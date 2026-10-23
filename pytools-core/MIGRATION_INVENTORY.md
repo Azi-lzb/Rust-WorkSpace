@@ -361,3 +361,9 @@ timeline_ops::keyword_match 改为复用共享 Python 语义匹配器，修复�
 真实配置的输入目录在当前开发机不存在；原项目 xlsx/ 中 70 份 XLSX 没有文件名和工作表同时命中时序规则，因此没有可运行的真实业务样本。本轮合成 CLI 对拍不构成 PT-1-1 完整验收。
 
 对拍另发现输出样式差异：Python/Pandas 两张结果表的 17 个标题单元格为粗体、水平居中、顶部对齐并带细边框；Rust 标题目前为默认样式。excel_writer 尚未导出 FormatBorder，按协作边界暂未修改共享 crate；需要 main 协调共享 writer API 后补齐样式并重新完成完整对拍。PT-1-1 仍未完成最终验收。
+
+### 2026-10-24 PT-6-1 剩余备份工作簿完整批次对拍
+
+对原 PyTools 只读 xlsx/备份/ 中此前已测最小和最大端点以外的 51 份 XLSX，调用只读 PyCode run_summary_by_usedrange 和真实 Rust summary-used-range CLI，按 17 批、每批 3 份进行对拍。输出共 1,016,511 行；17/17 批的完整工作簿投影一致，覆盖值/行、类型、样式、工作表维度、冻结窗格、表头、合并、公式、定义名称、打印区域、页面设置、页边距及居中属性。开发者视图累计 549 条事件，与每次运行保存的历史事件流逐项一致；报告记录实际组件为 Calamine、excel-reader::read_xlsx_worksheet_extents 和 rust_xlsxwriter。
+
+51 份源文件合计 84,340,966 字节，测试前后文件大小与修改时间均未变化；生成的工作簿和运行日志仅位于临时目录。机器报告 probe/reports/summary_used_range_backup_assets_20261024.json 只记录计数、投影结果及实际组件，不含源文件名或单元格内容。此项补充真实样本证据，不改变 PT-6-1 的最终验收状态：未知 #DATA! 错误值仍按 Calamine 未支持能力失败关闭；麒麟/UOS 实机、deb 与 glibc 2.28 仍未验证。
