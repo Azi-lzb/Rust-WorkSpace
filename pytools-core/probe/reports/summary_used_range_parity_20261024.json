@@ -40,9 +40,9 @@
   "rust_execution": {
     "reader_engine": "calamine",
     "writer_engine": "rust_xlsxwriter",
-    "read_elapsed_ms": 150,
-    "write_elapsed_ms": 193,
-    "total_elapsed_ms": 376,
+    "read_elapsed_ms": 172,
+    "write_elapsed_ms": 255,
+    "total_elapsed_ms": 459,
     "ooxml_error_cells_patched": 7
   },
   "offset_used_range_probe": {

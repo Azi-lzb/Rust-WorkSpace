@@ -1,4 +1,4 @@
-"""Synthetic Python/Rust parity probe for pytools summary tools 6-1 and 6-2."""
+"""Python/Rust parity probe for PyTools summary workflows 6-1 and 6-2."""
 
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ import shlex
 import subprocess
 import sys
 import tempfile
+import time
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from zipfile import ZipFile
@@ -220,6 +221,113 @@ def python_used_range_only(sources: list[Path], output: Path) -> Path | None:
         result = run_summary_by_usedrange(sources, output / "used", output / "logs")
     logging.shutdown()
     return Path(result["path"]) if result.get("saved") else None
+
+
+def compare_real_used_range_sample() -> dict[str, object]:
+    sample = PYTOOLS_SOURCE / "xlsx" / "2.报表不分口径.xlsx"
+    if not sample.is_file():
+        raise FileNotFoundError(sample)
+    before = source_fingerprints([sample])
+    with tempfile.TemporaryDirectory(
+        prefix="pytools-real-summary-parity-", ignore_cleanup_errors=True
+    ) as temporary:
+        root = Path(temporary)
+        python_started = time.perf_counter()
+        python_output = python_used_range_only([sample], root / "python")
+        python_elapsed_ms = round((time.perf_counter() - python_started) * 1000)
+        if python_output is None:
+            raise AssertionError("PyCode did not save the real-sample used-range summary")
+
+        rust_started = time.perf_counter()
+        rust_output, rust_result = run_rust(
+            "summary-used-range", [sample], root / "rust"
+        )
+        rust_cli_wall_elapsed_ms = round((time.perf_counter() - rust_started) * 1000)
+        if rust_output is None:
+            raise AssertionError("Rust CLI did not save the real-sample used-range summary")
+        assert_equivalent(python_output, rust_output, "PT-6-1 real source-project workbook")
+
+        source_workbook = load_workbook(sample, read_only=True, data_only=True)
+        try:
+            source_sheet_count = len(source_workbook.worksheets)
+            source_max_used_rows = max(
+                (sheet.max_row for sheet in source_workbook.worksheets), default=0
+            )
+            source_max_used_columns = max(
+                (sheet.max_column for sheet in source_workbook.worksheets), default=0
+            )
+        finally:
+            source_workbook.close()
+
+        python_sheets, python_dimensions = workbook_projection(python_output)
+        _, rust_dimensions = workbook_projection(rust_output)
+        summary_rows = len(python_sheets[0]["rows"]) - 1
+        if rust_result.get("rows") != summary_rows or rust_result.get("files") != 1:
+            raise AssertionError("Rust CLI and PyCode real-sample row/file counts differ")
+        after = source_fingerprints([sample])
+        if before != after:
+            raise AssertionError("the original PyTools source workbook changed")
+
+        report_day = dt.date.today().strftime("%Y%m%d")
+        report = {
+            "schema_version": 1,
+            "suite": "pytools.summary_used_range_real_sample_parity",
+            "date": dt.date.today().isoformat(),
+            "status": "passed_real_sample_cli_parity",
+            "data_origin": "read-only workbook asset in the original PyTools project",
+            "source_sample_relative_path": "xlsx/2.报表不分口径.xlsx",
+            "input_format": "xlsx",
+            "source_workbooks": 1,
+            "source_sha256_before_after_equal": True,
+            "source_sheet_count": source_sheet_count,
+            "source_max_used_rows": source_max_used_rows,
+            "source_max_used_columns": source_max_used_columns,
+            "summary_rows": summary_rows,
+            "pycode_dimensions": python_dimensions,
+            "rust_dimensions": rust_dimensions,
+            "comparison": {
+                "cell_values_and_types": "exact",
+                "populated_cell_styles": "exact",
+                "worksheet_names_and_dimensions": "exact",
+                "freeze_panes_and_header_bold": "exact",
+                "formula_merge_name_and_page_properties": "exact",
+            },
+            "python_elapsed_ms": python_elapsed_ms,
+            "rust_cli_wall_elapsed_ms": rust_cli_wall_elapsed_ms,
+            "execution_environment": {
+                "python_sys_platform": sys.platform,
+                "rust_cli_host": "WSL Linux",
+                "rust_cli_wall_includes_cargo_run": True,
+            },
+            "timing_note": "Single execution for diagnostics; not a performance comparison.",
+            "rust_execution": rust_result.get("execution"),
+            "limitations": [
+                "One original-project XLSX asset only; no production default or broad format acceptance inferred.",
+                "VBA-bearing XLSM, XLS/XLSB, Windows-native Rust and target Linux/deb remain unvalidated.",
+                "Report contains no source cell values or output workbook; both outputs were temporary.",
+            ],
+        }
+        report_path = (
+            Path(__file__).resolve().parent
+            / "reports"
+            / f"summary_used_range_real_parity_{report_day}.json"
+        )
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        report_path.write_text(
+            json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        )
+        return {
+            "status": report["status"],
+            "source_workbooks": report["source_workbooks"],
+            "source_sheet_count": report["source_sheet_count"],
+            "summary_rows": report["summary_rows"],
+            "source_sha256_before_after_equal": report["source_sha256_before_after_equal"],
+            "python_elapsed_ms": python_elapsed_ms,
+            "rust_cli_wall_elapsed_ms": rust_cli_wall_elapsed_ms,
+            "execution_environment": report["execution_environment"],
+            "rust_execution": report["rust_execution"],
+            "report": str(report_path),
+        }
 
 
 def python_comments_only(template: Path, sources: list[Path], output: Path) -> Path | None:
@@ -697,6 +805,7 @@ def main() -> int:
         report_path = Path(__file__).resolve().parent / "reports" / f"summary_used_range_parity_{report_day}.json"
         report_path.parent.mkdir(parents=True, exist_ok=True)
         report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        real_sample_report = compare_real_used_range_sample()
         print(json.dumps({
             "status": report["status"],
             "used_range_rows_rust": used_report.get("rows"),
@@ -705,6 +814,7 @@ def main() -> int:
             "nocom_pytools_matches_rust": nocom_matches_rust,
             "comment_summary_rows_rust": comments_report.get("rows"),
             "comment_duplicate_marker_rows_rust": duplicate_comments_report.get("rows"),
+            "real_sample_summary": real_sample_report,
             "report": str(report_path),
         }, ensure_ascii=False))
     return 0

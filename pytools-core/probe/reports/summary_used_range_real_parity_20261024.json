@@ -1,0 +1,57 @@
+{
+  "schema_version": 1,
+  "suite": "pytools.summary_used_range_real_sample_parity",
+  "date": "2026-10-24",
+  "status": "passed_real_sample_cli_parity",
+  "data_origin": "read-only workbook asset in the original PyTools project",
+  "source_sample_relative_path": "xlsx/2.报表不分口径.xlsx",
+  "input_format": "xlsx",
+  "source_workbooks": 1,
+  "source_sha256_before_after_equal": true,
+  "source_sheet_count": 15,
+  "source_max_used_rows": 153,
+  "source_max_used_columns": 33,
+  "summary_rows": 740,
+  "pycode_dimensions": [
+    {
+      "name": "汇总",
+      "rows": 741,
+      "columns": 36
+    }
+  ],
+  "rust_dimensions": [
+    {
+      "name": "汇总",
+      "rows": 741,
+      "columns": 36
+    }
+  ],
+  "comparison": {
+    "cell_values_and_types": "exact",
+    "populated_cell_styles": "exact",
+    "worksheet_names_and_dimensions": "exact",
+    "freeze_panes_and_header_bold": "exact",
+    "formula_merge_name_and_page_properties": "exact"
+  },
+  "python_elapsed_ms": 1100,
+  "rust_cli_wall_elapsed_ms": 4624,
+  "execution_environment": {
+    "python_sys_platform": "win32",
+    "rust_cli_host": "WSL Linux",
+    "rust_cli_wall_includes_cargo_run": true
+  },
+  "timing_note": "Single execution for diagnostics; not a performance comparison.",
+  "rust_execution": {
+    "reader_engine": "calamine",
+    "writer_engine": "rust_xlsxwriter",
+    "read_elapsed_ms": 666,
+    "write_elapsed_ms": 161,
+    "total_elapsed_ms": 857,
+    "ooxml_error_cells_patched": 0
+  },
+  "limitations": [
+    "One original-project XLSX asset only; no production default or broad format acceptance inferred.",
+    "VBA-bearing XLSM, XLS/XLSB, Windows-native Rust and target Linux/deb remain unvalidated.",
+    "Report contains no source cell values or output workbook; both outputs were temporary."
+  ]
+}
