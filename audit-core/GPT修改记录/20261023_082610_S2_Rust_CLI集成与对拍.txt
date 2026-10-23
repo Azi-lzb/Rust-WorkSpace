@@ -1,0 +1,37 @@
+时间：2026-10-23 08:26:10 Asia/Shanghai
+执行者：Codex
+修改前 commit：不可用（workspace 尚无首次提交）
+修改后 commit：未创建
+WIP 情况：workspace 根现有文件均未跟踪；本轮按增量修改保留既有 WIP，未清理、重置或覆盖其他文件。
+
+目的：把已完成文件级对拍的 Audit S2 service 暴露为可执行 Rust CLI 候选，并把 CLI 返回结果、进度、报表及失败行为纳入 Python 基线对拍。该候选不改变生产默认路由，也不代表整个 Audit 产品迁移完成。
+
+本轮文件：
+- `audit-core/Cargo.toml`：声明 `open-data-audit` CLI 二进制入口。
+- `audit-core/src/bin/open-data-audit.rs`：新增 `s2` 命令，接受当前期/上期目录、配置、输出目录和可选外部工作簿；调用 Rust `run_s2_audit`。进度事件写入 stderr JSON 行，成功摘要和报表路径写入 stdout JSON；错误以退出码 2 返回。
+- `audit-core/src/s2_service.rs`：为 CLI 集成测试所需的进度事件 JSON 反序列化增加 `Deserialize`；说明 CLI 是独立候选，不是生产默认。
+- `audit-core/tests/s2_service_parity.rs`：增加真实调用 `open-data-audit` 二进制的集成覆盖：无外部工作簿、含外部工作簿、无效配置三种场景，并核对输入 fixture 字节不变。
+- `audit-core/tests/compare/run_s2_service_parity.py`：将 Rust CLI 结果与只读 Python service 基线的业务摘要、进度、输出工作簿和错误行为比较。
+- `audit-core/probe/reports/s2_service_parity.json`：保存 service 与 CLI 两组对拍结果和 Python 源文件 SHA-256。
+- `audit-core/MIGRATION_INVENTORY.md`、`audit-core/README.md`、`EXCEL_ENGINE_ARCHITECTURE.md`：登记 CLI 候选状态、用法和未验收边界。
+- 本记录。
+
+对拍及验证：
+- `cargo fmt --all -- --check`：通过。
+- `cargo test --workspace --locked`：通过，所有 workspace 单元、集成和文档测试均无失败。
+- `cargo check --workspace --locked`：通过。
+- Python baseline 命令：`audit-core/tests/compare/run_s2_service_parity.py --source-root C:\Users\AZI\Desktop\VibeCode\3.open-data-audit`，使用原项目只读 `.venv`。无外部工作簿场景 15 条发现/22 个进度事件；含外部工作簿场景 18 条发现/26 个进度事件。两个场景的 service 与 CLI 业务、进度及三表工作簿差异数均为 0。
+- 无效配置场景中，CLI 与 Python 错误文本和进度一致，均未创建输出目录；差异数均为 0。
+- 报告：`audit-core/probe/reports/s2_service_parity.json`。报告标记 `status=passed`、`inputs_unchanged=true`、`rust_inputs_unchanged=true`、`source_unchanged=true`；Python 源哈希列于报告 `source_sha256`。
+
+未完成与风险：
+- 当前只把 Audit S2 文件级 service 接入一个可运行 Rust CLI 候选；它不是 GUI/桌面产品集成，也不表示其他 Audit 功能已迁移。
+- 对拍仅覆盖现有合成 fixtures；真实脱敏业务模板、真实 Excel/WPS 打开与保真、性能和峰值内存、异常文件回退尚未验收。
+- 未在 Windows 原生 Rust、麒麟 V10、统信 UOS/glibc 2.28 构建或运行，未构建 deb。
+- S2-F01 整体仍按迁移台账标记未验证；旧 Python 功能保留，未删除或修改。
+
+依赖与版本：未新增依赖；未修改 Cargo.lock；产品版本不变。
+
+回滚：撤销 `audit-core/Cargo.toml` 的 binary target，删除 `audit-core/src/bin/open-data-audit.rs`，撤销进度事件反序列化标记及本轮 S2 CLI 集成测试/比较器字段/报告，并还原相关文档条目和本记录。不要重置整个 workspace，也不要修改只读源 Python 项目。
+
+【组件版本】audit-core 0.1.0，不升级。

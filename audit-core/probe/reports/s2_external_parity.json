@@ -1,0 +1,56 @@
+{
+  "status": "passed_synthetic_parity",
+  "source": {
+    "project": "C:\\Users\\AZI\\Desktop\\VibeCode\\3.open-data-audit",
+    "module": "base_audit.systems.s2_report_collection.external_engine.ExternalComparisonEngine",
+    "sha256": {
+      "external_engine.py": "4113AD8B3211AE6EE8B5227B5BBDC1F954DD24D836AAE0199124D512E1420BDD",
+      "importer.py": "EEF44740DE8EB7AB0E09DE7C074FF06F22F515CC9A1518982FA662D123A49BEC",
+      "models.py": "8C19D7E5521F9290EC7FAF641C5454BE148188A9B1A7C129127C97E6FC5B903E",
+      "unit_conversion.py": "BE9AF2EAB715AC6ACDD496363B551C649486DD1A0939B55CB746A7AFCD6761BA"
+    },
+    "baseline_python": "3.12.10"
+  },
+  "rust_module": "audit-core/src/s2_external.rs",
+  "fixtures": {
+    "path": "audit-core/tests/fixtures/s2_external/cases.json",
+    "case_count": 12,
+    "finding_count": 31,
+    "expected_error_count": 2
+  },
+  "comparison": "Exact structural equality of serialized findings and expected error strings after source_file basename normalization. Decimal tuples, report-item mapping, source references, descriptions, severities and calculation traces are compared exactly.",
+  "checks": {
+    "baseline_command": "python -B audit-core/tests/compare/run_s2_external_baseline.py",
+    "baseline_generated": true,
+    "rust_parity_command": "cargo test -p audit-core --lib --test s2_external_parity --locked",
+    "rust_unit_tests_passed": 19,
+    "rust_parity_tests_passed": 1,
+    "rust_parity_tests_failed": 0,
+    "workspace_test_command": "cargo test --workspace --locked (WSL Ubuntu)",
+    "workspace_tests_passed": 70,
+    "workspace_tests_failed": 0,
+    "format_command": "cargo fmt --all -- --check",
+    "format_check": "passed"
+  },
+  "preserved": [
+    "six comparison methods with inclusive/exclusive boundaries and equals tolerance",
+    "amount conversion and comparison in the configured output unit; non-amount values stay in native scale",
+    "external organization map precedence over configured report item",
+    "plain-layout missing-row, missing-column and missing-value explanations",
+    "explicit zero fallback when the institution label column is missing, disabled for time-series data",
+    "time-series matching by exact normalized current date without borrowing other dates",
+    "finding identity, Decimal output values, source references and two-place calculation trace"
+  ],
+  "scope": "S2 external comparison rules over already-imported IndicatorRecord values, external numeric values and their metadata. It does not migrate external workbook reading or the S2 end-to-end workflow and is not connected to a production route.",
+  "unverified": [
+    "real external workbooks, parser-produced metadata and blank-cell warning behavior",
+    "configuration workbook loading and validation against production configuration files",
+    "source date objects outside the string forms emitted by the migrated period importer",
+    "external comparison service orchestration, report export and end-to-end S2 behavior",
+    "performance, memory, Windows, Kylin/UOS, glibc 2.28 and offline packaging"
+  ],
+  "performance": "not_measured",
+  "dependencies_or_routes_changed": false,
+  "production_default_changed": false,
+  "rollback": "Revert the listed S2 external comparison implementation, fixture, baseline generator, generated baseline/parity reports, inventory row and matching change record together. The source Python project remains read-only."
+}

@@ -1,0 +1,1447 @@
+{
+  "case_count": 2,
+  "cases": [
+    {
+      "case": "period_external_rules_and_quality_order",
+      "status": "passed"
+    },
+    {
+      "case": "empty_inputs_without_external_data",
+      "status": "passed"
+    }
+  ],
+  "python_baseline": {
+    "baseline_python": "3.12.10",
+    "module": "PeriodAuditV2Service in-memory component order",
+    "project": "C:\\Users\\AZI\\Desktop\\VibeCode\\3.open-data-audit",
+    "sha256": {
+      "exporter.py": "EF99D056BA9038BC9AED8BD23D5D8D0D2813941BA54366C1136380AC70A2E02B",
+      "external_engine.py": "4113AD8B3211AE6EE8B5227B5BBDC1F954DD24D836AAE0199124D512E1420BDD",
+      "importer.py": "EEF44740DE8EB7AB0E09DE7C074FF06F22F515CC9A1518982FA662D123A49BEC",
+      "models.py": "8C19D7E5521F9290EC7FAF641C5454BE148188A9B1A7C129127C97E6FC5B903E",
+      "period_engine.py": "75C549C3384EF6123C94B5FB08256B07C398B2753FA1B1A6A905478F90A6A4C3",
+      "rule_engine.py": "E80F7A03CCA7EAC89FD668148C798300BD4C4E6FCD9D33191F156B3368F2D2B0",
+      "service.py": "601EE1DDE3B97860D48408F37114A62AC28BA43434365121633F3D5AE4832528",
+      "validation.py": "AE453446AD2AC10D4457D19C5C14C02F8D95517B0E9559F9959E66726E964195"
+    }
+  },
+  "result": {
+    "empty_inputs_without_external_data": {
+      "current_records": [],
+      "external_findings": [],
+      "findings": [
+        {
+          "audit_type": "校验规则",
+          "band": "",
+          "calculation_trace": "",
+          "change_rate": null,
+          "current_value": "",
+          "data_type": "",
+          "description": "配置检查：配置提示",
+          "difference_value": "",
+          "external_indicator_name": "",
+          "external_value": "",
+          "finding_id": "8848b535dc14cba9",
+          "form_code": "",
+          "form_codes": [],
+          "handling_branch": "",
+          "indicator_code": "",
+          "indicator_name": "",
+          "institution_name": "",
+          "institution_type": "",
+          "period": "",
+          "previous_value": "",
+          "region": "",
+          "related_records": [],
+          "report_item": "",
+          "retrieval_note": "",
+          "rule_description": "配置检查：配置提示",
+          "rule_id": "Q001",
+          "rule_type": "配置检查",
+          "severity": "软性",
+          "social_credit_code": "",
+          "source_refs": [],
+          "status": "异常",
+          "value_details": "",
+          "value_type": ""
+        }
+      ],
+      "period_findings": [],
+      "previous_records": [],
+      "quality_findings": [
+        {
+          "audit_type": "校验规则",
+          "band": "",
+          "calculation_trace": "",
+          "change_rate": null,
+          "current_value": "",
+          "data_type": "",
+          "description": "配置检查：配置提示",
+          "difference_value": "",
+          "external_indicator_name": "",
+          "external_value": "",
+          "finding_id": "8848b535dc14cba9",
+          "form_code": "",
+          "form_codes": [],
+          "handling_branch": "",
+          "indicator_code": "",
+          "indicator_name": "",
+          "institution_name": "",
+          "institution_type": "",
+          "period": "",
+          "previous_value": "",
+          "region": "",
+          "related_records": [],
+          "report_item": "",
+          "retrieval_note": "",
+          "rule_description": "配置检查：配置提示",
+          "rule_id": "Q001",
+          "rule_type": "配置检查",
+          "severity": "软性",
+          "social_credit_code": "",
+          "source_refs": [],
+          "status": "异常",
+          "value_details": "",
+          "value_type": ""
+        }
+      ],
+      "rule_findings": [],
+      "rule_quality_findings": [],
+      "summary": {
+        "abnormal_findings": 1,
+        "by_severity": {
+          "软性": 1
+        },
+        "by_type": {
+          "校验规则": 1
+        },
+        "forms": 0,
+        "indicators": 0,
+        "institutions": 0,
+        "total_findings": 1
+      }
+    },
+    "period_external_rules_and_quality_order": {
+      "current_records": [
+        {
+          "form_code": "20202",
+          "handling_branch": "一部",
+          "indicator_code": "A",
+          "indicator_name": "各项存款",
+          "institution_id": "9144",
+          "institution_name": "甲银行",
+          "institution_type": "农商行",
+          "normalized_unit": "万元",
+          "normalized_value": {
+            "type": "decimal",
+            "value": {
+              "digits": [
+                1,
+                1,
+                0
+              ],
+              "exponent": 0,
+              "sign": 0
+            }
+          },
+          "period": "2026-06",
+          "region": "示例地区",
+          "social_credit_code": "C9144",
+          "source": {
+            "source_file": "current.xlsx",
+            "source_row": 4,
+            "source_sheet": "20202"
+          },
+          "source_date": "2026-06-30",
+          "source_unit": "元",
+          "value": {
+            "type": "decimal",
+            "value": {
+              "digits": [
+                1,
+                1,
+                0
+              ],
+              "exponent": 0,
+              "sign": 0
+            }
+          },
+          "value_type": "余额"
+        },
+        {
+          "form_code": "20202",
+          "handling_branch": "一部",
+          "indicator_code": "B",
+          "indicator_name": "负债合计",
+          "institution_id": "9144",
+          "institution_name": "甲银行",
+          "institution_type": "农商行",
+          "normalized_unit": "万元",
+          "normalized_value": {
+            "type": "decimal",
+            "value": {
+              "digits": [
+                4,
+                0
+              ],
+              "exponent": 0,
+              "sign": 0
+            }
+          },
+          "period": "2026-06",
+          "region": "示例地区",
+          "social_credit_code": "C9144",
+          "source": {
+            "source_file": "current.xlsx",
+            "source_row": 5,
+            "source_sheet": "20202"
+          },
+          "source_date": "2026-06-30",
+          "source_unit": "元",
+          "value": {
+            "type": "decimal",
+            "value": {
+              "digits": [
+                4,
+                0
+              ],
+              "exponent": 0,
+              "sign": 0
+            }
+          },
+          "value_type": "余额"
+        },
+        {
+          "form_code": "20202",
+          "handling_branch": "一部",
+          "indicator_code": "C",
+          "indicator_name": "权益合计",
+          "institution_id": "9144",
+          "institution_name": "甲银行",
+          "institution_type": "农商行",
+          "normalized_unit": "万元",
+          "normalized_value": {
+            "type": "decimal",
+            "value": {
+              "digits": [
+                6,
+                0
+              ],
+              "exponent": 0,
+              "sign": 0
+            }
+          },
+          "period": "2026-06",
+          "region": "示例地区",
+          "social_credit_code": "C9144",
+          "source": {
+            "source_file": "current.xlsx",
+            "source_row": 6,
+            "source_sheet": "20202"
+          },
+          "source_date": "2026-06-30",
+          "source_unit": "元",
+          "value": {
+            "type": "decimal",
+            "value": {
+              "digits": [
+                6,
+                0
+              ],
+              "exponent": 0,
+              "sign": 0
+            }
+          },
+          "value_type": "余额"
+        },
+        {
+          "form_code": "20202",
+          "handling_branch": "一部",
+          "indicator_code": "ANCHOR",
+          "indicator_name": "锚点指标",
+          "institution_id": "9144",
+          "institution_name": "甲银行",
+          "institution_type": "农商行",
+          "normalized_unit": "万元",
+          "normalized_value": {
+            "type": "number",
+            "value": 1.0
+          },
+          "period": "2026-06",
+          "region": "示例地区",
+          "social_credit_code": "C9144",
+          "source": {
+            "source_file": "current.xlsx",
+            "source_row": 7,
+            "source_sheet": "20202"
+          },
+          "source_date": "2026-06-30",
+          "source_unit": "元",
+          "value": {
+            "type": "number",
+            "value": 1.0
+          },
+          "value_type": "数值"
+        }
+      ],
+      "external_findings": [
+        {
+          "audit_type": "外部核对",
+          "band": "",
+          "calculation_trace": "差异绝对值= abs(110.00 - 105.00) = 5.00 万元",
+          "change_rate": null,
+          "current_value": {
+            "type": "decimal",
+            "value": {
+              "digits": [
+                1,
+                1,
+                0
+              ],
+              "exponent": 0,
+              "sign": 0
+            }
+          },
+          "data_type": "",
+          "description": "与大集中系统数据不一致",
+          "difference_value": {
+            "type": "decimal",
+            "value": {
+              "digits": [
+                5
+              ],
+              "exponent": 0,
+              "sign": 0
+            }
+          },
+          "external_indicator_name": "存款余额",
+          "external_value": {
+            "type": "decimal",
+            "value": {
+              "digits": [
+                1,
+                0,
+                5
+              ],
+              "exponent": 0,
+              "sign": 0
+            }
+          },
+          "finding_id": "c4ea16c6b440c026",
+          "form_code": "20202",
+          "form_codes": [
+            "20202"
+          ],
+          "handling_branch": "一部",
+          "indicator_code": "A",
+          "indicator_name": "各项存款",
+          "institution_name": "甲银行",
+          "institution_type": "农商行",
+          "period": "2026-06",
+          "previous_value": "",
+          "region": "示例地区",
+          "related_records": [],
+          "report_item": "row-9144",
+          "retrieval_note": "",
+          "rule_description": "与大集中系统数据不一致",
+          "rule_id": "EXT-A",
+          "rule_type": "",
+          "severity": "硬性",
+          "social_credit_code": "C9144",
+          "source_refs": [
+            {
+              "source_file": "current.xlsx",
+              "source_row": 4,
+              "source_sheet": "20202"
+            },
+            {
+              "source_file": "central.xlsx",
+              "source_row": 5,
+              "source_sheet": "集中系统数据"
+            }
+          ],
+          "status": "异常",
+          "value_details": "",
+          "value_type": ""
+        }
+      ],
+      "findings": [
+        {
+          "audit_type": "环比",
+          "band": "A-BAND",
+          "calculation_trace": "(110.00 - 100.00) / abs(100.00) = 10.00%",
+          "change_rate": {
+            "type": "decimal",
+            "value": {
+              "digits": [
+                1
+              ],
+              "exponent": -1,
+              "sign": 0
+            }
+          },
+          "current_value": {
+            "type": "decimal",
+            "value": {
+              "digits": [
+                1,
+                1,
+                0
+              ],
+              "exponent": 0,
+              "sign": 0
+            }
+          },
+          "data_type": "余额",
+          "description": "余额变动提示",
+          "difference_value": {
+            "type": "decimal",
+            "value": {
+              "digits": [
+                1,
+                0
+              ],
+              "exponent": 0,
+              "sign": 0
+            }
+          },
+          "external_indicator_name": "",
+          "external_value": "",
+          "finding_id": "ed7300eed4027e86",
+          "form_code": "20202",
+          "form_codes": [
+            "20202"
+          ],
+          "handling_branch": "一部",
+          "indicator_code": "A",
+          "indicator_name": "各项存款",
+          "institution_name": "甲银行",
+          "institution_type": "农商行",
+          "period": "2026-06",
+          "previous_value": {
+            "type": "decimal",
+            "value": {
+              "digits": [
+                1,
+                0,
+                0
+              ],
+              "exponent": 0,
+              "sign": 0
+            }
+          },
+          "region": "示例地区",
+          "related_records": [],
+          "report_item": "",
+          "retrieval_note": "",
+          "rule_description": "",
+          "rule_id": "",
+          "rule_type": "",
+          "severity": "软性",
+          "social_credit_code": "C9144",
+          "source_refs": [
+            {
+              "source_file": "current.xlsx",
+              "source_row": 4,
+              "source_sheet": "20202"
+            },
+            {
+              "source_file": "previous.xlsx",
+              "source_row": 4,
+              "source_sheet": "20202"
+            }
+          ],
+          "status": "异常",
+          "value_details": "",
+          "value_type": "余额"
+        },
+        {
+          "audit_type": "外部核对",
+          "band": "",
+          "calculation_trace": "差异绝对值= abs(110.00 - 105.00) = 5.00 万元",
+          "change_rate": null,
+          "current_value": {
+            "type": "decimal",
+            "value": {
+              "digits": [
+                1,
+                1,
+                0
+              ],
+              "exponent": 0,
+              "sign": 0
+            }
+          },
+          "data_type": "",
+          "description": "与大集中系统数据不一致",
+          "difference_value": {
+            "type": "decimal",
+            "value": {
+              "digits": [
+                5
+              ],
+              "exponent": 0,
+              "sign": 0
+            }
+          },
+          "external_indicator_name": "存款余额",
+          "external_value": {
+            "type": "decimal",
+            "value": {
+              "digits": [
+                1,
+                0,
+                5
+              ],
+              "exponent": 0,
+              "sign": 0
+            }
+          },
+          "finding_id": "c4ea16c6b440c026",
+          "form_code": "20202",
+          "form_codes": [
+            "20202"
+          ],
+          "handling_branch": "一部",
+          "indicator_code": "A",
+          "indicator_name": "各项存款",
+          "institution_name": "甲银行",
+          "institution_type": "农商行",
+          "period": "2026-06",
+          "previous_value": "",
+          "region": "示例地区",
+          "related_records": [],
+          "report_item": "row-9144",
+          "retrieval_note": "",
+          "rule_description": "与大集中系统数据不一致",
+          "rule_id": "EXT-A",
+          "rule_type": "",
+          "severity": "硬性",
+          "social_credit_code": "C9144",
+          "source_refs": [
+            {
+              "source_file": "current.xlsx",
+              "source_row": 4,
+              "source_sheet": "20202"
+            },
+            {
+              "source_file": "central.xlsx",
+              "source_row": 5,
+              "source_sheet": "集中系统数据"
+            }
+          ],
+          "status": "异常",
+          "value_details": "",
+          "value_type": ""
+        },
+        {
+          "audit_type": "规则",
+          "band": "",
+          "calculation_trace": "配置表达式：[A] <> [B] + [C]；代入表达式：110.00 <> 40.00 + 60.00",
+          "change_rate": null,
+          "current_value": "",
+          "data_type": "",
+          "description": "资产负债平衡",
+          "difference_value": "",
+          "external_indicator_name": "",
+          "external_value": "",
+          "finding_id": "f03b37fc425ee0e7",
+          "form_code": "20202",
+          "form_codes": [
+            "20202"
+          ],
+          "handling_branch": "一部",
+          "indicator_code": "A",
+          "indicator_name": "各项存款",
+          "institution_name": "甲银行",
+          "institution_type": "农商行",
+          "period": "2026-06",
+          "previous_value": "",
+          "region": "示例地区",
+          "related_records": [
+            {
+              "form_code": "20202",
+              "indicator_code": "A",
+              "indicator_name": "各项存款",
+              "period": "2026-06",
+              "source": {
+                "source_file": "current.xlsx",
+                "source_row": 4,
+                "source_sheet": "20202"
+              },
+              "value": {
+                "type": "decimal",
+                "value": {
+                  "digits": [
+                    1,
+                    1,
+                    0
+                  ],
+                  "exponent": 0,
+                  "sign": 0
+                }
+              }
+            },
+            {
+              "form_code": "20202",
+              "indicator_code": "B",
+              "indicator_name": "负债合计",
+              "period": "2026-06",
+              "source": {
+                "source_file": "current.xlsx",
+                "source_row": 5,
+                "source_sheet": "20202"
+              },
+              "value": {
+                "type": "decimal",
+                "value": {
+                  "digits": [
+                    4,
+                    0
+                  ],
+                  "exponent": 0,
+                  "sign": 0
+                }
+              }
+            },
+            {
+              "form_code": "20202",
+              "indicator_code": "C",
+              "indicator_name": "权益合计",
+              "period": "2026-06",
+              "source": {
+                "source_file": "current.xlsx",
+                "source_row": 6,
+                "source_sheet": "20202"
+              },
+              "value": {
+                "type": "decimal",
+                "value": {
+                  "digits": [
+                    6,
+                    0
+                  ],
+                  "exponent": 0,
+                  "sign": 0
+                }
+              }
+            }
+          ],
+          "report_item": "",
+          "retrieval_note": "",
+          "rule_description": "资产负债平衡",
+          "rule_id": "R-BAL",
+          "rule_type": "表达式",
+          "severity": "硬性",
+          "social_credit_code": "C9144",
+          "source_refs": [
+            {
+              "source_file": "current.xlsx",
+              "source_row": 4,
+              "source_sheet": "20202"
+            }
+          ],
+          "status": "异常",
+          "value_details": "本期 A 各项存款=110.00；本期 B 负债合计=40.00；本期 C 权益合计=60.00",
+          "value_type": ""
+        },
+        {
+          "audit_type": "校验规则",
+          "band": "",
+          "calculation_trace": "",
+          "change_rate": null,
+          "current_value": "",
+          "data_type": "",
+          "description": "配置检查：配置提示",
+          "difference_value": "",
+          "external_indicator_name": "",
+          "external_value": "",
+          "finding_id": "8848b535dc14cba9",
+          "form_code": "",
+          "form_codes": [],
+          "handling_branch": "",
+          "indicator_code": "",
+          "indicator_name": "",
+          "institution_name": "",
+          "institution_type": "",
+          "period": "",
+          "previous_value": "",
+          "region": "",
+          "related_records": [],
+          "report_item": "",
+          "retrieval_note": "",
+          "rule_description": "配置检查：配置提示",
+          "rule_id": "Q001",
+          "rule_type": "配置检查",
+          "severity": "软性",
+          "social_credit_code": "",
+          "source_refs": [],
+          "status": "异常",
+          "value_details": "",
+          "value_type": ""
+        },
+        {
+          "audit_type": "校验规则",
+          "band": "",
+          "calculation_trace": "首条：current.xlsx/20202!第4行；重复：current.xlsx/20202!第8行",
+          "change_rate": null,
+          "current_value": "",
+          "data_type": "",
+          "description": "重复指标：同一机构、指标编码、数据期出现多条记录",
+          "difference_value": "",
+          "external_indicator_name": "",
+          "external_value": "",
+          "finding_id": "75a3ab0f9ca663b1",
+          "form_code": "20202",
+          "form_codes": [
+            "20202"
+          ],
+          "handling_branch": "一部",
+          "indicator_code": "A",
+          "indicator_name": "各项存款",
+          "institution_name": "甲银行",
+          "institution_type": "农商行",
+          "period": "2026-06",
+          "previous_value": "",
+          "region": "示例地区",
+          "related_records": [],
+          "report_item": "",
+          "retrieval_note": "",
+          "rule_description": "重复指标：同一机构、指标编码、数据期出现多条记录",
+          "rule_id": "Q001",
+          "rule_type": "导入校验",
+          "severity": "硬性",
+          "social_credit_code": "C9144",
+          "source_refs": [
+            {
+              "source_file": "current.xlsx",
+              "source_row": 8,
+              "source_sheet": "20202"
+            }
+          ],
+          "status": "异常",
+          "value_details": "",
+          "value_type": ""
+        },
+        {
+          "audit_type": "校验规则",
+          "band": "",
+          "calculation_trace": "",
+          "change_rate": null,
+          "current_value": "",
+          "data_type": "",
+          "description": "本期导入提示",
+          "difference_value": "",
+          "external_indicator_name": "",
+          "external_value": "",
+          "finding_id": "95bb891df0dc3df7",
+          "form_code": "",
+          "form_codes": [],
+          "handling_branch": "",
+          "indicator_code": "",
+          "indicator_name": "",
+          "institution_name": "",
+          "institution_type": "",
+          "period": "",
+          "previous_value": "",
+          "region": "",
+          "related_records": [],
+          "report_item": "",
+          "retrieval_note": "",
+          "rule_description": "本期导入提示",
+          "rule_id": "Q001",
+          "rule_type": "导入校验",
+          "severity": "软性",
+          "social_credit_code": "",
+          "source_refs": [],
+          "status": "异常",
+          "value_details": "",
+          "value_type": ""
+        },
+        {
+          "audit_type": "校验规则",
+          "band": "",
+          "calculation_trace": "",
+          "change_rate": null,
+          "current_value": "",
+          "data_type": "",
+          "description": "上期导入提示",
+          "difference_value": "",
+          "external_indicator_name": "",
+          "external_value": "",
+          "finding_id": "3610857f8c569bc3",
+          "form_code": "",
+          "form_codes": [],
+          "handling_branch": "",
+          "indicator_code": "",
+          "indicator_name": "",
+          "institution_name": "",
+          "institution_type": "",
+          "period": "",
+          "previous_value": "",
+          "region": "",
+          "related_records": [],
+          "report_item": "",
+          "retrieval_note": "",
+          "rule_description": "上期导入提示",
+          "rule_id": "Q001",
+          "rule_type": "导入校验",
+          "severity": "软性",
+          "social_credit_code": "",
+          "source_refs": [],
+          "status": "异常",
+          "value_details": "",
+          "value_type": ""
+        },
+        {
+          "audit_type": "校验规则",
+          "band": "",
+          "calculation_trace": "",
+          "change_rate": null,
+          "current_value": "",
+          "data_type": "",
+          "description": "外部导入提示",
+          "difference_value": "",
+          "external_indicator_name": "",
+          "external_value": "",
+          "finding_id": "e6447a83aa6c76b4",
+          "form_code": "",
+          "form_codes": [],
+          "handling_branch": "",
+          "indicator_code": "",
+          "indicator_name": "",
+          "institution_name": "",
+          "institution_type": "",
+          "period": "",
+          "previous_value": "",
+          "region": "",
+          "related_records": [],
+          "report_item": "",
+          "retrieval_note": "",
+          "rule_description": "外部导入提示",
+          "rule_id": "Q002",
+          "rule_type": "外部数据导入",
+          "severity": "软性",
+          "social_credit_code": "",
+          "source_refs": [],
+          "status": "异常",
+          "value_details": "",
+          "value_type": ""
+        },
+        {
+          "audit_type": "校验规则",
+          "band": "",
+          "calculation_trace": "配置表达式：[MISSING_A] < 0.055 * [MISSING_B]；代入表达式：0.00 < 0.055 * 0.00",
+          "change_rate": null,
+          "current_value": "",
+          "data_type": "",
+          "description": "规则无法执行：缺少指标 MISSING_A 的当期数据；缺少指标 MISSING_B 的当期数据（规则：监管线缺项）",
+          "difference_value": "",
+          "external_indicator_name": "",
+          "external_value": "",
+          "finding_id": "239020aa9f46c51c",
+          "form_code": "",
+          "form_codes": [],
+          "handling_branch": "",
+          "indicator_code": "",
+          "indicator_name": "",
+          "institution_name": "甲银行",
+          "institution_type": "",
+          "period": "2026-06",
+          "previous_value": "",
+          "region": "",
+          "related_records": [],
+          "report_item": "",
+          "retrieval_note": "",
+          "rule_description": "",
+          "rule_id": "R-MISSING",
+          "rule_type": "表达式",
+          "severity": "软性",
+          "social_credit_code": "C9144",
+          "source_refs": [],
+          "status": "异常",
+          "value_details": "本期 MISSING_A=缺少指标；本期 MISSING_B=缺少指标",
+          "value_type": ""
+        }
+      ],
+      "period_findings": [
+        {
+          "audit_type": "环比",
+          "band": "A-BAND",
+          "calculation_trace": "(110.00 - 100.00) / abs(100.00) = 10.00%",
+          "change_rate": {
+            "type": "decimal",
+            "value": {
+              "digits": [
+                1
+              ],
+              "exponent": -1,
+              "sign": 0
+            }
+          },
+          "current_value": {
+            "type": "decimal",
+            "value": {
+              "digits": [
+                1,
+                1,
+                0
+              ],
+              "exponent": 0,
+              "sign": 0
+            }
+          },
+          "data_type": "余额",
+          "description": "余额变动提示",
+          "difference_value": {
+            "type": "decimal",
+            "value": {
+              "digits": [
+                1,
+                0
+              ],
+              "exponent": 0,
+              "sign": 0
+            }
+          },
+          "external_indicator_name": "",
+          "external_value": "",
+          "finding_id": "ed7300eed4027e86",
+          "form_code": "20202",
+          "form_codes": [
+            "20202"
+          ],
+          "handling_branch": "一部",
+          "indicator_code": "A",
+          "indicator_name": "各项存款",
+          "institution_name": "甲银行",
+          "institution_type": "农商行",
+          "period": "2026-06",
+          "previous_value": {
+            "type": "decimal",
+            "value": {
+              "digits": [
+                1,
+                0,
+                0
+              ],
+              "exponent": 0,
+              "sign": 0
+            }
+          },
+          "region": "示例地区",
+          "related_records": [],
+          "report_item": "",
+          "retrieval_note": "",
+          "rule_description": "",
+          "rule_id": "",
+          "rule_type": "",
+          "severity": "软性",
+          "social_credit_code": "C9144",
+          "source_refs": [
+            {
+              "source_file": "current.xlsx",
+              "source_row": 4,
+              "source_sheet": "20202"
+            },
+            {
+              "source_file": "previous.xlsx",
+              "source_row": 4,
+              "source_sheet": "20202"
+            }
+          ],
+          "status": "异常",
+          "value_details": "",
+          "value_type": "余额"
+        }
+      ],
+      "previous_records": [
+        {
+          "form_code": "20202",
+          "handling_branch": "一部",
+          "indicator_code": "A",
+          "indicator_name": "各项存款",
+          "institution_id": "9144",
+          "institution_name": "甲银行",
+          "institution_type": "农商行",
+          "normalized_unit": "万元",
+          "normalized_value": {
+            "type": "decimal",
+            "value": {
+              "digits": [
+                1,
+                0,
+                0
+              ],
+              "exponent": 0,
+              "sign": 0
+            }
+          },
+          "period": "2026-03",
+          "region": "示例地区",
+          "social_credit_code": "C9144",
+          "source": {
+            "source_file": "previous.xlsx",
+            "source_row": 4,
+            "source_sheet": "20202"
+          },
+          "source_date": "2026-03-30",
+          "source_unit": "元",
+          "value": {
+            "type": "decimal",
+            "value": {
+              "digits": [
+                1,
+                0,
+                0
+              ],
+              "exponent": 0,
+              "sign": 0
+            }
+          },
+          "value_type": "余额"
+        },
+        {
+          "form_code": "20202",
+          "handling_branch": "一部",
+          "indicator_code": "B",
+          "indicator_name": "负债合计",
+          "institution_id": "9144",
+          "institution_name": "甲银行",
+          "institution_type": "农商行",
+          "normalized_unit": "万元",
+          "normalized_value": {
+            "type": "decimal",
+            "value": {
+              "digits": [
+                4,
+                0
+              ],
+              "exponent": 0,
+              "sign": 0
+            }
+          },
+          "period": "2026-03",
+          "region": "示例地区",
+          "social_credit_code": "C9144",
+          "source": {
+            "source_file": "previous.xlsx",
+            "source_row": 5,
+            "source_sheet": "20202"
+          },
+          "source_date": "2026-03-30",
+          "source_unit": "元",
+          "value": {
+            "type": "decimal",
+            "value": {
+              "digits": [
+                4,
+                0
+              ],
+              "exponent": 0,
+              "sign": 0
+            }
+          },
+          "value_type": "余额"
+        },
+        {
+          "form_code": "20202",
+          "handling_branch": "一部",
+          "indicator_code": "C",
+          "indicator_name": "权益合计",
+          "institution_id": "9144",
+          "institution_name": "甲银行",
+          "institution_type": "农商行",
+          "normalized_unit": "万元",
+          "normalized_value": {
+            "type": "decimal",
+            "value": {
+              "digits": [
+                6,
+                0
+              ],
+              "exponent": 0,
+              "sign": 0
+            }
+          },
+          "period": "2026-03",
+          "region": "示例地区",
+          "social_credit_code": "C9144",
+          "source": {
+            "source_file": "previous.xlsx",
+            "source_row": 6,
+            "source_sheet": "20202"
+          },
+          "source_date": "2026-03-30",
+          "source_unit": "元",
+          "value": {
+            "type": "decimal",
+            "value": {
+              "digits": [
+                6,
+                0
+              ],
+              "exponent": 0,
+              "sign": 0
+            }
+          },
+          "value_type": "余额"
+        }
+      ],
+      "quality_findings": [
+        {
+          "audit_type": "校验规则",
+          "band": "",
+          "calculation_trace": "",
+          "change_rate": null,
+          "current_value": "",
+          "data_type": "",
+          "description": "配置检查：配置提示",
+          "difference_value": "",
+          "external_indicator_name": "",
+          "external_value": "",
+          "finding_id": "8848b535dc14cba9",
+          "form_code": "",
+          "form_codes": [],
+          "handling_branch": "",
+          "indicator_code": "",
+          "indicator_name": "",
+          "institution_name": "",
+          "institution_type": "",
+          "period": "",
+          "previous_value": "",
+          "region": "",
+          "related_records": [],
+          "report_item": "",
+          "retrieval_note": "",
+          "rule_description": "配置检查：配置提示",
+          "rule_id": "Q001",
+          "rule_type": "配置检查",
+          "severity": "软性",
+          "social_credit_code": "",
+          "source_refs": [],
+          "status": "异常",
+          "value_details": "",
+          "value_type": ""
+        },
+        {
+          "audit_type": "校验规则",
+          "band": "",
+          "calculation_trace": "首条：current.xlsx/20202!第4行；重复：current.xlsx/20202!第8行",
+          "change_rate": null,
+          "current_value": "",
+          "data_type": "",
+          "description": "重复指标：同一机构、指标编码、数据期出现多条记录",
+          "difference_value": "",
+          "external_indicator_name": "",
+          "external_value": "",
+          "finding_id": "75a3ab0f9ca663b1",
+          "form_code": "20202",
+          "form_codes": [
+            "20202"
+          ],
+          "handling_branch": "一部",
+          "indicator_code": "A",
+          "indicator_name": "各项存款",
+          "institution_name": "甲银行",
+          "institution_type": "农商行",
+          "period": "2026-06",
+          "previous_value": "",
+          "region": "示例地区",
+          "related_records": [],
+          "report_item": "",
+          "retrieval_note": "",
+          "rule_description": "重复指标：同一机构、指标编码、数据期出现多条记录",
+          "rule_id": "Q001",
+          "rule_type": "导入校验",
+          "severity": "硬性",
+          "social_credit_code": "C9144",
+          "source_refs": [
+            {
+              "source_file": "current.xlsx",
+              "source_row": 8,
+              "source_sheet": "20202"
+            }
+          ],
+          "status": "异常",
+          "value_details": "",
+          "value_type": ""
+        },
+        {
+          "audit_type": "校验规则",
+          "band": "",
+          "calculation_trace": "",
+          "change_rate": null,
+          "current_value": "",
+          "data_type": "",
+          "description": "本期导入提示",
+          "difference_value": "",
+          "external_indicator_name": "",
+          "external_value": "",
+          "finding_id": "95bb891df0dc3df7",
+          "form_code": "",
+          "form_codes": [],
+          "handling_branch": "",
+          "indicator_code": "",
+          "indicator_name": "",
+          "institution_name": "",
+          "institution_type": "",
+          "period": "",
+          "previous_value": "",
+          "region": "",
+          "related_records": [],
+          "report_item": "",
+          "retrieval_note": "",
+          "rule_description": "本期导入提示",
+          "rule_id": "Q001",
+          "rule_type": "导入校验",
+          "severity": "软性",
+          "social_credit_code": "",
+          "source_refs": [],
+          "status": "异常",
+          "value_details": "",
+          "value_type": ""
+        },
+        {
+          "audit_type": "校验规则",
+          "band": "",
+          "calculation_trace": "",
+          "change_rate": null,
+          "current_value": "",
+          "data_type": "",
+          "description": "上期导入提示",
+          "difference_value": "",
+          "external_indicator_name": "",
+          "external_value": "",
+          "finding_id": "3610857f8c569bc3",
+          "form_code": "",
+          "form_codes": [],
+          "handling_branch": "",
+          "indicator_code": "",
+          "indicator_name": "",
+          "institution_name": "",
+          "institution_type": "",
+          "period": "",
+          "previous_value": "",
+          "region": "",
+          "related_records": [],
+          "report_item": "",
+          "retrieval_note": "",
+          "rule_description": "上期导入提示",
+          "rule_id": "Q001",
+          "rule_type": "导入校验",
+          "severity": "软性",
+          "social_credit_code": "",
+          "source_refs": [],
+          "status": "异常",
+          "value_details": "",
+          "value_type": ""
+        },
+        {
+          "audit_type": "校验规则",
+          "band": "",
+          "calculation_trace": "",
+          "change_rate": null,
+          "current_value": "",
+          "data_type": "",
+          "description": "外部导入提示",
+          "difference_value": "",
+          "external_indicator_name": "",
+          "external_value": "",
+          "finding_id": "e6447a83aa6c76b4",
+          "form_code": "",
+          "form_codes": [],
+          "handling_branch": "",
+          "indicator_code": "",
+          "indicator_name": "",
+          "institution_name": "",
+          "institution_type": "",
+          "period": "",
+          "previous_value": "",
+          "region": "",
+          "related_records": [],
+          "report_item": "",
+          "retrieval_note": "",
+          "rule_description": "外部导入提示",
+          "rule_id": "Q002",
+          "rule_type": "外部数据导入",
+          "severity": "软性",
+          "social_credit_code": "",
+          "source_refs": [],
+          "status": "异常",
+          "value_details": "",
+          "value_type": ""
+        }
+      ],
+      "rule_findings": [
+        {
+          "audit_type": "规则",
+          "band": "",
+          "calculation_trace": "配置表达式：[A] <> [B] + [C]；代入表达式：110.00 <> 40.00 + 60.00",
+          "change_rate": null,
+          "current_value": "",
+          "data_type": "",
+          "description": "资产负债平衡",
+          "difference_value": "",
+          "external_indicator_name": "",
+          "external_value": "",
+          "finding_id": "f03b37fc425ee0e7",
+          "form_code": "20202",
+          "form_codes": [
+            "20202"
+          ],
+          "handling_branch": "一部",
+          "indicator_code": "A",
+          "indicator_name": "各项存款",
+          "institution_name": "甲银行",
+          "institution_type": "农商行",
+          "period": "2026-06",
+          "previous_value": "",
+          "region": "示例地区",
+          "related_records": [
+            {
+              "form_code": "20202",
+              "indicator_code": "A",
+              "indicator_name": "各项存款",
+              "period": "2026-06",
+              "source": {
+                "source_file": "current.xlsx",
+                "source_row": 4,
+                "source_sheet": "20202"
+              },
+              "value": {
+                "type": "decimal",
+                "value": {
+                  "digits": [
+                    1,
+                    1,
+                    0
+                  ],
+                  "exponent": 0,
+                  "sign": 0
+                }
+              }
+            },
+            {
+              "form_code": "20202",
+              "indicator_code": "B",
+              "indicator_name": "负债合计",
+              "period": "2026-06",
+              "source": {
+                "source_file": "current.xlsx",
+                "source_row": 5,
+                "source_sheet": "20202"
+              },
+              "value": {
+                "type": "decimal",
+                "value": {
+                  "digits": [
+                    4,
+                    0
+                  ],
+                  "exponent": 0,
+                  "sign": 0
+                }
+              }
+            },
+            {
+              "form_code": "20202",
+              "indicator_code": "C",
+              "indicator_name": "权益合计",
+              "period": "2026-06",
+              "source": {
+                "source_file": "current.xlsx",
+                "source_row": 6,
+                "source_sheet": "20202"
+              },
+              "value": {
+                "type": "decimal",
+                "value": {
+                  "digits": [
+                    6,
+                    0
+                  ],
+                  "exponent": 0,
+                  "sign": 0
+                }
+              }
+            }
+          ],
+          "report_item": "",
+          "retrieval_note": "",
+          "rule_description": "资产负债平衡",
+          "rule_id": "R-BAL",
+          "rule_type": "表达式",
+          "severity": "硬性",
+          "social_credit_code": "C9144",
+          "source_refs": [
+            {
+              "source_file": "current.xlsx",
+              "source_row": 4,
+              "source_sheet": "20202"
+            }
+          ],
+          "status": "异常",
+          "value_details": "本期 A 各项存款=110.00；本期 B 负债合计=40.00；本期 C 权益合计=60.00",
+          "value_type": ""
+        }
+      ],
+      "rule_quality_findings": [
+        {
+          "audit_type": "校验规则",
+          "band": "",
+          "calculation_trace": "配置表达式：[MISSING_A] < 0.055 * [MISSING_B]；代入表达式：0.00 < 0.055 * 0.00",
+          "change_rate": null,
+          "current_value": "",
+          "data_type": "",
+          "description": "规则无法执行：缺少指标 MISSING_A 的当期数据；缺少指标 MISSING_B 的当期数据（规则：监管线缺项）",
+          "difference_value": "",
+          "external_indicator_name": "",
+          "external_value": "",
+          "finding_id": "239020aa9f46c51c",
+          "form_code": "",
+          "form_codes": [],
+          "handling_branch": "",
+          "indicator_code": "",
+          "indicator_name": "",
+          "institution_name": "甲银行",
+          "institution_type": "",
+          "period": "2026-06",
+          "previous_value": "",
+          "region": "",
+          "related_records": [],
+          "report_item": "",
+          "retrieval_note": "",
+          "rule_description": "",
+          "rule_id": "R-MISSING",
+          "rule_type": "表达式",
+          "severity": "软性",
+          "social_credit_code": "C9144",
+          "source_refs": [],
+          "status": "异常",
+          "value_details": "本期 MISSING_A=缺少指标；本期 MISSING_B=缺少指标",
+          "value_type": ""
+        }
+      ],
+      "summary": {
+        "abnormal_findings": 9,
+        "by_severity": {
+          "硬性": 3,
+          "软性": 6
+        },
+        "by_type": {
+          "外部核对": 1,
+          "校验规则": 6,
+          "环比": 1,
+          "规则": 1
+        },
+        "forms": 1,
+        "indicators": 4,
+        "institutions": 1,
+        "total_findings": 9
+      }
+    }
+  },
+  "scope": "S2 in-memory analysis orchestration only; configuration checking/loading, workbook imports, progress callbacks, XLSX export, real templates, target Linux packaging, and production routing are not covered.",
+  "status": "passed"
+}

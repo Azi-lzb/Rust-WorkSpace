@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "run_files": [
+    "balanced.xlsx",
+    "mismatch.xlsx",
+    "no_target.xlsx",
+    "non_numeric_missing.xlsx",
+    "broken.xlsx"
+  ],
+  "expected_stats": {
+    "files": 4,
+    "sheets": 3,
+    "errors": 1,
+    "failed_files": 1
+  }
+}

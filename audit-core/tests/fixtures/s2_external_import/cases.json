@@ -1,0 +1,52 @@
+{
+  "cases": [
+    {
+      "id": "plain_layout",
+      "file": "plain_layout.xlsx"
+    },
+    {
+      "id": "plain_missing_label",
+      "file": "plain_missing_label.xlsx"
+    },
+    {
+      "id": "plain_zero_headers",
+      "file": "plain_zero_headers.xlsx"
+    },
+    {
+      "id": "plain_legacy_reference",
+      "file": "plain_legacy_reference.xlsx"
+    },
+    {
+      "id": "time_series",
+      "file": "time_series.xlsx"
+    },
+    {
+      "id": "time_series_1904",
+      "file": "time_series_1904.xlsx"
+    },
+    {
+      "id": "time_series_duplicate",
+      "file": "time_series_duplicate.xlsx"
+    },
+    {
+      "id": "time_series_duplicate_title",
+      "file": "time_series_duplicate_title.xlsx"
+    },
+    {
+      "id": "time_series_partial_header",
+      "file": "time_series_partial_header.xlsx"
+    },
+    {
+      "id": "missing_main_sheet",
+      "file": "missing_main_sheet.xlsx"
+    },
+    {
+      "id": "bad_org_map",
+      "file": "bad_org_map.xlsx"
+    },
+    {
+      "id": "unsupported_csv",
+      "file": "unsupported.csv"
+    }
+  ]
+}

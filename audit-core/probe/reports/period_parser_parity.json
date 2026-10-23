@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "source_project": "Open-Data-Audit",
+  "source_function": "base_audit.discovery._periods_in_text",
+  "rust_function": "audit_core::discovery::periods_in_text",
+  "source_baseline": "probe/reports/period_parser_python_baseline.json",
+  "source_python_version": "3.12.10",
+  "status": "保留",
+  "parity": {
+    "cases": 49,
+    "passed": 49,
+    "failed": 0
+  },
+  "verification": {
+    "command": "cargo test -p audit-core periods_in_text_matches_python_baseline --locked",
+    "result": "通过；Rust 单测逐项核对基线中的 49 条输入与排序去重后的期间集合"
+  },
+  "covered": [
+    "分隔格式：-、.、_、/、中文年/月",
+    "紧凑格式：YYYYMM 与 YYYYMMDD",
+    "月份范围、日期形状、前后数字边界、多个期间、Unicode 十进制数字边界"
+  ],
+  "not_verified": [
+    "source_workbooks 文件系统遍历与排除规则",
+    "detect_period 的文件名共识、目录回退和冲突详情",
+    "任何端到端业务工作流",
+    "真实脱敏业务模板"
+  ],
+  "limitation": "仅迁移并验证纯文本期间解析 helper；不得据此宣称文件发现流程或任一业务功能已迁移。"
+}

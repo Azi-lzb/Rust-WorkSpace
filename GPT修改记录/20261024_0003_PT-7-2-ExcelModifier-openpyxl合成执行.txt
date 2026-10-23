@@ -1,0 +1,42 @@
+# GPT 修改记录：PT-7-2 ExcelModifier/openpyxl 合成执行验证
+
+- 时间：2026-10-24 00:03（Asia/Shanghai）
+- 执行者：Codex
+- Git 基线：workspace 当前没有可解析的 `HEAD`，全仓库文件显示为未跟踪；没有 stage、commit、reset 或 clean。
+- WIP：保留现有 workspace 内容与此前迁移结果；原始 `4.pytools-main` 项目只读，未修改。
+- 【组件版本】：不升级；未修改 Cargo 依赖、产品版本或生产默认路由。
+
+## 修改目的
+
+继续 PT-7-2 机构名称规范化迁移，补上经 ExcelEditPlan/ExcelModifier 的合成端到端执行证据，并核查 openpyxl 对未修改单元格值及工作簿对象的保留情况。无真实业务样本，因此本轮只记录测试候选，不申请或登记生产能力。
+
+## 修改文件与行为
+
+- `crates/excel-editor/python/openpyxl_worker.py`：openpyxl 保存 XLSX 后，使用 namespace-aware Expat 解析器识别工作表/共享字符串中的首尾空白文本；仅在需要时对相应 XML 文本节点补回 `xml:space="preserve"`。没有匹配文本时不重写 ZIP 包。该补丁保留 OOXML 其余字节内容，并使 Calamine 对空白字符串的回读保持一致。
+- `crates/excel-editor/src/openpyxl_backend.rs`：为 openpyxl adapter 登记并验证已有语义验证器覆盖的命名区域、行列尺寸、页面设置、页眉页脚、关系、条件格式和数据验证保留项；保留项验证改为读取 ExcelModifier 的临时候选输出路径，而不是尚不存在的最终目标路径；错误诊断包含原始验证原因，并补齐 capability allow-list 单元测试。
+- `pytools-core/src/institution_normalize.rs`：PT-7-2 计划不再要求 openpyxl 无法承诺的 `UnmodifiedPackageParts` 字节原样合同，改为显式语义保留项；按源工作簿对象加入条件格式/数据验证要求。
+- `pytools-core/tests/institution_normalize_openpyxl.rs`：增加忽略式端到端测试，通过临时、夹具限定 capability 调用真实 PyTools CLI `--apply`，验证 ExcelModifier 实际选择 openpyxl worker、应用 3 个单元格更新、开发者日志记录实际执行引擎、Python 基线数据及工作簿对象保持一致，并验证源文件安全提交。
+- `pytools-core/probe/institution_normalize_preservation_check.py`：保真失败时打印前后差异，便于定位对象损失。
+- `pytools-core/probe/reports/institution_normalize_openpyxl_execution_20261024.json`：记录本次执行与对象保留检查；明确标为 `synthetic_passed_not_production_acceptance`。
+- `pytools-core/AGENTS.md`、`pytools-core/MIGRATION_INVENTORY.md`：修正 PT-7-2 “没有执行链”的滞后描述，登记合成候选执行证据，并保持生产状态为未验证。
+- 本记录。
+
+## 对拍和测试
+
+- 首次实际调用发现合成夹具 `报表分机构本外币!A5` 的空白字符串由原 OOXML `xml:space="preserve"` 表示；openpyxl 写出时省略该标记，Calamine 从候选读回 `""`，与源值 `"   "` 不同。验证正确阻止了候选提交。修补后再次发现元数据验证读了最终目标而非临时候选路径，已修正。两项都未放宽验证条件。
+- `RUST_WORKSPACE_OPENPYXL_PYTHON=.../.test-openpyxl-venv/bin/python PYTOOLS_INSTITUTION_OPENPYXL_REPORT=.../institution_normalize_openpyxl_execution_20261024.json cargo test -p pytools-core --test institution_normalize_openpyxl --offline --locked -- --ignored --nocapture`：1/1 通过。实际环境为 WSL2 x86_64、Python 3.12.3、openpyxl 3.1.5；单一合成 XLSX，映射 3 行，CLI 记录实际引擎 `openpyxl_worker`。文件保真检查覆盖工作表顺序/可见性、单元格样式、批注、合并、行列尺寸、页面设置、打印区域、居中和页眉页脚。
+- `cargo test -p excel-editor --offline --locked -q`：通过。11 个库单元测试及 crate 集成组均无失败。
+- `cargo test -p pytools-core --offline --locked -q`：通过，退出码 0；默认运行未执行其他要求单独启用隔离 Python 的 ignored 测试。
+- `cargo fmt --all -- --check`：通过。
+- 测试中只写临时目录副本；最终安全提交测试确认输入快照未变、临时输入输出经过校验后提交。未运行真实用户文件。
+
+## 状态与限制
+
+- 合成 XLSX 的 PT-7-2 CLI → ExcelModifier → openpyxl worker 候选执行及列明保留项通过；机器报告记录总任务约 5.2 秒、单文件执行约 5.1 秒。该小夹具耗时包含进程启动，不能作为性能结论。
+- 临时 Passed capability 仅写在该集成测试的临时目录；没有创建 workspace 生产 capability，不变更默认路由。
+- 用户此前确认当前没有脱敏真实样本。没有真实配置/工作簿、Windows 原生执行、目标 glibc 2.28、麒麟/UOS 安装或 deb 验收；PT-7-2 生产状态仍为**未验证**。
+- 全 crate 测试仍显示已有 umya 弃用 API和 unused import 警告。本轮不做无关清理。
+
+## 回滚
+
+workspace 无 Git commit 基线且文件均未跟踪，不能使用 `git checkout` 或整体 reset/clean。若需撤销，只能人工逆向本记录所列 PT-7-2 与 openpyxl worker 改动，移除新增端到端测试及其 `institution_normalize_openpyxl_execution_20261024.json`，并恢复 `AGENTS.md`、`MIGRATION_INVENTORY.md` 对应段落；保留此前 workspace 迁移成果和其他未提交文件。

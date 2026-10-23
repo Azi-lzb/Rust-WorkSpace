@@ -1,0 +1,39 @@
+# GPT 修改记录：PT-7-7/PT-7-8 精度与季度错误摘要回归
+
+- 时间：2026-10-23 21:15（Asia/Shanghai）
+- 执行者：Codex
+- Git 基线：workspace 当前没有可解析的 `HEAD`，全仓库文件显示为未跟踪；没有 stage、commit、reset 或 clean。
+- WIP：保留已有 Rust 实现、probe、报告与迁移状态；只读检查 `4.pytools-main/PyCode/core/feature_1_8_adjust_rural_loan.py` 和 `feature_1_9_adjust_rural_loan_quarterly.py`，未修改原 Python 项目。
+- 组件版本：未修改 Cargo 依赖或产品版本。
+
+## 修改目的
+
+修复已登记但旧合成样本未覆盖的 PT-7-7/7-8 差额精度问题，以及 PT-7-8 因某些地区异常被跳过而可能错误报告总体一致的问题。
+
+## 修改文件与行为
+
+- `pytools-core/src/batch_ops.rs`：7-7/7-8 写入机构差额时改用完整可往返浮点文本，不再经 `format!("{:.2}")` 截到小数点后两位。其余仍需两位展示格式的计算不变。7-8 对缺少上期地区工作表、地区内重复机构和地区统计表缺少地区行，均返回与旧版结构一致的逐地区错误记录；异常地区仍使总体 `consistent=false`。加入逐地区与总摘要 `error` 字段。
+- `pytools-core/tests/rural_loan_regressions.rs`：新增差额精度和多个季度地区错误状态的 Rust 集成回归测试。
+- `pytools-core/probe/compare_batch_remaining.py`：7-7/7-8 使用有精度的小数差额；新增缺上期地区、重复机构和缺地区统计行案例；浮点比较使用 `1e-15` 容差，不做跨引擎逐浮点位比较。新增报告写入 `_r2`，保留旧机器报告。
+- `pytools-core/probe/reports/batch_remaining_plan_parity_20261023_r2.json`：记录扩展后的 Python 基线 / Rust CLI 计划对拍结果。
+- `pytools-core/MIGRATION_INVENTORY.md`：记录新覆盖分支和未验收状态。
+- 本记录。
+
+## 对拍和测试
+
+- `py -3.12 pytools-core/probe/compare_batch_remaining.py`：通过。现有 7-1/7-3 语义对拍继续通过；7-7 精度差额输出与 Python 一致；7-8 常规季度、缺上期表、重复机构及缺少地区统计行的工作簿投影、地区摘要、错误及总体一致状态均通过。Python 只读调用旧 PyCode 基线；Rust 计划由探针的 openpyxl helper 仅应用到独立临时副本，不经过 `ExcelModifier`。
+- `cargo fmt --all -- --check`：通过。
+- `cargo test -p pytools-core --test rural_loan_regressions --offline --locked -q`：2/2 通过。
+- `cargo test --workspace --offline --locked -q`：通过；隔离 openpyxl runtime 专项用例仍按要求 ignored。
+- `cargo check -p pytools-core --target x86_64-pc-windows-gnu --offline --locked -q`：通过，属于 WSL 中的 Windows GNU 交叉检查，不是 Windows 原生运行验收。
+
+## 状态与限制
+
+- 本轮只有合成 XLSX，没有可用的真实业务样本。
+- 未执行生产修改能力、未创建 production capability、未变更默认路由；未验证完整 Excel/WPS 对象保真、Windows 原生运行、麒麟/UOS、glibc 2.28 或 deb。
+- 因缺真实样本和目标平台验收，PT-7-7/PT-7-8 仍登记为**未验证**，不宣称完整迁移。
+- 全 workspace 测试显示既有 umya 弃用 API、unused import 警告及若干需隔离 openpyxl runtime 的 ignored 用例。
+
+## 回滚
+
+无 Git commit 基线，禁止整体 reset/clean。若明确需要撤销本项，只反向恢复 `batch_ops.rs` 的差额格式和季度区域错误摘要，移除 `tests/rural_loan_regressions.rs`、探针新增案例、`_r2` 报告中的相关新增内容和本记录，并还原 `MIGRATION_INVENTORY.md` 对本项的增补；保留其他既有 workspace 工作。

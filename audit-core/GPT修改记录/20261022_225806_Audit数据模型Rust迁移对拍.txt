@@ -1,0 +1,37 @@
+时间：2026-10-22 22:58（Asia/Shanghai）
+执行者：Codex
+修改前 workspace HEAD：不可取得；workspace 根目录无首次提交，既有文件均为未跟踪。
+修改前 WIP 检查：保留所有现有候选实现与探针；未覆盖其他未跟踪文件。Open-Data-Audit 源项目只读。
+
+## 目的
+
+将 `base_audit.models` 中不依赖工作簿 I/O 的审核数据模型迁入 audit-core，为后续 Rust 规则和结果流程提供领域类型。本轮不迁移或宣称完成预检/审核业务流程，也未实现 ExcelModifier 或任何候选修改引擎。
+
+## 修改文件
+
+- `audit-core/src/models.rs`：迁移 AuditRule、CopyRange、TemplateDefinition、PreflightItem、StructureCheck、SourceMatch、PreflightRunResult、Issue、FileAuditResult、AuditRunResult；保留默认值、动态值字段及预检/审核结果计数和摘要文本。
+- `audit-core/src/lib.rs`：导出 `models` 模块。
+- `audit-core/tests/compare/run_models_baseline.py`：以 `python -B` 只读加载源 dataclass，生成稳定 JSON 基线；写入位置仅在 workspace。
+- `audit-core/probe/reports/models_python_baseline.json`：记录 10 个模型类型、11 个示例实例、默认值输入与摘要输出。
+- `audit-core/probe/reports/models_parity.json`：记录本次对拍范围和结果。
+- `audit-core/MIGRATION_INVENTORY.md`：登记模型层局部迁移，明确不等于任何业务工作流完成。
+- `EXCEL_ENGINE_ARCHITECTURE.md`：同步当前 audit-core 数据模型状态和证据范围。
+- 本修改记录。
+
+## 对拍与测试
+
+- Python 基线：`wsl.exe -d Ubuntu -- bash -lc "cd /mnt/c/Users/AZI/Desktop/VibeCode/1.rust-workspace && python3 -B audit-core/tests/compare/run_models_baseline.py --source-root /mnt/c/Users/AZI/Desktop/VibeCode/3.open-data-audit --output audit-core/probe/reports/models_python_baseline.json"`；生成 12 个顶层记录。
+- Rust：`cargo fmt --all -- --check` 通过；`cargo test -p audit-core --locked` 通过 4 项测试，包括 2 项模型对拍/默认值检查和 2 项既有 discovery 对拍。随后 `cargo test --workspace --locked` 全 workspace 22/22 项单元/集成测试通过。
+- Rust 侧比较 10 类模型的字段和值、7 类带默认值模型的构造参数行为，以及预检/审核摘要与成功/失败计数。
+
+## 兼容性说明与未完成项
+
+- Python `Any` 字段由 `serde_json::Value` 表达；Python `Path` 字段由 `PathBuf` 表达；计数和连续期数使用有符号 64 位整数以保留负数行为空间。
+- 本对拍是模型/文本级，不涉及真实 Excel 模板；模型被实际工作流消费前仍需在对应业务模块做端到端 Python 对拍。
+- 收尾只读 Git 状态检查发现 Open-Data-Audit 与 pytools 源仓库分别有大量未提交状态行；本轮没有开始前状态快照，不能归属这些改动。`base_audit/models.py` 未出现在源仓库状态清单中。本轮未对任何源文件执行写操作或 Git 清理。
+- 尚未迁移模型上的其他动态行为（除源代码中显式的计数、摘要和 clone 语义外）；Rust `Issue` 为可克隆数据结构，后续需在业务使用点确认修改习惯。
+- 尚未执行 Linux glibc 2.28 交叉构建、离线依赖检查或 麒麟/UOS deb 验收。
+
+## 回退
+
+删除新增 `audit-core/src/models.rs`、模型基线比较脚本及两份报告/本记录，并撤回 `audit-core/src/lib.rs`、`audit-core/MIGRATION_INVENTORY.md`、`EXCEL_ENGINE_ARCHITECTURE.md` 中对应导出和记录即可。未修改任何 Python 源项目。

@@ -1,0 +1,55 @@
+【时间】2026-10-23 01:04:57 +08:00
+【执行者】Codex
+【修改前/后 commit】workspace 当前没有可解析的 HEAD；本轮不创建 commit。
+【WIP 状态】workspace 文件处于未跟踪状态。仅变更本记录列出的 AGENTS/rules 文档；未清理、覆盖其他未跟踪文件。
+
+【修改目的】
+将 excel-engine-benchmarks/20261022-ooxml-vs-rust/REPORT.md 的限定环境与契约性能证据接入 Rust workspace agent 规则，修正普通值读取 fallback 与新建 writer 证据范围的歧义。保持正在迁移的业务实现、现有生产默认路由、依赖和构建配置不变。
+
+【检查范围与路由适用性】
+- 完整阅读基准报告（150 行；报告时间 2026-10-23 00:37:15 +08:00；SHA-256：D33A786C90D1942FB66DE33E3203A5D9A136414DA89D92A96B6935E04B84A596）。
+- 检查根 AGENTS.md、workspace 根 rules/13、audit-core/AGENTS.md、pytools-core/AGENTS.md、audit-core/rules/03、07、13，以及 README、EXCEL_ENGINE_ARCHITECTURE.md、PYTHON_EXCEL_OPERATION_INVENTORY.md 的路由/现状入口。
+- 根 rules/13 的 R01/R02/W01 是候选方向及验收入口，不代表所有格式/业务的统一生产路由。EXCEL_ENGINE_ARCHITECTURE.md 将代码现状、合成探针和候选能力分开记录，并说明真实模板/业务调用链未全验收；其当前 Rust reader / writer 验收仅覆盖合成 XLSX，ExcelModifier 尚无业务验收过的生产 backend。
+- Audit rules/13 的 R01/R02 曾将自研 OOXML reader 排在 Calamine 后面，容易形成普通值读取的通用 fallback；W01 也未充分区分报告中的 Python 专用 writer 与 Rust Direct OOXML。这些是本轮具体规范冲突，已对齐根规则。
+- pytools-core/AGENTS.md 已指向根 AGENTS/rules/13，没有独立引擎路由表；无需复制一份 benchmark 规则。现有业务代码和实际默认路由未修改。
+
+【修改文件】
+- AGENTS.md
+- rules/13_Rust_Excel读写修改与引擎路由规范.md
+- audit-core/rules/13_表格读写技术选型与主动优化.md
+- GPT修改记录/20261023_010457_Excel基准范围与路由规范.txt
+
+【变更内容】
+- 根 AGENTS.md 将根 rules/13 明确列为 Excel 性能证据与路由边界入口，规定 benchmark 只用于限定候选评估；候选顺序不等于验收路由，也不改变现有生产默认。补充 Rust-owned 普通 XLSX 值、对象专用 OOXML reader、Rust writer 输出契约/内存预算及 1.38 GiB 观测值的范围说明。
+- workspace 根 rules/13 明确 Calamine 仅在 Rust 持有数据、普通存储值 XLSX 且坐标/类型/空值/值语义匹配时优先评估；Calamine 错误不得由 Direct OOXML 通用 fallback 掩盖。OOXML 专属元数据必须使用对象/契约已验收的专用适配器。Python-owned 迁移期流程保留其同契约已验收路由，候选变化需完整调用链测量。
+- 根 rules/13 登记报告环境（Ubuntu/WSL2 x86_64、ext4、Release Rust、报告中的依赖版本）和证据边界；明确 Python `ooxml_s5`/`ooxml_s2` 是专用 writer，不是 Rust Direct OOXML。加入 30 万行 × 20 列报告观测值、constant-memory/既有工作簿编辑/通用 OOXML writer 未测范围，以及候选和实际 passed 路由的区别。
+- 根 rules/13 的性能切换流程要求先定绝对节省时间、加速比例、RSS 上限、测试规模；同机同输入同契约完整流程计入进程启动/导入、序列化、传输、数据转换、IPC 和校验。报告不自动替换任何既有默认。
+- Audit rules/13 更新 R01/R02/R03/W01、自动回退例外和项目选型摘要，修正 Calamine/OOXML reader 与 Rust/Python writer 的证据适用范围；版本记录更新为 1.2-RustGo.2。
+
+【规则与报告证据对应】
+- Calamine 候选范围：报告读取表的 `pure_same_range` 中 Calamine operation 132.100 ms、进程墙钟 138.571 ms、RSS 17.3 MiB；Python `ooxml_external_prepare` 分别 2161.393 ms、2354.164 ms、183.3 MiB。`pure_full_sheet` 也有同契约测量。支撑的仅为 Rust-owned 普通值 XLSX 且语义相同的候选排序。
+- Python reader 排序不外推：报告说明 `mixed_source_reader` 包含更宽的预加载/元数据构建；没有比较 Python python-calamine 与 Python Direct OOXML 的同进程端到端性能。
+- OOXML 专用对象边界：报告条件格式元数据只有专用路径可测，且 metadata-only 无 Calamine 对等 API；Direct OOXML 读取路径拒绝部分含合并、条件格式、数据验证或公式的样本，`ooxml_cf_public` 有 typed/coordinate/formula/merge contract mismatch。需要对象级适配器和能力缺项报告。
+- rust_xlsxwriter 候选与资源预算：300,000 × 20 plain same-level 的 Rust operation 8.729 s、RSS 1376.7 MiB；Python S5 operation 17.406 s、RSS 288.2 MiB。formatted 的对应值为 Rust 7.129 s / 1376.7 MiB，Python S5 19.801 s / 354.0 MiB。1.38 GiB 仅是该规模/模式的观测，不设为通用阈值。
+- Direct OOXML writer 范围：上述 S5/S2 实现来自 Python；无 Rust Direct OOXML writer 对比。报告明确未测 rust_xlsxwriter constant-memory、既有工作簿编辑或通用 OOXML writer。
+- 平台/格式边界：报告环境为 Ubuntu/WSL2 x86_64，仅测所列 XLSX 合同；不推断 Windows、麒麟、UOS、XLS、XLSB 的性能和兼容性。
+
+【未覆盖范围】
+- 未运行新 benchmark、cargo test、业务对拍、Windows/目标 Linux 验收；本轮为规则文档接入和 Markdown 静态核对。
+- 报告没有覆盖完整业务调用链、冷磁盘、python-calamine 与 Python Direct OOXML 同进程端到端、Rust constant-memory、既有工作簿编辑或通用 Rust OOXML writer。
+- 未改变 EXCEL_ENGINE_ARCHITECTURE.md 中的代码现状、候选矩阵或生产默认记录，也未修改 Python 基线或源项目。
+
+【变更确认】
+未修改业务逻辑、依赖、Cargo/build 配置、生产默认路由、两个原始 Python 项目或性能报告。只更新 agent 规范、Audit 对应技术选型规则和本记录。
+
+【验证】
+- 完整阅读报告并核对 SHA-256。
+- 对照根/子项目 AGENTS、workspace 根规则 13、Audit rules/03/07/13 及架构/操作清单；复查修改后的路由行、证据数值、报告相对链接目标存在。
+- 未运行代码测试，因为未修改代码。
+
+【回滚提示】
+workspace 当前无 HEAD 且文件为未跟踪 WIP，禁止用 git reset/checkout 清理回滚。若需回退，只反向恢复上述 AGENTS/rules 中列出的段落，并移除本记录；保留其余 workspace 内容。
+
+【组件版本】
+不升级 crate 或产品版本。仅 Audit rules/13 的文档规则版本由 1.2-RustGo.1 更新为 1.2-RustGo.2。
+

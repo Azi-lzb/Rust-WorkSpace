@@ -1,0 +1,55 @@
+【时间】2026-10-23 04:59:48（本机时间）
+【执行者】Codex
+【修改前 commit】不可用；当前 workspace 文件处于未跟踪 WIP 状态，无法从 Git 索引确定起始快照。
+【修改后 commit】未创建 commit。
+【WIP 情况】保留现有 workspace WIP；没有重置、覆盖或清理其他文件。两个原始 Python 项目只读。
+
+【修改目的】将 Open-Data-Audit S2 `importer.import_external_workbook` 的外部工作簿解析切片迁移为 Rust Calamine 实现，并与只读 Python OpenPyXL 基线逐字段对拍。修复普通布局中数值 `0`、布尔 `False` 表头的 Python truthiness 兼容差异。
+
+【修改/新增文件】
+- `crates/excel-reader/src/lib.rs`：增加共享 `read_value_columns_with_iso_dates` API，将 Calamine 识别的 1900/1904 日期系统日期型值编码为 ISO 日期时间；原 `read_value_columns` 语义不变。
+- `audit-core/src/lib.rs`：导出 `s2_external_import` 模块。
+- `audit-core/src/s2_import.rs`：开放外部解析器复用的单元格地址、值归一和 Python 兼容 helper；不改变目录导入逻辑。
+- `audit-core/src/s2_external.rs`：为解析结果序列化/精确比较增加必要的类型支持，并记录空值坐标供后续比较使用；日期归一严格处理日期文本和 ISO 日期时间。
+- `audit-core/src/s2_external_import.rs`：实现 `.xlsx` 普通布局、时序布局及机构映射读取、值归一、空值/非数值警告和预期拒绝分支；不接入 S2 服务或生产路由。普通布局表头按源 Python `str(title or "").strip()` 语义处理零值/false。
+- `audit-core/tests/compare/generate_s2_external_import_fixtures.py`：生成合成工作簿夹具，新增 `plain_zero_headers` 场景。
+- `audit-core/tests/compare/run_s2_external_import_baseline.py`：只读调用源 `import_external_workbook(..., reader_engine="OPENPYXL")`；基线报告记录 Python、OpenPyXL 版本和源哈希。
+- `audit-core/tests/fixtures/s2_external_import/`：12 个合成场景索引和输入文件，覆盖普通/时序布局、1900/1904 日期、空值、映射、重复项、错误表头、缺工作表及不支持扩展名。
+- `audit-core/tests/s2_external_import_parity.rs`：新增 Rust 输出对 Python JSON 基线的结构化精确比较测试。
+- `audit-core/probe/reports/s2_external_import_python_baseline.json`：12 个场景的只读 Python 基线结果。
+- `audit-core/probe/reports/s2_external_import_parity.json`：登记对拍命令、结果、适用范围和未验证项。
+- `audit-core/MIGRATION_INVENTORY.md`：新增 S2 外部工作簿解析局部迁移行，并区分解析器与已导入值比较引擎。
+- `EXCEL_ENGINE_ARCHITECTURE.md`：登记 date-aware reader API、Audit 当前 S2 局部模块和本次对拍证据。
+- 本文件：记录本轮变更。
+
+【业务与输入范围】
+- 生产代码只使用共享 Rust Calamine reader；Python/OpenPyXL 只用于测试夹具和对拍基线，没有 PyO3、Python 运行时或 `python-calamine` 生产依赖。
+- 复刻源导入器的 `.xlsx` 输入契约、“集中系统数据”表、普通/时序表头、完整日期匹配、Decimal/空值/非数值处理、来源行号、警告文本、机构参照表优先级及重复行/表头拒绝。
+- 输入扩展名不为 `.xlsx` 时显式拒绝；源行为本就不支持 `.xls/.csv` 外部工作簿，因为这会丢失机构映射表。
+- 本切片没有改变生产默认路由、Cargo 依赖、构建配置或业务服务调用链；S2-F01 仍未验证。
+
+【Python 基线来源】
+- 源项目：`C:\Users\AZI\Desktop\VibeCode\3.open-data-audit`。
+- `importer.py` SHA-256：`EEF44740DE8EB7AB0E09DE7C074FF06F22F515CC9A1518982FA662D123A49BEC`；执行前后哈希一致。
+- 基线环境：Python 3.12.10、OpenPyXL 3.1.5；基线入口显式指定 `reader_engine="OPENPYXL"`。
+- 两个原始 Python 项目没有修改。
+
+【测试与对拍】
+- `python audit-core/tests/compare/generate_s2_external_import_fixtures.py`：通过，生成 12 个合成案例。
+- `python audit-core/tests/compare/run_s2_external_import_baseline.py --source-root C:\Users\AZI\Desktop\VibeCode\3.open-data-audit`：通过；12 个 Python 基线场景已生成。
+- `cargo test -p audit-core --test s2_external_import_parity --locked -- --nocapture`（WSL Ubuntu）：通过，1 个集成测试覆盖的 12/12 案例逐字段/错误文本一致。
+- `cargo test --workspace --locked -q`（WSL Ubuntu）：通过，81 个测试通过，0 失败；doc-tests 0 项。
+- `cargo fmt --all -- --check`（WSL Ubuntu）：通过。
+- 所有 Excel 夹具均为合成文件；未运行源 Python 全量测试套件、真实脱敏工作簿、性能/内存测试或目标系统构建/安装。
+
+【已知问题与未完成范围】
+- 未使用真实外部工作簿；未知样式尾部空行、外链/公式缓存等真实文件特征未验收。
+- 不支持成功解析 `.xls`、`.xlsb`、`.et` 或 `.csv`；该源 importer 的当前契约只接受 `.xlsx`。
+- 尚未连接配置 loader、S2 目录导入、周期/规则/外部比较、质量发现、服务编排或报告输出，不能宣称 S2-F01 端到端迁移。
+- 未接入生产默认路由；未测性能、Windows 原生执行、麒麟/UOS、glibc 2.28 或离线 deb。
+
+【删除清单与回滚提示】
+- 无删除文件。
+- 回滚时成组撤销本次 S2 外部解析模块、共享 date-aware 读取 API 及所需 DTO/helper 支持、夹具生成器和合成夹具、Python 基线生成器/基线、Rust 对拍测试/报告、迁移清单行、Excel 架构记录和本留痕文件；不触碰两个源 Python 项目或其他 S2 已验收切片。
+
+【组件版本】不升级；workspace 尚未为该模块建立产品组件版本映射。

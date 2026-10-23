@@ -1,0 +1,43 @@
+时间：2026-10-23 16:12:03 +08:00
+执行者：Codex
+修改前/后 commit：main 尚无首次提交、无 HEAD；origin 为 https://github.com/Azi-lzb/Rust-WorkSpace.git。未 stage、commit 或 push。
+WIP：修改前已检查现有记录及 Git 状态；全部文件未跟踪，保留其他代理与用户现有内容。第一阶段只读复核完成后才开展本记录的准备与授权治理；没有并行委派。
+
+目的：完成第二阶段第1步的真实样本材料清单与产物比较准备；记录用户三项业务决定；完成任务明确允许的 C01 文案及滞后文档治理。用户明确暂无样本，因此停在真实样本闸门，不进入生产 capability 试点或后续业务组。
+
+修改文件：
+1. pytools-core/src/conversion.rs：只补 native CSV/Excel 成功输出的“按值重建（C01，丢弃样式/公式缓存）”与旧公式缓存损失声明；保留公式文本、不重算等原说明。不改转换算法、默认路由或依赖。
+2. pytools-core/src/bin/pytools.rs：只补 convert-file 帮助中同一 C01 声明及 Excel 公式文本/CSV 文本范围。
+3. EXCEL_ENGINE_ARCHITECTURE.md：修正 sidecar 已显式接入、fx-header 已接 CLI、现有门控/validator 状态的滞后描述；不登记生产能力。
+4. pytools-core/MIGRATION_INVENTORY.md：修正页眉 CLI 状态；增加首批13项真实样本闸门、用户合同、C01 治理与未覆盖业务风险。功能状态不升级。
+5. docs/architecture/audit-crosscheck-2026-10-23.md：第一阶段报告补记后续用户决定，并补充 PT-7-7/PT-7-8 差额提前舍入、PT-7-8 错误地区跳过后总体核对可能遗漏两项静态风险；没有修复业务代码。四份原审计文档保持原文。
+
+新增文件：
+- pytools-core/probe/REAL_SAMPLE_PLAN.md：13项逐功能材料、合同、隔离运行及性能/保真/平台闸门，明确当前比较器不运行业务。
+- pytools-core/tests/fixtures/real-sample-plan.json：13项空 cases 的待样本清单，不是伪造真实夹具。
+- pytools-core/probe/real_sample_harness.ps1：开发机 PowerShell 7 产物比较辅助；检查样本批准/输入哈希/独立运行信息/必需结果字段；递归类型及有序数组比较，跨实现浮点相对容差1e-15；限制报告目录且拒绝覆盖。不进入产品、不执行能力记录。
+- pytools-core/probe/reports/PT_real_sample_intake_20261023.json：初轮缺样本记录。
+- pytools-core/probe/reports/PT_real_sample_intake_20261023_r2.json：最终缺样本记录，含清单与 harness SHA-256；13项未验证、0次真实运行，退出2是预期闸门。
+- pytools-core/probe/reports/PT_semantic_decisions_20261023.json：用户原答复和三个目标合同；不冒充实现验收。
+- 本记录。
+
+用户已确认：
+- 已有簿三种旧行为分别保留：PT-1-3/1-4 重建替换单个目标sheet，PT-2-5 追加去重新增行，PT-7-6 新增唯一名称sheet；保留其他sheet，PT-1-2继续排除。
+- 插删行按 Excel/COM 体验调整相关对象和引用；后续须逐对象测试，旧普通 Python 的未修正依赖不作为新目标。
+- PT-3-3只输出新文件，已有目标拒绝；计划构建及最终提交的实现仍未更新和验收。
+
+实际验证：
+- PowerShell AST 解析通过；比较函数7项瞬时断言通过：1-ULP容差、明显数值差异拒绝、null/空串区分、bool/数值区分、数组顺序、超2^53整数区分、缺字段拒绝。未创建伪真实样本。
+- harness对空真实样本清单执行，退出2；最终JSON确认13项未验证；清单及脚本哈希与报告一致。
+- WSL：cargo fmt --all -- --check 通过。
+- WSL：cargo test -p pytools-core --lib conversion::tests --locked -q，4/4通过、21过滤；未更改测试。
+- WSL：target/debug/pytools --help，退出0，含C01中文帮助。此前串行检查的rg因WSL未安装而失败，随后直接读取CLI帮助核验；不是业务测试失败。
+- 对第一阶段起始113个Rust代码/清单/AGENTS/规则/四审计等文件SHA-256复核，仅 conversion.rs 与 bin/pytools.rs 两个授权文案文件变化；其他111个保持一致。AGENTS、rules/13、Cargo.toml/Cargo.lock、四原审计、所有其他被检查Rust代码未变。
+
+未执行项：无真实样本端到端、无真实模板编辑、无Office/LO调用、无性能资源测量、无目标Linux/glibc2.28/deb验收；未实现新的运行捕获适配器、validator或后端能力；未改变生产默认路由。全部源Python项目只读，未修改或删除源项目内容。
+已知问题：harness目前仅比较独立捕获JSON，通用字段检查不能证明完整合同覆盖或样本真实性；实际运行/保真捕获仍待样本后接入。贷款精度及错误地区的静态风险只登记，未修复。无HEAD无法提供提交diff，不应据此将整库及真实数据直接加入首次提交。
+下一闸门：取得经批准的脱敏真实输入、配置及旧版正确输出，按REAL_SAMPLE_PLAN补隔离运行捕获与完整流程测量；此前不得进入生产能力登记或后续迁移阶段。三项业务语义已答复，无需重复索取确认。
+配置/VBA影响：无配置语义或VBA实现变更；清单/报告是开发证据，不随deb进入生产。
+删除清单：无。
+回滚：仅撤销本次两处Rust文案、两份治理文档的局部修改及本记录所列新增材料；报告补记只回退对应段落。不得git reset/clean或覆盖其他未跟踪内容。
+【组件版本】：不升级；授权文案/治理与对拍准备，未新增业务实现或改变配置合同执行。

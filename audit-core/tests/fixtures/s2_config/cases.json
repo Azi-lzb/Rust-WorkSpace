@@ -1,0 +1,64 @@
+{
+  "cases": [
+    {
+      "id": "comprehensive",
+      "file": "comprehensive.xlsx"
+    },
+    {
+      "id": "legacy_band_headers",
+      "file": "legacy_band_headers.xlsx"
+    },
+    {
+      "id": "missing_optional_setting_rows",
+      "file": "missing_optional_setting_rows.xlsx"
+    },
+    {
+      "id": "invalid_general_header",
+      "file": "invalid_general_header.xlsx"
+    },
+    {
+      "id": "duplicate_general_setting",
+      "file": "duplicate_general_setting.xlsx"
+    },
+    {
+      "id": "invalid_unit",
+      "file": "invalid_unit.xlsx"
+    },
+    {
+      "id": "inline_unit_columns",
+      "file": "inline_unit_columns.xlsx"
+    },
+    {
+      "id": "missing_indicator_sheet",
+      "file": "missing_indicator_sheet.xlsx"
+    },
+    {
+      "id": "external_header_order",
+      "file": "external_header_order.xlsx"
+    },
+    {
+      "id": "missing_external_sheet",
+      "file": "missing_external_sheet.xlsx"
+    },
+    {
+      "id": "missing_general_sheet",
+      "file": "missing_general_sheet.xlsx"
+    },
+    {
+      "id": "invalid_boolean_setting",
+      "file": "invalid_boolean_setting.xlsx"
+    },
+    {
+      "id": "invalid_optional_severity",
+      "file": "invalid_optional_severity.xlsx"
+    },
+    {
+      "id": "unknown_general_setting",
+      "file": "unknown_general_setting.xlsx"
+    },
+    {
+      "id": "missing_file",
+      "file": "does_not_exist.xlsx"
+    }
+  ]
+}

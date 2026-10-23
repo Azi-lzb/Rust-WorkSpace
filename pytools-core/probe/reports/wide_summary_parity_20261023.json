@@ -1,0 +1,52 @@
+{
+  "schema_version": 1,
+  "suite": "pytools.timeline.wide_summary_python_rust_parity",
+  "date": "2026-10-23",
+  "status": "passed_synthetic_parity",
+  "source_python_files": [
+    "PyCode/core/wide_397_398.py",
+    "PyCode/core/io_excel.py"
+  ],
+  "input": {
+    "format": "xlsx",
+    "kind": "synthetic",
+    "features": [
+      "merged set-region label",
+      "multi-row and merged column headers",
+      "duplicate dynamic headers",
+      "duplicate row labels",
+      "date in the input filename",
+      "configured target worksheet"
+    ]
+  },
+  "scenarios": [
+    {
+      "row_suffix": false,
+      "summary_workbook": "passed",
+      "new_target_append_candidate": "passed"
+    },
+    {
+      "row_suffix": true,
+      "summary_workbook": "passed",
+      "new_target_append_candidate": "passed"
+    }
+  ],
+  "comparison": {
+    "worksheet_names": "exact",
+    "cell_values": "exact except numeric values compared with relative and absolute tolerance 1e-15",
+    "worksheet_dimensions": "exact",
+    "data_date_number_formats": "exact",
+    "target_rows_and_headers": "exact after executing the new-target candidate plan"
+  },
+  "commands": {
+    "focused_probe": "python pytools-core/probe/compare_wide_summary.py",
+    "rust_compile_check": "cargo check -p pytools-core --message-format short",
+    "rust_compile_check_result": "passed"
+  },
+  "limitations": [
+    "Synthetic XLSX only; no real business workbooks or real source configuration were available for this probe.",
+    "The target was newly created. Appending to and preserving an existing target workbook remains gated by exact ExcelModifier capability evidence.",
+    "The comparison covers summary values, worksheet names and dimensions, and data-date number formats; it is not a complete workbook-preservation audit.",
+    "XLS, XLSM, XLSB, ET, Windows native execution, Kylin/UOS, glibc 2.28 and deb packaging were not validated."
+  ]
+}

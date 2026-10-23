@@ -1,0 +1,69 @@
+{
+  "schema_version": 1,
+  "library": "umya-spreadsheet",
+  "library_version": "3.1.1",
+  "input": "/mnt/c/Users/AZI/Desktop/VibeCode/1.rust-workspace/audit-core/tests/fixtures/synthetic_probe.xlsx",
+  "output": "/mnt/c/Users/AZI/AppData/Local/Temp/audit-workspace-probes/umya/synthetic_probe_umya.xlsx",
+  "patched_output": "/mnt/c/Users/AZI/AppData/Local/Temp/audit-workspace-probes/umya/synthetic_probe_umya_patched.xlsx",
+  "column_patch_status": "success",
+  "elapsed_ms": 2622,
+  "umya_library_elapsed_ms": 1134,
+  "ooxml_patch_elapsed_ms": 1487,
+  "items": [
+    {
+      "name": "ordinary_cell",
+      "status": "success",
+      "detail": "A1 set to probe marker"
+    },
+    {
+      "name": "merged_anchor",
+      "status": "success",
+      "detail": "B2 changed; B2:C2 exists"
+    },
+    {
+      "name": "font_fill_border_number_format",
+      "status": "success",
+      "detail": "C4 bold, yellow fill, thin left border, number format 0.00"
+    },
+    {
+      "name": "formula_text",
+      "status": "success",
+      "detail": "D4 formula text set; no recalculation requested"
+    },
+    {
+      "name": "defined_name_cell",
+      "status": "success",
+      "detail": "SyntheticNamedCell target E5 value changed"
+    },
+    {
+      "name": "conditional_formatting_region",
+      "status": "success",
+      "detail": "F2 value changed; conditional formatting collection is readable"
+    },
+    {
+      "name": "data_validation_region",
+      "status": "success",
+      "detail": "G2 value changed; validation collection is readable"
+    },
+    {
+      "name": "comment_cell",
+      "status": "success",
+      "detail": "H2 changed; existing comment object left untouched"
+    },
+    {
+      "name": "row_height_column_width_hidden_row",
+      "status": "success",
+      "detail": "row 3 height 30; column I width 25; row 2 hidden"
+    },
+    {
+      "name": "print_area",
+      "status": "success",
+      "detail": "_xlnm.Print_Area set to A1:D10"
+    },
+    {
+      "name": "targeted_ooxml_column_restore",
+      "status": "success",
+      "detail": "restored original SpreadsheetML <cols> definitions and applied only the requested I=25 width"
+    }
+  ]
+}

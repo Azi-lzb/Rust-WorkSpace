@@ -1,0 +1,1739 @@
+{
+  "status": "python_baseline_generated",
+  "source": {
+    "project": "Open-Data-Audit",
+    "module": "base_audit.systems.s2_report_collection.config_check.{check_s2_config,format_config_report}",
+    "source_sha256": {
+      "config_check.py": "9D45DF493604751FA12E61D9B7D65FF2968401E37E779761F58DABCE70873502",
+      "config.py": "18AF21C33CA45A791C449A2C484BC66F095921EE0839FB9EE9D9218E6FC56ED6",
+      "models.py": "8C19D7E5521F9290EC7FAF641C5454BE148188A9B1A7C129127C97E6FC5B903E",
+      "unit_conversion.py": "BE9AF2EAB715AC6ACDD496363B551C649486DD1A0939B55CB746A7AFCD6761BA"
+    },
+    "python": "3.12.10",
+    "openpyxl": "3.1.5"
+  },
+  "fixture": {
+    "path": "tests/fixtures/s2_config/check_cases.json",
+    "case_count": 19
+  },
+  "result": {
+    "comprehensive": {
+      "report": {
+        "path": "comprehensive.xlsx",
+        "passed": false,
+        "blocking_errors": 21,
+        "warnings": 10,
+        "issues": [
+          {
+            "level": "blocking",
+            "message": "指标代码重复：20202001",
+            "sheet": "指标参照",
+            "row": 3
+          },
+          {
+            "level": "blocking",
+            "message": "指标 20202002 环比启用必须为“是”或“否”：None",
+            "sheet": "指标参照",
+            "row": 4
+          },
+          {
+            "level": "blocking",
+            "message": "指标 20202002 禁用必须为“是”或“否”：'TRUE'",
+            "sheet": "指标参照",
+            "row": 4
+          },
+          {
+            "level": "blocking",
+            "message": "策略组与规则编号不能为空",
+            "sheet": "环比策略",
+            "row": 2
+          },
+          {
+            "level": "blocking",
+            "message": "策略 BAL01/B003 审核级别无效：异常级别",
+            "sheet": "环比策略",
+            "row": 4
+          },
+          {
+            "level": "blocking",
+            "message": "策略 BAL01/B004 上限必须大于下限",
+            "sheet": "环比策略",
+            "row": 5
+          },
+          {
+            "level": "blocking",
+            "message": "环比策略组 BAL01 左侧没有覆盖负无穷（首行下限应为空）",
+            "sheet": "环比策略",
+            "row": 3
+          },
+          {
+            "level": "blocking",
+            "message": "环比策略组 BAL01 右侧没有覆盖正无穷（末行上限应为空）",
+            "sheet": "环比策略",
+            "row": 5
+          },
+          {
+            "level": "blocking",
+            "message": "环比策略组 BAL01 存在空档：B002 与 B004",
+            "sheet": "环比策略",
+            "row": 5
+          },
+          {
+            "level": "blocking",
+            "message": "环比策略组 PCT01 左侧没有覆盖负无穷（首行下限应为空）",
+            "sheet": "环比策略",
+            "row": 6
+          },
+          {
+            "level": "blocking",
+            "message": "环比策略组 PCT01 右侧没有覆盖正无穷（末行上限应为空）",
+            "sheet": "环比策略",
+            "row": 6
+          },
+          {
+            "level": "warning",
+            "message": "环比策略组 PCT01 当前没有被任何启用指标引用",
+            "sheet": "环比策略"
+          },
+          {
+            "level": "warning",
+            "message": "旧审核级别“错误”兼容映射为“硬性”；建议人工改为“硬性”。建议人工复核，程序未自动修改配置。",
+            "sheet": "环比策略",
+            "row": 2
+          },
+          {
+            "level": "warning",
+            "message": "旧审核级别“提示”兼容映射为“软性”；建议人工改为“软性”。建议人工复核，程序未自动修改配置。",
+            "sheet": "环比策略",
+            "row": 3
+          },
+          {
+            "level": "warning",
+            "message": "旧审核级别“严重”兼容映射为“硬性”；建议人工改为“硬性”。建议人工复核，程序未自动修改配置。",
+            "sheet": "校验规则",
+            "row": 2
+          },
+          {
+            "level": "warning",
+            "message": "旧审核级别“提示”兼容映射为“软性”；建议人工改为“软性”。建议人工复核，程序未自动修改配置。",
+            "sheet": "校验规则",
+            "row": 3
+          },
+          {
+            "level": "warning",
+            "message": "旧审核级别“严重”兼容映射为“硬性”；建议人工改为“硬性”。建议人工复核，程序未自动修改配置。",
+            "sheet": "外部核对规则",
+            "row": 2
+          },
+          {
+            "level": "warning",
+            "message": "指标参照存在重复指标代码：20202001"
+          },
+          {
+            "level": "warning",
+            "message": "指标参照第4行指标 20202002 未填写表单代码"
+          },
+          {
+            "level": "blocking",
+            "message": "外部核对规则第3行缺少规则编号或指标代码，已跳过"
+          },
+          {
+            "level": "blocking",
+            "message": "外部核对规则 D003 引用不存在指标：999999，已跳过"
+          },
+          {
+            "level": "blocking",
+            "message": "外部核对规则第5行 D004 配置无效：比较方式须为等于/不等于/大于/大于等于/小于/小于等于，容差须为非负有限数，外部指标名称不能为空；已跳过"
+          },
+          {
+            "level": "blocking",
+            "message": "外部核对规则第6行 D005 仅“等于”使用容差；其他比较方式容差必须为0，已跳过"
+          },
+          {
+            "level": "blocking",
+            "message": "外部核对规则 D006 级别无效：BAD，按硬性处理"
+          },
+          {
+            "level": "blocking",
+            "message": "环比规则 B003 级别无效：异常级别，按软性处理"
+          },
+          {
+            "level": "warning",
+            "message": "环比规则“B003”描述疑似正负号异常：降幅(-80%,50%)；V2 将只按下限/上限数值执行，未自动修改配置。"
+          },
+          {
+            "level": "blocking",
+            "message": "环比规则 B004 上限必须大于下限，已跳过"
+          },
+          {
+            "level": "warning",
+            "message": "环比规则空洞：B002 与 B003"
+          },
+          {
+            "level": "blocking",
+            "message": "规则 R001 引用不存在指标：999999"
+          },
+          {
+            "level": "blocking",
+            "message": "规则 R003 类型暂不支持：未知类型"
+          },
+          {
+            "level": "blocking",
+            "message": "规则 ROW5 级别无效：BAD，按软性处理"
+          }
+        ],
+        "sheet_stats": [
+          {
+            "name": "通用设置",
+            "rows": 9,
+            "columns": 3
+          },
+          {
+            "name": "指标参照",
+            "rows": 4,
+            "columns": 9
+          },
+          {
+            "name": "机构参照",
+            "rows": 4,
+            "columns": 7
+          },
+          {
+            "name": "环比策略",
+            "rows": 5,
+            "columns": 8
+          },
+          {
+            "name": "校验规则",
+            "rows": 4,
+            "columns": 9
+          },
+          {
+            "name": "外部核对规则",
+            "rows": 6,
+            "columns": 7
+          }
+        ],
+        "indicator_count": 4,
+        "strategy_count": 5,
+        "message": "审核配置存在 21 个阻断错误，不能执行。",
+        "checks": [
+          {
+            "id": "file_read",
+            "name": "配置文件可读取",
+            "status": "passed",
+            "detail": "配置工作簿已成功打开，并以只读方式检查。"
+          },
+          {
+            "id": "required_sheets",
+            "name": "必需工作表齐全",
+            "status": "passed",
+            "detail": "已确认 6 张必需工作表存在"
+          },
+          {
+            "id": "indicators",
+            "name": "指标参照字段与记录",
+            "status": "failed",
+            "detail": "发现 3 个阻断问题，详见下方问题明细。"
+          },
+          {
+            "id": "period_strategies",
+            "name": "环比策略区间与指标引用",
+            "status": "failed",
+            "detail": "发现 8 个阻断问题，详见下方问题明细。"
+          },
+          {
+            "id": "runtime_parse",
+            "name": "全部配置可被正式运行时解析",
+            "status": "failed",
+            "detail": "发现 10 个阻断问题，详见下方问题明细。"
+          }
+        ],
+        "limitations": [
+          "此项检查只读取 S2 配置工作簿，不读取本期、上期报表或大集中外部数据文件。",
+          "此项检查不实际执行审核规则，也不判断报表结果是否符合业务预期。",
+          "检查通过表示配置结构和内容可由当前运行时读取，不代表真实数据审核已经通过。"
+        ]
+      },
+      "formatted": "审核配置存在 21 个阻断错误，不能执行。\n配置文件：comprehensive.xlsx\n指标参照：4 条；环比策略：5 条\n实际检查项目：\n[通过] 配置文件可读取：配置工作簿已成功打开，并以只读方式检查。\n[通过] 必需工作表齐全：已确认 6 张必需工作表存在\n[未通过] 指标参照字段与记录：发现 3 个阻断问题，详见下方问题明细。\n[未通过] 环比策略区间与指标引用：发现 8 个阻断问题，详见下方问题明细。\n[未通过] 全部配置可被正式运行时解析：发现 10 个阻断问题，详见下方问题明细。\n检查范围说明：\n- 此项检查只读取 S2 配置工作簿，不读取本期、上期报表或大集中外部数据文件。\n- 此项检查不实际执行审核规则，也不判断报表结果是否符合业务预期。\n- 检查通过表示配置结构和内容可由当前运行时读取，不代表真实数据审核已经通过。\n工作表 通用设置：9 行，3 列\n工作表 指标参照：4 行，9 列\n工作表 机构参照：4 行，7 列\n工作表 环比策略：5 行，8 列\n工作表 校验规则：4 行，9 列\n工作表 外部核对规则：6 行，7 列\n[阻断] 指标参照 第3行：指标代码重复：20202001\n[阻断] 指标参照 第4行：指标 20202002 环比启用必须为“是”或“否”：None\n[阻断] 指标参照 第4行：指标 20202002 禁用必须为“是”或“否”：'TRUE'\n[阻断] 环比策略 第2行：策略组与规则编号不能为空\n[阻断] 环比策略 第4行：策略 BAL01/B003 审核级别无效：异常级别\n[阻断] 环比策略 第5行：策略 BAL01/B004 上限必须大于下限\n[阻断] 环比策略 第3行：环比策略组 BAL01 左侧没有覆盖负无穷（首行下限应为空）\n[阻断] 环比策略 第5行：环比策略组 BAL01 右侧没有覆盖正无穷（末行上限应为空）\n[阻断] 环比策略 第5行：环比策略组 BAL01 存在空档：B002 与 B004\n[阻断] 环比策略 第6行：环比策略组 PCT01 左侧没有覆盖负无穷（首行下限应为空）\n[阻断] 环比策略 第6行：环比策略组 PCT01 右侧没有覆盖正无穷（末行上限应为空）\n[警告] 环比策略：环比策略组 PCT01 当前没有被任何启用指标引用\n[警告] 环比策略 第2行：旧审核级别“错误”兼容映射为“硬性”；建议人工改为“硬性”。建议人工复核，程序未自动修改配置。\n[警告] 环比策略 第3行：旧审核级别“提示”兼容映射为“软性”；建议人工改为“软性”。建议人工复核，程序未自动修改配置。\n[警告] 校验规则 第2行：旧审核级别“严重”兼容映射为“硬性”；建议人工改为“硬性”。建议人工复核，程序未自动修改配置。\n[警告] 校验规则 第3行：旧审核级别“提示”兼容映射为“软性”；建议人工改为“软性”。建议人工复核，程序未自动修改配置。\n[警告] 外部核对规则 第2行：旧审核级别“严重”兼容映射为“硬性”；建议人工改为“硬性”。建议人工复核，程序未自动修改配置。\n[警告] 指标参照存在重复指标代码：20202001\n[警告] 指标参照第4行指标 20202002 未填写表单代码\n[阻断] 外部核对规则第3行缺少规则编号或指标代码，已跳过\n[阻断] 外部核对规则 D003 引用不存在指标：999999，已跳过\n[阻断] 外部核对规则第5行 D004 配置无效：比较方式须为等于/不等于/大于/大于等于/小于/小于等于，容差须为非负有限数，外部指标名称不能为空；已跳过\n[阻断] 外部核对规则第6行 D005 仅“等于”使用容差；其他比较方式容差必须为0，已跳过\n[阻断] 外部核对规则 D006 级别无效：BAD，按硬性处理\n[阻断] 环比规则 B003 级别无效：异常级别，按软性处理\n[警告] 环比规则“B003”描述疑似正负号异常：降幅(-80%,50%)；V2 将只按下限/上限数值执行，未自动修改配置。\n[阻断] 环比规则 B004 上限必须大于下限，已跳过\n[警告] 环比规则空洞：B002 与 B003\n[阻断] 规则 R001 引用不存在指标：999999\n[阻断] 规则 R003 类型暂不支持：未知类型\n[阻断] 规则 ROW5 级别无效：BAD，按软性处理"
+    },
+    "legacy_band_headers": {
+      "report": {
+        "path": "legacy_band_headers.xlsx",
+        "passed": false,
+        "blocking_errors": 3,
+        "warnings": 0,
+        "issues": [
+          {
+            "level": "blocking",
+            "message": "缺少工作表：机构参照"
+          },
+          {
+            "level": "blocking",
+            "message": "缺少工作表：环比策略"
+          },
+          {
+            "level": "blocking",
+            "message": "缺少工作表：校验规则"
+          }
+        ],
+        "sheet_stats": [
+          {
+            "name": "通用设置",
+            "rows": 9,
+            "columns": 3
+          },
+          {
+            "name": "指标参照",
+            "rows": 1,
+            "columns": 9
+          },
+          {
+            "name": "外部核对规则",
+            "rows": 0,
+            "columns": 7
+          },
+          {
+            "name": "环比规则",
+            "rows": 2,
+            "columns": 6
+          }
+        ],
+        "indicator_count": 0,
+        "strategy_count": 0,
+        "message": "审核配置存在 3 个阻断错误，不能执行。",
+        "checks": [
+          {
+            "id": "file_read",
+            "name": "配置文件可读取",
+            "status": "passed",
+            "detail": "配置工作簿已成功打开，并以只读方式检查。"
+          },
+          {
+            "id": "required_sheets",
+            "name": "必需工作表齐全",
+            "status": "failed",
+            "detail": "发现 3 个阻断问题，详见下方问题明细。"
+          },
+          {
+            "id": "indicators",
+            "name": "指标参照字段与记录",
+            "status": "not_run",
+            "detail": "未执行（前置检查未完成）。"
+          },
+          {
+            "id": "period_strategies",
+            "name": "环比策略区间与指标引用",
+            "status": "not_run",
+            "detail": "未执行（前置检查未完成）。"
+          },
+          {
+            "id": "runtime_parse",
+            "name": "全部配置可被正式运行时解析",
+            "status": "not_run",
+            "detail": "未执行（前置检查未完成）。"
+          }
+        ],
+        "limitations": [
+          "此项检查只读取 S2 配置工作簿，不读取本期、上期报表或大集中外部数据文件。",
+          "此项检查不实际执行审核规则，也不判断报表结果是否符合业务预期。",
+          "检查通过表示配置结构和内容可由当前运行时读取，不代表真实数据审核已经通过。"
+        ]
+      },
+      "formatted": "审核配置存在 3 个阻断错误，不能执行。\n配置文件：legacy_band_headers.xlsx\n指标参照：0 条；环比策略：0 条\n实际检查项目：\n[通过] 配置文件可读取：配置工作簿已成功打开，并以只读方式检查。\n[未通过] 必需工作表齐全：发现 3 个阻断问题，详见下方问题明细。\n[未检查] 指标参照字段与记录：未执行（前置检查未完成）。\n[未检查] 环比策略区间与指标引用：未执行（前置检查未完成）。\n[未检查] 全部配置可被正式运行时解析：未执行（前置检查未完成）。\n检查范围说明：\n- 此项检查只读取 S2 配置工作簿，不读取本期、上期报表或大集中外部数据文件。\n- 此项检查不实际执行审核规则，也不判断报表结果是否符合业务预期。\n- 检查通过表示配置结构和内容可由当前运行时读取，不代表真实数据审核已经通过。\n工作表 通用设置：9 行，3 列\n工作表 指标参照：1 行，9 列\n工作表 外部核对规则：0 行，7 列\n工作表 环比规则：2 行，6 列\n[阻断] 缺少工作表：机构参照\n[阻断] 缺少工作表：环比策略\n[阻断] 缺少工作表：校验规则"
+    },
+    "missing_optional_setting_rows": {
+      "report": {
+        "path": "missing_optional_setting_rows.xlsx",
+        "passed": false,
+        "blocking_errors": 3,
+        "warnings": 0,
+        "issues": [
+          {
+            "level": "blocking",
+            "message": "缺少工作表：机构参照"
+          },
+          {
+            "level": "blocking",
+            "message": "缺少工作表：环比策略"
+          },
+          {
+            "level": "blocking",
+            "message": "缺少工作表：校验规则"
+          }
+        ],
+        "sheet_stats": [
+          {
+            "name": "通用设置",
+            "rows": 0,
+            "columns": 3
+          },
+          {
+            "name": "指标参照",
+            "rows": 0,
+            "columns": 9
+          },
+          {
+            "name": "外部核对规则",
+            "rows": 0,
+            "columns": 7
+          }
+        ],
+        "indicator_count": 0,
+        "strategy_count": 0,
+        "message": "审核配置存在 3 个阻断错误，不能执行。",
+        "checks": [
+          {
+            "id": "file_read",
+            "name": "配置文件可读取",
+            "status": "passed",
+            "detail": "配置工作簿已成功打开，并以只读方式检查。"
+          },
+          {
+            "id": "required_sheets",
+            "name": "必需工作表齐全",
+            "status": "failed",
+            "detail": "发现 3 个阻断问题，详见下方问题明细。"
+          },
+          {
+            "id": "indicators",
+            "name": "指标参照字段与记录",
+            "status": "not_run",
+            "detail": "未执行（前置检查未完成）。"
+          },
+          {
+            "id": "period_strategies",
+            "name": "环比策略区间与指标引用",
+            "status": "not_run",
+            "detail": "未执行（前置检查未完成）。"
+          },
+          {
+            "id": "runtime_parse",
+            "name": "全部配置可被正式运行时解析",
+            "status": "not_run",
+            "detail": "未执行（前置检查未完成）。"
+          }
+        ],
+        "limitations": [
+          "此项检查只读取 S2 配置工作簿，不读取本期、上期报表或大集中外部数据文件。",
+          "此项检查不实际执行审核规则，也不判断报表结果是否符合业务预期。",
+          "检查通过表示配置结构和内容可由当前运行时读取，不代表真实数据审核已经通过。"
+        ]
+      },
+      "formatted": "审核配置存在 3 个阻断错误，不能执行。\n配置文件：missing_optional_setting_rows.xlsx\n指标参照：0 条；环比策略：0 条\n实际检查项目：\n[通过] 配置文件可读取：配置工作簿已成功打开，并以只读方式检查。\n[未通过] 必需工作表齐全：发现 3 个阻断问题，详见下方问题明细。\n[未检查] 指标参照字段与记录：未执行（前置检查未完成）。\n[未检查] 环比策略区间与指标引用：未执行（前置检查未完成）。\n[未检查] 全部配置可被正式运行时解析：未执行（前置检查未完成）。\n检查范围说明：\n- 此项检查只读取 S2 配置工作簿，不读取本期、上期报表或大集中外部数据文件。\n- 此项检查不实际执行审核规则，也不判断报表结果是否符合业务预期。\n- 检查通过表示配置结构和内容可由当前运行时读取，不代表真实数据审核已经通过。\n工作表 通用设置：0 行，3 列\n工作表 指标参照：0 行，9 列\n工作表 外部核对规则：0 行，7 列\n[阻断] 缺少工作表：机构参照\n[阻断] 缺少工作表：环比策略\n[阻断] 缺少工作表：校验规则"
+    },
+    "invalid_general_header": {
+      "report": {
+        "path": "invalid_general_header.xlsx",
+        "passed": false,
+        "blocking_errors": 3,
+        "warnings": 0,
+        "issues": [
+          {
+            "level": "blocking",
+            "message": "缺少工作表：机构参照"
+          },
+          {
+            "level": "blocking",
+            "message": "缺少工作表：环比策略"
+          },
+          {
+            "level": "blocking",
+            "message": "缺少工作表：校验规则"
+          }
+        ],
+        "sheet_stats": [
+          {
+            "name": "通用设置",
+            "rows": 9,
+            "columns": 3
+          },
+          {
+            "name": "指标参照",
+            "rows": 0,
+            "columns": 9
+          },
+          {
+            "name": "外部核对规则",
+            "rows": 0,
+            "columns": 7
+          }
+        ],
+        "indicator_count": 0,
+        "strategy_count": 0,
+        "message": "审核配置存在 3 个阻断错误，不能执行。",
+        "checks": [
+          {
+            "id": "file_read",
+            "name": "配置文件可读取",
+            "status": "passed",
+            "detail": "配置工作簿已成功打开，并以只读方式检查。"
+          },
+          {
+            "id": "required_sheets",
+            "name": "必需工作表齐全",
+            "status": "failed",
+            "detail": "发现 3 个阻断问题，详见下方问题明细。"
+          },
+          {
+            "id": "indicators",
+            "name": "指标参照字段与记录",
+            "status": "not_run",
+            "detail": "未执行（前置检查未完成）。"
+          },
+          {
+            "id": "period_strategies",
+            "name": "环比策略区间与指标引用",
+            "status": "not_run",
+            "detail": "未执行（前置检查未完成）。"
+          },
+          {
+            "id": "runtime_parse",
+            "name": "全部配置可被正式运行时解析",
+            "status": "not_run",
+            "detail": "未执行（前置检查未完成）。"
+          }
+        ],
+        "limitations": [
+          "此项检查只读取 S2 配置工作簿，不读取本期、上期报表或大集中外部数据文件。",
+          "此项检查不实际执行审核规则，也不判断报表结果是否符合业务预期。",
+          "检查通过表示配置结构和内容可由当前运行时读取，不代表真实数据审核已经通过。"
+        ]
+      },
+      "formatted": "审核配置存在 3 个阻断错误，不能执行。\n配置文件：invalid_general_header.xlsx\n指标参照：0 条；环比策略：0 条\n实际检查项目：\n[通过] 配置文件可读取：配置工作簿已成功打开，并以只读方式检查。\n[未通过] 必需工作表齐全：发现 3 个阻断问题，详见下方问题明细。\n[未检查] 指标参照字段与记录：未执行（前置检查未完成）。\n[未检查] 环比策略区间与指标引用：未执行（前置检查未完成）。\n[未检查] 全部配置可被正式运行时解析：未执行（前置检查未完成）。\n检查范围说明：\n- 此项检查只读取 S2 配置工作簿，不读取本期、上期报表或大集中外部数据文件。\n- 此项检查不实际执行审核规则，也不判断报表结果是否符合业务预期。\n- 检查通过表示配置结构和内容可由当前运行时读取，不代表真实数据审核已经通过。\n工作表 通用设置：9 行，3 列\n工作表 指标参照：0 行，9 列\n工作表 外部核对规则：0 行，7 列\n[阻断] 缺少工作表：机构参照\n[阻断] 缺少工作表：环比策略\n[阻断] 缺少工作表：校验规则"
+    },
+    "duplicate_general_setting": {
+      "report": {
+        "path": "duplicate_general_setting.xlsx",
+        "passed": false,
+        "blocking_errors": 3,
+        "warnings": 0,
+        "issues": [
+          {
+            "level": "blocking",
+            "message": "缺少工作表：机构参照"
+          },
+          {
+            "level": "blocking",
+            "message": "缺少工作表：环比策略"
+          },
+          {
+            "level": "blocking",
+            "message": "缺少工作表：校验规则"
+          }
+        ],
+        "sheet_stats": [
+          {
+            "name": "通用设置",
+            "rows": 10,
+            "columns": 3
+          },
+          {
+            "name": "指标参照",
+            "rows": 0,
+            "columns": 9
+          },
+          {
+            "name": "外部核对规则",
+            "rows": 0,
+            "columns": 7
+          }
+        ],
+        "indicator_count": 0,
+        "strategy_count": 0,
+        "message": "审核配置存在 3 个阻断错误，不能执行。",
+        "checks": [
+          {
+            "id": "file_read",
+            "name": "配置文件可读取",
+            "status": "passed",
+            "detail": "配置工作簿已成功打开，并以只读方式检查。"
+          },
+          {
+            "id": "required_sheets",
+            "name": "必需工作表齐全",
+            "status": "failed",
+            "detail": "发现 3 个阻断问题，详见下方问题明细。"
+          },
+          {
+            "id": "indicators",
+            "name": "指标参照字段与记录",
+            "status": "not_run",
+            "detail": "未执行（前置检查未完成）。"
+          },
+          {
+            "id": "period_strategies",
+            "name": "环比策略区间与指标引用",
+            "status": "not_run",
+            "detail": "未执行（前置检查未完成）。"
+          },
+          {
+            "id": "runtime_parse",
+            "name": "全部配置可被正式运行时解析",
+            "status": "not_run",
+            "detail": "未执行（前置检查未完成）。"
+          }
+        ],
+        "limitations": [
+          "此项检查只读取 S2 配置工作簿，不读取本期、上期报表或大集中外部数据文件。",
+          "此项检查不实际执行审核规则，也不判断报表结果是否符合业务预期。",
+          "检查通过表示配置结构和内容可由当前运行时读取，不代表真实数据审核已经通过。"
+        ]
+      },
+      "formatted": "审核配置存在 3 个阻断错误，不能执行。\n配置文件：duplicate_general_setting.xlsx\n指标参照：0 条；环比策略：0 条\n实际检查项目：\n[通过] 配置文件可读取：配置工作簿已成功打开，并以只读方式检查。\n[未通过] 必需工作表齐全：发现 3 个阻断问题，详见下方问题明细。\n[未检查] 指标参照字段与记录：未执行（前置检查未完成）。\n[未检查] 环比策略区间与指标引用：未执行（前置检查未完成）。\n[未检查] 全部配置可被正式运行时解析：未执行（前置检查未完成）。\n检查范围说明：\n- 此项检查只读取 S2 配置工作簿，不读取本期、上期报表或大集中外部数据文件。\n- 此项检查不实际执行审核规则，也不判断报表结果是否符合业务预期。\n- 检查通过表示配置结构和内容可由当前运行时读取，不代表真实数据审核已经通过。\n工作表 通用设置：10 行，3 列\n工作表 指标参照：0 行，9 列\n工作表 外部核对规则：0 行，7 列\n[阻断] 缺少工作表：机构参照\n[阻断] 缺少工作表：环比策略\n[阻断] 缺少工作表：校验规则"
+    },
+    "invalid_unit": {
+      "report": {
+        "path": "invalid_unit.xlsx",
+        "passed": false,
+        "blocking_errors": 3,
+        "warnings": 0,
+        "issues": [
+          {
+            "level": "blocking",
+            "message": "缺少工作表：机构参照"
+          },
+          {
+            "level": "blocking",
+            "message": "缺少工作表：环比策略"
+          },
+          {
+            "level": "blocking",
+            "message": "缺少工作表：校验规则"
+          }
+        ],
+        "sheet_stats": [
+          {
+            "name": "通用设置",
+            "rows": 9,
+            "columns": 3
+          },
+          {
+            "name": "指标参照",
+            "rows": 0,
+            "columns": 9
+          },
+          {
+            "name": "外部核对规则",
+            "rows": 0,
+            "columns": 7
+          }
+        ],
+        "indicator_count": 0,
+        "strategy_count": 0,
+        "message": "审核配置存在 3 个阻断错误，不能执行。",
+        "checks": [
+          {
+            "id": "file_read",
+            "name": "配置文件可读取",
+            "status": "passed",
+            "detail": "配置工作簿已成功打开，并以只读方式检查。"
+          },
+          {
+            "id": "required_sheets",
+            "name": "必需工作表齐全",
+            "status": "failed",
+            "detail": "发现 3 个阻断问题，详见下方问题明细。"
+          },
+          {
+            "id": "indicators",
+            "name": "指标参照字段与记录",
+            "status": "not_run",
+            "detail": "未执行（前置检查未完成）。"
+          },
+          {
+            "id": "period_strategies",
+            "name": "环比策略区间与指标引用",
+            "status": "not_run",
+            "detail": "未执行（前置检查未完成）。"
+          },
+          {
+            "id": "runtime_parse",
+            "name": "全部配置可被正式运行时解析",
+            "status": "not_run",
+            "detail": "未执行（前置检查未完成）。"
+          }
+        ],
+        "limitations": [
+          "此项检查只读取 S2 配置工作簿，不读取本期、上期报表或大集中外部数据文件。",
+          "此项检查不实际执行审核规则，也不判断报表结果是否符合业务预期。",
+          "检查通过表示配置结构和内容可由当前运行时读取，不代表真实数据审核已经通过。"
+        ]
+      },
+      "formatted": "审核配置存在 3 个阻断错误，不能执行。\n配置文件：invalid_unit.xlsx\n指标参照：0 条；环比策略：0 条\n实际检查项目：\n[通过] 配置文件可读取：配置工作簿已成功打开，并以只读方式检查。\n[未通过] 必需工作表齐全：发现 3 个阻断问题，详见下方问题明细。\n[未检查] 指标参照字段与记录：未执行（前置检查未完成）。\n[未检查] 环比策略区间与指标引用：未执行（前置检查未完成）。\n[未检查] 全部配置可被正式运行时解析：未执行（前置检查未完成）。\n检查范围说明：\n- 此项检查只读取 S2 配置工作簿，不读取本期、上期报表或大集中外部数据文件。\n- 此项检查不实际执行审核规则，也不判断报表结果是否符合业务预期。\n- 检查通过表示配置结构和内容可由当前运行时读取，不代表真实数据审核已经通过。\n工作表 通用设置：9 行，3 列\n工作表 指标参照：0 行，9 列\n工作表 外部核对规则：0 行，7 列\n[阻断] 缺少工作表：机构参照\n[阻断] 缺少工作表：环比策略\n[阻断] 缺少工作表：校验规则"
+    },
+    "inline_unit_columns": {
+      "report": {
+        "path": "inline_unit_columns.xlsx",
+        "passed": false,
+        "blocking_errors": 3,
+        "warnings": 0,
+        "issues": [
+          {
+            "level": "blocking",
+            "message": "缺少工作表：机构参照"
+          },
+          {
+            "level": "blocking",
+            "message": "缺少工作表：环比策略"
+          },
+          {
+            "level": "blocking",
+            "message": "缺少工作表：校验规则"
+          }
+        ],
+        "sheet_stats": [
+          {
+            "name": "通用设置",
+            "rows": 9,
+            "columns": 3
+          },
+          {
+            "name": "指标参照",
+            "rows": 0,
+            "columns": 11
+          },
+          {
+            "name": "外部核对规则",
+            "rows": 0,
+            "columns": 7
+          }
+        ],
+        "indicator_count": 0,
+        "strategy_count": 0,
+        "message": "审核配置存在 3 个阻断错误，不能执行。",
+        "checks": [
+          {
+            "id": "file_read",
+            "name": "配置文件可读取",
+            "status": "passed",
+            "detail": "配置工作簿已成功打开，并以只读方式检查。"
+          },
+          {
+            "id": "required_sheets",
+            "name": "必需工作表齐全",
+            "status": "failed",
+            "detail": "发现 3 个阻断问题，详见下方问题明细。"
+          },
+          {
+            "id": "indicators",
+            "name": "指标参照字段与记录",
+            "status": "not_run",
+            "detail": "未执行（前置检查未完成）。"
+          },
+          {
+            "id": "period_strategies",
+            "name": "环比策略区间与指标引用",
+            "status": "not_run",
+            "detail": "未执行（前置检查未完成）。"
+          },
+          {
+            "id": "runtime_parse",
+            "name": "全部配置可被正式运行时解析",
+            "status": "not_run",
+            "detail": "未执行（前置检查未完成）。"
+          }
+        ],
+        "limitations": [
+          "此项检查只读取 S2 配置工作簿，不读取本期、上期报表或大集中外部数据文件。",
+          "此项检查不实际执行审核规则，也不判断报表结果是否符合业务预期。",
+          "检查通过表示配置结构和内容可由当前运行时读取，不代表真实数据审核已经通过。"
+        ]
+      },
+      "formatted": "审核配置存在 3 个阻断错误，不能执行。\n配置文件：inline_unit_columns.xlsx\n指标参照：0 条；环比策略：0 条\n实际检查项目：\n[通过] 配置文件可读取：配置工作簿已成功打开，并以只读方式检查。\n[未通过] 必需工作表齐全：发现 3 个阻断问题，详见下方问题明细。\n[未检查] 指标参照字段与记录：未执行（前置检查未完成）。\n[未检查] 环比策略区间与指标引用：未执行（前置检查未完成）。\n[未检查] 全部配置可被正式运行时解析：未执行（前置检查未完成）。\n检查范围说明：\n- 此项检查只读取 S2 配置工作簿，不读取本期、上期报表或大集中外部数据文件。\n- 此项检查不实际执行审核规则，也不判断报表结果是否符合业务预期。\n- 检查通过表示配置结构和内容可由当前运行时读取，不代表真实数据审核已经通过。\n工作表 通用设置：9 行，3 列\n工作表 指标参照：0 行，11 列\n工作表 外部核对规则：0 行，7 列\n[阻断] 缺少工作表：机构参照\n[阻断] 缺少工作表：环比策略\n[阻断] 缺少工作表：校验规则"
+    },
+    "missing_indicator_sheet": {
+      "report": {
+        "path": "missing_indicator_sheet.xlsx",
+        "passed": false,
+        "blocking_errors": 4,
+        "warnings": 0,
+        "issues": [
+          {
+            "level": "blocking",
+            "message": "缺少工作表：指标参照"
+          },
+          {
+            "level": "blocking",
+            "message": "缺少工作表：机构参照"
+          },
+          {
+            "level": "blocking",
+            "message": "缺少工作表：环比策略"
+          },
+          {
+            "level": "blocking",
+            "message": "缺少工作表：校验规则"
+          }
+        ],
+        "sheet_stats": [
+          {
+            "name": "通用设置",
+            "rows": 9,
+            "columns": 3
+          },
+          {
+            "name": "其他",
+            "rows": 0,
+            "columns": 1
+          },
+          {
+            "name": "外部核对规则",
+            "rows": 0,
+            "columns": 7
+          }
+        ],
+        "indicator_count": 0,
+        "strategy_count": 0,
+        "message": "审核配置存在 4 个阻断错误，不能执行。",
+        "checks": [
+          {
+            "id": "file_read",
+            "name": "配置文件可读取",
+            "status": "passed",
+            "detail": "配置工作簿已成功打开，并以只读方式检查。"
+          },
+          {
+            "id": "required_sheets",
+            "name": "必需工作表齐全",
+            "status": "failed",
+            "detail": "发现 4 个阻断问题，详见下方问题明细。"
+          },
+          {
+            "id": "indicators",
+            "name": "指标参照字段与记录",
+            "status": "not_run",
+            "detail": "未执行（前置检查未完成）。"
+          },
+          {
+            "id": "period_strategies",
+            "name": "环比策略区间与指标引用",
+            "status": "not_run",
+            "detail": "未执行（前置检查未完成）。"
+          },
+          {
+            "id": "runtime_parse",
+            "name": "全部配置可被正式运行时解析",
+            "status": "not_run",
+            "detail": "未执行（前置检查未完成）。"
+          }
+        ],
+        "limitations": [
+          "此项检查只读取 S2 配置工作簿，不读取本期、上期报表或大集中外部数据文件。",
+          "此项检查不实际执行审核规则，也不判断报表结果是否符合业务预期。",
+          "检查通过表示配置结构和内容可由当前运行时读取，不代表真实数据审核已经通过。"
+        ]
+      },
+      "formatted": "审核配置存在 4 个阻断错误，不能执行。\n配置文件：missing_indicator_sheet.xlsx\n指标参照：0 条；环比策略：0 条\n实际检查项目：\n[通过] 配置文件可读取：配置工作簿已成功打开，并以只读方式检查。\n[未通过] 必需工作表齐全：发现 4 个阻断问题，详见下方问题明细。\n[未检查] 指标参照字段与记录：未执行（前置检查未完成）。\n[未检查] 环比策略区间与指标引用：未执行（前置检查未完成）。\n[未检查] 全部配置可被正式运行时解析：未执行（前置检查未完成）。\n检查范围说明：\n- 此项检查只读取 S2 配置工作簿，不读取本期、上期报表或大集中外部数据文件。\n- 此项检查不实际执行审核规则，也不判断报表结果是否符合业务预期。\n- 检查通过表示配置结构和内容可由当前运行时读取，不代表真实数据审核已经通过。\n工作表 通用设置：9 行，3 列\n工作表 其他：0 行，1 列\n工作表 外部核对规则：0 行，7 列\n[阻断] 缺少工作表：指标参照\n[阻断] 缺少工作表：机构参照\n[阻断] 缺少工作表：环比策略\n[阻断] 缺少工作表：校验规则"
+    },
+    "external_header_order": {
+      "report": {
+        "path": "external_header_order.xlsx",
+        "passed": false,
+        "blocking_errors": 3,
+        "warnings": 0,
+        "issues": [
+          {
+            "level": "blocking",
+            "message": "缺少工作表：机构参照"
+          },
+          {
+            "level": "blocking",
+            "message": "缺少工作表：环比策略"
+          },
+          {
+            "level": "blocking",
+            "message": "缺少工作表：校验规则"
+          }
+        ],
+        "sheet_stats": [
+          {
+            "name": "通用设置",
+            "rows": 9,
+            "columns": 3
+          },
+          {
+            "name": "指标参照",
+            "rows": 0,
+            "columns": 9
+          },
+          {
+            "name": "外部核对规则",
+            "rows": 0,
+            "columns": 8
+          }
+        ],
+        "indicator_count": 0,
+        "strategy_count": 0,
+        "message": "审核配置存在 3 个阻断错误，不能执行。",
+        "checks": [
+          {
+            "id": "file_read",
+            "name": "配置文件可读取",
+            "status": "passed",
+            "detail": "配置工作簿已成功打开，并以只读方式检查。"
+          },
+          {
+            "id": "required_sheets",
+            "name": "必需工作表齐全",
+            "status": "failed",
+            "detail": "发现 3 个阻断问题，详见下方问题明细。"
+          },
+          {
+            "id": "indicators",
+            "name": "指标参照字段与记录",
+            "status": "not_run",
+            "detail": "未执行（前置检查未完成）。"
+          },
+          {
+            "id": "period_strategies",
+            "name": "环比策略区间与指标引用",
+            "status": "not_run",
+            "detail": "未执行（前置检查未完成）。"
+          },
+          {
+            "id": "runtime_parse",
+            "name": "全部配置可被正式运行时解析",
+            "status": "not_run",
+            "detail": "未执行（前置检查未完成）。"
+          }
+        ],
+        "limitations": [
+          "此项检查只读取 S2 配置工作簿，不读取本期、上期报表或大集中外部数据文件。",
+          "此项检查不实际执行审核规则，也不判断报表结果是否符合业务预期。",
+          "检查通过表示配置结构和内容可由当前运行时读取，不代表真实数据审核已经通过。"
+        ]
+      },
+      "formatted": "审核配置存在 3 个阻断错误，不能执行。\n配置文件：external_header_order.xlsx\n指标参照：0 条；环比策略：0 条\n实际检查项目：\n[通过] 配置文件可读取：配置工作簿已成功打开，并以只读方式检查。\n[未通过] 必需工作表齐全：发现 3 个阻断问题，详见下方问题明细。\n[未检查] 指标参照字段与记录：未执行（前置检查未完成）。\n[未检查] 环比策略区间与指标引用：未执行（前置检查未完成）。\n[未检查] 全部配置可被正式运行时解析：未执行（前置检查未完成）。\n检查范围说明：\n- 此项检查只读取 S2 配置工作簿，不读取本期、上期报表或大集中外部数据文件。\n- 此项检查不实际执行审核规则，也不判断报表结果是否符合业务预期。\n- 检查通过表示配置结构和内容可由当前运行时读取，不代表真实数据审核已经通过。\n工作表 通用设置：9 行，3 列\n工作表 指标参照：0 行，9 列\n工作表 外部核对规则：0 行，8 列\n[阻断] 缺少工作表：机构参照\n[阻断] 缺少工作表：环比策略\n[阻断] 缺少工作表：校验规则"
+    },
+    "missing_external_sheet": {
+      "report": {
+        "path": "missing_external_sheet.xlsx",
+        "passed": false,
+        "blocking_errors": 4,
+        "warnings": 0,
+        "issues": [
+          {
+            "level": "blocking",
+            "message": "缺少工作表：机构参照"
+          },
+          {
+            "level": "blocking",
+            "message": "缺少工作表：环比策略"
+          },
+          {
+            "level": "blocking",
+            "message": "缺少工作表：校验规则"
+          },
+          {
+            "level": "blocking",
+            "message": "缺少工作表：外部核对规则"
+          }
+        ],
+        "sheet_stats": [
+          {
+            "name": "通用设置",
+            "rows": 9,
+            "columns": 3
+          },
+          {
+            "name": "指标参照",
+            "rows": 0,
+            "columns": 9
+          },
+          {
+            "name": "可选表",
+            "rows": 0,
+            "columns": 1
+          }
+        ],
+        "indicator_count": 0,
+        "strategy_count": 0,
+        "message": "审核配置存在 4 个阻断错误，不能执行。",
+        "checks": [
+          {
+            "id": "file_read",
+            "name": "配置文件可读取",
+            "status": "passed",
+            "detail": "配置工作簿已成功打开，并以只读方式检查。"
+          },
+          {
+            "id": "required_sheets",
+            "name": "必需工作表齐全",
+            "status": "failed",
+            "detail": "发现 4 个阻断问题，详见下方问题明细。"
+          },
+          {
+            "id": "indicators",
+            "name": "指标参照字段与记录",
+            "status": "not_run",
+            "detail": "未执行（前置检查未完成）。"
+          },
+          {
+            "id": "period_strategies",
+            "name": "环比策略区间与指标引用",
+            "status": "not_run",
+            "detail": "未执行（前置检查未完成）。"
+          },
+          {
+            "id": "runtime_parse",
+            "name": "全部配置可被正式运行时解析",
+            "status": "not_run",
+            "detail": "未执行（前置检查未完成）。"
+          }
+        ],
+        "limitations": [
+          "此项检查只读取 S2 配置工作簿，不读取本期、上期报表或大集中外部数据文件。",
+          "此项检查不实际执行审核规则，也不判断报表结果是否符合业务预期。",
+          "检查通过表示配置结构和内容可由当前运行时读取，不代表真实数据审核已经通过。"
+        ]
+      },
+      "formatted": "审核配置存在 4 个阻断错误，不能执行。\n配置文件：missing_external_sheet.xlsx\n指标参照：0 条；环比策略：0 条\n实际检查项目：\n[通过] 配置文件可读取：配置工作簿已成功打开，并以只读方式检查。\n[未通过] 必需工作表齐全：发现 4 个阻断问题，详见下方问题明细。\n[未检查] 指标参照字段与记录：未执行（前置检查未完成）。\n[未检查] 环比策略区间与指标引用：未执行（前置检查未完成）。\n[未检查] 全部配置可被正式运行时解析：未执行（前置检查未完成）。\n检查范围说明：\n- 此项检查只读取 S2 配置工作簿，不读取本期、上期报表或大集中外部数据文件。\n- 此项检查不实际执行审核规则，也不判断报表结果是否符合业务预期。\n- 检查通过表示配置结构和内容可由当前运行时读取，不代表真实数据审核已经通过。\n工作表 通用设置：9 行，3 列\n工作表 指标参照：0 行，9 列\n工作表 可选表：0 行，1 列\n[阻断] 缺少工作表：机构参照\n[阻断] 缺少工作表：环比策略\n[阻断] 缺少工作表：校验规则\n[阻断] 缺少工作表：外部核对规则"
+    },
+    "missing_general_sheet": {
+      "report": {
+        "path": "missing_general_sheet.xlsx",
+        "passed": false,
+        "blocking_errors": 4,
+        "warnings": 0,
+        "issues": [
+          {
+            "level": "blocking",
+            "message": "缺少工作表：机构参照"
+          },
+          {
+            "level": "blocking",
+            "message": "缺少工作表：环比策略"
+          },
+          {
+            "level": "blocking",
+            "message": "缺少工作表：校验规则"
+          },
+          {
+            "level": "blocking",
+            "message": "缺少工作表：通用设置"
+          }
+        ],
+        "sheet_stats": [
+          {
+            "name": "其他",
+            "rows": 0,
+            "columns": 1
+          },
+          {
+            "name": "指标参照",
+            "rows": 0,
+            "columns": 9
+          },
+          {
+            "name": "外部核对规则",
+            "rows": 0,
+            "columns": 7
+          }
+        ],
+        "indicator_count": 0,
+        "strategy_count": 0,
+        "message": "审核配置存在 4 个阻断错误，不能执行。",
+        "checks": [
+          {
+            "id": "file_read",
+            "name": "配置文件可读取",
+            "status": "passed",
+            "detail": "配置工作簿已成功打开，并以只读方式检查。"
+          },
+          {
+            "id": "required_sheets",
+            "name": "必需工作表齐全",
+            "status": "failed",
+            "detail": "发现 4 个阻断问题，详见下方问题明细。"
+          },
+          {
+            "id": "indicators",
+            "name": "指标参照字段与记录",
+            "status": "not_run",
+            "detail": "未执行（前置检查未完成）。"
+          },
+          {
+            "id": "period_strategies",
+            "name": "环比策略区间与指标引用",
+            "status": "not_run",
+            "detail": "未执行（前置检查未完成）。"
+          },
+          {
+            "id": "runtime_parse",
+            "name": "全部配置可被正式运行时解析",
+            "status": "not_run",
+            "detail": "未执行（前置检查未完成）。"
+          }
+        ],
+        "limitations": [
+          "此项检查只读取 S2 配置工作簿，不读取本期、上期报表或大集中外部数据文件。",
+          "此项检查不实际执行审核规则，也不判断报表结果是否符合业务预期。",
+          "检查通过表示配置结构和内容可由当前运行时读取，不代表真实数据审核已经通过。"
+        ]
+      },
+      "formatted": "审核配置存在 4 个阻断错误，不能执行。\n配置文件：missing_general_sheet.xlsx\n指标参照：0 条；环比策略：0 条\n实际检查项目：\n[通过] 配置文件可读取：配置工作簿已成功打开，并以只读方式检查。\n[未通过] 必需工作表齐全：发现 4 个阻断问题，详见下方问题明细。\n[未检查] 指标参照字段与记录：未执行（前置检查未完成）。\n[未检查] 环比策略区间与指标引用：未执行（前置检查未完成）。\n[未检查] 全部配置可被正式运行时解析：未执行（前置检查未完成）。\n检查范围说明：\n- 此项检查只读取 S2 配置工作簿，不读取本期、上期报表或大集中外部数据文件。\n- 此项检查不实际执行审核规则，也不判断报表结果是否符合业务预期。\n- 检查通过表示配置结构和内容可由当前运行时读取，不代表真实数据审核已经通过。\n工作表 其他：0 行，1 列\n工作表 指标参照：0 行，9 列\n工作表 外部核对规则：0 行，7 列\n[阻断] 缺少工作表：机构参照\n[阻断] 缺少工作表：环比策略\n[阻断] 缺少工作表：校验规则\n[阻断] 缺少工作表：通用设置"
+    },
+    "invalid_boolean_setting": {
+      "report": {
+        "path": "invalid_boolean_setting.xlsx",
+        "passed": false,
+        "blocking_errors": 3,
+        "warnings": 0,
+        "issues": [
+          {
+            "level": "blocking",
+            "message": "缺少工作表：机构参照"
+          },
+          {
+            "level": "blocking",
+            "message": "缺少工作表：环比策略"
+          },
+          {
+            "level": "blocking",
+            "message": "缺少工作表：校验规则"
+          }
+        ],
+        "sheet_stats": [
+          {
+            "name": "通用设置",
+            "rows": 9,
+            "columns": 3
+          },
+          {
+            "name": "指标参照",
+            "rows": 0,
+            "columns": 9
+          },
+          {
+            "name": "外部核对规则",
+            "rows": 0,
+            "columns": 7
+          }
+        ],
+        "indicator_count": 0,
+        "strategy_count": 0,
+        "message": "审核配置存在 3 个阻断错误，不能执行。",
+        "checks": [
+          {
+            "id": "file_read",
+            "name": "配置文件可读取",
+            "status": "passed",
+            "detail": "配置工作簿已成功打开，并以只读方式检查。"
+          },
+          {
+            "id": "required_sheets",
+            "name": "必需工作表齐全",
+            "status": "failed",
+            "detail": "发现 3 个阻断问题，详见下方问题明细。"
+          },
+          {
+            "id": "indicators",
+            "name": "指标参照字段与记录",
+            "status": "not_run",
+            "detail": "未执行（前置检查未完成）。"
+          },
+          {
+            "id": "period_strategies",
+            "name": "环比策略区间与指标引用",
+            "status": "not_run",
+            "detail": "未执行（前置检查未完成）。"
+          },
+          {
+            "id": "runtime_parse",
+            "name": "全部配置可被正式运行时解析",
+            "status": "not_run",
+            "detail": "未执行（前置检查未完成）。"
+          }
+        ],
+        "limitations": [
+          "此项检查只读取 S2 配置工作簿，不读取本期、上期报表或大集中外部数据文件。",
+          "此项检查不实际执行审核规则，也不判断报表结果是否符合业务预期。",
+          "检查通过表示配置结构和内容可由当前运行时读取，不代表真实数据审核已经通过。"
+        ]
+      },
+      "formatted": "审核配置存在 3 个阻断错误，不能执行。\n配置文件：invalid_boolean_setting.xlsx\n指标参照：0 条；环比策略：0 条\n实际检查项目：\n[通过] 配置文件可读取：配置工作簿已成功打开，并以只读方式检查。\n[未通过] 必需工作表齐全：发现 3 个阻断问题，详见下方问题明细。\n[未检查] 指标参照字段与记录：未执行（前置检查未完成）。\n[未检查] 环比策略区间与指标引用：未执行（前置检查未完成）。\n[未检查] 全部配置可被正式运行时解析：未执行（前置检查未完成）。\n检查范围说明：\n- 此项检查只读取 S2 配置工作簿，不读取本期、上期报表或大集中外部数据文件。\n- 此项检查不实际执行审核规则，也不判断报表结果是否符合业务预期。\n- 检查通过表示配置结构和内容可由当前运行时读取，不代表真实数据审核已经通过。\n工作表 通用设置：9 行，3 列\n工作表 指标参照：0 行，9 列\n工作表 外部核对规则：0 行，7 列\n[阻断] 缺少工作表：机构参照\n[阻断] 缺少工作表：环比策略\n[阻断] 缺少工作表：校验规则"
+    },
+    "invalid_optional_severity": {
+      "report": {
+        "path": "invalid_optional_severity.xlsx",
+        "passed": false,
+        "blocking_errors": 3,
+        "warnings": 0,
+        "issues": [
+          {
+            "level": "blocking",
+            "message": "缺少工作表：机构参照"
+          },
+          {
+            "level": "blocking",
+            "message": "缺少工作表：环比策略"
+          },
+          {
+            "level": "blocking",
+            "message": "缺少工作表：校验规则"
+          }
+        ],
+        "sheet_stats": [
+          {
+            "name": "通用设置",
+            "rows": 9,
+            "columns": 3
+          },
+          {
+            "name": "指标参照",
+            "rows": 0,
+            "columns": 9
+          },
+          {
+            "name": "外部核对规则",
+            "rows": 0,
+            "columns": 7
+          }
+        ],
+        "indicator_count": 0,
+        "strategy_count": 0,
+        "message": "审核配置存在 3 个阻断错误，不能执行。",
+        "checks": [
+          {
+            "id": "file_read",
+            "name": "配置文件可读取",
+            "status": "passed",
+            "detail": "配置工作簿已成功打开，并以只读方式检查。"
+          },
+          {
+            "id": "required_sheets",
+            "name": "必需工作表齐全",
+            "status": "failed",
+            "detail": "发现 3 个阻断问题，详见下方问题明细。"
+          },
+          {
+            "id": "indicators",
+            "name": "指标参照字段与记录",
+            "status": "not_run",
+            "detail": "未执行（前置检查未完成）。"
+          },
+          {
+            "id": "period_strategies",
+            "name": "环比策略区间与指标引用",
+            "status": "not_run",
+            "detail": "未执行（前置检查未完成）。"
+          },
+          {
+            "id": "runtime_parse",
+            "name": "全部配置可被正式运行时解析",
+            "status": "not_run",
+            "detail": "未执行（前置检查未完成）。"
+          }
+        ],
+        "limitations": [
+          "此项检查只读取 S2 配置工作簿，不读取本期、上期报表或大集中外部数据文件。",
+          "此项检查不实际执行审核规则，也不判断报表结果是否符合业务预期。",
+          "检查通过表示配置结构和内容可由当前运行时读取，不代表真实数据审核已经通过。"
+        ]
+      },
+      "formatted": "审核配置存在 3 个阻断错误，不能执行。\n配置文件：invalid_optional_severity.xlsx\n指标参照：0 条；环比策略：0 条\n实际检查项目：\n[通过] 配置文件可读取：配置工作簿已成功打开，并以只读方式检查。\n[未通过] 必需工作表齐全：发现 3 个阻断问题，详见下方问题明细。\n[未检查] 指标参照字段与记录：未执行（前置检查未完成）。\n[未检查] 环比策略区间与指标引用：未执行（前置检查未完成）。\n[未检查] 全部配置可被正式运行时解析：未执行（前置检查未完成）。\n检查范围说明：\n- 此项检查只读取 S2 配置工作簿，不读取本期、上期报表或大集中外部数据文件。\n- 此项检查不实际执行审核规则，也不判断报表结果是否符合业务预期。\n- 检查通过表示配置结构和内容可由当前运行时读取，不代表真实数据审核已经通过。\n工作表 通用设置：9 行，3 列\n工作表 指标参照：0 行，9 列\n工作表 外部核对规则：0 行，7 列\n[阻断] 缺少工作表：机构参照\n[阻断] 缺少工作表：环比策略\n[阻断] 缺少工作表：校验规则"
+    },
+    "unknown_general_setting": {
+      "report": {
+        "path": "unknown_general_setting.xlsx",
+        "passed": false,
+        "blocking_errors": 3,
+        "warnings": 0,
+        "issues": [
+          {
+            "level": "blocking",
+            "message": "缺少工作表：机构参照"
+          },
+          {
+            "level": "blocking",
+            "message": "缺少工作表：环比策略"
+          },
+          {
+            "level": "blocking",
+            "message": "缺少工作表：校验规则"
+          }
+        ],
+        "sheet_stats": [
+          {
+            "name": "通用设置",
+            "rows": 10,
+            "columns": 3
+          },
+          {
+            "name": "指标参照",
+            "rows": 0,
+            "columns": 9
+          },
+          {
+            "name": "外部核对规则",
+            "rows": 0,
+            "columns": 7
+          }
+        ],
+        "indicator_count": 0,
+        "strategy_count": 0,
+        "message": "审核配置存在 3 个阻断错误，不能执行。",
+        "checks": [
+          {
+            "id": "file_read",
+            "name": "配置文件可读取",
+            "status": "passed",
+            "detail": "配置工作簿已成功打开，并以只读方式检查。"
+          },
+          {
+            "id": "required_sheets",
+            "name": "必需工作表齐全",
+            "status": "failed",
+            "detail": "发现 3 个阻断问题，详见下方问题明细。"
+          },
+          {
+            "id": "indicators",
+            "name": "指标参照字段与记录",
+            "status": "not_run",
+            "detail": "未执行（前置检查未完成）。"
+          },
+          {
+            "id": "period_strategies",
+            "name": "环比策略区间与指标引用",
+            "status": "not_run",
+            "detail": "未执行（前置检查未完成）。"
+          },
+          {
+            "id": "runtime_parse",
+            "name": "全部配置可被正式运行时解析",
+            "status": "not_run",
+            "detail": "未执行（前置检查未完成）。"
+          }
+        ],
+        "limitations": [
+          "此项检查只读取 S2 配置工作簿，不读取本期、上期报表或大集中外部数据文件。",
+          "此项检查不实际执行审核规则，也不判断报表结果是否符合业务预期。",
+          "检查通过表示配置结构和内容可由当前运行时读取，不代表真实数据审核已经通过。"
+        ]
+      },
+      "formatted": "审核配置存在 3 个阻断错误，不能执行。\n配置文件：unknown_general_setting.xlsx\n指标参照：0 条；环比策略：0 条\n实际检查项目：\n[通过] 配置文件可读取：配置工作簿已成功打开，并以只读方式检查。\n[未通过] 必需工作表齐全：发现 3 个阻断问题，详见下方问题明细。\n[未检查] 指标参照字段与记录：未执行（前置检查未完成）。\n[未检查] 环比策略区间与指标引用：未执行（前置检查未完成）。\n[未检查] 全部配置可被正式运行时解析：未执行（前置检查未完成）。\n检查范围说明：\n- 此项检查只读取 S2 配置工作簿，不读取本期、上期报表或大集中外部数据文件。\n- 此项检查不实际执行审核规则，也不判断报表结果是否符合业务预期。\n- 检查通过表示配置结构和内容可由当前运行时读取，不代表真实数据审核已经通过。\n工作表 通用设置：10 行，3 列\n工作表 指标参照：0 行，9 列\n工作表 外部核对规则：0 行，7 列\n[阻断] 缺少工作表：机构参照\n[阻断] 缺少工作表：环比策略\n[阻断] 缺少工作表：校验规则"
+    },
+    "missing_file": {
+      "report": {
+        "path": "does_not_exist.xlsx",
+        "passed": false,
+        "blocking_errors": 1,
+        "warnings": 0,
+        "issues": [
+          {
+            "level": "blocking",
+            "message": "配置文件不存在：does_not_exist.xlsx"
+          }
+        ],
+        "sheet_stats": [],
+        "indicator_count": 0,
+        "strategy_count": 0,
+        "message": "审核配置存在 1 个阻断错误，不能执行。",
+        "checks": [
+          {
+            "id": "file_read",
+            "name": "配置文件可读取",
+            "status": "failed",
+            "detail": "配置文件不存在，无法读取。"
+          },
+          {
+            "id": "required_sheets",
+            "name": "必需工作表齐全",
+            "status": "not_run",
+            "detail": "未执行（前置检查未完成）。"
+          },
+          {
+            "id": "indicators",
+            "name": "指标参照字段与记录",
+            "status": "not_run",
+            "detail": "未执行（前置检查未完成）。"
+          },
+          {
+            "id": "period_strategies",
+            "name": "环比策略区间与指标引用",
+            "status": "not_run",
+            "detail": "未执行（前置检查未完成）。"
+          },
+          {
+            "id": "runtime_parse",
+            "name": "全部配置可被正式运行时解析",
+            "status": "not_run",
+            "detail": "未执行（前置检查未完成）。"
+          }
+        ],
+        "limitations": [
+          "此项检查只读取 S2 配置工作簿，不读取本期、上期报表或大集中外部数据文件。",
+          "此项检查不实际执行审核规则，也不判断报表结果是否符合业务预期。",
+          "检查通过表示配置结构和内容可由当前运行时读取，不代表真实数据审核已经通过。"
+        ]
+      },
+      "formatted": "审核配置存在 1 个阻断错误，不能执行。\n配置文件：does_not_exist.xlsx\n指标参照：0 条；环比策略：0 条\n实际检查项目：\n[未通过] 配置文件可读取：配置文件不存在，无法读取。\n[未检查] 必需工作表齐全：未执行（前置检查未完成）。\n[未检查] 指标参照字段与记录：未执行（前置检查未完成）。\n[未检查] 环比策略区间与指标引用：未执行（前置检查未完成）。\n[未检查] 全部配置可被正式运行时解析：未执行（前置检查未完成）。\n检查范围说明：\n- 此项检查只读取 S2 配置工作簿，不读取本期、上期报表或大集中外部数据文件。\n- 此项检查不实际执行审核规则，也不判断报表结果是否符合业务预期。\n- 检查通过表示配置结构和内容可由当前运行时读取，不代表真实数据审核已经通过。\n[阻断] 配置文件不存在：does_not_exist.xlsx"
+    },
+    "check_valid": {
+      "report": {
+        "path": "check_valid.xlsx",
+        "passed": true,
+        "blocking_errors": 0,
+        "warnings": 0,
+        "issues": [],
+        "sheet_stats": [
+          {
+            "name": "通用设置",
+            "rows": 9,
+            "columns": 3
+          },
+          {
+            "name": "指标参照",
+            "rows": 1,
+            "columns": 9
+          },
+          {
+            "name": "机构参照",
+            "rows": 0,
+            "columns": 7
+          },
+          {
+            "name": "环比策略",
+            "rows": 1,
+            "columns": 8
+          },
+          {
+            "name": "校验规则",
+            "rows": 0,
+            "columns": 9
+          },
+          {
+            "name": "外部核对规则",
+            "rows": 0,
+            "columns": 7
+          }
+        ],
+        "indicator_count": 1,
+        "strategy_count": 1,
+        "message": "审核配置检查通过，可执行报表规则。",
+        "checks": [
+          {
+            "id": "file_read",
+            "name": "配置文件可读取",
+            "status": "passed",
+            "detail": "配置工作簿已成功打开，并以只读方式检查。"
+          },
+          {
+            "id": "required_sheets",
+            "name": "必需工作表齐全",
+            "status": "passed",
+            "detail": "已确认 6 张必需工作表存在"
+          },
+          {
+            "id": "indicators",
+            "name": "指标参照字段与记录",
+            "status": "passed",
+            "detail": "已检查 1 条指标记录的必需字段、重复代码、属性、启用值及环比设置"
+          },
+          {
+            "id": "period_strategies",
+            "name": "环比策略区间与指标引用",
+            "status": "passed",
+            "detail": "已检查 1 条策略记录的编号、区间覆盖/空档/重叠及指标组引用"
+          },
+          {
+            "id": "runtime_parse",
+            "name": "全部配置可被正式运行时解析",
+            "status": "passed",
+            "detail": "指标参照、机构参照、校验规则、外部核对规则和通用设置均已交给正式配置解析器检查"
+          }
+        ],
+        "limitations": [
+          "此项检查只读取 S2 配置工作簿，不读取本期、上期报表或大集中外部数据文件。",
+          "此项检查不实际执行审核规则，也不判断报表结果是否符合业务预期。",
+          "检查通过表示配置结构和内容可由当前运行时读取，不代表真实数据审核已经通过。"
+        ]
+      },
+      "formatted": "审核配置检查通过，可执行报表规则。\n配置文件：check_valid.xlsx\n指标参照：1 条；环比策略：1 条\n实际检查项目：\n[通过] 配置文件可读取：配置工作簿已成功打开，并以只读方式检查。\n[通过] 必需工作表齐全：已确认 6 张必需工作表存在\n[通过] 指标参照字段与记录：已检查 1 条指标记录的必需字段、重复代码、属性、启用值及环比设置\n[通过] 环比策略区间与指标引用：已检查 1 条策略记录的编号、区间覆盖/空档/重叠及指标组引用\n[通过] 全部配置可被正式运行时解析：指标参照、机构参照、校验规则、外部核对规则和通用设置均已交给正式配置解析器检查\n检查范围说明：\n- 此项检查只读取 S2 配置工作簿，不读取本期、上期报表或大集中外部数据文件。\n- 此项检查不实际执行审核规则，也不判断报表结果是否符合业务预期。\n- 检查通过表示配置结构和内容可由当前运行时读取，不代表真实数据审核已经通过。\n工作表 通用设置：9 行，3 列\n工作表 指标参照：1 行，9 列\n工作表 机构参照：0 行，7 列\n工作表 环比策略：1 行，8 列\n工作表 校验规则：0 行，9 列\n工作表 外部核对规则：0 行，7 列"
+    },
+    "check_legacy_severity": {
+      "report": {
+        "path": "check_legacy_severity.xlsx",
+        "passed": true,
+        "blocking_errors": 0,
+        "warnings": 1,
+        "issues": [
+          {
+            "level": "warning",
+            "message": "旧审核级别“严重”兼容映射为“硬性”；建议人工改为“硬性”。建议人工复核，程序未自动修改配置。",
+            "sheet": "环比策略",
+            "row": 2
+          }
+        ],
+        "sheet_stats": [
+          {
+            "name": "通用设置",
+            "rows": 9,
+            "columns": 3
+          },
+          {
+            "name": "指标参照",
+            "rows": 1,
+            "columns": 9
+          },
+          {
+            "name": "机构参照",
+            "rows": 0,
+            "columns": 7
+          },
+          {
+            "name": "环比策略",
+            "rows": 1,
+            "columns": 8
+          },
+          {
+            "name": "校验规则",
+            "rows": 0,
+            "columns": 9
+          },
+          {
+            "name": "外部核对规则",
+            "rows": 0,
+            "columns": 7
+          }
+        ],
+        "indicator_count": 1,
+        "strategy_count": 1,
+        "message": "审核配置检查通过，可执行报表规则。",
+        "checks": [
+          {
+            "id": "file_read",
+            "name": "配置文件可读取",
+            "status": "passed",
+            "detail": "配置工作簿已成功打开，并以只读方式检查。"
+          },
+          {
+            "id": "required_sheets",
+            "name": "必需工作表齐全",
+            "status": "passed",
+            "detail": "已确认 6 张必需工作表存在"
+          },
+          {
+            "id": "indicators",
+            "name": "指标参照字段与记录",
+            "status": "passed",
+            "detail": "已检查 1 条指标记录的必需字段、重复代码、属性、启用值及环比设置"
+          },
+          {
+            "id": "period_strategies",
+            "name": "环比策略区间与指标引用",
+            "status": "passed",
+            "detail": "已检查 1 条策略记录的编号、区间覆盖/空档/重叠及指标组引用"
+          },
+          {
+            "id": "runtime_parse",
+            "name": "全部配置可被正式运行时解析",
+            "status": "warning",
+            "detail": "指标参照、机构参照、校验规则、外部核对规则和通用设置均已交给正式配置解析器检查；另有 1 条警告，详见下方问题明细。"
+          }
+        ],
+        "limitations": [
+          "此项检查只读取 S2 配置工作簿，不读取本期、上期报表或大集中外部数据文件。",
+          "此项检查不实际执行审核规则，也不判断报表结果是否符合业务预期。",
+          "检查通过表示配置结构和内容可由当前运行时读取，不代表真实数据审核已经通过。"
+        ]
+      },
+      "formatted": "审核配置检查通过，可执行报表规则。\n配置文件：check_legacy_severity.xlsx\n指标参照：1 条；环比策略：1 条\n实际检查项目：\n[通过] 配置文件可读取：配置工作簿已成功打开，并以只读方式检查。\n[通过] 必需工作表齐全：已确认 6 张必需工作表存在\n[通过] 指标参照字段与记录：已检查 1 条指标记录的必需字段、重复代码、属性、启用值及环比设置\n[通过] 环比策略区间与指标引用：已检查 1 条策略记录的编号、区间覆盖/空档/重叠及指标组引用\n[有警告] 全部配置可被正式运行时解析：指标参照、机构参照、校验规则、外部核对规则和通用设置均已交给正式配置解析器检查；另有 1 条警告，详见下方问题明细。\n检查范围说明：\n- 此项检查只读取 S2 配置工作簿，不读取本期、上期报表或大集中外部数据文件。\n- 此项检查不实际执行审核规则，也不判断报表结果是否符合业务预期。\n- 检查通过表示配置结构和内容可由当前运行时读取，不代表真实数据审核已经通过。\n工作表 通用设置：9 行，3 列\n工作表 指标参照：1 行，9 列\n工作表 机构参照：0 行，7 列\n工作表 环比策略：1 行，8 列\n工作表 校验规则：0 行，9 列\n工作表 外部核对规则：0 行，7 列\n[警告] 环比策略 第2行：旧审核级别“严重”兼容映射为“硬性”；建议人工改为“硬性”。建议人工复核，程序未自动修改配置。"
+    },
+    "check_gap_duplicate": {
+      "report": {
+        "path": "check_gap_duplicate.xlsx",
+        "passed": false,
+        "blocking_errors": 2,
+        "warnings": 1,
+        "issues": [
+          {
+            "level": "blocking",
+            "message": "策略组+规则编号重复：G1/B1",
+            "sheet": "环比策略",
+            "row": 3
+          },
+          {
+            "level": "blocking",
+            "message": "环比策略组 G1 存在空档：B1 与 B1",
+            "sheet": "环比策略",
+            "row": 3
+          },
+          {
+            "level": "warning",
+            "message": "环比规则空洞：B1 与 B1"
+          }
+        ],
+        "sheet_stats": [
+          {
+            "name": "通用设置",
+            "rows": 9,
+            "columns": 3
+          },
+          {
+            "name": "指标参照",
+            "rows": 1,
+            "columns": 9
+          },
+          {
+            "name": "机构参照",
+            "rows": 0,
+            "columns": 7
+          },
+          {
+            "name": "环比策略",
+            "rows": 2,
+            "columns": 8
+          },
+          {
+            "name": "校验规则",
+            "rows": 0,
+            "columns": 9
+          },
+          {
+            "name": "外部核对规则",
+            "rows": 0,
+            "columns": 7
+          }
+        ],
+        "indicator_count": 1,
+        "strategy_count": 2,
+        "message": "审核配置存在 2 个阻断错误，不能执行。",
+        "checks": [
+          {
+            "id": "file_read",
+            "name": "配置文件可读取",
+            "status": "passed",
+            "detail": "配置工作簿已成功打开，并以只读方式检查。"
+          },
+          {
+            "id": "required_sheets",
+            "name": "必需工作表齐全",
+            "status": "passed",
+            "detail": "已确认 6 张必需工作表存在"
+          },
+          {
+            "id": "indicators",
+            "name": "指标参照字段与记录",
+            "status": "passed",
+            "detail": "已检查 1 条指标记录的必需字段、重复代码、属性、启用值及环比设置"
+          },
+          {
+            "id": "period_strategies",
+            "name": "环比策略区间与指标引用",
+            "status": "failed",
+            "detail": "发现 2 个阻断问题，详见下方问题明细。"
+          },
+          {
+            "id": "runtime_parse",
+            "name": "全部配置可被正式运行时解析",
+            "status": "warning",
+            "detail": "指标参照、机构参照、校验规则、外部核对规则和通用设置均已交给正式配置解析器检查；另有 1 条警告，详见下方问题明细。"
+          }
+        ],
+        "limitations": [
+          "此项检查只读取 S2 配置工作簿，不读取本期、上期报表或大集中外部数据文件。",
+          "此项检查不实际执行审核规则，也不判断报表结果是否符合业务预期。",
+          "检查通过表示配置结构和内容可由当前运行时读取，不代表真实数据审核已经通过。"
+        ]
+      },
+      "formatted": "审核配置存在 2 个阻断错误，不能执行。\n配置文件：check_gap_duplicate.xlsx\n指标参照：1 条；环比策略：2 条\n实际检查项目：\n[通过] 配置文件可读取：配置工作簿已成功打开，并以只读方式检查。\n[通过] 必需工作表齐全：已确认 6 张必需工作表存在\n[通过] 指标参照字段与记录：已检查 1 条指标记录的必需字段、重复代码、属性、启用值及环比设置\n[未通过] 环比策略区间与指标引用：发现 2 个阻断问题，详见下方问题明细。\n[有警告] 全部配置可被正式运行时解析：指标参照、机构参照、校验规则、外部核对规则和通用设置均已交给正式配置解析器检查；另有 1 条警告，详见下方问题明细。\n检查范围说明：\n- 此项检查只读取 S2 配置工作簿，不读取本期、上期报表或大集中外部数据文件。\n- 此项检查不实际执行审核规则，也不判断报表结果是否符合业务预期。\n- 检查通过表示配置结构和内容可由当前运行时读取，不代表真实数据审核已经通过。\n工作表 通用设置：9 行，3 列\n工作表 指标参照：1 行，9 列\n工作表 机构参照：0 行，7 列\n工作表 环比策略：2 行，8 列\n工作表 校验规则：0 行，9 列\n工作表 外部核对规则：0 行，7 列\n[阻断] 环比策略 第3行：策略组+规则编号重复：G1/B1\n[阻断] 环比策略 第3行：环比策略组 G1 存在空档：B1 与 B1\n[警告] 环比规则空洞：B1 与 B1"
+    },
+    "check_datetime_indicator_flag": {
+      "report": {
+        "path": "check_datetime_indicator_flag.xlsx",
+        "passed": false,
+        "blocking_errors": 1,
+        "warnings": 1,
+        "issues": [
+          {
+            "level": "blocking",
+            "message": "指标 1001 环比启用必须为“是”或“否”：datetime.datetime(2024, 1, 2, 0, 0)",
+            "sheet": "指标参照",
+            "row": 2
+          },
+          {
+            "level": "warning",
+            "message": "环比策略组 G1 当前没有被任何启用指标引用",
+            "sheet": "环比策略"
+          }
+        ],
+        "sheet_stats": [
+          {
+            "name": "通用设置",
+            "rows": 9,
+            "columns": 3
+          },
+          {
+            "name": "指标参照",
+            "rows": 1,
+            "columns": 9
+          },
+          {
+            "name": "机构参照",
+            "rows": 0,
+            "columns": 7
+          },
+          {
+            "name": "环比策略",
+            "rows": 1,
+            "columns": 8
+          },
+          {
+            "name": "校验规则",
+            "rows": 0,
+            "columns": 9
+          },
+          {
+            "name": "外部核对规则",
+            "rows": 0,
+            "columns": 7
+          }
+        ],
+        "indicator_count": 1,
+        "strategy_count": 1,
+        "message": "审核配置存在 1 个阻断错误，不能执行。",
+        "checks": [
+          {
+            "id": "file_read",
+            "name": "配置文件可读取",
+            "status": "passed",
+            "detail": "配置工作簿已成功打开，并以只读方式检查。"
+          },
+          {
+            "id": "required_sheets",
+            "name": "必需工作表齐全",
+            "status": "passed",
+            "detail": "已确认 6 张必需工作表存在"
+          },
+          {
+            "id": "indicators",
+            "name": "指标参照字段与记录",
+            "status": "failed",
+            "detail": "发现 1 个阻断问题，详见下方问题明细。"
+          },
+          {
+            "id": "period_strategies",
+            "name": "环比策略区间与指标引用",
+            "status": "warning",
+            "detail": "已检查 1 条策略记录的编号、区间覆盖/空档/重叠及指标组引用；另有 1 条警告，详见下方问题明细。"
+          },
+          {
+            "id": "runtime_parse",
+            "name": "全部配置可被正式运行时解析",
+            "status": "passed",
+            "detail": "指标参照、机构参照、校验规则、外部核对规则和通用设置均已交给正式配置解析器检查"
+          }
+        ],
+        "limitations": [
+          "此项检查只读取 S2 配置工作簿，不读取本期、上期报表或大集中外部数据文件。",
+          "此项检查不实际执行审核规则，也不判断报表结果是否符合业务预期。",
+          "检查通过表示配置结构和内容可由当前运行时读取，不代表真实数据审核已经通过。"
+        ]
+      },
+      "formatted": "审核配置存在 1 个阻断错误，不能执行。\n配置文件：check_datetime_indicator_flag.xlsx\n指标参照：1 条；环比策略：1 条\n实际检查项目：\n[通过] 配置文件可读取：配置工作簿已成功打开，并以只读方式检查。\n[通过] 必需工作表齐全：已确认 6 张必需工作表存在\n[未通过] 指标参照字段与记录：发现 1 个阻断问题，详见下方问题明细。\n[有警告] 环比策略区间与指标引用：已检查 1 条策略记录的编号、区间覆盖/空档/重叠及指标组引用；另有 1 条警告，详见下方问题明细。\n[通过] 全部配置可被正式运行时解析：指标参照、机构参照、校验规则、外部核对规则和通用设置均已交给正式配置解析器检查\n检查范围说明：\n- 此项检查只读取 S2 配置工作簿，不读取本期、上期报表或大集中外部数据文件。\n- 此项检查不实际执行审核规则，也不判断报表结果是否符合业务预期。\n- 检查通过表示配置结构和内容可由当前运行时读取，不代表真实数据审核已经通过。\n工作表 通用设置：9 行，3 列\n工作表 指标参照：1 行，9 列\n工作表 机构参照：0 行，7 列\n工作表 环比策略：1 行，8 列\n工作表 校验规则：0 行，9 列\n工作表 外部核对规则：0 行，7 列\n[阻断] 指标参照 第2行：指标 1001 环比启用必须为“是”或“否”：datetime.datetime(2024, 1, 2, 0, 0)\n[警告] 环比策略：环比策略组 G1 当前没有被任何启用指标引用"
+    }
+  },
+  "scope": "Read-only S2 configuration structure and runtime-parser checks over synthetic XLSX fixtures. Does not cover real business configurations, default workbook generation, service orchestration, report writing, or target Linux validation."
+}

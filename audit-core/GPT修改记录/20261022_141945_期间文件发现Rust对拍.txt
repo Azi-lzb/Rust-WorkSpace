@@ -1,0 +1,37 @@
+时间：2026-10-22 22:19:45（Asia/Shanghai）
+执行者：Codex
+修改前 commit：无（当前仓库未提交）
+修改后 commit：无（当前仓库未提交）
+WIP 状态：开始前检查 git status；workspace 和 audit-core 有既存未跟踪迁移文件。本次仅在 audit-core 中增量修改，不覆盖或清理已有 WIP。
+
+目的：在已对拍的期间文本解析 helper 基础上，迁移并验证原项目 `base_audit.discovery.source_workbooks` 与 `detect_period` 的局部流程。
+
+修改/新增文件：
+- 修改 `audit-core/src/discovery.rs`：增加扫描深度、xlsx 文件发现过滤、期间来源优先级与冲突结果；补充基线对拍单测并更新模块说明。
+- 修改 `audit-core/tests/compare/run_period_detection_baseline.py`：兼容原项目实际 Python 包路径 `core/src`，并禁止基线导入向只读源目录写入 `.pyc`。
+- 新增 `audit-core/tests/fixtures/period_detection_cases.json`：9 个合成目录场景。
+- 新增 `audit-core/probe/reports/period_detection_python_baseline.json`：从只读 Python 源项目生成的旧实现基线。
+- 新增 `audit-core/probe/reports/period_detection_parity.json`：对拍结果及逐项状态。
+- 修改 `audit-core/MIGRATION_INVENTORY.md`：记录本次局部 helper 状态和证据。
+
+逻辑变化：Rust 版本按源实现扫描 `.xlsx`，排除 `~$` 临时文件、文件名含 `_审核版` 的路径、`_skip` 目录及“执行结果”目录；支持根目录、指定递归深度和全递归；期间先从源文件名判断，再按输入目录及祖先目录回退，并保留多期间冲突文本。扫描中 `.xlsx` 后缀目录行为按源实现保留。Python 基线脚本通过 `sys.dont_write_bytecode` 避免向只读源目录生成字节码缓存。
+
+测试与对拍：
+- Python：`python tests\compare\run_period_detection_baseline.py --source-root C:\Users\AZI\Desktop\VibeCode\3.open-data-audit`，通过，生成 9 个基线场景。首次运行因脚本没有将 `core/src` 加入导入路径失败；修正后通过。
+- Rust：`cargo fmt --all && cargo test -p audit-core --locked`，通过；2 个测试通过，其中包括 49 个期间解析向量和 9 个目录/期间场景逐项比较。
+- 后续全 workspace 验证：`cargo fmt --all -- --check && cargo test --workspace --locked`，通过；audit-core 2 项、共享 reader 2 项、probe 5 项、pytools-core 9 项测试通过，其他 crate 和 doc-test 无失败。
+
+未执行项与已知问题：
+- 真实脱敏模板、完整业务调用链、文件系统权限错误处理、性能、目标 Linux 行为均未验证或测量。
+- 不能据此宣称任何 Open-Data-Audit 顶级业务功能已迁移；其他清单状态不变。
+- 没有检查或修改原始 Python 项目文件；没有产品依赖或版本变更。
+
+【组件版本】
+系统：不适用（局部迁移 helper，尚无已登记业务组件版本）
+影响功能：不升级
+影响配置：无
+未修改的相关组件：全部
+版本升级原因：纯迁移探针及局部实现，未触及已登记产品/组件版本。
+
+删除清单：无。
+回滚提示：可单独回退本记录列出的新增/修改文件；不得删除本次之前已有的未跟踪文件。

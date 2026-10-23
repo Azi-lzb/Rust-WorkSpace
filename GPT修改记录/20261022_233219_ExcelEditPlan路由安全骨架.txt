@@ -1,0 +1,45 @@
+时间：2026-10-22 23:32:19 +08:00
+执行者：Codex
+修改前/后 commit：不可用（workspace 尚无首次提交）
+WIP 情况：修改前查看 git status；workspace 当前文件均为未跟踪 WIP。本轮只修改下列共享 crate、架构清单和记录文件；未清理或覆盖其余 WIP。
+
+目的：
+在已盘点 Excel 操作及已有合成对拍证据的前提下，为共享 excel-editor 建立第一版 ExcelEditPlan / ExcelModifier 路由与安全执行边界。不实现或默认启用 OOXML Patch、umya-spreadsheet、Excelize 任何真实修改 backend。
+
+修改/新增文件：
+- crates/excel-editor/Cargo.toml：为可序列化的引擎无关计划增加 serde 直接依赖。
+- crates/excel-editor/src/lib.rs：公开计划、能力、backend trait、validator、结构化执行结果与错误类型；既有 umya open/save 包装保留。
+- crates/excel-editor/src/plan.rs：新增 ExcelEditPlan 与首批操作类型；按格式、操作全集、已检查工作簿特征、保留项、平台和证据字段过滤候选。单计划只路由给一个完整覆盖的 backend。每次尝试从原始输入创建独立临时副本；仅 UnsupportedBeforeWrite 且临时输出未写入时允许回退；写入错误、协议违约、输出验证失败均停止。验证后通过同目录 hard link no-clobber 发布到新目标，拒绝覆盖已有文件。结构化报告包含候选路由和尝试结果。
+- Cargo.lock：离线记录 excel-editor 对现有 serde 版本的直接依赖，未升级依赖版本。
+- EXCEL_ENGINE_ARCHITECTURE.md：记录当前骨架、缺失操作/注册表/backend/validator 和测试现状；修正规范中的回退条件与实现一致。
+- GPT修改记录/20261022_233219_ExcelEditPlan路由安全骨架.txt：本记录。
+
+逻辑边界与影响：
+- 仅涉及共享 Excel 原语层；audit-core、pytools-core、sidecar、两个只读 Python 项目和业务 fixtures 均未修改。
+- 首批计划操作覆盖普通值、公式文本、批注、行列尺寸、删行、sheet 改名及页面设置。样式、合并、定义名称、隐藏/大纲、区域/工作表复制等仍未建模。
+- 能力声明当前由调用方提供；代码只检查声明字段、状态、范围和平台，不读取报告文件或验证报告内容。当前没有真实 backend、能力报告注册表、Excel 输出 validator 或业务调用入口；fake-backend 测试不能视为 Excel 格式保真对拍。
+- 目标路径必须不存在；覆盖/备份替换策略尚未实现。工作簿 profile 的完整性由调用方提供，尚未由 reader 自动生成。
+
+测试与检查：
+- cargo fmt -p excel-editor：通过。
+- WSL Ubuntu / rustc 1.99.1：cargo test -p excel-editor --locked，6/6 通过。
+- WSL Ubuntu：cargo test --workspace --locked，28 个单元/集成测试全部通过，doc-tests 0 项通过。
+- 新增测试覆盖 passed/不合格能力筛选、必须单一 backend 覆盖整批操作、从原始输入副本重试、仅 pre-write unsupported 回退、写入/验证失败停止、no-clobber 发布及结构化路由/尝试状态。
+- 未运行真实 Excel 文件对拍、Python 基线、Windows MSVC 构建、目标 Linux glibc 2.28 构建、deb 打包或目标机验收。
+
+已知问题/下一步：
+- 把能力报告读取/核验接入 registry；不能让运行代码仅凭手写 Passed 状态启用未验收后端。
+- 补齐计划操作 schema 与 Python 调用链清单后，优先把 pytools 机构规范化从直接 umya 调用迁到计划边界，并用真实/脱敏工作簿验证；当前不能宣称该功能已迁移到统一路由。
+- 为 umya/OOXML 的具体整批操作实现独立 backend 和 Excel reader validator，再评估是否引入 Excelize worker。
+- 在 Windows 原生编译环境验证 hard link/no-clobber 与输出写库行为；离线目标 deb 仍未验证。
+
+删除清单：
+- 无删除文件或业务功能。
+
+回滚提示：
+- 仅逆向本记录列出的 5 个文件变更；删除新建的 crates/excel-editor/src/plan.rs 和本记录，移除 excel-editor 的 serde 依赖/公开导出，并恢复 EXCEL_ENGINE_ARCHITECTURE.md 中本轮新增状态说明。
+- 回退 Cargo.lock 时只恢复 excel-editor 包的 serde 依赖边，不得覆盖其他 crate 的 Cargo.lock 内容。
+- 不要使用 git clean/reset；不要触碰其他未跟踪 WIP、target 缓存或两个原始 Python 项目。
+
+【组件版本】
+不升级。共享 excel-editor Cargo package 仍为 0.1.0；本轮未迁移业务菜单、产品功能或配置，也不宣称 Excel 后端已验收。

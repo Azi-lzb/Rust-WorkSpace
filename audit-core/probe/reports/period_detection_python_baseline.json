@@ -1,0 +1,122 @@
+{
+  "schema_version": 1,
+  "suite": "audit.period_detection",
+  "baseline": "base_audit.discovery.source_workbooks + detect_period",
+  "source_python_version": "3.12.10",
+  "source_root": "C:\\Users\\AZI\\Desktop\\VibeCode\\3.open-data-audit",
+  "cases": [
+    {
+      "id": "same_period_across_filenames",
+      "source_workbooks": [
+        "001_甲银行_2026年6月.xlsx",
+        "002_乙银行_20260630.xlsx"
+      ],
+      "result": {
+        "period": "2026-06",
+        "source": "源文件名",
+        "conflict": false,
+        "details": "从源文件名识别为 2026-06"
+      }
+    },
+    {
+      "id": "conflicting_filename_periods",
+      "source_workbooks": [
+        "001_甲银行_2026-05.xlsx",
+        "002_乙银行_2026-06.xlsx"
+      ],
+      "result": {
+        "period": "",
+        "source": "源文件名",
+        "conflict": true,
+        "details": "源文件中识别出多个数据期：2026-05、2026-06"
+      }
+    },
+    {
+      "id": "filename_period_takes_precedence_over_folder",
+      "source_workbooks": [
+        "甲银行_2026-08.xlsx"
+      ],
+      "result": {
+        "period": "2026-08",
+        "source": "源文件名",
+        "conflict": false,
+        "details": "从源文件名识别为 2026-08"
+      }
+    },
+    {
+      "id": "fallback_to_parent_folder_period",
+      "source_workbooks": [
+        "甲银行.xlsx"
+      ],
+      "result": {
+        "period": "2026-07",
+        "source": "文件夹名称",
+        "conflict": false,
+        "details": "从文件夹名称识别为 2026-07"
+      }
+    },
+    {
+      "id": "folder_name_conflict",
+      "source_workbooks": [
+        "甲银行.xlsx"
+      ],
+      "result": {
+        "period": "",
+        "source": "文件夹名称",
+        "conflict": true,
+        "details": "文件夹名称中识别出多个数据期：2026-05、2026-06"
+      }
+    },
+    {
+      "id": "recursive_depth_one_and_source_filters",
+      "source_workbooks": [
+        "root_2026-09.xlsx",
+        "机构乙/deep_2026-12.xlsx",
+        "机构甲/child_2026-10.xlsx"
+      ],
+      "result": {
+        "period": "",
+        "source": "源文件名",
+        "conflict": true,
+        "details": "源文件中识别出多个数据期：2026-09、2026-10、2026-12"
+      }
+    },
+    {
+      "id": "recursive_full_depth_finds_files_but_skips_outputs",
+      "source_workbooks": [
+        "机构甲/normal_2026-09.xlsx"
+      ],
+      "result": {
+        "period": "2026-09",
+        "source": "源文件名",
+        "conflict": false,
+        "details": "从源文件名识别为 2026-09"
+      }
+    },
+    {
+      "id": "xlsx_suffix_directory_matches_source_filter",
+      "source_workbooks": [
+        "目录期_202610.xlsx",
+        "银行.xlsx"
+      ],
+      "result": {
+        "period": "2026-10",
+        "source": "源文件名",
+        "conflict": false,
+        "details": "从源文件名识别为 2026-10"
+      }
+    },
+    {
+      "id": "no_period_in_files_or_folders",
+      "source_workbooks": [
+        "甲银行.xlsx"
+      ],
+      "result": {
+        "period": "",
+        "source": "",
+        "conflict": false,
+        "details": "未识别到数据期，请手动填写"
+      }
+    }
+  ]
+}

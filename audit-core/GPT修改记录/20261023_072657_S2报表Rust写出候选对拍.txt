@@ -1,0 +1,47 @@
+时间：2026-10-23 07:26:57 Asia/Shanghai
+执行者：Codex
+修改前 commit：不可用（workspace 尚无首次提交）
+修改后 commit：未创建
+WIP 情况：workspace 文件处于未跟踪状态；修改前检查过 git status 和 audit-core/GPT修改记录，未发现 WIP/草稿记录。本轮只作增量修改，未清理或覆盖其他工作。
+
+目的：完成 S2 三表结果簿 Rust 写出候选的合成样本文件级对拍，并把列宽表示差异和验收边界记录下来。此切片不是完整 S2-F01 服务迁移，不接入生产路由。
+
+本切片关联文件：
+- audit-core/src/s2_exporter.rs
+- audit-core/src/lib.rs
+- audit-core/src/s2_validation.rs
+- audit-core/tests/fixtures/s2_exporter/cases.json
+- audit-core/tests/s2_exporter_parity.rs
+- audit-core/tests/compare/run_s2_exporter_parity.py
+- audit-core/probe/reports/s2_exporter_python_baseline.json
+- audit-core/probe/reports/s2_exporter_parity.json
+- audit-core/MIGRATION_INVENTORY.md
+- EXCEL_ENGINE_ARCHITECTURE.md
+- 本记录
+
+逻辑与边界：
+- `audit_core::s2_exporter::export_s2_report` 新建“环比规则”“外部核对规则”“校验规则”三张表，通过共享 `excel_writer` 写入、共享 `excel_reader` 重开验证，临时文件验证成功后再发布。
+- 覆盖公式文本与公式/文字区分、数值零、百分数与百分点格式、异常状态/级别、验证规则涉及表单、控制字符拒绝、文本长度限制、隐藏指定说明行和进度回调。公式缓存保持为空，不承诺本轮重算。
+- 日期/时长值尚未对拍时明确拒绝；无法精确保留为 Excel `f64` 的整数明确拒绝。十进制业务运算仍在上游完成，Excel 数值单元格按 IEEE-754 双精度写入。
+- rust_xlsxwriter 的字符宽度 API 会把像素内边距反映到 OOXML 宽度。为匹配 Python writer 写入并由 openpyxl 读回的列宽，候选改用像素宽度 API。Python 对拍器同时按 OOXML `min/max` 列区间解析宽度，避免把一个合并列区间误读成仅首列有宽度。
+- Python 对拍脚本只从只读源项目导入 `ExcelExporter` 和模型；旧输出写入系统临时目录，脚本结束后清理。原始 Python 源项目未修改。
+
+对拍结果：
+- 夹具 SHA-256：`027aae09f46eb6162c0443e6fa501f8c22ee3e0233cfd74c2cf65c2dff9949ae`；5 个合成 finding，Python baseline 为 3.12.10。
+- 只读基线源 SHA-256：`exporter.py` = `ef99d056ba9038bc9aed8bd23d5d8d0d2813941ba54366c1136380ac70a2e02b`；`models.py` = `8c19d7e5521f9290ec7faf641c5454be148188a9b1a7c129127c97e6fc5b903e`。
+- Rust/Python XLSX 文件级对拍：3 张表、116 个比较单元格、11 个数值单元格、1 个公式单元格；相对容差 `1e-15`；0 项差异。公式缓存为空。比较覆盖单元格值/类型、公式、样式、列宽区间、冻结窗格、筛选、隐藏行和页面边距。结果见 `audit-core/probe/reports/s2_exporter_parity.json`。
+- `AUDIT_S2_EXPORT_PROBE_DIR=... cargo test -p audit-core --test s2_exporter_parity --locked -- --nocapture`（WSL）：1/1 通过。
+- `cargo fmt --all -- --check && cargo test --workspace --locked -q`（WSL）：格式检查通过，workspace 测试命令退出码 0。
+- 首次文件对拍发现 44 项列宽差异；核查发现其中一部分来自 rust_xlsxwriter 像素/字符宽度转换，另一部分是比较器未展开 OOXML 列范围。修正后复跑，0 项差异。未用放宽列宽容差掩盖差异。
+
+未执行项与已知风险：
+- 只有合成 finding；尚无经批准的真实脱敏模板，未验证完整 `PeriodAuditV2Service.run` 的配置检查/加载、工作簿导入、服务编排、输出路径与错误流程。
+- 未测性能、峰值内存；未在 Windows 原生 Rust、麒麟 V10、统信 UOS/glibc 2.28 上验证，未构建 deb。
+- 未完成真实格式/模板保留验收；日期/时长和大整数按上述规则拒绝。候选不代表通用 rust_xlsxwriter 写入能力验收。
+- S2-F01 仍未完成，旧 Python 功能未删除，候选未接入生产默认路由。
+
+依赖、配置及版本：Cargo.toml/Cargo.lock 未改，无新增依赖；`audit-core` 仍为 0.1.0，不升级；无 VBA、Office 或外部引擎影响。
+
+回滚：如需撤回此候选，删除上述 S2 exporter 模块、导出入口、对应 fixture/集成测试/对拍脚本和两份 probe JSON，并撤销 `MIGRATION_INVENTORY.md`、`EXCEL_ENGINE_ARCHITECTURE.md` 与本记录中的对应条目。只删除 `audit-core/probe/tmp/s2-exporter/` 下本轮生成的临时 XLSX（若不再需要复查）；不要清理其他未跟踪文件或改动只读 Python 源项目。
+
+【组件版本】audit-core 0.1.0，不升级。

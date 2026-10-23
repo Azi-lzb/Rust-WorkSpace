@@ -1,0 +1,40 @@
+{
+  "status": "python_baseline_generated",
+  "source": {
+    "module": "base_audit.systems.s2_report_collection.exporter.build_summary",
+    "exporter_sha256": "EF99D056BA9038BC9AED8BD23D5D8D0D2813941BA54366C1136380AC70A2E02B",
+    "models_sha256": "8C19D7E5521F9290EC7FAF641C5454BE148188A9B1A7C129127C97E6FC5B903E",
+    "baseline_python": "3.12.10"
+  },
+  "fixture": {
+    "path": "tests/fixtures/s2_summary/cases.json",
+    "case_count": 2
+  },
+  "result": {
+    "unique_records_and_abnormal_finding_breakdowns": {
+      "institutions": 3,
+      "forms": 2,
+      "indicators": 4,
+      "total_findings": 4,
+      "abnormal_findings": 3,
+      "by_type": {
+        "环比": 2,
+        "": 1
+      },
+      "by_severity": {
+        "硬性": 1,
+        "软性": 1
+      }
+    },
+    "empty_input": {
+      "institutions": 0,
+      "forms": 0,
+      "indicators": 0,
+      "total_findings": 0,
+      "abnormal_findings": 0,
+      "by_type": {},
+      "by_severity": {}
+    }
+  },
+  "scope": "S2 summary aggregation only: unique institution/form counts, record/finding totals, and abnormal finding type/severity counts."
+}

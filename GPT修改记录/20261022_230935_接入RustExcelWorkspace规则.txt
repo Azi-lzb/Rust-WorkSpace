@@ -1,0 +1,46 @@
+时间：2026-10-22 23:09:35 +08:00
+执行者：Codex
+修改前/后 commit：不可用（workspace 尚无首次提交）
+WIP 情况：修改前检查 git status；当前 workspace 文件均显示为未跟踪，无干净 Git 基线。本轮仅处理规则文档，不清理或覆盖其他文件。
+
+目的：
+将用户提供的 Excel 读写、修改与引擎路由建议接入 workspace 级 rules，并合并原项目可复用的操作契约、安全回退、能力登记和性能验收原则。
+
+修改/新增文件：
+- rules/13_Rust_Excel读写修改与引擎路由规范.md：新增 workspace 级 Excel 技术规范、初始能力快照和操作迁移清单。
+- EXCEL_ENGINE_ARCHITECTURE.md：新增三类修改引擎的初始操作能力矩阵，状态仅覆盖现有合成证据。
+- README.md：修正既有工作簿编辑摘要，移除“umya 为默认编辑器”的歧义。
+- AGENTS.md：新增规则入口、优先级和不存在 rules/12 的说明；修正修改记录/版本规则路径。
+- audit-core/rules/03_Excel与OOXML边界.md：标明 workspace 规则优先级和本文件适用范围。
+- audit-core/rules/07_测试与发布.md：区分 Audit Python pytest 规则与 workspace Rust Excel 后端证据。
+- audit-core/rules/13_表格读写技术选型与主动优化.md：链接到 workspace 级规范，保留 Audit 业务补充，并统一 W01 新建 XLSX 的 rust_xlsxwriter 方向。
+- 本记录文件。
+
+冲突与处理：
+- workspace 原先没有根 rules/；03、07、13 只存在于 audit-core/rules/。新建根 rules/13 作为共享规范，不覆盖 Audit 业务规则。
+- workspace 根和 audit-core/rules/ 均不存在 rules/12；Open-Data-Audit 原项目有 rules/12。仅采纳其“保留已验收实现、性能切换需测量和对拍”的原则。
+- 根 README 曾将 umya 描述为既有工作簿编辑方式，容易被理解成默认，已对齐为 ExcelEditPlan/ExcelModifier 条件路由。audit-core/rules/13 的 W01 表格曾将 Direct OOXML writer 排在 rust_xlsxwriter 前，与 workspace 根 AGENTS.md 和该规则自身其他段落不一致。现统一为 rust_xlsxwriter 默认，Direct OOXML 仅为对比候选。
+- 两个原项目规则中的 Python/openpyxl 生产路由、旧菜单/系统迁移顺序、宽泛 Office 路径均未照搬；来源项目保持只读。
+- 现有 Rust 代码、业务 crate、测试/夹具均未修改。
+
+测试与检查：
+- 文档任务未运行 cargo/pytest 测试。
+- 已检查 AGENTS.md、workspace 根 README、Cargo/crate 结构、Excel 架构和 Python 操作清单、audit-core/rules/03、07、13，以及两个原始 Python 项目的规则目录。
+- 手工检查了根 AGENTS 入口、规则章节、相对链接、W01 冲突修正和当前 probe 报告范围。
+- 未执行代码构建、业务对拍、Linux 目标机验证。
+
+已知问题/后续：
+- Python/openpyxl 操作调用链和修改引擎能力矩阵尚未全部完成；静态清单不可视为完整验收。
+- Excelize worker 与 sidecar 功能均未接通；不进入运行路由。
+- 真实模板与 glibc 2.28 目标机的全套对拍未完成。
+- 当前 workspace 无 Git 首次提交，不能用 Git 恢复原始文档；回退须按下列说明人工逆向。
+
+回滚提示：
+- 删除新增的 rules/13_Rust_Excel读写修改与引擎路由规范.md 和本记录。
+- 从 AGENTS.md 删除新增“规则入口”小节，并将 §9 的 audit-core/rules/11 路径恢复为修改前的 rules/11 写法。
+- 从 audit-core/rules/03、07、13 删除新增的 workspace 规则提示；将 audit-core/rules/13 的 W01 两处行恢复为修改前文本。
+- 将 README.md 的编辑器描述恢复为修改前文本；从 EXCEL_ENGINE_ARCHITECTURE.md 移除入口提示、§4.2 能力矩阵和相应勾选项；从 rules/13 删除对该矩阵的引用。
+- 不触碰任何 Rust 业务实现或两个原始 Python 项目。
+
+【组件版本】
+不升级。纯文档/规则治理变更，不修改产品、功能或配置版本。

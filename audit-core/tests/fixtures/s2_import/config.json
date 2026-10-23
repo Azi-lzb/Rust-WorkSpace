@@ -1,0 +1,73 @@
+{
+  "unit_settings": {
+    "source_unit": "元",
+    "output_file_unit": "万元"
+  },
+  "institutions_by_id": {
+    "9144": {
+      "institution_id": "9144",
+      "institution_name": "配置名称不覆盖文件名",
+      "social_credit_code": "CREDIT-9144",
+      "institution_type": "农商行",
+      "handling_branch": "一部",
+      "region": "示例地区"
+    }
+  },
+  "institutions_by_name": {
+    "乙银行": {
+      "institution_id": "9200",
+      "institution_name": "乙银行配置名称",
+      "social_credit_code": "CREDIT-9200",
+      "institution_type": "城商行",
+      "handling_branch": "二部",
+      "region": "另一个地区"
+    }
+  },
+  "indicators": {
+    "20202001": {
+      "indicator_name": "存款余额配置名",
+      "form_code": "20202",
+      "data_type": "余额"
+    },
+    "20202002": {
+      "indicator_name": "累计金额",
+      "form_code": "20202",
+      "data_type": "累发"
+    },
+    "20201028": {
+      "indicator_name": "持股比例",
+      "form_code": "20202",
+      "data_type": "百分数"
+    },
+    "20202003": {
+      "indicator_name": "机构数量",
+      "form_code": "20202",
+      "data_type": "个数"
+    },
+    "20202004": {
+      "indicator_name": "真实零值",
+      "form_code": "20202",
+      "data_type": "余额"
+    },
+    "20202005": {
+      "indicator_name": "逗号金额",
+      "form_code": "20202",
+      "data_type": "余额"
+    },
+    "20202006": {
+      "indicator_name": "无效金额",
+      "form_code": "20202",
+      "data_type": "余额"
+    },
+    "20202007": {
+      "indicator_name": "文字示例",
+      "form_code": "20202",
+      "data_type": "文字"
+    },
+    "20202008": {
+      "indicator_name": "占位文字",
+      "form_code": "20202",
+      "data_type": "文字"
+    }
+  }
+}

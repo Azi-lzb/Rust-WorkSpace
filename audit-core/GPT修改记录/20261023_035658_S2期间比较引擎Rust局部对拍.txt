@@ -1,0 +1,52 @@
+【时间】2026-10-23 03:56:58（本机时间）
+【执行者】Codex
+【修改前 commit】不可用；当前 workspace 文件处于未跟踪 WIP 状态，无法从 Git 索引确定起始快照。
+【修改后 commit】未创建 commit。
+【WIP 情况】保留现有 workspace WIP；没有重置或覆盖其他文件。原始 Python 项目只读。
+
+【修改目的】将 Open-Data-Audit S2 两期比较规则引擎作为独立局部切片迁移到 Rust，并用只读 Python 源实现生成基线，对拍计算结果和错误行为。
+
+【修改/新增文件】
+- `audit-core/src/s2_period.rs`：新增两期比较引擎，处理数值/文字/缺失侧、表单不一致、百分数百分点、Decimal 金额、策略区间、严重度、计算轨迹及策略错误。
+- `audit-core/src/lib.rs`：导出 `s2_period` 模块。
+- `audit-core/src/s2_import.rs`：为导入值增加反序列化支持，供合成对拍夹具构造既有导入模型。
+- `audit-core/src/unit_conversion.rs`：为 Decimal tuple 增加反序列化支持。
+- `audit-core/src/s2_validation.rs`：将 finding 的 `change_rate` 扩展为 JSON 值，以保持 Decimal tuple 与 Python 基线的序列化结构；空值仍序列化为 null。
+- `audit-core/tests/fixtures/s2_period/cases.json`：新增 13 个合成规则场景。
+- `audit-core/tests/compare/run_s2_period_baseline.py`：新增 Python 基线生成器，只读导入原项目 period engine 和模型。
+- `audit-core/tests/s2_period_parity.rs`：新增 Rust 结果与 Python 基线逐字段对拍测试。
+- `audit-core/probe/reports/s2_period_python_baseline.json`：生成的只读 Python 基线。
+- `audit-core/probe/reports/s2_period_parity.json`：记录来源哈希、覆盖范围、验收命令和未验证项。
+- `audit-core/MIGRATION_INVENTORY.md`：登记本次已对拍的局部迁移，S2-F01 总体状态保持未验证。
+- `audit-core/GPT修改记录/20261023_035658_S2期间比较引擎Rust局部对拍.txt`：本记录。
+
+【逻辑、配置及 VBA 变化】
+- 用 Rust 实现 `PeriodComparisonEngine` 的两期比较部分，金额使用 Decimal tuple 计算，按 Python 默认 Decimal 精度 28 和 half-even 舍入。
+- 对拍初期发现并修正两处差异：浮点计算轨迹的百分比显示未按 Python 百分比格式乘 100；Decimal 除法结果保留了 Python 不输出的尾随精度零。
+- `S2AuditFinding.change_rate` 序列化字段能够容纳 Decimal tuple；空 finding 保持 JSON null。
+- 未修改配置文件、VBA、依赖、生产路由或构建配置；未修改原始 Python 项目。
+
+【基线来源】
+- Python 版本：3.12.10。
+- `period_engine.py` SHA-256：`75C549C3384EF6123C94B5FB08256B07C398B2753FA1B1A6A905478F90A6A4C3`。
+- `models.py` SHA-256：`8C19D7E5521F9290EC7FAF641C5454BE148188A9B1A7C129127C97E6FC5B903E`。
+- Python 基线仅作为测试工具；生产路径不调用 Python。
+
+【测试与对拍】
+- `python -B audit-core/tests/compare/run_s2_period_baseline.py`：通过，生成 13 个场景、15 条发现、2 个预期配置错误。
+- `cargo test -p audit-core --lib --test s2_period_parity --locked`：通过，17 个单元测试和 1 个集成对拍测试通过，0 失败。
+- `cargo fmt --all -- --check`：通过。
+- `cargo test --workspace --locked`（WSL Ubuntu）：通过，67 个测试通过，0 失败。
+- 对拍为合成 JSON 输入和规则配置，不含真实工作簿；未测量性能/内存，未验证目标 Linux/glibc 2.28、离线打包或 deb 安装。
+
+【已知问题与未完成范围】
+- 这只是 S2 期间比较计算局部，不包括配置工作簿加载、真实目录导入到规则引擎的完整接线、外部核对、表达式、服务编排、报告写入或真实模板对拍。
+- 13 个用例不能代表 Python Decimal 的全部边界；后续应从原项目测试和脱敏配置/样本扩充场景。
+- 当前 `compare_periods` 未接入生产默认路径；S2-F01 保持未验证。
+- 没有性能或峰值内存结论。
+
+【删除清单与回滚提示】
+- 回滚时成组撤销上述实现、fixture、Python baseline generator、生成的 baseline/parity 报告、迁移清单行和本记录。
+- 不删除或改写原始 Python 源；Rust 生产路由未改变。
+
+【组件版本】不升级；Cargo package 元数据未改变，workspace 尚未为该模块建立产品组件版本映射。

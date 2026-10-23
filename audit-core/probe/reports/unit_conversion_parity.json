@@ -1,0 +1,54 @@
+{
+  "status": "passed_on_fixture",
+  "source": {
+    "project": "C:\\Users\\AZI\\Desktop\\VibeCode\\3.open-data-audit",
+    "module": "core/src/base_audit/systems/s2_report_collection/unit_conversion.py",
+    "sha256": "BE9AF2EAB715AC6ACDD496363B551C649486DD1A0939B55CB746A7AFCD6761BA",
+    "baseline_python": "3.12.10",
+    "importer_module": "core/src/base_audit/systems/s2_report_collection/importer.py",
+    "importer_sha256": "EEF44740DE8EB7AB0E09DE7C074FF06F22F515CC9A1518982FA662D123A49BEC"
+  },
+  "rust_module": "audit-core/src/unit_conversion.rs",
+  "numeric_contract": {
+    "representation": "sign + arbitrary-length decimal digits + base-ten exponent",
+    "scaling": "unit conversion shifts the exponent by an integer power of ten; no binary floating-point conversion or rounding",
+    "source_unit_powers": {"元": 0, "万元": 4, "亿元": 8},
+    "reader_adapter": "excel_reader::CellValue; JSON serialization remains tagged as {type,value}; XLSX-like values follow source openpyxl-compatible normalization, while XLS integers/bools follow source xlrd-compatible normalization"
+  },
+  "fixtures": {
+    "amount_data_type_cases": 5,
+    "as_decimal_cases": 19,
+    "conversion_cases": 15,
+    "to_yuan_cases": 4,
+    "reader_cell_cases": 19,
+    "total_cases": 62
+  },
+  "comparison": "Exact Python Decimal sign/digits/exponent tuple equality; ValueError category and message equality; amount data-type membership equality; typed cell normalization, skip behavior, Decimal tuple and unit conversion compared to source importer._normalize_fast_value/_decimal_number.",
+  "checks": {
+    "baseline_command": "python -B audit-core/tests/compare/run_unit_conversion_baseline.py --source-root <read-only Open-Data-Audit root> --output audit-core/probe/reports/unit_conversion_python_baseline.json",
+    "rust_parity_command": "cargo test -p excel-reader -p audit-core --locked",
+    "rust_unit_tests_passed": 11,
+    "rust_parity_tests_passed": 1,
+    "excel_reader_unit_tests_passed": 3,
+    "rust_fixture_cases_compared": 62,
+    "rust_test_failures": 0,
+    "source_test_command": "python -B -m pytest -q -p no:cacheprovider tests/test_s2_units.py -k 'amount_conversion_is_exact_without_decimal_context_rounding or unit_conversion_rejects_unsupported_unit or source_amounts_convert_to_output_unit_before_engines_and_keep_other_types'",
+    "source_tests_passed": 3,
+    "source_tests_deselected": 48,
+    "source_test_failures": 0,
+    "workspace_test_command": "cargo test --workspace --locked",
+    "workspace_tests_passed": 56,
+    "workspace_test_failures": 0,
+    "format_command": "cargo fmt --all -- --check",
+    "format_check": "passed"
+  },
+  "scope": "Pure S2 amount-type/unit-conversion helpers plus a typed cell-value adapter that matches the source importer's XLS/XLSX normalization. It is not connected to the S2 importer, period/rule/external comparison engines, real workbook reading workflow, or report writing.",
+  "unverified": [
+    "The adapter is not yet called by an S2 importer or verified against a real workbook read through excel-reader.",
+    "XLS/XLSX numeric semantics are fixture-matched to the source normalization helpers; other formats and value-origin combinations are not covered.",
+    "Binary64-to-decimal string parity is checked on the listed fixtures, not exhaustively over all finite f64 values.",
+    "Extreme exponent overflow behavior is not included in the fixture baseline.",
+    "No real business workbook, full S2 flow, target Linux package, or glibc 2.28 runtime was tested."
+  ],
+  "dependencies_or_routes_changed": false
+}

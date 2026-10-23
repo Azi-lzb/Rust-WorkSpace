@@ -1,0 +1,52 @@
+【时间】2026-10-23 04:07:05（本机时间）
+【执行者】Codex
+【修改前 commit】不可用；当前 workspace 文件均处于未跟踪 WIP 状态，无法从 Git 索引确定起始快照。
+【修改后 commit】未创建 commit。
+【WIP 情况】保留现有 workspace WIP；没有重置、覆盖或清理其他文件。两个原始 Python 项目只读。
+
+【修改目的】将 Open-Data-Audit S2 外部数据比较规则迁移到 Rust，使用已导入模型和外部数值元数据作为输入，并与只读 Python 引擎逐字段对拍。
+
+【修改/新增文件】
+- `audit-core/src/s2_external.rs`：新增外部比较模型、日期归一、六种比较方式、单位换算、缺失说明/回退和 finding 输出。
+- `audit-core/src/lib.rs`：导出 `s2_external` 模块。
+- `audit-core/src/s2_import.rs`：为 `IndicatorRecord` 和 `S2SourceRef` 增加反序列化能力，供 JSON 夹具构造输入。
+- `audit-core/src/s2_period.rs`：将已有 Decimal 比较、减法和格式化函数开放为 crate 内共享 helper，供外部引擎复用，未改变其逻辑。
+- `audit-core/tests/fixtures/s2_external/cases.json`：新增 12 个合成场景，其中比较方式场景包含 13 个边界向量。
+- `audit-core/tests/compare/run_s2_external_baseline.py`：新增 Python 基线生成器，只读调用原 `ExternalComparisonEngine`。
+- `audit-core/tests/s2_external_parity.rs`：新增 Rust 输出与 Python 基线逐字段对拍测试。
+- `audit-core/probe/reports/s2_external_python_baseline.json`：生成的 Python 基线。
+- `audit-core/probe/reports/s2_external_parity.json`：记录源哈希、对拍结果、适用范围和未验证项。
+- `audit-core/MIGRATION_INVENTORY.md`：登记外部比较规则的局部迁移；S2-F01 总体仍为未验证。
+- `audit-core/GPT修改记录/20261023_040705_S2外部数据比较引擎Rust局部对拍.txt`：本记录。
+
+【逻辑、配置及 VBA 变化】
+- 按源引擎语义处理等于/不等于/大于/大于等于/小于/小于等于、等于容差、金额输出单位、非金额原尺度、机构映射优先级、缺失元数据说明和显式零回退。
+- 时序外部数据严格按当前日期匹配；不借用其他日期，且不会使用普通布局的机构缺失零回退。
+- 未改配置工作簿、VBA、依赖、生产路由或构建配置；未修改两个原始 Python 项目。
+
+【基线来源】
+- Python 版本：3.12.10。
+- `external_engine.py` SHA-256：`4113AD8B3211AE6EE8B5227B5BBDC1F954DD24D836AAE0199124D512E1420BDD`。
+- `importer.py` SHA-256：`EEF44740DE8EB7AB0E09DE7C074FF06F22F515CC9A1518982FA662D123A49BEC`。
+- `models.py` SHA-256：`8C19D7E5521F9290EC7FAF641C5454BE148188A9B1A7C129127C97E6FC5B903E`。
+- `unit_conversion.py` SHA-256：`BE9AF2EAB715AC6ACDD496363B551C649486DD1A0939B55CB746A7AFCD6761BA`。
+- Python 仅用于测试基线；产品运行路径没有 Python 调用。
+
+【测试与对拍】
+- `python -B audit-core/tests/compare/run_s2_external_baseline.py`：通过，12 个场景产生 31 条发现和 2 个预期错误。
+- `cargo test -p audit-core --lib --test s2_external_parity --locked`：通过，19 个单元测试和 1 个集成对拍测试通过，0 失败。
+- `cargo fmt --all -- --check`：通过。
+- `cargo test --workspace --locked`（WSL Ubuntu）：通过，70 个测试通过，0 失败。
+- 对拍输入是合成 JSON 记录和外部数据元数据，不包含真实工作簿；没有测量性能/内存，也没有在麒麟/UOS 或 glibc 2.28 环境构建/打包。
+
+【已知问题与未完成范围】
+- 本切片不读取外部工作簿，也未将 Rust 外部解析器的输出接入本引擎；未迁移 S2 配置工作簿读取和校验。
+- 未接入 S2 服务编排、规则表达式或报告导出，不代表 S2-F01 端到端迁移完成。
+- 测试覆盖源引擎关键规则和输入元数据分支，但未使用真实脱敏外部文件；Python `datetime/date` 对象由现有 Rust `source_date` 字符串边界承接的完整性未验收。
+- 当前 Rust 引擎未接入生产默认路由，目标系统离线运行和性能未验证。
+
+【删除清单与回滚提示】
+- 回滚时成组撤销上述外部比较实现、fixture、Python baseline generator、生成的 baseline/parity 报告、迁移清单行和本记录。
+- 保留原始 Python 源代码及现有生产路径。
+
+【组件版本】不升级；Cargo package 元数据未改变，workspace 尚未为该模块建立产品组件版本映射。

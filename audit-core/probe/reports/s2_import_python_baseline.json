@@ -1,0 +1,591 @@
+{
+  "status": "passed_on_synthetic_fixture",
+  "source": {
+    "project": "C:\\Users\\AZI\\Desktop\\VibeCode\\3.open-data-audit",
+    "module": "core/src/base_audit/systems/s2_report_collection/importer.py",
+    "sha256": "EEF44740DE8EB7AB0E09DE7C074FF06F22F515CC9A1518982FA662D123A49BEC",
+    "baseline_python": "3.12.10",
+    "reader": "source importer selected python-calamine when available; legacy fallback unchanged"
+  },
+  "fixture": {
+    "directory": "tests/fixtures/s2_import",
+    "workbooks": [
+      "9144#2026-06-30#x#20202#甲银行.xlsx",
+      "#2026-06-30#x#20202#乙银行.xlsx"
+    ],
+    "scenario_count": 17
+  },
+  "result": {
+    "records": [
+      {
+        "institution_id": "9200",
+        "institution_name": "乙银行",
+        "social_credit_code": "CREDIT-9200",
+        "institution_type": "城商行",
+        "handling_branch": "二部",
+        "region": "另一个地区",
+        "form_code": "20202",
+        "indicator_code": "20202001",
+        "indicator_name": "乙银行存款余额",
+        "period": "2026-06",
+        "source_date": "2026-06-30",
+        "value": {
+          "type": "integer",
+          "value": 10000
+        },
+        "value_type": "余额",
+        "source_unit": "元",
+        "normalized_value": {
+          "type": "decimal",
+          "value": {
+            "sign": 0,
+            "digits": [
+              1,
+              0,
+              0,
+              0,
+              0
+            ],
+            "exponent": -4
+          }
+        },
+        "normalized_unit": "万元",
+        "source": {
+          "source_file": "#2026-06-30#x#20202#乙银行.xlsx",
+          "source_sheet": "20202",
+          "source_row": 4
+        }
+      },
+      {
+        "institution_id": "9144",
+        "institution_name": "甲银行",
+        "social_credit_code": "9144",
+        "institution_type": "农商行",
+        "handling_branch": "一部",
+        "region": "示例地区",
+        "form_code": "20202",
+        "indicator_code": "20202001",
+        "indicator_name": "存款余额",
+        "period": "2026-06",
+        "source_date": "2026-06-30",
+        "value": {
+          "type": "number",
+          "value": 1234567.89
+        },
+        "value_type": "余额",
+        "source_unit": "元",
+        "normalized_value": {
+          "type": "decimal",
+          "value": {
+            "sign": 0,
+            "digits": [
+              1,
+              2,
+              3,
+              4,
+              5,
+              6,
+              7,
+              8,
+              9
+            ],
+            "exponent": -6
+          }
+        },
+        "normalized_unit": "万元",
+        "source": {
+          "source_file": "9144#2026-06-30#x#20202#甲银行.xlsx",
+          "source_sheet": "20202",
+          "source_row": 4
+        }
+      },
+      {
+        "institution_id": "9144",
+        "institution_name": "甲银行",
+        "social_credit_code": "9144",
+        "institution_type": "农商行",
+        "handling_branch": "一部",
+        "region": "示例地区",
+        "form_code": "20202",
+        "indicator_code": "20202002",
+        "indicator_name": "累计金额",
+        "period": "2026-06",
+        "source_date": "2026-06-30",
+        "value": {
+          "type": "number",
+          "value": 12345678.9
+        },
+        "value_type": "累发",
+        "source_unit": "元",
+        "normalized_value": {
+          "type": "decimal",
+          "value": {
+            "sign": 0,
+            "digits": [
+              1,
+              2,
+              3,
+              4,
+              5,
+              6,
+              7,
+              8,
+              9
+            ],
+            "exponent": -5
+          }
+        },
+        "normalized_unit": "万元",
+        "source": {
+          "source_file": "9144#2026-06-30#x#20202#甲银行.xlsx",
+          "source_sheet": "20202",
+          "source_row": 5
+        }
+      },
+      {
+        "institution_id": "9144",
+        "institution_name": "甲银行",
+        "social_credit_code": "9144",
+        "institution_type": "农商行",
+        "handling_branch": "一部",
+        "region": "示例地区",
+        "form_code": "20202",
+        "indicator_code": "20201028",
+        "indicator_name": "持股比例",
+        "period": "2026-06",
+        "source_date": "2026-06-30",
+        "value": {
+          "type": "number",
+          "value": 9.92
+        },
+        "value_type": "百分数",
+        "source_unit": "原始单位",
+        "normalized_value": {
+          "type": "number",
+          "value": 9.92
+        },
+        "normalized_unit": "",
+        "source": {
+          "source_file": "9144#2026-06-30#x#20202#甲银行.xlsx",
+          "source_sheet": "20202",
+          "source_row": 6
+        }
+      },
+      {
+        "institution_id": "9144",
+        "institution_name": "甲银行",
+        "social_credit_code": "9144",
+        "institution_type": "农商行",
+        "handling_branch": "一部",
+        "region": "示例地区",
+        "form_code": "20202",
+        "indicator_code": "20202003",
+        "indicator_name": "机构数量",
+        "period": "2026-06",
+        "source_date": "2026-06-30",
+        "value": {
+          "type": "integer",
+          "value": 42
+        },
+        "value_type": "个数",
+        "source_unit": "原始单位",
+        "normalized_value": {
+          "type": "number",
+          "value": 42.0
+        },
+        "normalized_unit": "",
+        "source": {
+          "source_file": "9144#2026-06-30#x#20202#甲银行.xlsx",
+          "source_sheet": "20202",
+          "source_row": 7
+        }
+      },
+      {
+        "institution_id": "9144",
+        "institution_name": "甲银行",
+        "social_credit_code": "9144",
+        "institution_type": "农商行",
+        "handling_branch": "一部",
+        "region": "示例地区",
+        "form_code": "20202",
+        "indicator_code": "20202004",
+        "indicator_name": "真实零值",
+        "period": "2026-06",
+        "source_date": "2026-06-30",
+        "value": {
+          "type": "integer",
+          "value": 0
+        },
+        "value_type": "余额",
+        "source_unit": "元",
+        "normalized_value": {
+          "type": "decimal",
+          "value": {
+            "sign": 0,
+            "digits": [
+              0
+            ],
+            "exponent": -4
+          }
+        },
+        "normalized_unit": "万元",
+        "source": {
+          "source_file": "9144#2026-06-30#x#20202#甲银行.xlsx",
+          "source_sheet": "20202",
+          "source_row": 8
+        }
+      },
+      {
+        "institution_id": "9144",
+        "institution_name": "甲银行",
+        "social_credit_code": "9144",
+        "institution_type": "农商行",
+        "handling_branch": "一部",
+        "region": "示例地区",
+        "form_code": "20202",
+        "indicator_code": "20202005",
+        "indicator_name": "逗号金额",
+        "period": "2026-06",
+        "source_date": "2026-06-30",
+        "value": {
+          "type": "string",
+          "value": "1,234.50"
+        },
+        "value_type": "余额",
+        "source_unit": "元",
+        "normalized_value": {
+          "type": "decimal",
+          "value": {
+            "sign": 0,
+            "digits": [
+              1,
+              2,
+              3,
+              4,
+              5,
+              0
+            ],
+            "exponent": -6
+          }
+        },
+        "normalized_unit": "万元",
+        "source": {
+          "source_file": "9144#2026-06-30#x#20202#甲银行.xlsx",
+          "source_sheet": "20202",
+          "source_row": 9
+        }
+      },
+      {
+        "institution_id": "9144",
+        "institution_name": "甲银行",
+        "social_credit_code": "9144",
+        "institution_type": "农商行",
+        "handling_branch": "一部",
+        "region": "示例地区",
+        "form_code": "20202",
+        "indicator_code": "20202006",
+        "indicator_name": "无效金额",
+        "period": "2026-06",
+        "source_date": "2026-06-30",
+        "value": {
+          "type": "string",
+          "value": "待核实"
+        },
+        "value_type": "余额",
+        "source_unit": "元",
+        "normalized_value": {
+          "type": "string",
+          "value": "待核实"
+        },
+        "normalized_unit": "",
+        "source": {
+          "source_file": "9144#2026-06-30#x#20202#甲银行.xlsx",
+          "source_sheet": "20202",
+          "source_row": 10
+        }
+      },
+      {
+        "institution_id": "9144",
+        "institution_name": "甲银行",
+        "social_credit_code": "9144",
+        "institution_type": "农商行",
+        "handling_branch": "一部",
+        "region": "示例地区",
+        "form_code": "20202",
+        "indicator_code": "20202007",
+        "indicator_name": "文字示例",
+        "period": "2026-06",
+        "source_date": "2026-06-30",
+        "value": {
+          "type": "string",
+          "value": " 保留 文本 "
+        },
+        "value_type": "文字",
+        "source_unit": "原始单位",
+        "normalized_value": {
+          "type": "string",
+          "value": "保留 文本"
+        },
+        "normalized_unit": "",
+        "source": {
+          "source_file": "9144#2026-06-30#x#20202#甲银行.xlsx",
+          "source_sheet": "20202",
+          "source_row": 11
+        }
+      },
+      {
+        "institution_id": "9144",
+        "institution_name": "甲银行",
+        "social_credit_code": "9144",
+        "institution_type": "农商行",
+        "handling_branch": "一部",
+        "region": "示例地区",
+        "form_code": "20202",
+        "indicator_code": "20202008",
+        "indicator_name": "占位文字",
+        "period": "2026-06",
+        "source_date": "2026-06-30",
+        "value": {
+          "type": "integer",
+          "value": 0
+        },
+        "value_type": "文字",
+        "source_unit": "原始单位",
+        "normalized_value": {
+          "type": "string",
+          "value": ""
+        },
+        "normalized_unit": "",
+        "source": {
+          "source_file": "9144#2026-06-30#x#20202#甲银行.xlsx",
+          "source_sheet": "20202",
+          "source_row": 12
+        }
+      },
+      {
+        "institution_id": "9144",
+        "institution_name": "甲银行",
+        "social_credit_code": "9144",
+        "institution_type": "农商行",
+        "handling_branch": "一部",
+        "region": "示例地区",
+        "form_code": "20202",
+        "indicator_code": "20209999",
+        "indicator_name": "未配置指标",
+        "period": "2026-06",
+        "source_date": "2026-06-30",
+        "value": {
+          "type": "number",
+          "value": 8.5
+        },
+        "value_type": "数值",
+        "source_unit": "原始单位",
+        "normalized_value": {
+          "type": "number",
+          "value": 8.5
+        },
+        "normalized_unit": "",
+        "source": {
+          "source_file": "9144#2026-06-30#x#20202#甲银行.xlsx",
+          "source_sheet": "20202",
+          "source_row": 13
+        }
+      },
+      {
+        "institution_id": "9144",
+        "institution_name": "甲银行",
+        "social_credit_code": "9144",
+        "institution_type": "农商行",
+        "handling_branch": "一部",
+        "region": "示例地区",
+        "form_code": "20202",
+        "indicator_code": "9223372036854775808",
+        "indicator_name": "超过有符号整数范围的代码",
+        "period": "2026-06",
+        "source_date": "2026-06-30",
+        "value": {
+          "type": "integer",
+          "value": 1
+        },
+        "value_type": "数值",
+        "source_unit": "原始单位",
+        "normalized_value": {
+          "type": "number",
+          "value": 1.0
+        },
+        "normalized_unit": "",
+        "source": {
+          "source_file": "9144#2026-06-30#x#20202#甲银行.xlsx",
+          "source_sheet": "20202",
+          "source_row": 15
+        }
+      }
+    ],
+    "duplicates": [
+      [
+        {
+          "institution_id": "9144",
+          "institution_name": "甲银行",
+          "social_credit_code": "9144",
+          "institution_type": "农商行",
+          "handling_branch": "一部",
+          "region": "示例地区",
+          "form_code": "20202",
+          "indicator_code": "20202001",
+          "indicator_name": "存款余额",
+          "period": "2026-06",
+          "source_date": "2026-06-30",
+          "value": {
+            "type": "number",
+            "value": 1234567.89
+          },
+          "value_type": "余额",
+          "source_unit": "元",
+          "normalized_value": {
+            "type": "decimal",
+            "value": {
+              "sign": 0,
+              "digits": [
+                1,
+                2,
+                3,
+                4,
+                5,
+                6,
+                7,
+                8,
+                9
+              ],
+              "exponent": -6
+            }
+          },
+          "normalized_unit": "万元",
+          "source": {
+            "source_file": "9144#2026-06-30#x#20202#甲银行.xlsx",
+            "source_sheet": "20202",
+            "source_row": 4
+          }
+        },
+        {
+          "institution_id": "9144",
+          "institution_name": "甲银行",
+          "social_credit_code": "9144",
+          "institution_type": "农商行",
+          "handling_branch": "一部",
+          "region": "示例地区",
+          "form_code": "20203",
+          "indicator_code": "20202001",
+          "indicator_name": "重复余额",
+          "period": "2026-06",
+          "source_date": "2026-06-30",
+          "value": {
+            "type": "integer",
+            "value": 9999999
+          },
+          "value_type": "余额",
+          "source_unit": "元",
+          "normalized_value": {
+            "type": "decimal",
+            "value": {
+              "sign": 0,
+              "digits": [
+                9,
+                9,
+                9,
+                9,
+                9,
+                9,
+                9
+              ],
+              "exponent": -4
+            }
+          },
+          "normalized_unit": "万元",
+          "source": {
+            "source_file": "9144#2026-06-30#x#20202#甲银行.xlsx",
+            "source_sheet": "20203",
+            "source_row": 4
+          }
+        }
+      ],
+      [
+        {
+          "institution_id": "9144",
+          "institution_name": "甲银行",
+          "social_credit_code": "9144",
+          "institution_type": "农商行",
+          "handling_branch": "一部",
+          "region": "示例地区",
+          "form_code": "20202",
+          "indicator_code": "20202004",
+          "indicator_name": "真实零值",
+          "period": "2026-06",
+          "source_date": "2026-06-30",
+          "value": {
+            "type": "integer",
+            "value": 0
+          },
+          "value_type": "余额",
+          "source_unit": "元",
+          "normalized_value": {
+            "type": "decimal",
+            "value": {
+              "sign": 0,
+              "digits": [
+                0
+              ],
+              "exponent": -4
+            }
+          },
+          "normalized_unit": "万元",
+          "source": {
+            "source_file": "9144#2026-06-30#x#20202#甲银行.xlsx",
+            "source_sheet": "20202",
+            "source_row": 8
+          }
+        },
+        {
+          "institution_id": "9144",
+          "institution_name": "甲银行",
+          "social_credit_code": "9144",
+          "institution_type": "农商行",
+          "handling_branch": "一部",
+          "region": "示例地区",
+          "form_code": "20203",
+          "indicator_code": "20202004",
+          "indicator_name": "重复零值",
+          "period": "2026-06",
+          "source_date": "2026-06-30",
+          "value": {
+            "type": "integer",
+            "value": 0
+          },
+          "value_type": "余额",
+          "source_unit": "元",
+          "normalized_value": {
+            "type": "decimal",
+            "value": {
+              "sign": 0,
+              "digits": [
+                0
+              ],
+              "exponent": -4
+            }
+          },
+          "normalized_unit": "万元",
+          "source": {
+            "source_file": "9144#2026-06-30#x#20202#甲银行.xlsx",
+            "source_sheet": "20203",
+            "source_row": 5
+          }
+        }
+      ]
+    ],
+    "warnings": [
+      "无法识别文件名，已跳过：unrecognized.xlsx",
+      "表单归属不一致：9144#2026-06-30#x#20202#甲银行.xlsx/20203 第4行，声明表单 20203，指标 20202001 配置归属 20202",
+      "表单归属不一致：9144#2026-06-30#x#20202#甲银行.xlsx/20203 第5行，声明表单 20203，指标 20202004 配置归属 20202"
+    ]
+  },
+  "scope": "Synthetic S2 .xlsx directory import: filename identity, first-three-column rows, institution/indicator enrichment, amount normalization, duplicate retention and warnings. Not a real workbook or end-to-end S2 business flow."
+}

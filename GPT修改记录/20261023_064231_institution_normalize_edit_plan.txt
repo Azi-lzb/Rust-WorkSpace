@@ -1,0 +1,37 @@
+时间：2026-10-23 06:42:31 Asia/Shanghai
+执行者：Codex
+修改前 commit：不可用（workspace 尚无首次提交）
+修改后 commit：未创建
+WIP 情况：workspace 中已有大量未跟踪文件；本轮按目标文件增量修改，没有清理、覆盖或提交既有 WIP。
+
+目的：开始将机构名称规范化业务候选从具体 Excel 库操作拆到 ExcelEditPlan。保留现有 umya 候选，不在 workbook inventory 和执行后端未验收时启用新路由。
+
+修改/新增文件：
+- pytools-core/src/institution_normalize.rs
+- pytools-core/tests/institution_normalize_plan_parity.rs
+- pytools-core/probe/reports/institution_normalize_plan_parity.json
+- pytools-core/AGENTS.md
+- pytools-core/MIGRATION_INVENTORY.md
+- EXCEL_ENGINE_ARCHITECTURE.md
+- PYTHON_EXCEL_OPERATION_INVENTORY.md
+- GPT修改记录/20261023_064231_institution_normalize_edit_plan.txt（本记录）
+
+变化：
+- 新增 `build_institution_normalize_plan`，用共享 excel-reader 读工作簿值，按旧规则生成 SetCellValue 操作。工作簿能力清单由调用方提供；本轮不伪造清单完整性，计划测试明确设置 `inventory_complete=false`，因此不可被 ExcelModifier 路由。
+- 新增 Python baseline 计划对拍，验证 3 个目标单元格、3 个分机构表、2 个改动表、3 行变更及输入字节不变；生成独立 JSON 报告。
+- 原 `run_normalize_institution` 直接 umya 候选保留，尚未改为 ExcelModifier 执行；文档同步记录该差距。未改变生产默认路由。
+
+配置及 VBA 影响：无。依赖/Cargo manifest：无变化。源 Python 项目：只读，未修改。
+【组件版本】pytools-core 0.1.0，不升级；新增 API 仅为候选计划构建，不接入产品执行路径。
+
+实际验证：
+- `cargo fmt --all -- --check`：通过。
+- `PYTOOLS_INSTITUTION_PLAN_PARITY_REPORT=... cargo test -p pytools-core --test institution_normalize_plan_parity --locked -- --nocapture`：1/1 通过；报告已生成。
+- `cargo test --workspace --locked -q`：退出码 0，全部执行测试组通过。
+
+未执行/已知问题：
+- 没有实现完整 OOXML workbook feature inventory、umya ExcelModifier backend 或输出 validator；该计划不可执行。
+- 对拍只覆盖一份合成 XLSX，未验证真实模板、XLSM、目标 Linux/deb、性能和峰值内存。
+- 旧直接 umya 候选仍存在并被保留；不能据本轮结果宣称文件修改后端已迁移。
+
+回滚提示：本轮未删除或重写旧候选。若回滚，只需移除新增 plan builder/plan parity 测试/报告，并将同步文档恢复到本记录前的状态；不要清理其他未跟踪文件。

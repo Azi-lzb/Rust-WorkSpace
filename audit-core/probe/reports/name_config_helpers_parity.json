@@ -1,0 +1,39 @@
+{
+  "status": "passed_on_fixture",
+  "source": {
+    "project": "C:\\Users\\AZI\\Desktop\\VibeCode\\3.open-data-audit",
+    "module": "core/src/base_audit/name_config.py",
+    "sha256": "1D56FFD7AFB82B015102EB4CCDFA2EECFD3609B5A774E6841BA9F2C5B7C9664C",
+    "baseline_python": "3.12.10"
+  },
+  "rust_module": "audit-core/src/name_config.rs",
+  "fixtures": {
+    "feature_mappings": 4,
+    "split_names": 5,
+    "limited_values": 9,
+    "features_of_type": 3,
+    "named_range_cases": 10,
+    "total_cases": 31
+  },
+  "comparison": "Exact equality of normalized mapping fields, helper outputs, and selected mapping indexes against the read-only Python baseline.",
+  "checks": {
+    "rust_parity_command": "cargo test -p audit-core --test name_config_helpers_parity --locked -q",
+    "rust_parity_passed": 1,
+    "rust_parity_failed": 0,
+    "python_source_test_command": "python -B -m pytest -q -p no:cacheprovider core/tests/test_template.py",
+    "python_source_tests_passed": 18,
+    "python_source_tests_failed": 0,
+    "workspace_test_command": "cargo test --workspace --locked -q",
+    "workspace_tests_passed": 49,
+    "workspace_tests_failed": 0,
+    "format_command": "cargo fmt --all -- --check",
+    "format_check": "passed"
+  },
+  "scope": "Pure value-level configuration helper migration only. It does not read, validate, initialize, or save config.xlsx and is not connected to the Audit workflow.",
+  "unverified": [
+    "Python str.casefold() has Unicode mappings that can expand or otherwise differ from Rust lowercase conversion; tested matching cases cover Chinese and ordinary ASCII names only.",
+    "Excel configuration workbook loading, validation, initialization, persistence, and real configuration templates are not covered.",
+    "Target Linux/glibc 2.28 execution is not covered by this helper-level report."
+  ],
+  "dependencies_or_routes_changed": false
+}

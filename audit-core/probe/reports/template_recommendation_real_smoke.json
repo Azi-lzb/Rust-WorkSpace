@@ -1,0 +1,56 @@
+{
+  "schema_version": 1,
+  "suite": "audit.s1_template_recommendation_real_smoke",
+  "source_project": "Open-Data-Audit",
+  "source_module": "core/src/base_audit/discovery.py",
+  "source_module_sha256": "6206EA12B6D51F02253682EA32C2055040A6DA9EE162C808EADD27BB5D860EC7",
+  "python_version": "3.12.10",
+  "sample": "read-only config-real and 2026-07-31 S1 source tree",
+  "source_workbooks": 68,
+  "template_workbooks": 8,
+  "matched": true,
+  "confidence": 1.0,
+  "python_rust_fields_equal": true,
+  "files_unchanged": true,
+  "template_set_sha256_before": "B2FFFEB43A897D1E8222C6813E019D4CA804508885ED97168BC10FD6A78B3F0D",
+  "template_set_sha256_after": "B2FFFEB43A897D1E8222C6813E019D4CA804508885ED97168BC10FD6A78B3F0D",
+  "source_set_sha256_before": "6477AC2801D1CF2A923ACD0620B94CEC4AADA861A6DB26F901E34E592511C3AA",
+  "source_set_sha256_after": "6477AC2801D1CF2A923ACD0620B94CEC4AADA861A6DB26F901E34E592511C3AA",
+  "limitations": [
+    "S1 template recommendation only",
+    "does not validate conditional rule evaluation, formula recalculation, result writeback, history, repeat-run behavior, Windows-native Rust, target Linux, or deb packaging"
+  ],
+  "performance": {
+    "environment": "Ubuntu 24.04 / WSL2 x86_64, workbook files on /mnt/c",
+    "rust": "1.99.1",
+    "python": "3.12.3",
+    "operation": "full template-suggest process wall time including process startup, recursive file scan, workbook sheet-directory reads, ranking and JSON output",
+    "runs": 5,
+    "python_seconds": [
+      1.82,
+      1.78,
+      1.73,
+      1.73,
+      1.76
+    ],
+    "python_median_seconds": 1.76,
+    "rust_calamine_release_seconds": [
+      3.55,
+      3.8,
+      3.76,
+      3.57,
+      3.7
+    ],
+    "rust_calamine_release_median_seconds": 3.7,
+    "rust_ooxml_release_seconds": [
+      1.36,
+      1.37,
+      1.37,
+      1.37,
+      1.39
+    ],
+    "rust_ooxml_release_median_seconds": 1.37,
+    "ooxml_vs_python_speedup": 1.28,
+    "note": "Single real directory-tree observation only; Python cache is created in a temporary directory. This is not a general engine ranking or target-system benchmark."
+  }
+}

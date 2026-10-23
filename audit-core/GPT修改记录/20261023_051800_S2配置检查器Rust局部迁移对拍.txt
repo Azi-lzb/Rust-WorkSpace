@@ -1,0 +1,56 @@
+# S2 配置检查器 Rust 局部迁移与对拍
+
+## 修改信息
+
+- 时间：2026-10-23 05:18（Asia/Shanghai）
+- 执行者：Codex
+- 修改前/后 commit：无。当前 workspace 尚无可解析的 `HEAD`；修改前已有大量未跟踪 WIP，本次不清理、不提交。
+- 【组件版本】：不升级。本次是增量迁移切片，不改变 Cargo 包版本或产品组件编号。
+
+## 目的与迁移范围
+
+将只读源函数 `base_audit.systems.s2_report_collection.config_check.check_s2_config` 和 `format_config_report` 迁移为 Audit Rust 实现，保留其报告字段、检查状态、错误/警告次序、中文提示及 UI 文本格式。运行时校验复用已迁移的 `s2_config::load_config`；读取继续使用共享 Calamine 适配器，不写回配置文件。
+
+为复现 OpenPyXL 对日期格式单元格的解释，S2 配置读取改用共享 `read_value_columns_with_iso_dates`；`SheetValues` 增加 Calamine worksheet extent 字段供只读 sheet 统计使用。新增独立配置检查夹具、只读 Python 基线和 Rust 对拍报告。
+
+## 修改文件
+
+- `crates/excel-reader/src/lib.rs`
+- `audit-core/src/lib.rs`
+- `audit-core/src/s2_config.rs`
+- `audit-core/src/s2_config_check.rs`
+- `audit-core/tests/compare/generate_s2_config_check_fixtures.py`
+- `audit-core/tests/compare/run_s2_config_check_baseline.py`
+- `audit-core/tests/fixtures/s2_config/check_cases.json`
+- `audit-core/tests/fixtures/s2_config/check_valid.xlsx`
+- `audit-core/tests/fixtures/s2_config/check_legacy_severity.xlsx`
+- `audit-core/tests/fixtures/s2_config/check_gap_duplicate.xlsx`
+- `audit-core/tests/fixtures/s2_config/check_datetime_indicator_flag.xlsx`
+- `audit-core/probe/reports/s2_config_check_python_baseline.json`
+- `audit-core/probe/reports/s2_config_check_parity.json`
+- `audit-core/tests/s2_config_check_parity.rs`
+- `audit-core/MIGRATION_INVENTORY.md`
+- 本修改记录
+
+原始 Python 项目只读。`config_check.py` SHA-256：`9D45DF493604751FA12E61D9B7D65FF2968401E37E779761F58DABCE70873502`；`config.py` SHA-256：`18AF21C33CA45A791C449A2C484BC66F095921EE0839FB9EE9D9218E6FC56ED6`，与生成的 Python 基线记录一致。
+
+## 测试与对拍
+
+- `python audit-core/tests/compare/generate_s2_config_check_fixtures.py`：生成 19 个检查场景索引及 4 个独立 synthetic XLSX 夹具。
+- `python audit-core/tests/compare/run_s2_config_check_baseline.py --source-root C:\Users\AZI\Desktop\VibeCode\3.open-data-audit`：19 场景；源基线汇总 2 个业务通过场景、67 个阻断问题、13 条警告。该统计表示各场景的检查结果总量，不是 19 个场景都应“业务通过”。
+- `cargo test -p audit-core --test s2_config_check_parity --test s2_config_parity --locked -- --nocapture`：检查器对拍 1/1、已有配置加载对拍 2/2 通过；逐字段比较结构化 JSON 和格式化文本，并检查所有输入夹具检查前后字节不变。
+- `cargo test --workspace --locked -q`：全 workspace 测试通过。
+- `cargo fmt --all -- --check`：通过。
+
+机器报告：`audit-core/probe/reports/s2_config_check_parity.json`。覆盖有效配置、旧审核级别、区间空档/重复、日期类型错误值、综合配置错误、必需工作表缺失和缺失文件。
+
+## 未执行项与已知限制
+
+- 未运行源项目完整 pytest；只调用旧项目只读检查器生成合成夹具基线。
+- 未使用真实业务配置文件；真实配置文件及其保真仍未验证。
+- 未接入 Rust S2 服务阻断流程，未迁移默认配置生成、S2 报告输出或完整服务编排；S2-F01 仍未验证，也未切换生产默认路由。
+- 损坏/加密工作簿、不可读文件的底层错误文案未建立跨引擎等价契约；非 XLSX 格式和麒麟/UOS 目标环境未验证。
+
+## 回滚
+
+删除本记录列出的新检查器模块、对拍测试/脚本、4 个新增合成夹具及 2 个检查器报告；从 `audit-core/MIGRATION_INVENTORY.md` 移除本切片条目；恢复 `s2_config.rs` 的原值读取和 helper 可见性，以及 `excel-reader::SheetValues` 的原结构。保留既有 S2 配置加载实现及其基线文件，不回滚其他未相关 WIP。原始 Python 项目无需回滚，且未被修改。

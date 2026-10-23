@@ -1,0 +1,94 @@
+{
+  "status": "evaluated_static_rules",
+  "reader": "calamine+namespace_aware_ooxml",
+  "read_time_ms": 77,
+  "evaluation_time_ms": 17,
+  "total_time_ms": 98,
+  "rules_total": 7,
+  "rules_supported": 6,
+  "scanned_cells": 12,
+  "triggered": [
+    {
+      "sheet": "S1Conditional",
+      "cell": "B2",
+      "applies_to": "B2:B4",
+      "rule_type": "cellis",
+      "operator": "greaterThan",
+      "formula": "0",
+      "priority": 1,
+      "confidence": "FULL"
+    },
+    {
+      "sheet": "S1Conditional",
+      "cell": "C5",
+      "applies_to": "C5:C7",
+      "rule_type": "expression",
+      "operator": "",
+      "formula": "AND(C5>0,C5>1)",
+      "priority": 2,
+      "confidence": "FULL"
+    },
+    {
+      "sheet": "S1Conditional",
+      "cell": "C7",
+      "applies_to": "C5:C7",
+      "rule_type": "expression",
+      "operator": "",
+      "formula": "AND(C5>0,C5>1)",
+      "priority": 2,
+      "confidence": "FULL"
+    },
+    {
+      "sheet": "S1Conditional",
+      "cell": "E2",
+      "applies_to": "E2",
+      "rule_type": "expression",
+      "operator": "",
+      "formula": "$A$1+$A$2+$A$3=$C$2",
+      "priority": 3,
+      "confidence": "FULL"
+    }
+  ],
+  "diagnostics": [
+    {
+      "sheet": "S1Conditional",
+      "cell": "F5",
+      "applies_to": "F5",
+      "rule_type": "expression",
+      "formula": "INDIRECT(\"A1\")>0",
+      "priority": 5,
+      "status": "UNSUPPORTED",
+      "reason": "暂不支持的条件格式函数：INDIRECT"
+    },
+    {
+      "sheet": "S1Conditional",
+      "cell": "G5",
+      "applies_to": "G5",
+      "rule_type": "expression",
+      "formula": "(((",
+      "priority": 6,
+      "status": "ERROR",
+      "reason": "无法解析的条件格式公式：((("
+    },
+    {
+      "sheet": "S1Conditional",
+      "cell": "H2",
+      "applies_to": "H2:H3",
+      "rule_type": "colorscale",
+      "formula": "",
+      "priority": 7,
+      "status": "UNSUPPORTED",
+      "reason": "暂不支持的条件格式类型：colorscale"
+    },
+    {
+      "sheet": "S1Conditional",
+      "cell": "H3",
+      "applies_to": "H2:H3",
+      "rule_type": "colorscale",
+      "formula": "",
+      "priority": 7,
+      "status": "UNSUPPORTED",
+      "reason": "暂不支持的条件格式类型：colorscale"
+    }
+  ]
+}

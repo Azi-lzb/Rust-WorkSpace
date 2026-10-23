@@ -1,0 +1,3069 @@
+{
+  "cases": [
+    {
+      "id": "amount_conversion_compares_in_output_unit",
+      "current": [
+        {
+          "institution_id": "9144",
+          "institution_name": "甲银行",
+          "social_credit_code": "9144",
+          "institution_type": "农商行",
+          "handling_branch": "一部",
+          "region": "示例地区",
+          "form_code": "20202",
+          "indicator_code": "A001",
+          "indicator_name": "A001",
+          "period": "2026-06",
+          "source_date": "2026-06-30",
+          "value": {
+            "type": "decimal",
+            "value": {
+              "sign": 0,
+              "digits": [
+                1,
+                2,
+                3,
+                4,
+                5,
+                6,
+                7
+              ],
+              "exponent": -6
+            }
+          },
+          "value_type": "余额",
+          "source_unit": "元",
+          "normalized_value": {
+            "type": "decimal",
+            "value": {
+              "sign": 0,
+              "digits": [
+                1,
+                2,
+                3,
+                4,
+                5,
+                6,
+                7
+              ],
+              "exponent": -6
+            }
+          },
+          "normalized_unit": "万元",
+          "source": {
+            "source_file": "A001.xlsx",
+            "source_sheet": "20202",
+            "source_row": 4
+          }
+        }
+      ],
+      "external_org_map": {
+        "9144": "row-a"
+      },
+      "external": {
+        "time_series": false,
+        "values": [
+          {
+            "data_date": "",
+            "row_label": "row-a",
+            "indicator_name": "存款余额",
+            "value": {
+              "type": "decimal",
+              "value": {
+                "sign": 0,
+                "digits": [
+                  1,
+                  2,
+                  3,
+                  4,
+                  5,
+                  6,
+                  7
+                ],
+                "exponent": -10
+              }
+            },
+            "source": {
+              "source_file": "central.xlsx",
+              "source_sheet": "集中系统数据",
+              "source_row": 5
+            },
+            "fallback_reason": ""
+          }
+        ],
+        "available_dates": [],
+        "date_labels": [],
+        "row_labels": [
+          "row-a"
+        ],
+        "indicator_names": [
+          "存款余额"
+        ],
+        "missing_label_fallback": null
+      },
+      "config": {
+        "indicators": {
+          "A001": {
+            "data_type": "余额"
+          }
+        },
+        "institutions_by_id": {},
+        "institutions_by_name": {},
+        "external_rules": [
+          {
+            "rule_id": "A001",
+            "indicator_code": "A001",
+            "external_indicator_name": "存款余额",
+            "comparison_method": "等于",
+            "tolerance": 1e-06,
+            "severity": "硬性",
+            "enabled": true
+          }
+        ],
+        "unit_settings": {
+          "external_file_unit": "亿元",
+          "output_file_unit": "万元"
+        }
+      }
+    },
+    {
+      "id": "organization_mapping_precedes_configured_report_item",
+      "current": [
+        {
+          "institution_id": "9144",
+          "institution_name": "甲银行",
+          "social_credit_code": "9144",
+          "institution_type": "农商行",
+          "handling_branch": "一部",
+          "region": "示例地区",
+          "form_code": "20202",
+          "indicator_code": "A002",
+          "indicator_name": "A002",
+          "period": "2026-06",
+          "source_date": "2026-06-30",
+          "value": {
+            "type": "decimal",
+            "value": {
+              "sign": 0,
+              "digits": [
+                1,
+                0
+              ],
+              "exponent": 0
+            }
+          },
+          "value_type": "数值",
+          "source_unit": "元",
+          "normalized_value": {
+            "type": "decimal",
+            "value": {
+              "sign": 0,
+              "digits": [
+                1,
+                0
+              ],
+              "exponent": 0
+            }
+          },
+          "normalized_unit": "万元",
+          "source": {
+            "source_file": "A002.xlsx",
+            "source_sheet": "20202",
+            "source_row": 4
+          }
+        },
+        {
+          "institution_id": "9145",
+          "institution_name": "乙银行",
+          "social_credit_code": "9145",
+          "institution_type": "农商行",
+          "handling_branch": "一部",
+          "region": "示例地区",
+          "form_code": "20202",
+          "indicator_code": "A002",
+          "indicator_name": "A002",
+          "period": "2026-06",
+          "source_date": "2026-06-30",
+          "value": {
+            "type": "decimal",
+            "value": {
+              "sign": 0,
+              "digits": [
+                1,
+                0
+              ],
+              "exponent": 0
+            }
+          },
+          "value_type": "数值",
+          "source_unit": "元",
+          "normalized_value": {
+            "type": "decimal",
+            "value": {
+              "sign": 0,
+              "digits": [
+                1,
+                0
+              ],
+              "exponent": 0
+            }
+          },
+          "normalized_unit": "万元",
+          "source": {
+            "source_file": "A002.xlsx",
+            "source_sheet": "20202",
+            "source_row": 4
+          }
+        }
+      ],
+      "external_org_map": {
+        "9144": "外部项目"
+      },
+      "external": {
+        "time_series": false,
+        "values": [
+          {
+            "data_date": "",
+            "row_label": "外部项目",
+            "indicator_name": "存款余额",
+            "value": {
+              "type": "decimal",
+              "value": {
+                "sign": 0,
+                "digits": [
+                  1,
+                  0
+                ],
+                "exponent": 0
+              }
+            },
+            "source": {
+              "source_file": "central.xlsx",
+              "source_sheet": "集中系统数据",
+              "source_row": 5
+            },
+            "fallback_reason": ""
+          },
+          {
+            "data_date": "",
+            "row_label": "配置项目",
+            "indicator_name": "存款余额",
+            "value": {
+              "type": "decimal",
+              "value": {
+                "sign": 0,
+                "digits": [
+                  3,
+                  0
+                ],
+                "exponent": 0
+              }
+            },
+            "source": {
+              "source_file": "central.xlsx",
+              "source_sheet": "集中系统数据",
+              "source_row": 5
+            },
+            "fallback_reason": ""
+          }
+        ],
+        "available_dates": [],
+        "date_labels": [],
+        "row_labels": [
+          "外部项目",
+          "配置项目"
+        ],
+        "indicator_names": [
+          "存款余额"
+        ],
+        "missing_label_fallback": null
+      },
+      "config": {
+        "indicators": {
+          "A002": {
+            "data_type": "余额"
+          }
+        },
+        "institutions_by_id": {
+          "9145": {
+            "report_item": "配置项目"
+          }
+        },
+        "institutions_by_name": {},
+        "external_rules": [
+          {
+            "rule_id": "A002",
+            "indicator_code": "A002",
+            "external_indicator_name": "存款余额",
+            "comparison_method": "等于",
+            "tolerance": 0.0,
+            "severity": "硬性",
+            "enabled": true
+          }
+        ],
+        "unit_settings": {
+          "external_file_unit": "元",
+          "output_file_unit": "元"
+        }
+      }
+    },
+    {
+      "id": "all_comparison_methods_and_boundaries",
+      "current": [
+        {
+          "institution_id": "9144",
+          "institution_name": "甲银行",
+          "social_credit_code": "9144",
+          "institution_type": "农商行",
+          "handling_branch": "一部",
+          "region": "示例地区",
+          "form_code": "20202",
+          "indicator_code": "M01",
+          "indicator_name": "M01",
+          "period": "2026-06",
+          "source_date": "2026-06-30",
+          "value": {
+            "type": "decimal",
+            "value": {
+              "sign": 0,
+              "digits": [
+                1,
+                0
+              ],
+              "exponent": 0
+            }
+          },
+          "value_type": "数值",
+          "source_unit": "元",
+          "normalized_value": {
+            "type": "decimal",
+            "value": {
+              "sign": 0,
+              "digits": [
+                1,
+                0
+              ],
+              "exponent": 0
+            }
+          },
+          "normalized_unit": "万元",
+          "source": {
+            "source_file": "M01.xlsx",
+            "source_sheet": "20202",
+            "source_row": 4
+          }
+        },
+        {
+          "institution_id": "9144",
+          "institution_name": "甲银行",
+          "social_credit_code": "9144",
+          "institution_type": "农商行",
+          "handling_branch": "一部",
+          "region": "示例地区",
+          "form_code": "20202",
+          "indicator_code": "M02",
+          "indicator_name": "M02",
+          "period": "2026-06",
+          "source_date": "2026-06-30",
+          "value": {
+            "type": "decimal",
+            "value": {
+              "sign": 0,
+              "digits": [
+                1,
+                1
+              ],
+              "exponent": 0
+            }
+          },
+          "value_type": "数值",
+          "source_unit": "元",
+          "normalized_value": {
+            "type": "decimal",
+            "value": {
+              "sign": 0,
+              "digits": [
+                1,
+                1
+              ],
+              "exponent": 0
+            }
+          },
+          "normalized_unit": "万元",
+          "source": {
+            "source_file": "M02.xlsx",
+            "source_sheet": "20202",
+            "source_row": 4
+          }
+        },
+        {
+          "institution_id": "9144",
+          "institution_name": "甲银行",
+          "social_credit_code": "9144",
+          "institution_type": "农商行",
+          "handling_branch": "一部",
+          "region": "示例地区",
+          "form_code": "20202",
+          "indicator_code": "M03",
+          "indicator_name": "M03",
+          "period": "2026-06",
+          "source_date": "2026-06-30",
+          "value": {
+            "type": "decimal",
+            "value": {
+              "sign": 0,
+              "digits": [
+                1,
+                1,
+                0,
+                0,
+                0,
+                1
+              ],
+              "exponent": -4
+            }
+          },
+          "value_type": "数值",
+          "source_unit": "元",
+          "normalized_value": {
+            "type": "decimal",
+            "value": {
+              "sign": 0,
+              "digits": [
+                1,
+                1,
+                0,
+                0,
+                0,
+                1
+              ],
+              "exponent": -4
+            }
+          },
+          "normalized_unit": "万元",
+          "source": {
+            "source_file": "M03.xlsx",
+            "source_sheet": "20202",
+            "source_row": 4
+          }
+        },
+        {
+          "institution_id": "9144",
+          "institution_name": "甲银行",
+          "social_credit_code": "9144",
+          "institution_type": "农商行",
+          "handling_branch": "一部",
+          "region": "示例地区",
+          "form_code": "20202",
+          "indicator_code": "M04",
+          "indicator_name": "M04",
+          "period": "2026-06",
+          "source_date": "2026-06-30",
+          "value": {
+            "type": "decimal",
+            "value": {
+              "sign": 0,
+              "digits": [
+                1,
+                0
+              ],
+              "exponent": 0
+            }
+          },
+          "value_type": "数值",
+          "source_unit": "元",
+          "normalized_value": {
+            "type": "decimal",
+            "value": {
+              "sign": 0,
+              "digits": [
+                1,
+                0
+              ],
+              "exponent": 0
+            }
+          },
+          "normalized_unit": "万元",
+          "source": {
+            "source_file": "M04.xlsx",
+            "source_sheet": "20202",
+            "source_row": 4
+          }
+        },
+        {
+          "institution_id": "9144",
+          "institution_name": "甲银行",
+          "social_credit_code": "9144",
+          "institution_type": "农商行",
+          "handling_branch": "一部",
+          "region": "示例地区",
+          "form_code": "20202",
+          "indicator_code": "M05",
+          "indicator_name": "M05",
+          "period": "2026-06",
+          "source_date": "2026-06-30",
+          "value": {
+            "type": "decimal",
+            "value": {
+              "sign": 0,
+              "digits": [
+                1,
+                0
+              ],
+              "exponent": 0
+            }
+          },
+          "value_type": "数值",
+          "source_unit": "元",
+          "normalized_value": {
+            "type": "decimal",
+            "value": {
+              "sign": 0,
+              "digits": [
+                1,
+                0
+              ],
+              "exponent": 0
+            }
+          },
+          "normalized_unit": "万元",
+          "source": {
+            "source_file": "M05.xlsx",
+            "source_sheet": "20202",
+            "source_row": 4
+          }
+        },
+        {
+          "institution_id": "9144",
+          "institution_name": "甲银行",
+          "social_credit_code": "9144",
+          "institution_type": "农商行",
+          "handling_branch": "一部",
+          "region": "示例地区",
+          "form_code": "20202",
+          "indicator_code": "M06",
+          "indicator_name": "M06",
+          "period": "2026-06",
+          "source_date": "2026-06-30",
+          "value": {
+            "type": "decimal",
+            "value": {
+              "sign": 0,
+              "digits": [
+                1,
+                1
+              ],
+              "exponent": 0
+            }
+          },
+          "value_type": "数值",
+          "source_unit": "元",
+          "normalized_value": {
+            "type": "decimal",
+            "value": {
+              "sign": 0,
+              "digits": [
+                1,
+                1
+              ],
+              "exponent": 0
+            }
+          },
+          "normalized_unit": "万元",
+          "source": {
+            "source_file": "M06.xlsx",
+            "source_sheet": "20202",
+            "source_row": 4
+          }
+        },
+        {
+          "institution_id": "9144",
+          "institution_name": "甲银行",
+          "social_credit_code": "9144",
+          "institution_type": "农商行",
+          "handling_branch": "一部",
+          "region": "示例地区",
+          "form_code": "20202",
+          "indicator_code": "M07",
+          "indicator_name": "M07",
+          "period": "2026-06",
+          "source_date": "2026-06-30",
+          "value": {
+            "type": "decimal",
+            "value": {
+              "sign": 0,
+              "digits": [
+                1,
+                0
+              ],
+              "exponent": 0
+            }
+          },
+          "value_type": "数值",
+          "source_unit": "元",
+          "normalized_value": {
+            "type": "decimal",
+            "value": {
+              "sign": 0,
+              "digits": [
+                1,
+                0
+              ],
+              "exponent": 0
+            }
+          },
+          "normalized_unit": "万元",
+          "source": {
+            "source_file": "M07.xlsx",
+            "source_sheet": "20202",
+            "source_row": 4
+          }
+        },
+        {
+          "institution_id": "9144",
+          "institution_name": "甲银行",
+          "social_credit_code": "9144",
+          "institution_type": "农商行",
+          "handling_branch": "一部",
+          "region": "示例地区",
+          "form_code": "20202",
+          "indicator_code": "M08",
+          "indicator_name": "M08",
+          "period": "2026-06",
+          "source_date": "2026-06-30",
+          "value": {
+            "type": "decimal",
+            "value": {
+              "sign": 0,
+              "digits": [
+                1,
+                0
+              ],
+              "exponent": 0
+            }
+          },
+          "value_type": "数值",
+          "source_unit": "元",
+          "normalized_value": {
+            "type": "decimal",
+            "value": {
+              "sign": 0,
+              "digits": [
+                1,
+                0
+              ],
+              "exponent": 0
+            }
+          },
+          "normalized_unit": "万元",
+          "source": {
+            "source_file": "M08.xlsx",
+            "source_sheet": "20202",
+            "source_row": 4
+          }
+        },
+        {
+          "institution_id": "9144",
+          "institution_name": "甲银行",
+          "social_credit_code": "9144",
+          "institution_type": "农商行",
+          "handling_branch": "一部",
+          "region": "示例地区",
+          "form_code": "20202",
+          "indicator_code": "M09",
+          "indicator_name": "M09",
+          "period": "2026-06",
+          "source_date": "2026-06-30",
+          "value": {
+            "type": "decimal",
+            "value": {
+              "sign": 0,
+              "digits": [
+                9
+              ],
+              "exponent": 0
+            }
+          },
+          "value_type": "数值",
+          "source_unit": "元",
+          "normalized_value": {
+            "type": "decimal",
+            "value": {
+              "sign": 0,
+              "digits": [
+                9
+              ],
+              "exponent": 0
+            }
+          },
+          "normalized_unit": "万元",
+          "source": {
+            "source_file": "M09.xlsx",
+            "source_sheet": "20202",
+            "source_row": 4
+          }
+        },
+        {
+          "institution_id": "9144",
+          "institution_name": "甲银行",
+          "social_credit_code": "9144",
+          "institution_type": "农商行",
+          "handling_branch": "一部",
+          "region": "示例地区",
+          "form_code": "20202",
+          "indicator_code": "M10",
+          "indicator_name": "M10",
+          "period": "2026-06",
+          "source_date": "2026-06-30",
+          "value": {
+            "type": "decimal",
+            "value": {
+              "sign": 0,
+              "digits": [
+                9
+              ],
+              "exponent": 0
+            }
+          },
+          "value_type": "数值",
+          "source_unit": "元",
+          "normalized_value": {
+            "type": "decimal",
+            "value": {
+              "sign": 0,
+              "digits": [
+                9
+              ],
+              "exponent": 0
+            }
+          },
+          "normalized_unit": "万元",
+          "source": {
+            "source_file": "M10.xlsx",
+            "source_sheet": "20202",
+            "source_row": 4
+          }
+        },
+        {
+          "institution_id": "9144",
+          "institution_name": "甲银行",
+          "social_credit_code": "9144",
+          "institution_type": "农商行",
+          "handling_branch": "一部",
+          "region": "示例地区",
+          "form_code": "20202",
+          "indicator_code": "M11",
+          "indicator_name": "M11",
+          "period": "2026-06",
+          "source_date": "2026-06-30",
+          "value": {
+            "type": "decimal",
+            "value": {
+              "sign": 0,
+              "digits": [
+                1,
+                0
+              ],
+              "exponent": 0
+            }
+          },
+          "value_type": "数值",
+          "source_unit": "元",
+          "normalized_value": {
+            "type": "decimal",
+            "value": {
+              "sign": 0,
+              "digits": [
+                1,
+                0
+              ],
+              "exponent": 0
+            }
+          },
+          "normalized_unit": "万元",
+          "source": {
+            "source_file": "M11.xlsx",
+            "source_sheet": "20202",
+            "source_row": 4
+          }
+        },
+        {
+          "institution_id": "9144",
+          "institution_name": "甲银行",
+          "social_credit_code": "9144",
+          "institution_type": "农商行",
+          "handling_branch": "一部",
+          "region": "示例地区",
+          "form_code": "20202",
+          "indicator_code": "M12",
+          "indicator_name": "M12",
+          "period": "2026-06",
+          "source_date": "2026-06-30",
+          "value": {
+            "type": "decimal",
+            "value": {
+              "sign": 0,
+              "digits": [
+                1,
+                0
+              ],
+              "exponent": 0
+            }
+          },
+          "value_type": "数值",
+          "source_unit": "元",
+          "normalized_value": {
+            "type": "decimal",
+            "value": {
+              "sign": 0,
+              "digits": [
+                1,
+                0
+              ],
+              "exponent": 0
+            }
+          },
+          "normalized_unit": "万元",
+          "source": {
+            "source_file": "M12.xlsx",
+            "source_sheet": "20202",
+            "source_row": 4
+          }
+        },
+        {
+          "institution_id": "9144",
+          "institution_name": "甲银行",
+          "social_credit_code": "9144",
+          "institution_type": "农商行",
+          "handling_branch": "一部",
+          "region": "示例地区",
+          "form_code": "20202",
+          "indicator_code": "M13",
+          "indicator_name": "M13",
+          "period": "2026-06",
+          "source_date": "2026-06-30",
+          "value": {
+            "type": "decimal",
+            "value": {
+              "sign": 0,
+              "digits": [
+                1,
+                1
+              ],
+              "exponent": 0
+            }
+          },
+          "value_type": "数值",
+          "source_unit": "元",
+          "normalized_value": {
+            "type": "decimal",
+            "value": {
+              "sign": 0,
+              "digits": [
+                1,
+                1
+              ],
+              "exponent": 0
+            }
+          },
+          "normalized_unit": "万元",
+          "source": {
+            "source_file": "M13.xlsx",
+            "source_sheet": "20202",
+            "source_row": 4
+          }
+        }
+      ],
+      "external_org_map": {
+        "9144": "row-a"
+      },
+      "external": {
+        "time_series": false,
+        "values": [
+          {
+            "data_date": "",
+            "row_label": "row-a",
+            "indicator_name": "指标01",
+            "value": {
+              "type": "decimal",
+              "value": {
+                "sign": 0,
+                "digits": [
+                  1,
+                  0
+                ],
+                "exponent": 0
+              }
+            },
+            "source": {
+              "source_file": "central.xlsx",
+              "source_sheet": "集中系统数据",
+              "source_row": 11
+            },
+            "fallback_reason": ""
+          },
+          {
+            "data_date": "",
+            "row_label": "row-a",
+            "indicator_name": "指标02",
+            "value": {
+              "type": "decimal",
+              "value": {
+                "sign": 0,
+                "digits": [
+                  1,
+                  0
+                ],
+                "exponent": 0
+              }
+            },
+            "source": {
+              "source_file": "central.xlsx",
+              "source_sheet": "集中系统数据",
+              "source_row": 12
+            },
+            "fallback_reason": ""
+          },
+          {
+            "data_date": "",
+            "row_label": "row-a",
+            "indicator_name": "指标03",
+            "value": {
+              "type": "decimal",
+              "value": {
+                "sign": 0,
+                "digits": [
+                  1,
+                  0
+                ],
+                "exponent": 0
+              }
+            },
+            "source": {
+              "source_file": "central.xlsx",
+              "source_sheet": "集中系统数据",
+              "source_row": 13
+            },
+            "fallback_reason": ""
+          },
+          {
+            "data_date": "",
+            "row_label": "row-a",
+            "indicator_name": "指标04",
+            "value": {
+              "type": "decimal",
+              "value": {
+                "sign": 0,
+                "digits": [
+                  1,
+                  1
+                ],
+                "exponent": 0
+              }
+            },
+            "source": {
+              "source_file": "central.xlsx",
+              "source_sheet": "集中系统数据",
+              "source_row": 14
+            },
+            "fallback_reason": ""
+          },
+          {
+            "data_date": "",
+            "row_label": "row-a",
+            "indicator_name": "指标05",
+            "value": {
+              "type": "decimal",
+              "value": {
+                "sign": 0,
+                "digits": [
+                  1,
+                  0
+                ],
+                "exponent": 0
+              }
+            },
+            "source": {
+              "source_file": "central.xlsx",
+              "source_sheet": "集中系统数据",
+              "source_row": 15
+            },
+            "fallback_reason": ""
+          },
+          {
+            "data_date": "",
+            "row_label": "row-a",
+            "indicator_name": "指标06",
+            "value": {
+              "type": "decimal",
+              "value": {
+                "sign": 0,
+                "digits": [
+                  1,
+                  0
+                ],
+                "exponent": 0
+              }
+            },
+            "source": {
+              "source_file": "central.xlsx",
+              "source_sheet": "集中系统数据",
+              "source_row": 16
+            },
+            "fallback_reason": ""
+          },
+          {
+            "data_date": "",
+            "row_label": "row-a",
+            "indicator_name": "指标07",
+            "value": {
+              "type": "decimal",
+              "value": {
+                "sign": 0,
+                "digits": [
+                  1,
+                  0
+                ],
+                "exponent": 0
+              }
+            },
+            "source": {
+              "source_file": "central.xlsx",
+              "source_sheet": "集中系统数据",
+              "source_row": 17
+            },
+            "fallback_reason": ""
+          },
+          {
+            "data_date": "",
+            "row_label": "row-a",
+            "indicator_name": "指标08",
+            "value": {
+              "type": "decimal",
+              "value": {
+                "sign": 0,
+                "digits": [
+                  1,
+                  0
+                ],
+                "exponent": 0
+              }
+            },
+            "source": {
+              "source_file": "central.xlsx",
+              "source_sheet": "集中系统数据",
+              "source_row": 18
+            },
+            "fallback_reason": ""
+          },
+          {
+            "data_date": "",
+            "row_label": "row-a",
+            "indicator_name": "指标09",
+            "value": {
+              "type": "decimal",
+              "value": {
+                "sign": 0,
+                "digits": [
+                  1,
+                  0
+                ],
+                "exponent": 0
+              }
+            },
+            "source": {
+              "source_file": "central.xlsx",
+              "source_sheet": "集中系统数据",
+              "source_row": 19
+            },
+            "fallback_reason": ""
+          },
+          {
+            "data_date": "",
+            "row_label": "row-a",
+            "indicator_name": "指标10",
+            "value": {
+              "type": "decimal",
+              "value": {
+                "sign": 0,
+                "digits": [
+                  1,
+                  0
+                ],
+                "exponent": 0
+              }
+            },
+            "source": {
+              "source_file": "central.xlsx",
+              "source_sheet": "集中系统数据",
+              "source_row": 20
+            },
+            "fallback_reason": ""
+          },
+          {
+            "data_date": "",
+            "row_label": "row-a",
+            "indicator_name": "指标11",
+            "value": {
+              "type": "decimal",
+              "value": {
+                "sign": 0,
+                "digits": [
+                  1,
+                  0
+                ],
+                "exponent": 0
+              }
+            },
+            "source": {
+              "source_file": "central.xlsx",
+              "source_sheet": "集中系统数据",
+              "source_row": 21
+            },
+            "fallback_reason": ""
+          },
+          {
+            "data_date": "",
+            "row_label": "row-a",
+            "indicator_name": "指标12",
+            "value": {
+              "type": "decimal",
+              "value": {
+                "sign": 0,
+                "digits": [
+                  1,
+                  0
+                ],
+                "exponent": 0
+              }
+            },
+            "source": {
+              "source_file": "central.xlsx",
+              "source_sheet": "集中系统数据",
+              "source_row": 22
+            },
+            "fallback_reason": ""
+          },
+          {
+            "data_date": "",
+            "row_label": "row-a",
+            "indicator_name": "指标13",
+            "value": {
+              "type": "decimal",
+              "value": {
+                "sign": 0,
+                "digits": [
+                  1,
+                  0
+                ],
+                "exponent": 0
+              }
+            },
+            "source": {
+              "source_file": "central.xlsx",
+              "source_sheet": "集中系统数据",
+              "source_row": 23
+            },
+            "fallback_reason": ""
+          }
+        ],
+        "available_dates": [],
+        "date_labels": [],
+        "row_labels": [
+          "row-a"
+        ],
+        "indicator_names": [
+          "指标01",
+          "指标02",
+          "指标03",
+          "指标04",
+          "指标05",
+          "指标06",
+          "指标07",
+          "指标08",
+          "指标09",
+          "指标10",
+          "指标11",
+          "指标12",
+          "指标13"
+        ],
+        "missing_label_fallback": null
+      },
+      "config": {
+        "indicators": {
+          "M01": {
+            "data_type": "数值"
+          },
+          "M02": {
+            "data_type": "数值"
+          },
+          "M03": {
+            "data_type": "数值"
+          },
+          "M04": {
+            "data_type": "数值"
+          },
+          "M05": {
+            "data_type": "数值"
+          },
+          "M06": {
+            "data_type": "数值"
+          },
+          "M07": {
+            "data_type": "数值"
+          },
+          "M08": {
+            "data_type": "数值"
+          },
+          "M09": {
+            "data_type": "数值"
+          },
+          "M10": {
+            "data_type": "数值"
+          },
+          "M11": {
+            "data_type": "数值"
+          },
+          "M12": {
+            "data_type": "数值"
+          },
+          "M13": {
+            "data_type": "数值"
+          }
+        },
+        "institutions_by_id": {},
+        "institutions_by_name": {},
+        "external_rules": [
+          {
+            "rule_id": "M01",
+            "indicator_code": "M01",
+            "external_indicator_name": "指标01",
+            "comparison_method": "等于",
+            "tolerance": 0.0,
+            "severity": "硬性",
+            "enabled": true
+          },
+          {
+            "rule_id": "M02",
+            "indicator_code": "M02",
+            "external_indicator_name": "指标02",
+            "comparison_method": "等于",
+            "tolerance": 1.0,
+            "severity": "硬性",
+            "enabled": true
+          },
+          {
+            "rule_id": "M03",
+            "indicator_code": "M03",
+            "external_indicator_name": "指标03",
+            "comparison_method": "等于",
+            "tolerance": 1.0,
+            "severity": "硬性",
+            "enabled": true
+          },
+          {
+            "rule_id": "M04",
+            "indicator_code": "M04",
+            "external_indicator_name": "指标04",
+            "comparison_method": "不等于",
+            "tolerance": 0.0,
+            "severity": "硬性",
+            "enabled": true
+          },
+          {
+            "rule_id": "M05",
+            "indicator_code": "M05",
+            "external_indicator_name": "指标05",
+            "comparison_method": "不等于",
+            "tolerance": 0.0,
+            "severity": "硬性",
+            "enabled": true
+          },
+          {
+            "rule_id": "M06",
+            "indicator_code": "M06",
+            "external_indicator_name": "指标06",
+            "comparison_method": "大于",
+            "tolerance": 0.0,
+            "severity": "硬性",
+            "enabled": true
+          },
+          {
+            "rule_id": "M07",
+            "indicator_code": "M07",
+            "external_indicator_name": "指标07",
+            "comparison_method": "大于",
+            "tolerance": 0.0,
+            "severity": "硬性",
+            "enabled": true
+          },
+          {
+            "rule_id": "M08",
+            "indicator_code": "M08",
+            "external_indicator_name": "指标08",
+            "comparison_method": "大于等于",
+            "tolerance": 0.0,
+            "severity": "硬性",
+            "enabled": true
+          },
+          {
+            "rule_id": "M09",
+            "indicator_code": "M09",
+            "external_indicator_name": "指标09",
+            "comparison_method": "大于等于",
+            "tolerance": 0.0,
+            "severity": "硬性",
+            "enabled": true
+          },
+          {
+            "rule_id": "M10",
+            "indicator_code": "M10",
+            "external_indicator_name": "指标10",
+            "comparison_method": "小于",
+            "tolerance": 0.0,
+            "severity": "硬性",
+            "enabled": true
+          },
+          {
+            "rule_id": "M11",
+            "indicator_code": "M11",
+            "external_indicator_name": "指标11",
+            "comparison_method": "小于",
+            "tolerance": 0.0,
+            "severity": "硬性",
+            "enabled": true
+          },
+          {
+            "rule_id": "M12",
+            "indicator_code": "M12",
+            "external_indicator_name": "指标12",
+            "comparison_method": "小于等于",
+            "tolerance": 0.0,
+            "severity": "硬性",
+            "enabled": true
+          },
+          {
+            "rule_id": "M13",
+            "indicator_code": "M13",
+            "external_indicator_name": "指标13",
+            "comparison_method": "小于等于",
+            "tolerance": 0.0,
+            "severity": "硬性",
+            "enabled": true
+          }
+        ],
+        "unit_settings": {
+          "external_file_unit": "元",
+          "output_file_unit": "元"
+        }
+      }
+    },
+    {
+      "id": "plain_layout_distinguishes_missing_row_column_and_value",
+      "current": [
+        {
+          "institution_id": "9144",
+          "institution_name": "甲银行",
+          "social_credit_code": "ID1",
+          "institution_type": "农商行",
+          "handling_branch": "一部",
+          "region": "示例地区",
+          "form_code": "20202",
+          "indicator_code": "MISSING_ROW",
+          "indicator_name": "MISSING_ROW",
+          "period": "2026-06",
+          "source_date": "2026-06-30",
+          "value": {
+            "type": "decimal",
+            "value": {
+              "sign": 0,
+              "digits": [
+                1
+              ],
+              "exponent": 0
+            }
+          },
+          "value_type": "数值",
+          "source_unit": "元",
+          "normalized_value": {
+            "type": "decimal",
+            "value": {
+              "sign": 0,
+              "digits": [
+                1
+              ],
+              "exponent": 0
+            }
+          },
+          "normalized_unit": "万元",
+          "source": {
+            "source_file": "MISSING_ROW.xlsx",
+            "source_sheet": "20202",
+            "source_row": 4
+          }
+        },
+        {
+          "institution_id": "9144",
+          "institution_name": "甲银行",
+          "social_credit_code": "ID2",
+          "institution_type": "农商行",
+          "handling_branch": "一部",
+          "region": "示例地区",
+          "form_code": "20202",
+          "indicator_code": "MISSING_COLUMN",
+          "indicator_name": "MISSING_COLUMN",
+          "period": "2026-06",
+          "source_date": "2026-06-30",
+          "value": {
+            "type": "decimal",
+            "value": {
+              "sign": 0,
+              "digits": [
+                1
+              ],
+              "exponent": 0
+            }
+          },
+          "value_type": "数值",
+          "source_unit": "元",
+          "normalized_value": {
+            "type": "decimal",
+            "value": {
+              "sign": 0,
+              "digits": [
+                1
+              ],
+              "exponent": 0
+            }
+          },
+          "normalized_unit": "万元",
+          "source": {
+            "source_file": "MISSING_COLUMN.xlsx",
+            "source_sheet": "20202",
+            "source_row": 4
+          }
+        },
+        {
+          "institution_id": "9144",
+          "institution_name": "甲银行",
+          "social_credit_code": "ID3",
+          "institution_type": "农商行",
+          "handling_branch": "一部",
+          "region": "示例地区",
+          "form_code": "20202",
+          "indicator_code": "MISSING_VALUE",
+          "indicator_name": "MISSING_VALUE",
+          "period": "2026-06",
+          "source_date": "2026-06-30",
+          "value": {
+            "type": "decimal",
+            "value": {
+              "sign": 0,
+              "digits": [
+                1
+              ],
+              "exponent": 0
+            }
+          },
+          "value_type": "数值",
+          "source_unit": "元",
+          "normalized_value": {
+            "type": "decimal",
+            "value": {
+              "sign": 0,
+              "digits": [
+                1
+              ],
+              "exponent": 0
+            }
+          },
+          "normalized_unit": "万元",
+          "source": {
+            "source_file": "MISSING_VALUE.xlsx",
+            "source_sheet": "20202",
+            "source_row": 4
+          }
+        }
+      ],
+      "external_org_map": {
+        "ID1": "row-not-present",
+        "ID2": "row-known-no-column",
+        "ID3": "row-known-no-value"
+      },
+      "external": {
+        "time_series": false,
+        "values": [],
+        "available_dates": [],
+        "date_labels": [],
+        "row_labels": [
+          "row-known-no-column",
+          "row-known-no-value"
+        ],
+        "indicator_names": [
+          "缺少值"
+        ],
+        "missing_label_fallback": null
+      },
+      "config": {
+        "indicators": {
+          "MISSING_ROW": {
+            "data_type": "数值"
+          },
+          "MISSING_COLUMN": {
+            "data_type": "数值"
+          },
+          "MISSING_VALUE": {
+            "data_type": "数值"
+          }
+        },
+        "institutions_by_id": {},
+        "institutions_by_name": {},
+        "external_rules": [
+          {
+            "rule_id": "MISSING_ROW",
+            "indicator_code": "MISSING_ROW",
+            "external_indicator_name": "缺少行",
+            "comparison_method": "等于",
+            "tolerance": 0.0,
+            "severity": "硬性",
+            "enabled": true
+          },
+          {
+            "rule_id": "MISSING_COLUMN",
+            "indicator_code": "MISSING_COLUMN",
+            "external_indicator_name": "缺少列",
+            "comparison_method": "等于",
+            "tolerance": 0.0,
+            "severity": "硬性",
+            "enabled": true
+          },
+          {
+            "rule_id": "MISSING_VALUE",
+            "indicator_code": "MISSING_VALUE",
+            "external_indicator_name": "缺少值",
+            "comparison_method": "等于",
+            "tolerance": 0.0,
+            "severity": "硬性",
+            "enabled": true
+          }
+        ],
+        "unit_settings": {
+          "external_file_unit": "元",
+          "output_file_unit": "元"
+        }
+      }
+    },
+    {
+      "id": "missing_external_value_is_not_real_zero",
+      "current": [
+        {
+          "institution_id": "9144",
+          "institution_name": "甲银行",
+          "social_credit_code": "9144",
+          "institution_type": "农商行",
+          "handling_branch": "一部",
+          "region": "示例地区",
+          "form_code": "20202",
+          "indicator_code": "MZERO",
+          "indicator_name": "MZERO",
+          "period": "2026-06",
+          "source_date": "2026-06-30",
+          "value": {
+            "type": "decimal",
+            "value": {
+              "sign": 0,
+              "digits": [
+                0
+              ],
+              "exponent": 0
+            }
+          },
+          "value_type": "数值",
+          "source_unit": "元",
+          "normalized_value": {
+            "type": "decimal",
+            "value": {
+              "sign": 0,
+              "digits": [
+                0
+              ],
+              "exponent": 0
+            }
+          },
+          "normalized_unit": "万元",
+          "source": {
+            "source_file": "MZERO.xlsx",
+            "source_sheet": "20202",
+            "source_row": 4
+          }
+        }
+      ],
+      "external_org_map": {
+        "9144": "row-a"
+      },
+      "external": {
+        "time_series": false,
+        "values": [],
+        "available_dates": [],
+        "date_labels": [],
+        "row_labels": [
+          "row-a"
+        ],
+        "indicator_names": [
+          "存款"
+        ],
+        "missing_label_fallback": null
+      },
+      "config": {
+        "indicators": {
+          "MZERO": {
+            "data_type": "余额"
+          }
+        },
+        "institutions_by_id": {},
+        "institutions_by_name": {},
+        "external_rules": [
+          {
+            "rule_id": "MZERO",
+            "indicator_code": "MZERO",
+            "external_indicator_name": "存款",
+            "comparison_method": "等于",
+            "tolerance": 0.0,
+            "severity": "硬性",
+            "enabled": true
+          }
+        ],
+        "unit_settings": {
+          "external_file_unit": "元",
+          "output_file_unit": "元"
+        }
+      }
+    },
+    {
+      "id": "explicit_missing_label_fallback_uses_zero",
+      "current": [
+        {
+          "institution_id": "9144",
+          "institution_name": "甲银行",
+          "social_credit_code": "9144",
+          "institution_type": "农商行",
+          "handling_branch": "一部",
+          "region": "示例地区",
+          "form_code": "20202",
+          "indicator_code": "FB",
+          "indicator_name": "FB",
+          "period": "2026-06",
+          "source_date": "2026-06-30",
+          "value": {
+            "type": "decimal",
+            "value": {
+              "sign": 0,
+              "digits": [
+                5
+              ],
+              "exponent": 0
+            }
+          },
+          "value_type": "数值",
+          "source_unit": "元",
+          "normalized_value": {
+            "type": "decimal",
+            "value": {
+              "sign": 0,
+              "digits": [
+                5
+              ],
+              "exponent": 0
+            }
+          },
+          "normalized_unit": "万元",
+          "source": {
+            "source_file": "FB.xlsx",
+            "source_sheet": "20202",
+            "source_row": 4
+          }
+        }
+      ],
+      "external_org_map": {},
+      "external": {
+        "time_series": false,
+        "values": [],
+        "available_dates": [],
+        "date_labels": [],
+        "row_labels": [],
+        "indicator_names": [],
+        "missing_label_fallback": {
+          "data_date": "",
+          "row_label": "",
+          "indicator_name": "",
+          "value": {
+            "type": "decimal",
+            "value": {
+              "sign": 0,
+              "digits": [
+                0
+              ],
+              "exponent": 0
+            }
+          },
+          "source": {
+            "source_file": "central.xlsx",
+            "source_sheet": "集中系统数据",
+            "source_row": 5
+          },
+          "fallback_reason": "机构行标签列未识别，外部数按0参与比较"
+        }
+      },
+      "config": {
+        "indicators": {
+          "FB": {
+            "data_type": "余额"
+          }
+        },
+        "institutions_by_id": {},
+        "institutions_by_name": {},
+        "external_rules": [
+          {
+            "rule_id": "FB",
+            "indicator_code": "FB",
+            "external_indicator_name": "存款",
+            "comparison_method": "等于",
+            "tolerance": 0.0,
+            "severity": "硬性",
+            "enabled": true
+          }
+        ],
+        "unit_settings": {
+          "external_file_unit": "元",
+          "output_file_unit": "元"
+        }
+      }
+    },
+    {
+      "id": "non_amount_values_keep_native_scale",
+      "current": [
+        {
+          "institution_id": "9144",
+          "institution_name": "甲银行",
+          "social_credit_code": "9144",
+          "institution_type": "农商行",
+          "handling_branch": "一部",
+          "region": "示例地区",
+          "form_code": "20202",
+          "indicator_code": "PERCENT",
+          "indicator_name": "PERCENT",
+          "period": "2026-06",
+          "source_date": "2026-06-30",
+          "value": {
+            "type": "decimal",
+            "value": {
+              "sign": 0,
+              "digits": [
+                9,
+                9,
+                2
+              ],
+              "exponent": -2
+            }
+          },
+          "value_type": "百分数",
+          "source_unit": "元",
+          "normalized_value": {
+            "type": "decimal",
+            "value": {
+              "sign": 0,
+              "digits": [
+                9,
+                9,
+                2
+              ],
+              "exponent": -2
+            }
+          },
+          "normalized_unit": "万元",
+          "source": {
+            "source_file": "PERCENT.xlsx",
+            "source_sheet": "20202",
+            "source_row": 4
+          }
+        },
+        {
+          "institution_id": "9144",
+          "institution_name": "甲银行",
+          "social_credit_code": "9144",
+          "institution_type": "农商行",
+          "handling_branch": "一部",
+          "region": "示例地区",
+          "form_code": "20202",
+          "indicator_code": "COUNT",
+          "indicator_name": "COUNT",
+          "period": "2026-06",
+          "source_date": "2026-06-30",
+          "value": {
+            "type": "decimal",
+            "value": {
+              "sign": 0,
+              "digits": [
+                4,
+                2
+              ],
+              "exponent": 0
+            }
+          },
+          "value_type": "个数",
+          "source_unit": "元",
+          "normalized_value": {
+            "type": "decimal",
+            "value": {
+              "sign": 0,
+              "digits": [
+                4,
+                2
+              ],
+              "exponent": 0
+            }
+          },
+          "normalized_unit": "万元",
+          "source": {
+            "source_file": "COUNT.xlsx",
+            "source_sheet": "20202",
+            "source_row": 4
+          }
+        }
+      ],
+      "external_org_map": {
+        "9144": "row-a"
+      },
+      "external": {
+        "time_series": false,
+        "values": [
+          {
+            "data_date": "",
+            "row_label": "row-a",
+            "indicator_name": "百分比",
+            "value": {
+              "type": "decimal",
+              "value": {
+                "sign": 0,
+                "digits": [
+                  9,
+                  9,
+                  2,
+                  0,
+                  5
+                ],
+                "exponent": -4
+              }
+            },
+            "source": {
+              "source_file": "central.xlsx",
+              "source_sheet": "集中系统数据",
+              "source_row": 5
+            },
+            "fallback_reason": ""
+          },
+          {
+            "data_date": "",
+            "row_label": "row-a",
+            "indicator_name": "计数",
+            "value": {
+              "type": "decimal",
+              "value": {
+                "sign": 0,
+                "digits": [
+                  4,
+                  2,
+                  0,
+                  0,
+                  0,
+                  5
+                ],
+                "exponent": -4
+              }
+            },
+            "source": {
+              "source_file": "central.xlsx",
+              "source_sheet": "集中系统数据",
+              "source_row": 5
+            },
+            "fallback_reason": ""
+          }
+        ],
+        "available_dates": [],
+        "date_labels": [],
+        "row_labels": [
+          "row-a"
+        ],
+        "indicator_names": [
+          "百分比",
+          "计数"
+        ],
+        "missing_label_fallback": null
+      },
+      "config": {
+        "indicators": {
+          "PERCENT": {
+            "data_type": "百分数"
+          },
+          "COUNT": {
+            "data_type": "个数"
+          }
+        },
+        "institutions_by_id": {},
+        "institutions_by_name": {},
+        "external_rules": [
+          {
+            "rule_id": "PERCENT",
+            "indicator_code": "PERCENT",
+            "external_indicator_name": "百分比",
+            "comparison_method": "等于",
+            "tolerance": 0.001,
+            "severity": "硬性",
+            "enabled": true
+          },
+          {
+            "rule_id": "COUNT",
+            "indicator_code": "COUNT",
+            "external_indicator_name": "计数",
+            "comparison_method": "等于",
+            "tolerance": 0.001,
+            "severity": "硬性",
+            "enabled": true
+          }
+        ],
+        "unit_settings": {
+          "external_file_unit": "亿元",
+          "output_file_unit": "万元"
+        }
+      }
+    },
+    {
+      "id": "amount_tolerance_is_in_output_unit",
+      "current": [
+        {
+          "institution_id": "9144",
+          "institution_name": "甲银行",
+          "social_credit_code": "9144",
+          "institution_type": "农商行",
+          "handling_branch": "一部",
+          "region": "示例地区",
+          "form_code": "20202",
+          "indicator_code": "AMOUNT_OK",
+          "indicator_name": "AMOUNT_OK",
+          "period": "2026-06",
+          "source_date": "2026-06-30",
+          "value": {
+            "type": "decimal",
+            "value": {
+              "sign": 0,
+              "digits": [
+                1,
+                2,
+                3,
+                4,
+                5,
+                6,
+                7
+              ],
+              "exponent": -4
+            }
+          },
+          "value_type": "余额",
+          "source_unit": "元",
+          "normalized_value": {
+            "type": "decimal",
+            "value": {
+              "sign": 0,
+              "digits": [
+                1,
+                2,
+                3,
+                4,
+                5,
+                6,
+                7
+              ],
+              "exponent": -4
+            }
+          },
+          "normalized_unit": "万元",
+          "source": {
+            "source_file": "AMOUNT_OK.xlsx",
+            "source_sheet": "20202",
+            "source_row": 4
+          }
+        },
+        {
+          "institution_id": "9145",
+          "institution_name": "甲银行",
+          "social_credit_code": "9145",
+          "institution_type": "农商行",
+          "handling_branch": "一部",
+          "region": "示例地区",
+          "form_code": "20202",
+          "indicator_code": "AMOUNT_BAD",
+          "indicator_name": "AMOUNT_BAD",
+          "period": "2026-06",
+          "source_date": "2026-06-30",
+          "value": {
+            "type": "decimal",
+            "value": {
+              "sign": 0,
+              "digits": [
+                1,
+                2,
+                3,
+                4,
+                5,
+                6,
+                7
+              ],
+              "exponent": -4
+            }
+          },
+          "value_type": "余额",
+          "source_unit": "元",
+          "normalized_value": {
+            "type": "decimal",
+            "value": {
+              "sign": 0,
+              "digits": [
+                1,
+                2,
+                3,
+                4,
+                5,
+                6,
+                7
+              ],
+              "exponent": -4
+            }
+          },
+          "normalized_unit": "万元",
+          "source": {
+            "source_file": "AMOUNT_BAD.xlsx",
+            "source_sheet": "20202",
+            "source_row": 4
+          }
+        }
+      ],
+      "external_org_map": {
+        "9144": "row-a",
+        "9145": "row-b"
+      },
+      "external": {
+        "time_series": false,
+        "values": [
+          {
+            "data_date": "",
+            "row_label": "row-a",
+            "indicator_name": "存款",
+            "value": {
+              "type": "decimal",
+              "value": {
+                "sign": 0,
+                "digits": [
+                  1,
+                  2,
+                  3,
+                  4,
+                  5,
+                  6,
+                  8
+                ],
+                "exponent": -8
+              }
+            },
+            "source": {
+              "source_file": "central.xlsx",
+              "source_sheet": "集中系统数据",
+              "source_row": 5
+            },
+            "fallback_reason": ""
+          },
+          {
+            "data_date": "",
+            "row_label": "row-b",
+            "indicator_name": "存款",
+            "value": {
+              "type": "decimal",
+              "value": {
+                "sign": 0,
+                "digits": [
+                  1,
+                  2,
+                  3,
+                  4,
+                  5,
+                  6,
+                  9
+                ],
+                "exponent": -8
+              }
+            },
+            "source": {
+              "source_file": "central.xlsx",
+              "source_sheet": "集中系统数据",
+              "source_row": 5
+            },
+            "fallback_reason": ""
+          }
+        ],
+        "available_dates": [],
+        "date_labels": [],
+        "row_labels": [
+          "row-a",
+          "row-b"
+        ],
+        "indicator_names": [
+          "存款"
+        ],
+        "missing_label_fallback": null
+      },
+      "config": {
+        "indicators": {
+          "AMOUNT_OK": {
+            "data_type": "余额"
+          },
+          "AMOUNT_BAD": {
+            "data_type": "余额"
+          }
+        },
+        "institutions_by_id": {},
+        "institutions_by_name": {},
+        "external_rules": [
+          {
+            "rule_id": "AMOUNT_OK",
+            "indicator_code": "AMOUNT_OK",
+            "external_indicator_name": "存款",
+            "comparison_method": "等于",
+            "tolerance": 0.0,
+            "severity": "硬性",
+            "enabled": true
+          },
+          {
+            "rule_id": "AMOUNT_BAD",
+            "indicator_code": "AMOUNT_BAD",
+            "external_indicator_name": "存款",
+            "comparison_method": "等于",
+            "tolerance": 0.0,
+            "severity": "硬性",
+            "enabled": true
+          }
+        ],
+        "unit_settings": {
+          "external_file_unit": "亿元",
+          "output_file_unit": "万元"
+        }
+      }
+    },
+    {
+      "id": "time_series_requires_exact_current_date_and_disables_zero_fallback",
+      "current": [
+        {
+          "institution_id": "9144",
+          "institution_name": "甲银行",
+          "social_credit_code": "9144",
+          "institution_type": "农商行",
+          "handling_branch": "一部",
+          "region": "示例地区",
+          "form_code": "20202",
+          "indicator_code": "TS_MATCH",
+          "indicator_name": "TS_MATCH",
+          "period": "2026-06",
+          "source_date": "20260630",
+          "value": {
+            "type": "decimal",
+            "value": {
+              "sign": 0,
+              "digits": [
+                1,
+                0,
+                0
+              ],
+              "exponent": 0
+            }
+          },
+          "value_type": "数值",
+          "source_unit": "元",
+          "normalized_value": {
+            "type": "decimal",
+            "value": {
+              "sign": 0,
+              "digits": [
+                1,
+                0,
+                0
+              ],
+              "exponent": 0
+            }
+          },
+          "normalized_unit": "万元",
+          "source": {
+            "source_file": "TS_MATCH.xlsx",
+            "source_sheet": "20202",
+            "source_row": 4
+          }
+        },
+        {
+          "institution_id": "9145",
+          "institution_name": "甲银行",
+          "social_credit_code": "9145",
+          "institution_type": "农商行",
+          "handling_branch": "一部",
+          "region": "示例地区",
+          "form_code": "20202",
+          "indicator_code": "TS_DATE_MISSING",
+          "indicator_name": "TS_DATE_MISSING",
+          "period": "2026-06",
+          "source_date": "20260831",
+          "value": {
+            "type": "decimal",
+            "value": {
+              "sign": 0,
+              "digits": [
+                1,
+                0,
+                0
+              ],
+              "exponent": 0
+            }
+          },
+          "value_type": "数值",
+          "source_unit": "元",
+          "normalized_value": {
+            "type": "decimal",
+            "value": {
+              "sign": 0,
+              "digits": [
+                1,
+                0,
+                0
+              ],
+              "exponent": 0
+            }
+          },
+          "normalized_unit": "万元",
+          "source": {
+            "source_file": "TS_DATE_MISSING.xlsx",
+            "source_sheet": "20202",
+            "source_row": 4
+          }
+        },
+        {
+          "institution_id": "9146",
+          "institution_name": "甲银行",
+          "social_credit_code": "9146",
+          "institution_type": "农商行",
+          "handling_branch": "一部",
+          "region": "示例地区",
+          "form_code": "20202",
+          "indicator_code": "TS_BAD_DATE",
+          "indicator_name": "TS_BAD_DATE",
+          "period": "2026-06",
+          "source_date": "2026-06",
+          "value": {
+            "type": "decimal",
+            "value": {
+              "sign": 0,
+              "digits": [
+                1,
+                0,
+                0
+              ],
+              "exponent": 0
+            }
+          },
+          "value_type": "数值",
+          "source_unit": "元",
+          "normalized_value": {
+            "type": "decimal",
+            "value": {
+              "sign": 0,
+              "digits": [
+                1,
+                0,
+                0
+              ],
+              "exponent": 0
+            }
+          },
+          "normalized_unit": "万元",
+          "source": {
+            "source_file": "TS_BAD_DATE.xlsx",
+            "source_sheet": "20202",
+            "source_row": 4
+          }
+        },
+        {
+          "institution_id": "9147",
+          "institution_name": "甲银行",
+          "social_credit_code": "9147",
+          "institution_type": "农商行",
+          "handling_branch": "一部",
+          "region": "示例地区",
+          "form_code": "20202",
+          "indicator_code": "TS_ROW_MISSING",
+          "indicator_name": "TS_ROW_MISSING",
+          "period": "2026-06",
+          "source_date": "20260629",
+          "value": {
+            "type": "decimal",
+            "value": {
+              "sign": 0,
+              "digits": [
+                1,
+                0,
+                0
+              ],
+              "exponent": 0
+            }
+          },
+          "value_type": "数值",
+          "source_unit": "元",
+          "normalized_value": {
+            "type": "decimal",
+            "value": {
+              "sign": 0,
+              "digits": [
+                1,
+                0,
+                0
+              ],
+              "exponent": 0
+            }
+          },
+          "normalized_unit": "万元",
+          "source": {
+            "source_file": "TS_ROW_MISSING.xlsx",
+            "source_sheet": "20202",
+            "source_row": 4
+          }
+        },
+        {
+          "institution_id": "9150",
+          "institution_name": "甲银行",
+          "social_credit_code": "9150",
+          "institution_type": "农商行",
+          "handling_branch": "一部",
+          "region": "示例地区",
+          "form_code": "20202",
+          "indicator_code": "TS_NO_MAP",
+          "indicator_name": "TS_NO_MAP",
+          "period": "2026-06",
+          "source_date": "20260630",
+          "value": {
+            "type": "decimal",
+            "value": {
+              "sign": 0,
+              "digits": [
+                1,
+                0,
+                0
+              ],
+              "exponent": 0
+            }
+          },
+          "value_type": "数值",
+          "source_unit": "元",
+          "normalized_value": {
+            "type": "decimal",
+            "value": {
+              "sign": 0,
+              "digits": [
+                1,
+                0,
+                0
+              ],
+              "exponent": 0
+            }
+          },
+          "normalized_unit": "万元",
+          "source": {
+            "source_file": "TS_NO_MAP.xlsx",
+            "source_sheet": "20202",
+            "source_row": 4
+          }
+        },
+        {
+          "institution_id": "9148",
+          "institution_name": "甲银行",
+          "social_credit_code": "9148",
+          "institution_type": "农商行",
+          "handling_branch": "一部",
+          "region": "示例地区",
+          "form_code": "20202",
+          "indicator_code": "TS_NO_COLUMN",
+          "indicator_name": "TS_NO_COLUMN",
+          "period": "2026-06",
+          "source_date": "20260630",
+          "value": {
+            "type": "decimal",
+            "value": {
+              "sign": 0,
+              "digits": [
+                1,
+                0,
+                0
+              ],
+              "exponent": 0
+            }
+          },
+          "value_type": "数值",
+          "source_unit": "元",
+          "normalized_value": {
+            "type": "decimal",
+            "value": {
+              "sign": 0,
+              "digits": [
+                1,
+                0,
+                0
+              ],
+              "exponent": 0
+            }
+          },
+          "normalized_unit": "万元",
+          "source": {
+            "source_file": "TS_NO_COLUMN.xlsx",
+            "source_sheet": "20202",
+            "source_row": 4
+          }
+        }
+      ],
+      "external_org_map": {
+        "9144": "row-a",
+        "9145": "row-a",
+        "9146": "row-a",
+        "9147": "row-other",
+        "9148": "row-a"
+      },
+      "external": {
+        "time_series": true,
+        "values": [
+          {
+            "data_date": "2026-06-30",
+            "row_label": "row-a",
+            "indicator_name": "存款",
+            "value": {
+              "type": "decimal",
+              "value": {
+                "sign": 0,
+                "digits": [
+                  1,
+                  0,
+                  0
+                ],
+                "exponent": 0
+              }
+            },
+            "source": {
+              "source_file": "central.xlsx",
+              "source_sheet": "集中系统数据",
+              "source_row": 5
+            },
+            "fallback_reason": ""
+          },
+          {
+            "data_date": "2026-06-29",
+            "row_label": "row-a",
+            "indicator_name": "存款",
+            "value": {
+              "type": "decimal",
+              "value": {
+                "sign": 0,
+                "digits": [
+                  3,
+                  3,
+                  3
+                ],
+                "exponent": 0
+              }
+            },
+            "source": {
+              "source_file": "central.xlsx",
+              "source_sheet": "集中系统数据",
+              "source_row": 6
+            },
+            "fallback_reason": ""
+          },
+          {
+            "data_date": "",
+            "row_label": "row-a",
+            "indicator_name": "存款",
+            "value": {
+              "type": "decimal",
+              "value": {
+                "sign": 0,
+                "digits": [
+                  9,
+                  9,
+                  9
+                ],
+                "exponent": 0
+              }
+            },
+            "source": {
+              "source_file": "central.xlsx",
+              "source_sheet": "集中系统数据",
+              "source_row": 5
+            },
+            "fallback_reason": ""
+          }
+        ],
+        "available_dates": [
+          "2026-06-30",
+          "2026-06-29"
+        ],
+        "date_labels": [
+          [
+            "2026-06-30",
+            "row-a"
+          ],
+          [
+            "2026-06-29",
+            "row-other"
+          ]
+        ],
+        "row_labels": [
+          "row-a"
+        ],
+        "indicator_names": [
+          "存款"
+        ],
+        "missing_label_fallback": {
+          "data_date": "",
+          "row_label": "",
+          "indicator_name": "",
+          "value": {
+            "type": "decimal",
+            "value": {
+              "sign": 0,
+              "digits": [
+                0
+              ],
+              "exponent": 0
+            }
+          },
+          "source": {
+            "source_file": "central.xlsx",
+            "source_sheet": "集中系统数据",
+            "source_row": 5
+          },
+          "fallback_reason": "机构行标签列未识别，外部数按0参与比较"
+        }
+      },
+      "config": {
+        "indicators": {
+          "TS_MATCH": {
+            "data_type": "数值"
+          },
+          "TS_DATE_MISSING": {
+            "data_type": "数值"
+          },
+          "TS_BAD_DATE": {
+            "data_type": "数值"
+          },
+          "TS_ROW_MISSING": {
+            "data_type": "数值"
+          },
+          "TS_NO_MAP": {
+            "data_type": "数值"
+          },
+          "TS_NO_COLUMN": {
+            "data_type": "数值"
+          }
+        },
+        "institutions_by_id": {},
+        "institutions_by_name": {},
+        "external_rules": [
+          {
+            "rule_id": "TS_MATCH",
+            "indicator_code": "TS_MATCH",
+            "external_indicator_name": "存款",
+            "comparison_method": "等于",
+            "tolerance": 0.0,
+            "severity": "硬性",
+            "enabled": true
+          },
+          {
+            "rule_id": "TS_DATE_MISSING",
+            "indicator_code": "TS_DATE_MISSING",
+            "external_indicator_name": "存款",
+            "comparison_method": "等于",
+            "tolerance": 0.0,
+            "severity": "硬性",
+            "enabled": true
+          },
+          {
+            "rule_id": "TS_BAD_DATE",
+            "indicator_code": "TS_BAD_DATE",
+            "external_indicator_name": "存款",
+            "comparison_method": "等于",
+            "tolerance": 0.0,
+            "severity": "硬性",
+            "enabled": true
+          },
+          {
+            "rule_id": "TS_ROW_MISSING",
+            "indicator_code": "TS_ROW_MISSING",
+            "external_indicator_name": "存款",
+            "comparison_method": "等于",
+            "tolerance": 0.0,
+            "severity": "硬性",
+            "enabled": true
+          },
+          {
+            "rule_id": "TS_NO_MAP",
+            "indicator_code": "TS_NO_MAP",
+            "external_indicator_name": "存款",
+            "comparison_method": "等于",
+            "tolerance": 0.0,
+            "severity": "硬性",
+            "enabled": true
+          },
+          {
+            "rule_id": "TS_NO_COLUMN",
+            "indicator_code": "TS_NO_COLUMN",
+            "external_indicator_name": "缺失列",
+            "comparison_method": "等于",
+            "tolerance": 0.0,
+            "severity": "硬性",
+            "enabled": true
+          }
+        ],
+        "unit_settings": {
+          "external_file_unit": "元",
+          "output_file_unit": "元"
+        }
+      }
+    },
+    {
+      "id": "disabled_text_and_nonnumeric_records_are_skipped",
+      "current": [
+        {
+          "institution_id": "9144",
+          "institution_name": "甲银行",
+          "social_credit_code": "9144",
+          "institution_type": "农商行",
+          "handling_branch": "一部",
+          "region": "示例地区",
+          "form_code": "20202",
+          "indicator_code": "DISABLED",
+          "indicator_name": "DISABLED",
+          "period": "2026-06",
+          "source_date": "2026-06-30",
+          "value": {
+            "type": "decimal",
+            "value": {
+              "sign": 0,
+              "digits": [
+                1
+              ],
+              "exponent": 0
+            }
+          },
+          "value_type": "数值",
+          "source_unit": "元",
+          "normalized_value": {
+            "type": "decimal",
+            "value": {
+              "sign": 0,
+              "digits": [
+                1
+              ],
+              "exponent": 0
+            }
+          },
+          "normalized_unit": "万元",
+          "source": {
+            "source_file": "DISABLED.xlsx",
+            "source_sheet": "20202",
+            "source_row": 4
+          }
+        },
+        {
+          "institution_id": "9144",
+          "institution_name": "甲银行",
+          "social_credit_code": "9144",
+          "institution_type": "农商行",
+          "handling_branch": "一部",
+          "region": "示例地区",
+          "form_code": "20202",
+          "indicator_code": "TEXT",
+          "indicator_name": "TEXT",
+          "period": "2026-06",
+          "source_date": "2026-06-30",
+          "value": {
+            "type": "string",
+            "value": "甲"
+          },
+          "value_type": "文字",
+          "source_unit": "元",
+          "normalized_value": {
+            "type": "string",
+            "value": "甲"
+          },
+          "normalized_unit": "万元",
+          "source": {
+            "source_file": "TEXT.xlsx",
+            "source_sheet": "20202",
+            "source_row": 4
+          }
+        },
+        {
+          "institution_id": "9144",
+          "institution_name": "甲银行",
+          "social_credit_code": "9144",
+          "institution_type": "农商行",
+          "handling_branch": "一部",
+          "region": "示例地区",
+          "form_code": "20202",
+          "indicator_code": "NONNUM",
+          "indicator_name": "NONNUM",
+          "period": "2026-06",
+          "source_date": "2026-06-30",
+          "value": {
+            "type": "string",
+            "value": "无数据"
+          },
+          "value_type": "数值",
+          "source_unit": "元",
+          "normalized_value": {
+            "type": "string",
+            "value": "无数据"
+          },
+          "normalized_unit": "万元",
+          "source": {
+            "source_file": "NONNUM.xlsx",
+            "source_sheet": "20202",
+            "source_row": 4
+          }
+        },
+        {
+          "institution_id": "9144",
+          "institution_name": "甲银行",
+          "social_credit_code": "9144",
+          "institution_type": "农商行",
+          "handling_branch": "一部",
+          "region": "示例地区",
+          "form_code": "20202",
+          "indicator_code": "NO_RULE",
+          "indicator_name": "NO_RULE",
+          "period": "2026-06",
+          "source_date": "2026-06-30",
+          "value": {
+            "type": "decimal",
+            "value": {
+              "sign": 0,
+              "digits": [
+                1
+              ],
+              "exponent": 0
+            }
+          },
+          "value_type": "数值",
+          "source_unit": "元",
+          "normalized_value": {
+            "type": "decimal",
+            "value": {
+              "sign": 0,
+              "digits": [
+                1
+              ],
+              "exponent": 0
+            }
+          },
+          "normalized_unit": "万元",
+          "source": {
+            "source_file": "NO_RULE.xlsx",
+            "source_sheet": "20202",
+            "source_row": 4
+          }
+        }
+      ],
+      "external_org_map": {
+        "9144": "row-a"
+      },
+      "external": {
+        "time_series": false,
+        "values": [],
+        "available_dates": [],
+        "date_labels": [],
+        "row_labels": [
+          "row-a"
+        ],
+        "indicator_names": [
+          "关闭",
+          "文字",
+          "非数值"
+        ],
+        "missing_label_fallback": null
+      },
+      "config": {
+        "indicators": {
+          "DISABLED": {
+            "data_type": "数值"
+          },
+          "TEXT": {
+            "data_type": "数值"
+          },
+          "NONNUM": {
+            "data_type": "数值"
+          }
+        },
+        "institutions_by_id": {},
+        "institutions_by_name": {},
+        "external_rules": [
+          {
+            "rule_id": "DISABLED",
+            "indicator_code": "DISABLED",
+            "external_indicator_name": "关闭",
+            "comparison_method": "等于",
+            "tolerance": 0.0,
+            "severity": "硬性",
+            "enabled": false
+          },
+          {
+            "rule_id": "TEXT",
+            "indicator_code": "TEXT",
+            "external_indicator_name": "文字",
+            "comparison_method": "等于",
+            "tolerance": 0.0,
+            "severity": "硬性",
+            "enabled": true
+          },
+          {
+            "rule_id": "NONNUM",
+            "indicator_code": "NONNUM",
+            "external_indicator_name": "非数值",
+            "comparison_method": "等于",
+            "tolerance": 0.0,
+            "severity": "硬性",
+            "enabled": true
+          }
+        ],
+        "unit_settings": {
+          "external_file_unit": "元",
+          "output_file_unit": "元"
+        }
+      }
+    },
+    {
+      "id": "invalid_comparison_method_reports_rule_error",
+      "current": [
+        {
+          "institution_id": "9144",
+          "institution_name": "甲银行",
+          "social_credit_code": "9144",
+          "institution_type": "农商行",
+          "handling_branch": "一部",
+          "region": "示例地区",
+          "form_code": "20202",
+          "indicator_code": "INV",
+          "indicator_name": "INV",
+          "period": "2026-06",
+          "source_date": "2026-06-30",
+          "value": {
+            "type": "decimal",
+            "value": {
+              "sign": 0,
+              "digits": [
+                1
+              ],
+              "exponent": 0
+            }
+          },
+          "value_type": "数值",
+          "source_unit": "元",
+          "normalized_value": {
+            "type": "decimal",
+            "value": {
+              "sign": 0,
+              "digits": [
+                1
+              ],
+              "exponent": 0
+            }
+          },
+          "normalized_unit": "万元",
+          "source": {
+            "source_file": "INV.xlsx",
+            "source_sheet": "20202",
+            "source_row": 4
+          }
+        }
+      ],
+      "external_org_map": {
+        "9144": "row-a"
+      },
+      "external": {
+        "time_series": false,
+        "values": [
+          {
+            "data_date": "",
+            "row_label": "row-a",
+            "indicator_name": "值",
+            "value": {
+              "type": "decimal",
+              "value": {
+                "sign": 0,
+                "digits": [
+                  2
+                ],
+                "exponent": 0
+              }
+            },
+            "source": {
+              "source_file": "central.xlsx",
+              "source_sheet": "集中系统数据",
+              "source_row": 5
+            },
+            "fallback_reason": ""
+          }
+        ],
+        "available_dates": [],
+        "date_labels": [],
+        "row_labels": [
+          "row-a"
+        ],
+        "indicator_names": [
+          "值"
+        ],
+        "missing_label_fallback": null
+      },
+      "config": {
+        "indicators": {
+          "INV": {
+            "data_type": "数值"
+          }
+        },
+        "institutions_by_id": {},
+        "institutions_by_name": {},
+        "external_rules": [
+          {
+            "rule_id": "INV",
+            "indicator_code": "INV",
+            "external_indicator_name": "值",
+            "comparison_method": "无效",
+            "tolerance": 0.0,
+            "severity": "硬性",
+            "enabled": true
+          }
+        ],
+        "unit_settings": {
+          "external_file_unit": "元",
+          "output_file_unit": "元"
+        }
+      }
+    },
+    {
+      "id": "unsupported_external_amount_unit_reports_rule_error",
+      "current": [
+        {
+          "institution_id": "9144",
+          "institution_name": "甲银行",
+          "social_credit_code": "9144",
+          "institution_type": "农商行",
+          "handling_branch": "一部",
+          "region": "示例地区",
+          "form_code": "20202",
+          "indicator_code": "UNIT",
+          "indicator_name": "UNIT",
+          "period": "2026-06",
+          "source_date": "2026-06-30",
+          "value": {
+            "type": "decimal",
+            "value": {
+              "sign": 0,
+              "digits": [
+                1
+              ],
+              "exponent": 0
+            }
+          },
+          "value_type": "余额",
+          "source_unit": "元",
+          "normalized_value": {
+            "type": "decimal",
+            "value": {
+              "sign": 0,
+              "digits": [
+                1
+              ],
+              "exponent": 0
+            }
+          },
+          "normalized_unit": "万元",
+          "source": {
+            "source_file": "UNIT.xlsx",
+            "source_sheet": "20202",
+            "source_row": 4
+          }
+        }
+      ],
+      "external_org_map": {
+        "9144": "row-a"
+      },
+      "external": {
+        "time_series": false,
+        "values": [
+          {
+            "data_date": "",
+            "row_label": "row-a",
+            "indicator_name": "存款",
+            "value": {
+              "type": "decimal",
+              "value": {
+                "sign": 0,
+                "digits": [
+                  2
+                ],
+                "exponent": 0
+              }
+            },
+            "source": {
+              "source_file": "central.xlsx",
+              "source_sheet": "集中系统数据",
+              "source_row": 5
+            },
+            "fallback_reason": ""
+          }
+        ],
+        "available_dates": [],
+        "date_labels": [],
+        "row_labels": [
+          "row-a"
+        ],
+        "indicator_names": [
+          "存款"
+        ],
+        "missing_label_fallback": null
+      },
+      "config": {
+        "indicators": {
+          "UNIT": {
+            "data_type": "余额"
+          }
+        },
+        "institutions_by_id": {},
+        "institutions_by_name": {},
+        "external_rules": [
+          {
+            "rule_id": "UNIT",
+            "indicator_code": "UNIT",
+            "external_indicator_name": "存款",
+            "comparison_method": "等于",
+            "tolerance": 0.0,
+            "severity": "硬性",
+            "enabled": true
+          }
+        ],
+        "unit_settings": {
+          "external_file_unit": "千元",
+          "output_file_unit": "元"
+        }
+      }
+    }
+  ]
+}

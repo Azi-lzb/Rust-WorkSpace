@@ -1,0 +1,491 @@
+{
+  "audit_rule": {
+    "rule_id": "R-001",
+    "enabled": true,
+    "report_code": "REP-A",
+    "sheet_name": "汇总",
+    "formula_cell": "C8",
+    "target_cell": "D8",
+    "severity": "warning",
+    "message": "结果不一致",
+    "copy_range": "A1:D12",
+    "result_mode": "nonempty",
+    "value_from_result": true
+  },
+  "audit_rule_defaults": {
+    "rule_id": "R-default",
+    "enabled": false,
+    "report_code": "REP-B",
+    "sheet_name": "明细",
+    "formula_cell": "A2",
+    "target_cell": "B2",
+    "severity": "info",
+    "message": "默认值检查",
+    "copy_range": "",
+    "result_mode": "nonempty",
+    "value_from_result": false
+  },
+  "copy_range": {
+    "sheet_name": "汇总",
+    "address": "A1:D12"
+  },
+  "template_definition": {
+    "rules": [
+      {
+        "rule_id": "R-001",
+        "enabled": true,
+        "report_code": "REP-A",
+        "sheet_name": "汇总",
+        "formula_cell": "C8",
+        "target_cell": "D8",
+        "severity": "warning",
+        "message": "结果不一致",
+        "copy_range": "A1:D12",
+        "result_mode": "nonempty",
+        "value_from_result": true
+      }
+    ],
+    "copy_ranges": [
+      {
+        "sheet_name": "汇总",
+        "address": "A1:D12"
+      }
+    ],
+    "structured": true,
+    "structure_ranges": [
+      {
+        "sheet_name": "结构",
+        "address": "A1:B3"
+      }
+    ],
+    "extraction_ranges": [
+      {
+        "sheet_name": "数据",
+        "address": "A5:H20"
+      }
+    ]
+  },
+  "preflight_item": {
+    "category": "template",
+    "level": "warning",
+    "status": "mismatch",
+    "sheet_name": "汇总",
+    "location": "C8",
+    "message": "标签未匹配"
+  },
+  "structure_check": {
+    "sheet_name": "汇总",
+    "cell_address": "A1",
+    "expected_value": "机构代码",
+    "actual_value": "机构编号",
+    "matched": false
+  },
+  "source_match": {
+    "matched": false,
+    "score": 0.5,
+    "matched_labels": 1,
+    "checked_labels": 2,
+    "missing_sheets": [
+      "说明"
+    ],
+    "details": "模板结构不完整",
+    "structure_checks": [
+      {
+        "sheet_name": "汇总",
+        "cell_address": "A1",
+        "expected_value": "机构代码",
+        "actual_value": "机构编号",
+        "matched": false
+      }
+    ]
+  },
+  "preflight_run_result": {
+    "value": {
+      "report_path": "output/preflight.xlsx",
+      "total_files": 3,
+      "matched_files": 2,
+      "template_warnings": 1,
+      "source_matches": [
+        [
+          "input/source-01.xlsx",
+          {
+            "matched": false,
+            "score": 0.5,
+            "matched_labels": 1,
+            "checked_labels": 2,
+            "missing_sheets": [
+              "说明"
+            ],
+            "details": "模板结构不完整",
+            "structure_checks": [
+              {
+                "sheet_name": "汇总",
+                "cell_address": "A1",
+                "expected_value": "机构代码",
+                "actual_value": "机构编号",
+                "matched": false
+              }
+            ]
+          }
+        ]
+      ],
+      "batch_id": "batch-001",
+      "log_path": "logs/preflight.log"
+    },
+    "failed_files": 1,
+    "summary_text": "审核前检查完成：通过 2 个，不通过 1 个，模板提示 1 项。\n检查报告：output/preflight.xlsx\n运行日志：logs/preflight.log"
+  },
+  "issue": {
+    "issue_id": "issue-001",
+    "period": "2026-09",
+    "batch_id": "batch-001",
+    "audit_time": "2026-10-01 09:30:00",
+    "triggered": true,
+    "status": "new",
+    "first_seen_period": "2026-09",
+    "previous_seen_period": "2026-08",
+    "consecutive_count": 2,
+    "org_code": "0001",
+    "org_name": "样本机构",
+    "report_code": "REP-A",
+    "sheet_name": "汇总",
+    "rule_id": "R-001",
+    "severity": "warning",
+    "formula_cell": "C8",
+    "target_cell": "D8",
+    "target_value": 100.25,
+    "formula_result": null,
+    "message": "结果不一致",
+    "source_file": "input/source-01.xlsx",
+    "audit_file": "output/source-01_audit.xlsx",
+    "check_field": "余额",
+    "check_type": "difference",
+    "comparison_value": "100.25",
+    "reference_value": "99.00",
+    "difference_value": "1.25",
+    "detail": "样本差额",
+    "institution_feedback": "待反馈",
+    "auditor_opinion": "待复核"
+  },
+  "file_audit_result": {
+    "source_path": "input/source-01.xlsx",
+    "audit_path": "output/source-01_audit.xlsx",
+    "org_code": "0001",
+    "org_name": "样本机构",
+    "issues": [
+      {
+        "issue_id": "issue-001",
+        "period": "2026-09",
+        "batch_id": "batch-001",
+        "audit_time": "2026-10-01 09:30:00",
+        "triggered": true,
+        "status": "new",
+        "first_seen_period": "2026-09",
+        "previous_seen_period": "2026-08",
+        "consecutive_count": 2,
+        "org_code": "0001",
+        "org_name": "样本机构",
+        "report_code": "REP-A",
+        "sheet_name": "汇总",
+        "rule_id": "R-001",
+        "severity": "warning",
+        "formula_cell": "C8",
+        "target_cell": "D8",
+        "target_value": 100.25,
+        "formula_result": null,
+        "message": "结果不一致",
+        "source_file": "input/source-01.xlsx",
+        "audit_file": "output/source-01_audit.xlsx",
+        "check_field": "余额",
+        "check_type": "difference",
+        "comparison_value": "100.25",
+        "reference_value": "99.00",
+        "difference_value": "1.25",
+        "detail": "样本差额",
+        "institution_feedback": "待反馈",
+        "auditor_opinion": "待复核"
+      }
+    ],
+    "error": ""
+  },
+  "audit_run_result": {
+    "value": {
+      "batch_id": "batch-001",
+      "period": "2026-09",
+      "output_dir": "output",
+      "current_issues": [
+        {
+          "issue_id": "issue-001",
+          "period": "2026-09",
+          "batch_id": "batch-001",
+          "audit_time": "2026-10-01 09:30:00",
+          "triggered": true,
+          "status": "new",
+          "first_seen_period": "2026-09",
+          "previous_seen_period": "2026-08",
+          "consecutive_count": 2,
+          "org_code": "0001",
+          "org_name": "样本机构",
+          "report_code": "REP-A",
+          "sheet_name": "汇总",
+          "rule_id": "R-001",
+          "severity": "warning",
+          "formula_cell": "C8",
+          "target_cell": "D8",
+          "target_value": 100.25,
+          "formula_result": null,
+          "message": "结果不一致",
+          "source_file": "input/source-01.xlsx",
+          "audit_file": "output/source-01_audit.xlsx",
+          "check_field": "余额",
+          "check_type": "difference",
+          "comparison_value": "100.25",
+          "reference_value": "99.00",
+          "difference_value": "1.25",
+          "detail": "样本差额",
+          "institution_feedback": "待反馈",
+          "auditor_opinion": "待复核"
+        }
+      ],
+      "resolved_issues": [],
+      "files": [
+        {
+          "source_path": "input/source-01.xlsx",
+          "audit_path": "output/source-01_audit.xlsx",
+          "org_code": "0001",
+          "org_name": "样本机构",
+          "issues": [
+            {
+              "issue_id": "issue-001",
+              "period": "2026-09",
+              "batch_id": "batch-001",
+              "audit_time": "2026-10-01 09:30:00",
+              "triggered": true,
+              "status": "new",
+              "first_seen_period": "2026-09",
+              "previous_seen_period": "2026-08",
+              "consecutive_count": 2,
+              "org_code": "0001",
+              "org_name": "样本机构",
+              "report_code": "REP-A",
+              "sheet_name": "汇总",
+              "rule_id": "R-001",
+              "severity": "warning",
+              "formula_cell": "C8",
+              "target_cell": "D8",
+              "target_value": 100.25,
+              "formula_result": null,
+              "message": "结果不一致",
+              "source_file": "input/source-01.xlsx",
+              "audit_file": "output/source-01_audit.xlsx",
+              "check_field": "余额",
+              "check_type": "difference",
+              "comparison_value": "100.25",
+              "reference_value": "99.00",
+              "difference_value": "1.25",
+              "detail": "样本差额",
+              "institution_feedback": "待反馈",
+              "auditor_opinion": "待复核"
+            }
+          ],
+          "error": ""
+        },
+        {
+          "source_path": "input/source-02.xlsx",
+          "audit_path": null,
+          "org_code": "0002",
+          "org_name": "待匹配机构",
+          "issues": [],
+          "error": "报送文件与模板不匹配：缺少工作表"
+        }
+      ],
+      "summary_path": "output/summary.xlsx",
+      "history_path": "output/history.xlsx",
+      "preflight_path": "output/preflight.xlsx",
+      "performance_lines": [
+        "读取 0.10s",
+        "规则 0.20s"
+      ],
+      "log_path": "logs/audit.log",
+      "copies": {
+        "source-copy": "output/copies"
+      }
+    },
+    "successful_files": 1,
+    "failed_files": 1,
+    "summary_text": "审核完成：成功 1 个文件，失败 1 个文件。\n本期审核结果 1 条。\n问题汇总：output/summary.xlsx\n历史库：output/history.xlsx\n审核前检查：output/preflight.xlsx\n运行日志：logs/audit.log\n已跳过 1 个结构不匹配文件：source-02.xlsx\n耗时分解：读取 0.10s；规则 0.20s"
+  },
+  "constructor_defaults": {
+    "audit_rule": {
+      "args": {
+        "rule_id": "R-default",
+        "enabled": false,
+        "report_code": "REP-B",
+        "sheet_name": "明细",
+        "formula_cell": "A2",
+        "target_cell": "B2",
+        "severity": "info",
+        "message": "默认值检查"
+      },
+      "value": {
+        "rule_id": "R-default",
+        "enabled": false,
+        "report_code": "REP-B",
+        "sheet_name": "明细",
+        "formula_cell": "A2",
+        "target_cell": "B2",
+        "severity": "info",
+        "message": "默认值检查",
+        "copy_range": "",
+        "result_mode": "nonempty",
+        "value_from_result": false
+      }
+    },
+    "template_definition": {
+      "args": {
+        "rules": [],
+        "copy_ranges": [],
+        "structured": false
+      },
+      "value": {
+        "rules": [],
+        "copy_ranges": [],
+        "structured": false,
+        "structure_ranges": [],
+        "extraction_ranges": []
+      }
+    },
+    "source_match": {
+      "args": {
+        "matched": true,
+        "score": 1.0,
+        "matched_labels": 1,
+        "checked_labels": 1
+      },
+      "value": {
+        "matched": true,
+        "score": 1.0,
+        "matched_labels": 1,
+        "checked_labels": 1,
+        "missing_sheets": [],
+        "details": "",
+        "structure_checks": []
+      }
+    },
+    "preflight_run_result": {
+      "args": {
+        "report_path": null,
+        "total_files": 0,
+        "matched_files": 0,
+        "template_warnings": 0
+      },
+      "value": {
+        "report_path": null,
+        "total_files": 0,
+        "matched_files": 0,
+        "template_warnings": 0,
+        "source_matches": [],
+        "batch_id": null,
+        "log_path": null
+      }
+    },
+    "issue": {
+      "args": {
+        "issue_id": "issue-default",
+        "period": "2026-09",
+        "batch_id": "batch-default",
+        "audit_time": "",
+        "triggered": false,
+        "status": "new",
+        "first_seen_period": "",
+        "previous_seen_period": "",
+        "consecutive_count": 0,
+        "org_code": "",
+        "org_name": "",
+        "report_code": "",
+        "sheet_name": "",
+        "rule_id": "",
+        "severity": "",
+        "formula_cell": "",
+        "target_cell": "",
+        "target_value": null,
+        "formula_result": null,
+        "message": "",
+        "source_file": "",
+        "audit_file": ""
+      },
+      "value": {
+        "issue_id": "issue-default",
+        "period": "2026-09",
+        "batch_id": "batch-default",
+        "audit_time": "",
+        "triggered": false,
+        "status": "new",
+        "first_seen_period": "",
+        "previous_seen_period": "",
+        "consecutive_count": 0,
+        "org_code": "",
+        "org_name": "",
+        "report_code": "",
+        "sheet_name": "",
+        "rule_id": "",
+        "severity": "",
+        "formula_cell": "",
+        "target_cell": "",
+        "target_value": null,
+        "formula_result": null,
+        "message": "",
+        "source_file": "",
+        "audit_file": "",
+        "check_field": "",
+        "check_type": "",
+        "comparison_value": "",
+        "reference_value": "",
+        "difference_value": "",
+        "detail": "",
+        "institution_feedback": "",
+        "auditor_opinion": ""
+      }
+    },
+    "file_audit_result": {
+      "args": {
+        "source_path": "input/minimal.xlsx",
+        "audit_path": null,
+        "org_code": "",
+        "org_name": ""
+      },
+      "value": {
+        "source_path": "input/minimal.xlsx",
+        "audit_path": null,
+        "org_code": "",
+        "org_name": "",
+        "issues": [],
+        "error": ""
+      }
+    },
+    "audit_run_result": {
+      "args": {
+        "batch_id": "batch-default",
+        "period": "2026-09",
+        "output_dir": "output",
+        "current_issues": [],
+        "resolved_issues": [],
+        "files": []
+      },
+      "value": {
+        "batch_id": "batch-default",
+        "period": "2026-09",
+        "output_dir": "output",
+        "current_issues": [],
+        "resolved_issues": [],
+        "files": [],
+        "summary_path": null,
+        "history_path": null,
+        "preflight_path": null,
+        "performance_lines": [],
+        "log_path": null,
+        "copies": {}
+      }
+    }
+  }
+}

@@ -1,0 +1,63 @@
+{
+  "status": "passed_synthetic_parity",
+  "source": {
+    "project": "C:\\Users\\AZI\\Desktop\\VibeCode\\3.open-data-audit",
+    "module": "core/src/base_audit/systems/s2_report_collection/config.py::{load_config,load_unit_settings}",
+    "config_sha256": "18AF21C33CA45A791C449A2C484BC66F095921EE0839FB9EE9D9218E6FC56ED6",
+    "models_sha256": "8C19D7E5521F9290EC7FAF641C5454BE148188A9B1A7C129127C97E6FC5B903E",
+    "unit_conversion_sha256": "BE9AF2EAB715AC6ACDD496363B551C649486DD1A0939B55CB746A7AFCD6761BA",
+    "baseline_python": "3.12.10",
+    "baseline_openpyxl": "3.1.5"
+  },
+  "rust_modules": [
+    "audit-core/src/s2_config.rs",
+    "audit-core/src/s2_import.rs",
+    "audit-core/src/s2_period.rs",
+    "audit-core/src/s2_rule_engine.rs",
+    "audit-core/src/s2_external.rs"
+  ],
+  "fixtures": {
+    "path": "audit-core/tests/fixtures/s2_config/cases.json",
+    "case_count": 15,
+    "config_success_count": 3,
+    "expected_config_error_count": 12,
+    "unit_settings_success_count": 7,
+    "expected_unit_settings_error_count": 8
+  },
+  "comparison": "The Rust integration test compares complete serialized config models, warning order, rule sources and error strings with the read-only Python baseline after source path normalization. It separately compares load_unit_settings and checks projection into the existing S2 import, period, rule and external-engine config contracts.",
+  "checks": {
+    "fixture_generator_command": "python -B audit-core/tests/compare/generate_s2_config_fixtures.py",
+    "baseline_command": "python -B audit-core/tests/compare/run_s2_config_baseline.py",
+    "baseline_generated": true,
+    "rust_parity_command": "cargo test -p audit-core --test s2_config_parity --locked",
+    "rust_parity_tests_passed": 2,
+    "rust_parity_tests_failed": 0,
+    "audit_core_library_tests_passed": 27,
+    "workspace_test_command": "cargo test --workspace --locked -q (WSL Ubuntu)",
+    "workspace_tests_passed": 81,
+    "workspace_tests_failed": 0,
+    "format_command": "cargo fmt --all -- --check",
+    "format_check": "passed"
+  },
+  "preserved": [
+    "Required and optional worksheet handling, header aliases, required header ordering, and general-settings defaults",
+    "Indicator code normalization, duplicate handling, missing-form warnings, and indicator flags",
+    "External-rule validation, severity compatibility mapping, enabled defaults, and source row identity",
+    "Institution lookup maps, alias columns, disabled-row filtering, and report-item metadata",
+    "Preferred strategy-sheet parsing, legacy period-band parsing, severity mapping, sorting, overlap/gap and description warnings",
+    "Rule IDs, default rule type/severity, unsupported-type warnings, unknown numeric references, and source references",
+    "Mapping of the loaded configuration into the existing S2 import, period, expression-rule, and external-comparison configuration models"
+  ],
+  "scope": "S2 runtime configuration workbook loading and shared unit-settings loading from synthetic XLSX fixtures using the shared Rust Calamine reader. The module is not connected to service orchestration or a production route.",
+  "unverified": [
+    "real sanitized or production S2 configuration workbooks",
+    "configuration checker/preflight UI and write_default_config workbook generation",
+    "formula-valued configuration cells, date-typed configuration values, unusual worksheet dimensions, and style-only trailing rows",
+    "end-to-end config-to-import-to-rule-to-report service execution",
+    "performance, peak memory, Windows, Kylin/UOS, glibc 2.28, and offline packaging"
+  ],
+  "performance": "not_measured",
+  "dependencies_or_routes_changed": false,
+  "production_default_changed": false,
+  "rollback": "Revert s2_config, its module export, the supporting serialization/source fields on the S2 engine config models, synthetic workbook fixture generator and fixtures, Python baseline generator/output, parity test/report, migration-inventory row, and matching change record together. The original Python project remains read-only."
+}

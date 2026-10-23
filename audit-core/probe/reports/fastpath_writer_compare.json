@@ -1,0 +1,82 @@
+{
+  "input": "C:\\Users\\AZI\\AppData\\Local\\Temp\\audit-workspace-probes\\rust_xlsxwriter_smoke.xlsx",
+  "checks": [
+    {
+      "name": "openpyxl_openability",
+      "passed": true,
+      "actual": [
+        "Synthetic"
+      ]
+    },
+    {
+      "name": "sheet_names_and_order",
+      "passed": true,
+      "actual": [
+        "Synthetic"
+      ]
+    },
+    {
+      "name": "values",
+      "passed": true,
+      "actual": {
+        "A1": 1,
+        "A2": 2,
+        "A3": 3,
+        "E5": "named target"
+      }
+    },
+    {
+      "name": "formula_text",
+      "passed": true,
+      "actual": "=SUM(A1:A3)"
+    },
+    {
+      "name": "merge",
+      "passed": true,
+      "actual": [
+        "A7:B7"
+      ]
+    },
+    {
+      "name": "style",
+      "passed": true,
+      "actual": {
+        "bold": true,
+        "fill": "FFFFFF00",
+        "number_format": "0.00"
+      }
+    },
+    {
+      "name": "defined_name",
+      "passed": true,
+      "actual": "Synthetic!$E$5"
+    },
+    {
+      "name": "row_column_dimensions",
+      "passed": true,
+      "actual": {
+        "row3": 30.0,
+        "colI": 25.7109375,
+        "requested_colI": 25,
+        "tolerance": 1
+      }
+    },
+    {
+      "name": "print_area",
+      "passed": true,
+      "actual": "'Synthetic'!$A$1:$D$10"
+    }
+  ],
+  "passed": 9,
+  "total": 9,
+  "rate": 1.0,
+  "performance_ms": {
+    "warmup_runs": 1,
+    "measured_runs": 5,
+    "rust_xlsxwriter_internal_ms": {
+      "median": 397,
+      "min": 236,
+      "max": 1235
+    }
+  }
+}

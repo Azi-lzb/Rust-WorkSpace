@@ -1,0 +1,41 @@
+时间：2026-10-23 02:37:44 +08:00
+执行者：Codex
+修改前/后 commit：当前仓库无可用 HEAD；未创建提交。
+WIP：workspace 文件处于未提交状态；仅按本轮范围修改以下文件，保留其他工作区内容。
+
+目的
+- 将 `base_audit.template` 的纯解析 helper 迁移候选与其对拍清单、机器报告补齐。
+- 根据 Python 源码中的 Unicode `\d` 语义，修复 Rust 模板日期标记和批注区域标记只接受 ASCII 数字的差异。
+
+修改文件
+- `audit-core/src/template.rs`
+- `audit-core/tests/fixtures/template_parser_cases.json`
+- `audit-core/probe/reports/template_parser_python_baseline.json`
+- `audit-core/probe/reports/template_parser_parity.json`
+- `audit-core/MIGRATION_INVENTORY.md`
+- `audit-core/GPT修改记录/20261023_023744_Audit模板解析Unicode数字对拍.txt`（本记录）
+
+变化
+- 添加按 Python 3.12.10 / Unicode 15.0.0 基线固定的 Unicode Decimal_Number 范围表，供模板日期 token 和批注区域标记解析使用；不新增依赖。
+- fixture 扩展到 24 个 helper 级样例；Python 基线由只读原项目模块生成。
+- Inventory 仅登记为“纯解析局部”保留，不代表工作簿模板读取、规则执行或审核工作流完成。
+- 未更改源 Python 项目、Excel 引擎路由、Cargo.toml/Cargo.lock、配置或 VBA。
+
+测试与对拍
+- 原项目只读回归：`python -B -m pytest -q -p no:cacheprovider core/tests/test_template.py`：18 passed。
+- Rust 对拍：`cargo test -p audit-core --test template_parser_parity --locked -q`：1 passed；24 个 fixture case 的输出 JSON/错误文本逐项一致。
+- workspace 回归：`cargo test --workspace --locked -q`：48 passed，0 failed。
+- 格式检查：`cargo fmt --all -- --check`：passed。
+- Python 基线记录的 `core/src/base_audit/template.py` SHA-256：`E64338FFCBA01773AAC7E579EB2EBD2C437C44D9C79673E8B1CD43142573B5A0`，与只读源文件一致。
+
+未完成与已知问题
+- 此模块只解析调用方已读出的值，不读取 xlsx 或 comments.xml，不执行规则，也未接入审核流程。
+- 任意 JSON 数组/对象映射为 Python `str()` 的一致性未验证；实际模板预期使用标量单元格。
+- Unicode 范围固定到基线 Python 的 Unicode 15.0.0；更换基线解释器后需重新核验 Unicode 字符分类。
+- 真实脱敏模板、目标 Linux/glibc 2.28 环境和业务端到端结果未验证。
+
+回滚提示
+- 若新增 Unicode 用例失败，恢复 `audit-core/src/template.rs` 本轮前的 ASCII 数字判断，并移除 fixture 中两条 Unicode 扩展样例；重新生成 Python baseline 和 parity report。
+- 若撤回整个 helper 候选，再撤销本次 Inventory 行及两份新报告；不要删除此前已存在的其他迁移模块或报告。
+
+【组件版本】audit-core 0.1.0（本轮不改 Cargo 包版本；未发布）。

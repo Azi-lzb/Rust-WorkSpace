@@ -1,0 +1,44 @@
+时间：2026-10-22 13:34:13 UTC
+执行者：Codex
+修改前 commit：无；当前 Git 状态为全量未跟踪 WIP。
+修改后 commit：无；未提交、未推送。
+目的：实现共享 Rust workbook probe 的 dump/compare 初版，补足公式状态、批注、条件格式及数据验证的 namespace-aware OOXML 元数据导出，并为 pytools 建立独立对拍配置位置。
+
+修改/新增文件：
+- crates/probe/Cargo.toml
+- crates/probe/src/main.rs
+- crates/excel-reader/src/lib.rs
+- Cargo.lock（Cargo 解析 workspace 依赖时更新）
+- audit-core/probe/probe.toml
+- pytools-core/README.md
+- pytools-core/probe/probe.toml
+- pytools-core/probe/reports/.gitkeep
+- pytools-core/tests/fixtures/.gitkeep
+- audit-core/GPT修改记录/20261022_133413_Rust读取与对拍探针.txt
+
+主要变化：
+- probe 增加 dump 命令，调用共享 excel-reader 输出 JSON；增加 compare 命令，对工作表名、值、公式、合并、批注、条件格式和数据验证逐项报告状态、差异位置和通过率。
+- 公式文本读取失败不再静默当成没有公式，dump 导出 formula_status。
+- excel-reader 通过根包关系查找 officeDocument，再沿 workbook 与 worksheet relationships 读取部件；不再固定假定工作簿位于 xl/workbook.xml。
+- 以 namespace-aware XML 结构导出条件格式和数据验证，保留命名空间、属性、子元素与文本；OOXML supplement 当前用于 xlsx/xlsm。
+- Reader JSON schema_version 当前为 3；Python 基线导出需采用同一结构，或后续实现显式 schema 映射。
+- pytools 和 audit 分别保留配置、夹具目录和报告路径。
+
+验证结果：
+- 在 Ubuntu WSL 使用 /root/.cargo/bin/cargo fmt --all。
+- cargo test --workspace 通过：reader 2 项、probe 5 项，共 7 项单测通过；其他 workspace targets 编译通过，但多数当前没有单测。
+- probe dump 对 audit-core/tests/fixtures/synthetic_probe.xlsx 完成 smoke；读取到 1 个工作表，条件格式、数据验证、批注均有结构数据。
+- 对同一 Rust dump 的 self-compare 输出为保留；这是 CLI 自检，不是独立 openpyxl 对拍，不计入正式对拍报告。
+- WSL glibc 为 2.39，只用于本机编译检查；PowerShell PATH 未发现 Rust 命令。已确认 Ubuntu WSL 有 Rust 工具链，Zig 未安装；cargo-zigbuild 尚未验证。
+- 未执行目标平台交叉构建、真实模板对拍或 deb 安装验收。
+
+已知问题：
+- pytools 暂无独立 fixture 文件和旧项目 openpyxl baseline JSON；真实业务样本未提供。
+- Audit 和 pytools 的真实模板能力、所有业务入口和输出仍未完成迁移审计。
+- 当前 probe 读取/比较的是规范化 OOXML 结构；尚未验证所有扩展命名空间和非标准包布局。
+- 公式重算与 .et/.xls/.doc 转换 sidecar 仍是 scaffold。
+- Excel-reader 的条件格式和数据验证只做元数据读取，不执行规则，也不承诺 Office 渲染语义。
+
+删除清单：无。target/ 下生成的 smoke JSON 为忽略目录中的临时输出，未纳入业务夹具或正式报告。
+回滚提示：本仓库当前所有文件均为未跟踪 WIP。只回退上述代码、配置和说明文件；保留已有项目内容与 target/ 用户缓存，不要重置或清理整个仓库。
+组件版本：产品版本不升级；reader dump schema_version 更新到 3。

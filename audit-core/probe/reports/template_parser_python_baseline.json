@@ -1,0 +1,237 @@
+{
+  "source": {
+    "project": "C:\\Users\\AZI\\Desktop\\VibeCode\\3.open-data-audit",
+    "module": "core/src/base_audit/template.py",
+    "sha256": "E64338FFCBA01773AAC7E579EB2EBD2C437C44D9C79673E8B1CD43142573B5A0"
+  },
+  "normalize_names": [
+    {
+      "input": "！金融基础数据-单位贷款202605",
+      "output": "金融基础数据-单位贷款"
+    },
+    {
+      "input": "!Financial2026-06",
+      "output": "Financial"
+    },
+    {
+      "input": "Template_2026.06.30_Archive",
+      "output": "Template__Archive"
+    },
+    {
+      "input": "Report202600NoValidToken",
+      "output": "ReportNoValidToken"
+    },
+    {
+      "input": "2026-02-Audit",
+      "output": "-Audit"
+    },
+    {
+      "input": "Template20٢٦-٠٦",
+      "output": "Template"
+    }
+  ],
+  "comment_cases": [
+    {
+      "name": "rule_id_and_region",
+      "rule_id": {
+        "value": "DWCK-001"
+      },
+      "cleaned": "余额不能为负数"
+    },
+    {
+      "name": "source_prefix_and_rule_id",
+      "rule_id": {
+        "value": "QA_02"
+      },
+      "cleaned": "QA_02\n；余额有误"
+    },
+    {
+      "name": "rule_id_ascii_case_insensitive",
+      "rule_id": {
+        "value": "AB.09"
+      },
+      "cleaned": "说明正文"
+    },
+    {
+      "name": "invalid_rule_id",
+      "rule_id": {
+        "error": "规则编号无效：A/B"
+      },
+      "cleaned": ""
+    },
+    {
+      "name": "no_rule_id",
+      "rule_id": {
+        "value": ""
+      },
+      "cleaned": "余额异常"
+    },
+    {
+      "name": "unicode_decimal_markers",
+      "rule_id": {
+        "value": ""
+      },
+      "cleaned": "说明\n保留正文"
+    },
+    {
+      "name": "unicode_decimal_rule_id",
+      "rule_id": {
+        "value": "A١"
+      },
+      "cleaned": "提示文本"
+    }
+  ],
+  "formula_cases": [
+    {
+      "name": "seven_fields",
+      "result": {
+        "severity": "错误",
+        "indicator": "单位贷款",
+        "value": "0",
+        "message": "不应该为0",
+        "comparison_value": "0",
+        "reference_value": "",
+        "difference_value": "0",
+        "detail": "不应该为0",
+        "check_type": "逾期核对"
+      }
+    },
+    {
+      "name": "full_width_pipe",
+      "result": {
+        "severity": "错误",
+        "indicator": "文本",
+        "value": "1",
+        "message": "描述",
+        "comparison_value": "2",
+        "reference_value": "",
+        "difference_value": "3",
+        "detail": "描述",
+        "check_type": "类型"
+      }
+    },
+    {
+      "name": "soft_and_short",
+      "result": {
+        "severity": "核实",
+        "indicator": "超过百亿，核实是否出现放大倍数的情况",
+        "value": "",
+        "message": "",
+        "comparison_value": "",
+        "reference_value": "",
+        "difference_value": "",
+        "detail": "",
+        "check_type": "注册资本"
+      }
+    },
+    {
+      "name": "default_marker",
+      "result": {
+        "severity": "提示",
+        "indicator": "",
+        "value": "",
+        "message": "默认说明",
+        "comparison_value": "",
+        "reference_value": "",
+        "difference_value": "",
+        "detail": "",
+        "check_type": "余额异常"
+      }
+    },
+    {
+      "name": "tail_join",
+      "result": {
+        "severity": "错误",
+        "indicator": "指标",
+        "value": "值",
+        "message": "说明",
+        "comparison_value": "比较",
+        "reference_value": "",
+        "difference_value": "差额|附加|结尾",
+        "detail": "说明",
+        "check_type": "类型"
+      }
+    },
+    {
+      "name": "null_value",
+      "result": {
+        "severity": "核实",
+        "indicator": "",
+        "value": "",
+        "message": "无公式结果",
+        "comparison_value": "",
+        "reference_value": "",
+        "difference_value": "",
+        "detail": "",
+        "check_type": ""
+      }
+    },
+    {
+      "name": "boolean_value",
+      "result": {
+        "severity": "错误",
+        "indicator": "",
+        "value": "",
+        "message": "",
+        "comparison_value": "",
+        "reference_value": "",
+        "difference_value": "",
+        "detail": "",
+        "check_type": ""
+      }
+    }
+  ],
+  "rule_row_cases": [
+    {
+      "name": "valid_and_blank_id_rows",
+      "result": {
+        "rules": [
+          {
+            "rule_id": "JC-A01-001",
+            "enabled": true,
+            "report_code": "A01",
+            "sheet_name": "基础数据",
+            "formula_cell": "H5",
+            "target_cell": "B5",
+            "severity": "错误",
+            "message": "余额不能为负数",
+            "copy_range": "H5",
+            "result_mode": "nonempty",
+            "value_from_result": false
+          },
+          {
+            "rule_id": "R.02",
+            "enabled": false,
+            "report_code": "B02",
+            "sheet_name": "对照表",
+            "formula_cell": "AA100",
+            "target_cell": "Z3",
+            "severity": "核实",
+            "message": "请核对",
+            "copy_range": "AA100",
+            "result_mode": "nonempty",
+            "value_from_result": false
+          }
+        ]
+      }
+    },
+    {
+      "name": "aggregated_errors_and_duplicate",
+      "result": {
+        "error": "第2行未填写工作表：DUP-1；第2行公式单元格无效：ZZZZ1；第2行定位单元格无效：A0；第2行级别无效：未知；第3行规则编号重复：DUP-1"
+      }
+    },
+    {
+      "name": "no_rules",
+      "result": {
+        "error": "审核规则表中没有可读取的规则"
+      }
+    },
+    {
+      "name": "empty_table",
+      "result": {
+        "error": "审核规则表中没有可读取的规则"
+      }
+    }
+  ]
+}

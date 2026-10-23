@@ -1,0 +1,35 @@
+时间：2026-10-23 09:19（Asia/Shanghai）
+执行者：Codex
+修改前 commit：无可用提交（workspace 当前文件均为未提交 WIP）
+修改后 commit：未提交
+WIP：修改前检查过 Git 状态；原 workspace 文件均为未提交文件，保留已有内容并仅做局部增补。
+
+目的：确认生产路径没有遗留 Python 后，将现有 Audit S2 Rust service 接入原 HTML 前端，建立可逐步扩展的 Rust 本机 Web bridge。
+
+修改/新增文件：
+- `Cargo.toml`、`Cargo.lock`：增加 Axum/Tokio 本机 HTTP 服务依赖及锁定版本。
+- `audit-core/Cargo.toml`：接入 workspace HTTP 依赖。
+- `audit-core/src/lib.rs`、`audit-core/src/bin/open-data-audit.rs`：导出 web bridge，新增 `serve` 子命令。
+- `audit-core/src/web_bridge.rs`：本机 HTTP 页面/接口服务，连接现有 S2 配置检查、路径浏览、输入选择、执行进度与摘要回传；未迁移 API 明确返回 HTTP 501。
+- `audit-core/frontend/web/index.html`、`audit-core/frontend/assets/app-icon.png`、`audit-core/frontend/assets/app-icon.ico`：从只读 Audit 源项目原样复制。HTML SHA-256（源与副本）为 `0CCF7CE3894B5B4354B051A91D32F730309028E413D5DC6573708F5B3F4D0120`；PNG（源与副本）为 `70BC9427B15D9D1F0E3CF72D80FC8C5BF9298680745590E735AC52077AA62E12`；ICO（源与副本）为 `74C5DE4B9878C10BFE652707602CF02170F9C86090FAAE4E66366B1DF7AAA8F3`。服务只在 HTTP 响应中插入 bridge，未改 HTML 文件内容。
+- `audit-core/AGENTS.md`、`audit-core/README.md`、`audit-core/MIGRATION_INVENTORY.md`：记录 UI 接入边界、启动方式、已接 API 与未迁移范围。
+
+逻辑变化：
+- `open-data-audit serve --port 8750 [--config <path>]` 固定绑定 `127.0.0.1`；默认配置查找 `OPEN_DATA_AUDIT_S2_CONFIG`、workspace 本机真实配置和公开占位配置。
+- Web bridge 目前调用已有 Rust S2 功能，不调用 Python/Office/LO；页面默认进入 S2。取消执行、周期配对预览、设置持久化和其他 S1/S3/S4/S5 接口仍未迁移。
+- 检查 workspace Python 文件后，没有发现产品运行路径中的 Python 文件；保留 `probe/`、`tests/compare/` 的 Python 对拍脚本，没有删除 Python 基线。
+
+【组件版本】audit-core Cargo 版本 0.1.0 沿用，未升级。
+
+实际验证：
+- `cargo fmt --all`：通过。
+- `cargo check -p audit-core`：通过。
+- `cargo test -p audit-core web_bridge --locked`：5/5 bridge 单元测试通过。
+- 启动 `open-data-audit serve --port 18750` 后，HTTP 页面返回 200、HTML 含 runtime bridge 且保留原 S2 页面脚本；`get_state` 与 `browse_dir` 返回前端契约结构；未迁移 S3 API 返回 HTTP 501 和接口名。
+- 用合成 fixture 通过 HTTP API 选择配置、本期/上期目录并运行 S2；配置检查通过，异步任务完成，返回 1 家机构、1 张表、11 条指标、15 条发现摘要并生成 XLSX 报告。
+- 对拍临时输入均为 workspace `target/web-smoke/` 下的合成文件，不修改 fixture 和原 Python 项目。
+
+未执行项/已知问题：真实脱敏模板、完整前端交互、API 浏览器自动化、Windows 原生 Rust、麒麟/UOS、glibc 2.28、deb 打包未验收；取消执行和周期配对预览未实现；除明确支持的 API 外其余前端 API 返回 501。
+
+删除清单：无。
+回滚提示：移除本记录列出的 Web bridge 新增/修改即可；不得删除 `probe/` 或 `tests/compare/` 的 Python 对拍基线。

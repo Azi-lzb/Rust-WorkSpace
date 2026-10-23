@@ -1,0 +1,36 @@
+时间：2026-10-23 09:33（Asia/Shanghai）
+执行者：Codex
+修改前 commit：无可用提交（workspace 当前文件均为未提交 WIP）
+修改后 commit：未提交
+WIP：开始前查看 Git 状态；已有 workspace 文件均为未提交文件。本次只按任务增量修改，不清理或覆盖现有内容。
+
+目的：将 S2 前端两期报送文件配对预览从旧 Python 逻辑迁移到 Rust，并保持 HTML 不变；把工作表目录读取纳入共享 Calamine reader。
+
+修改/新增文件：
+- `crates/excel-reader/src/lib.rs`：新增 `read_sheet_names`，经 Calamine 读取工作表名，不遍历单元格正文，并复用现有 `.xls` CFB/OLE 签名校验。
+- `audit-core/src/report_source.rs`：集中处理逐机构、reports、banks 与非标准来源身份；`s2_import` 改为复用此身份解析，避免规则分叉。
+- `audit-core/src/period_pairs.rs`：实现两期工作簿/工作表配对、单边项展示、banks 来源提醒、临时文件过滤及重复键最后项覆盖。
+- `audit-core/src/lib.rs`、`audit-core/src/s2_import.rs`、`audit-core/src/web_bridge.rs`：导出并接入新业务模块；选择或清除本期/上期目录后刷新配对预览；文件浏览器对 S2 报送数据列出 `.xls` 和 `.xlsx`。
+- `audit-core/tests/fixtures/period_pairs_cases.json`、`audit-core/tests/compare/run_period_pairs_baseline.py`、`audit-core/probe/reports/period_pairs_python_baseline.json`、`audit-core/tests/period_pairs_parity.rs`、`audit-core/probe/reports/period_pairs_parity.json`：建立合成 Python 基线、Rust 对拍和报告。
+- `audit-core/README.md`、`audit-core/MIGRATION_INVENTORY.md`：记录新接通的预览功能、对拍范围和代码盘点结果。
+
+逻辑变化：
+- 前端 API `choose_period_compare` 和 `clear_path` 更新目录后重新计算 `periodPairs`/`periodSourceWarning`。原 `frontend/web/index.html` 未修改，运行时仍由 Rust 注入 bridge。
+- 对拍与旧实现一致：配对键、日期、文件名/路径、工作表名、banks 提醒、标准名/reports/banks、单边项目、临时文件过滤及重复键覆盖均逐字段比较；临时目录路径归一为文件名。
+- `.xls` 预览走纯 Rust Calamine sheet-name reader，不使用 xlrd 或 Python 运行时。当前无有效 `.xls` fixture，因此具体 `.xls` 工作表读取格式覆盖仍待验收。
+- Python 文件盘点：`audit-core/src/`、`pytools-core/src/`、`crates/`、`sidecar/` 未发现 Python 源码；发现的 `.py` 均在 `probe/` 或 `tests/compare/`，属于旧实现对拍/测试工具，保留且不进入产品运行路径。本次没有 Python 生产代码需要删除。
+
+【组件版本】audit-core Cargo 版本 0.1.0 沿用，未升级。
+
+实际验证：
+- Python 对拍基线：`python audit-core/tests/compare/run_period_pairs_baseline.py --source-root C:\Users\AZI\Desktop\VibeCode\3.open-data-audit` 通过；基线记录旧 `period_compare.py` 与 `report_source.py` SHA-256。
+- `cargo test -p audit-core --test period_pairs_parity -- --nocapture`：1 个合成目录场景、6 行配对结果与只读 Python 基线完全一致（5 行匹配、1 行仅本期）。
+- `cargo test -p audit-core period_pairs --locked`：配对和 banks 提醒单元测试通过。
+- `cargo test -p audit-core web_bridge::tests::choosing_and_clearing_period_directories_refreshes_pair_preview -- --nocapture`：选择/清除路径后的前端状态更新通过。
+- `cargo fmt --all -- --check` 与 `cargo test --workspace --locked`：通过；全 workspace 测试全部通过，包含既有 `s2_import` 对拍及 pytools 对拍。
+- 前端 HTML SHA-256 仍为 `0CCF7CE3894B5B4354B051A91D32F730309028E413D5DC6573708F5B3F4D0120`，与 Audit 源 HTML 一致。
+
+未执行项/已知问题：没有有效 `.xls` fixture；未用真实报送目录验收身份冲突频率和预览性能；未验证 Windows 原生、麒麟/UOS、glibc 2.28 或 deb。此功能对拍不代表 S2 整体业务流程已完成迁移。
+
+删除清单：无。Python 仅存在于基线/测试辅助目录，未发现可删除的产品运行代码。
+回滚提示：如需回退预览功能，恢复本记录涉及的 Rust/测试/说明文件；不要删除原项目或 workspace 的 Python 对拍基线。`s2_import` 已复用 `report_source`，回退时须保留原身份解析能力或一并还原原 importer helper。

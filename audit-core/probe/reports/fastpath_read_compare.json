@@ -1,0 +1,84 @@
+{
+  "schema_version": 1,
+  "fixtures": [
+    {
+      "fixture": "synthetic_probe.xlsx",
+      "calamine_json": "C:\\Users\\AZI\\AppData\\Local\\Temp\\audit-workspace-probes\\read\\synthetic_probe_calamine.json",
+      "checks": {
+        "sheet_names": {
+          "matched": 1,
+          "total": 1,
+          "rate": 1.0,
+          "differences": []
+        },
+        "values": {
+          "matched": 65,
+          "total": 65,
+          "rate": 1.0,
+          "differences": []
+        },
+        "formulas": {
+          "matched": 1,
+          "total": 1,
+          "rate": 1.0,
+          "differences": []
+        },
+        "merges": {
+          "matched": 1,
+          "total": 1,
+          "rate": 1.0,
+          "differences": []
+        },
+        "comments": {
+          "matched": 1,
+          "total": 1,
+          "rate": 1.0,
+          "differences": []
+        }
+      },
+      "performance_ms": {
+        "warmup_runs": 1,
+        "measured_runs": 5,
+        "calamine_internal": {
+          "median": 220,
+          "min": 180,
+          "max": 1116
+        },
+        "openpyxl_read_baseline": {
+          "median": 44.86090000045806,
+          "min": 35.4723999998896,
+          "max": 93.45469999971101
+        },
+        "note": "Calamine value/formula/merge/comment export includes a namespace-aware comment supplement; OpenPyXL uses data_only values plus formula text."
+      }
+    }
+  ],
+  "totals": {
+    "sheet_names": {
+      "matched": 1,
+      "total": 1,
+      "rate": 1.0
+    },
+    "values": {
+      "matched": 65,
+      "total": 65,
+      "rate": 1.0
+    },
+    "formulas": {
+      "matched": 1,
+      "total": 1,
+      "rate": 1.0
+    },
+    "merges": {
+      "matched": 1,
+      "total": 1,
+      "rate": 1.0
+    },
+    "comments": {
+      "matched": 1,
+      "total": 1,
+      "rate": 1.0
+    }
+  },
+  "status": "completed"
+}

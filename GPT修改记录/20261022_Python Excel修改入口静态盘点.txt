@@ -1,0 +1,36 @@
+时间：2026-10-22（Asia/Shanghai）
+执行者：Codex
+修改前状态：workspace 尚无首次 Git 提交，已有工程文件均为未跟踪 WIP；未清理或覆盖。
+
+目的：
+- 将首轮 Excel 操作类别细化为 PyCode、NoComPyTools 和 Open-Data-Audit 的源文件/函数入口。
+- 区分新建输出、原位编辑、模板复制、OOXML 定点写入和只读元数据提取。
+- 记录 AST 静态盘点无法证明的调用链、运行分支和输出行为，避免把搜索命中当成已迁移。
+
+修改文件：
+- 新增 PYTHON_EXCEL_OPERATION_INVENTORY.md。
+- 修改 EXCEL_ENGINE_ARCHITECTURE.md，加入函数入口清单链接。
+- 修改 AGENTS.md，加入静态入口清单与架构证据链接。
+- 修改 audit-core/rules/13_表格读写技术选型与主动优化.md，将 W02 路由改为 ExcelEditPlan/ExcelModifier，移除 umya 全局首选顺序。
+- 修改 pytools-core/README.md 与 MIGRATION_PLAN.md，统一候选引擎与整批操作路由表述。
+- 新增本记录。
+
+盘点证据：
+- 对两个原始 Python 项目的 core 目录运行只读 AST 盘点，识别函数及 workbook/openpyxl 赋值、写入、保存和 ZIP/XML API；未导入/执行源业务代码。
+- 检查 NoComPyTools 的 xls_to_xlsx.py 和 convert_33_34_35_37.py，确认存在 LibreOffice/Office 转换调用，以及 python-calamine 内容读取入口。
+- 核对 workspace 根目录并行出现的 13_Rust_ExcelWorkspace excel 读写、修改与引擎路由规范.md 建议稿；未改动或移动该未跟踪文件。将其中与当前用户目标一致的 write_pattern/value_view/保留契约及 passed/unverified/unsupported 能力状态纳入架构设计。
+- 读取当前 Rust 共享 crate 调用点、已保存 probe 报告和业务迁移清单。
+- 原始源目录未写入任何文件；本轮未运行测试，因为仅修改 workspace 文档。
+
+主要结果：
+- pytools 记录了配置初始化、去重、split/normalize/delete、区域校验、普通 sheet 提取、打印、汇总、转换等函数入口和具体工作簿操作。
+- audit 记录了模板/公式复制、跨簿 sheet、模板合并、定义名称、批注/样式/尺寸、原生输出和多处自定义 OOXML 写入入口。
+- 明确 AST 静态方法不能解析 helper/运行时分支，因此所有入口仍须追踪菜单 dispatch、输入输出契约及对拍。
+
+未完成：
+- 每个源函数完整调用链、业务功能与输出文件契约。
+- PyCode 与 NoComPyTools 的全部差异核对。
+- 真实脱敏模板和修改后端能力矩阵。
+
+回退方式：
+- 本次只涉及 workspace 文档，可单独回退列出的三个 Markdown 文件及本记录；不得清理其他未跟踪 WIP。

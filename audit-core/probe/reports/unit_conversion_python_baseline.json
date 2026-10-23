@@ -1,0 +1,1238 @@
+{
+  "source": {
+    "project": "C:\\Users\\AZI\\Desktop\\VibeCode\\3.open-data-audit",
+    "module": "core/src/base_audit/systems/s2_report_collection/unit_conversion.py",
+    "sha256": "BE9AF2EAB715AC6ACDD496363B551C649486DD1A0939B55CB746A7AFCD6761BA",
+    "baseline_python": "3.12.10",
+    "importer_module": "core/src/base_audit/systems/s2_report_collection/importer.py",
+    "importer_sha256": "EEF44740DE8EB7AB0E09DE7C074FF06F22F515CC9A1518982FA662D123A49BEC"
+  },
+  "amount_data_type_cases": [
+    {
+      "id": "balance",
+      "value": "余额",
+      "output": true
+    },
+    {
+      "id": "cumulative",
+      "value": "累发",
+      "output": true
+    },
+    {
+      "id": "percentage",
+      "value": "百分数",
+      "output": false
+    },
+    {
+      "id": "count",
+      "value": "个数",
+      "output": false
+    },
+    {
+      "id": "empty",
+      "value": "",
+      "output": false
+    }
+  ],
+  "as_decimal_cases": [
+    {
+      "id": "large_precision",
+      "value": "123456789012345678901234567890.12345678",
+      "output": {
+        "status": "ok",
+        "tuple": {
+          "sign": 0,
+          "digits": [
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8
+          ],
+          "exponent": -8
+        }
+      }
+    },
+    {
+      "id": "grouped_trailing_zeroes",
+      "value": "1,234,567.8900",
+      "output": {
+        "status": "ok",
+        "tuple": {
+          "sign": 0,
+          "digits": [
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            0,
+            0
+          ],
+          "exponent": -4
+        }
+      }
+    },
+    {
+      "id": "negative_whitespace",
+      "value": "  -0.00100 ",
+      "output": {
+        "status": "ok",
+        "tuple": {
+          "sign": 1,
+          "digits": [
+            1,
+            0,
+            0
+          ],
+          "exponent": -5
+        }
+      }
+    },
+    {
+      "id": "scientific_positive",
+      "value": "1.23e+4",
+      "output": {
+        "status": "ok",
+        "tuple": {
+          "sign": 0,
+          "digits": [
+            1,
+            2,
+            3
+          ],
+          "exponent": 2
+        }
+      }
+    },
+    {
+      "id": "scientific_negative",
+      "value": "7E-8",
+      "output": {
+        "status": "ok",
+        "tuple": {
+          "sign": 0,
+          "digits": [
+            7
+          ],
+          "exponent": -8
+        }
+      }
+    },
+    {
+      "id": "unicode_exponent",
+      "value": "1e+２",
+      "output": {
+        "status": "ok",
+        "tuple": {
+          "sign": 0,
+          "digits": [
+            1
+          ],
+          "exponent": 2
+        }
+      }
+    },
+    {
+      "id": "negative_zero",
+      "value": "-0.000",
+      "output": {
+        "status": "ok",
+        "tuple": {
+          "sign": 1,
+          "digits": [
+            0
+          ],
+          "exponent": -3
+        }
+      }
+    },
+    {
+      "id": "leading_decimal_point",
+      "value": ".5",
+      "output": {
+        "status": "ok",
+        "tuple": {
+          "sign": 0,
+          "digits": [
+            5
+          ],
+          "exponent": -1
+        }
+      }
+    },
+    {
+      "id": "trailing_decimal_point",
+      "value": "5.",
+      "output": {
+        "status": "ok",
+        "tuple": {
+          "sign": 0,
+          "digits": [
+            5
+          ],
+          "exponent": 0
+        }
+      }
+    },
+    {
+      "id": "underscores",
+      "value": "1__2",
+      "output": {
+        "status": "ok",
+        "tuple": {
+          "sign": 0,
+          "digits": [
+            1,
+            2
+          ],
+          "exponent": 0
+        }
+      }
+    },
+    {
+      "id": "commas_removed",
+      "value": "1,,2",
+      "output": {
+        "status": "ok",
+        "tuple": {
+          "sign": 0,
+          "digits": [
+            1,
+            2
+          ],
+          "exponent": 0
+        }
+      }
+    },
+    {
+      "id": "full_width_digits",
+      "value": "１２.３",
+      "output": {
+        "status": "ok",
+        "tuple": {
+          "sign": 0,
+          "digits": [
+            1,
+            2,
+            3
+          ],
+          "exponent": -1
+        }
+      }
+    },
+    {
+      "id": "arabic_indic_digits",
+      "value": "١٢.٣",
+      "output": {
+        "status": "ok",
+        "tuple": {
+          "sign": 0,
+          "digits": [
+            1,
+            2,
+            3
+          ],
+          "exponent": -1
+        }
+      }
+    },
+    {
+      "id": "non_decimal_number_character",
+      "value": "²",
+      "output": {
+        "status": "error",
+        "type": "ValueError",
+        "message": "金额不是有效数值：'²'"
+      }
+    },
+    {
+      "id": "invalid_text",
+      "value": "not a number",
+      "output": {
+        "status": "error",
+        "type": "ValueError",
+        "message": "金额不是有效数值：'not a number'"
+      }
+    },
+    {
+      "id": "empty_after_trim",
+      "value": "  ",
+      "output": {
+        "status": "error",
+        "type": "ValueError",
+        "message": "金额不是有效数值：'  '"
+      }
+    },
+    {
+      "id": "nan",
+      "value": "NaN",
+      "output": {
+        "status": "error",
+        "type": "ValueError",
+        "message": "金额不是有限数值：'NaN'"
+      }
+    },
+    {
+      "id": "nan_payload",
+      "value": "NaN123",
+      "output": {
+        "status": "error",
+        "type": "ValueError",
+        "message": "金额不是有限数值：'NaN123'"
+      }
+    },
+    {
+      "id": "positive_infinity",
+      "value": "+Infinity",
+      "output": {
+        "status": "error",
+        "type": "ValueError",
+        "message": "金额不是有限数值：'+Infinity'"
+      }
+    }
+  ],
+  "conversion_cases": [
+    {
+      "id": "large_exact_amount",
+      "value": "123456789012345678901234567890.12345678",
+      "source_unit": "元",
+      "target_unit": "万元",
+      "output": {
+        "status": "ok",
+        "tuple": {
+          "sign": 0,
+          "digits": [
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8
+          ],
+          "exponent": -12
+        }
+      }
+    },
+    {
+      "id": "yuan_to_wan",
+      "value": "1234567.89",
+      "source_unit": "元",
+      "target_unit": "万元",
+      "output": {
+        "status": "ok",
+        "tuple": {
+          "sign": 0,
+          "digits": [
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9
+          ],
+          "exponent": -6
+        }
+      }
+    },
+    {
+      "id": "zero_yi_to_yuan",
+      "value": "0",
+      "source_unit": "亿元",
+      "target_unit": "元",
+      "output": {
+        "status": "ok",
+        "tuple": {
+          "sign": 0,
+          "digits": [
+            0
+          ],
+          "exponent": 8
+        }
+      }
+    },
+    {
+      "id": "negative_preserve_scale",
+      "value": "-0.00100",
+      "source_unit": "万元",
+      "target_unit": "元",
+      "output": {
+        "status": "ok",
+        "tuple": {
+          "sign": 1,
+          "digits": [
+            1,
+            0,
+            0
+          ],
+          "exponent": -1
+        }
+      }
+    },
+    {
+      "id": "yi_to_yuan",
+      "value": "1",
+      "source_unit": "亿元",
+      "target_unit": "元",
+      "output": {
+        "status": "ok",
+        "tuple": {
+          "sign": 0,
+          "digits": [
+            1
+          ],
+          "exponent": 8
+        }
+      }
+    },
+    {
+      "id": "same_unit_preserve_scale",
+      "value": "1,234.500",
+      "source_unit": "万元",
+      "target_unit": "万元",
+      "output": {
+        "status": "ok",
+        "tuple": {
+          "sign": 0,
+          "digits": [
+            1,
+            2,
+            3,
+            4,
+            5,
+            0,
+            0
+          ],
+          "exponent": -3
+        }
+      }
+    },
+    {
+      "id": "scientific_positive",
+      "value": "1.23e4",
+      "source_unit": "元",
+      "target_unit": "万元",
+      "output": {
+        "status": "ok",
+        "tuple": {
+          "sign": 0,
+          "digits": [
+            1,
+            2,
+            3
+          ],
+          "exponent": -2
+        }
+      }
+    },
+    {
+      "id": "scientific_negative",
+      "value": "7e-8",
+      "source_unit": "亿元",
+      "target_unit": "元",
+      "output": {
+        "status": "ok",
+        "tuple": {
+          "sign": 0,
+          "digits": [
+            7
+          ],
+          "exponent": 0
+        }
+      }
+    },
+    {
+      "id": "negative_to_yi",
+      "value": "-123",
+      "source_unit": "元",
+      "target_unit": "亿元",
+      "output": {
+        "status": "ok",
+        "tuple": {
+          "sign": 1,
+          "digits": [
+            1,
+            2,
+            3
+          ],
+          "exponent": -8
+        }
+      }
+    },
+    {
+      "id": "unsupported_source",
+      "value": "1",
+      "source_unit": "千元",
+      "target_unit": "元",
+      "output": {
+        "status": "error",
+        "type": "ValueError",
+        "message": "不支持的金额单位：千元（支持：元、万元、亿元）"
+      }
+    },
+    {
+      "id": "unsupported_target",
+      "value": "1",
+      "source_unit": "元",
+      "target_unit": "千元",
+      "output": {
+        "status": "error",
+        "type": "ValueError",
+        "message": "不支持的金额单位：千元（支持：元、万元、亿元）"
+      }
+    },
+    {
+      "id": "source_error_precedes_target",
+      "value": "bad",
+      "source_unit": "千元",
+      "target_unit": "未知",
+      "output": {
+        "status": "error",
+        "type": "ValueError",
+        "message": "不支持的金额单位：千元（支持：元、万元、亿元）"
+      }
+    },
+    {
+      "id": "invalid_amount",
+      "value": "bad",
+      "source_unit": "元",
+      "target_unit": "万元",
+      "output": {
+        "status": "error",
+        "type": "ValueError",
+        "message": "金额不是有效数值：'bad'"
+      }
+    },
+    {
+      "id": "non_finite_amount",
+      "value": "NaN",
+      "source_unit": "元",
+      "target_unit": "万元",
+      "output": {
+        "status": "error",
+        "type": "ValueError",
+        "message": "金额不是有限数值：'NaN'"
+      }
+    },
+    {
+      "id": "whitespace_source_unit",
+      "value": "1",
+      "source_unit": " ",
+      "target_unit": "元",
+      "output": {
+        "status": "error",
+        "type": "ValueError",
+        "message": "不支持的金额单位：空白（支持：元、万元、亿元）"
+      }
+    }
+  ],
+  "to_yuan_cases": [
+    {
+      "id": "wan_to_yuan",
+      "value": "1.2345",
+      "unit": "万元",
+      "output": {
+        "status": "ok",
+        "tuple": {
+          "sign": 0,
+          "digits": [
+            1,
+            2,
+            3,
+            4,
+            5
+          ],
+          "exponent": 0
+        }
+      }
+    },
+    {
+      "id": "yuan_same_unit",
+      "value": "1e-3",
+      "unit": "元",
+      "output": {
+        "status": "ok",
+        "tuple": {
+          "sign": 0,
+          "digits": [
+            1
+          ],
+          "exponent": -3
+        }
+      }
+    },
+    {
+      "id": "zero_yi_to_yuan",
+      "value": "0",
+      "unit": "亿元",
+      "output": {
+        "status": "ok",
+        "tuple": {
+          "sign": 0,
+          "digits": [
+            0
+          ],
+          "exponent": 8
+        }
+      }
+    },
+    {
+      "id": "unsupported_unit",
+      "value": "1",
+      "unit": "千元",
+      "output": {
+        "status": "error",
+        "type": "ValueError",
+        "message": "不支持的金额单位：千元（支持：元、万元、亿元）"
+      }
+    }
+  ],
+  "reader_cell_cases": [
+    {
+      "id": "xlsx_integer",
+      "source_format": "xlsx",
+      "cell": {
+        "type": "integer",
+        "value": 42
+      },
+      "python_value": 42,
+      "source_unit": "元",
+      "target_unit": "万元",
+      "decimal_output": {
+        "status": "ok",
+        "tuple": {
+          "sign": 0,
+          "digits": [
+            4,
+            2
+          ],
+          "exponent": 0
+        }
+      },
+      "conversion_output": {
+        "status": "ok",
+        "tuple": {
+          "sign": 0,
+          "digits": [
+            4,
+            2
+          ],
+          "exponent": -4
+        }
+      }
+    },
+    {
+      "id": "xlsx_integral_float_normalizes_to_integer",
+      "source_format": "xlsx",
+      "cell": {
+        "type": "number",
+        "value": 42.0
+      },
+      "python_value": 42.0,
+      "source_unit": "元",
+      "target_unit": "万元",
+      "decimal_output": {
+        "status": "ok",
+        "tuple": {
+          "sign": 0,
+          "digits": [
+            4,
+            2
+          ],
+          "exponent": 0
+        }
+      },
+      "conversion_output": {
+        "status": "ok",
+        "tuple": {
+          "sign": 0,
+          "digits": [
+            4,
+            2
+          ],
+          "exponent": -4
+        }
+      }
+    },
+    {
+      "id": "xlsx_float_shortest_decimal",
+      "source_format": "xlsx",
+      "cell": {
+        "type": "number",
+        "value": 0.1
+      },
+      "python_value": 0.1,
+      "source_unit": "元",
+      "target_unit": "万元",
+      "decimal_output": {
+        "status": "ok",
+        "tuple": {
+          "sign": 0,
+          "digits": [
+            1
+          ],
+          "exponent": -1
+        }
+      },
+      "conversion_output": {
+        "status": "ok",
+        "tuple": {
+          "sign": 0,
+          "digits": [
+            1
+          ],
+          "exponent": -5
+        }
+      }
+    },
+    {
+      "id": "xlsx_scientific_small",
+      "source_format": "xlsx",
+      "cell": {
+        "type": "number",
+        "value": 1e-05
+      },
+      "python_value": 1e-05,
+      "source_unit": "元",
+      "target_unit": "万元",
+      "decimal_output": {
+        "status": "ok",
+        "tuple": {
+          "sign": 0,
+          "digits": [
+            1
+          ],
+          "exponent": -5
+        }
+      },
+      "conversion_output": {
+        "status": "ok",
+        "tuple": {
+          "sign": 0,
+          "digits": [
+            1
+          ],
+          "exponent": -9
+        }
+      }
+    },
+    {
+      "id": "xlsx_integral_float_at_exact_integer_limit",
+      "source_format": "xlsx",
+      "cell": {
+        "type": "number",
+        "value": 9007199254740992.0
+      },
+      "python_value": 9007199254740992.0,
+      "source_unit": "元",
+      "target_unit": "万元",
+      "decimal_output": {
+        "status": "ok",
+        "tuple": {
+          "sign": 0,
+          "digits": [
+            9,
+            0,
+            0,
+            7,
+            1,
+            9,
+            9,
+            2,
+            5,
+            4,
+            7,
+            4,
+            0,
+            9,
+            9,
+            2
+          ],
+          "exponent": 0
+        }
+      },
+      "conversion_output": {
+        "status": "ok",
+        "tuple": {
+          "sign": 0,
+          "digits": [
+            9,
+            0,
+            0,
+            7,
+            1,
+            9,
+            9,
+            2,
+            5,
+            4,
+            7,
+            4,
+            0,
+            9,
+            9,
+            2
+          ],
+          "exponent": -4
+        }
+      }
+    },
+    {
+      "id": "xlsx_float_above_exact_integer_limit",
+      "source_format": "xlsx",
+      "cell": {
+        "type": "number",
+        "value": 9007199254740994.0
+      },
+      "python_value": 9007199254740994.0,
+      "source_unit": "元",
+      "target_unit": "万元",
+      "decimal_output": {
+        "status": "ok",
+        "tuple": {
+          "sign": 0,
+          "digits": [
+            9,
+            0,
+            0,
+            7,
+            1,
+            9,
+            9,
+            2,
+            5,
+            4,
+            7,
+            4,
+            0,
+            9,
+            9,
+            4,
+            0
+          ],
+          "exponent": -1
+        }
+      },
+      "conversion_output": {
+        "status": "ok",
+        "tuple": {
+          "sign": 0,
+          "digits": [
+            9,
+            0,
+            0,
+            7,
+            1,
+            9,
+            9,
+            2,
+            5,
+            4,
+            7,
+            4,
+            0,
+            9,
+            9,
+            4,
+            0
+          ],
+          "exponent": -5
+        }
+      }
+    },
+    {
+      "id": "xlsx_negative_zero_normalizes_to_integer_zero",
+      "source_format": "xlsx",
+      "cell": {
+        "type": "number",
+        "value": -0.0
+      },
+      "python_value": -0.0,
+      "source_unit": "元",
+      "target_unit": "元",
+      "decimal_output": {
+        "status": "ok",
+        "tuple": {
+          "sign": 0,
+          "digits": [
+            0
+          ],
+          "exponent": 0
+        }
+      },
+      "conversion_output": {
+        "status": "ok",
+        "tuple": {
+          "sign": 0,
+          "digits": [
+            0
+          ],
+          "exponent": 0
+        }
+      }
+    },
+    {
+      "id": "xls_integer_normalizes_to_float",
+      "source_format": "xls",
+      "cell": {
+        "type": "integer",
+        "value": 42
+      },
+      "python_value": 42,
+      "source_unit": "元",
+      "target_unit": "万元",
+      "decimal_output": {
+        "status": "ok",
+        "tuple": {
+          "sign": 0,
+          "digits": [
+            4,
+            2,
+            0
+          ],
+          "exponent": -1
+        }
+      },
+      "conversion_output": {
+        "status": "ok",
+        "tuple": {
+          "sign": 0,
+          "digits": [
+            4,
+            2,
+            0
+          ],
+          "exponent": -5
+        }
+      }
+    },
+    {
+      "id": "xls_integral_float_remains_float",
+      "source_format": "xls",
+      "cell": {
+        "type": "number",
+        "value": 42.0
+      },
+      "python_value": 42.0,
+      "source_unit": "元",
+      "target_unit": "万元",
+      "decimal_output": {
+        "status": "ok",
+        "tuple": {
+          "sign": 0,
+          "digits": [
+            4,
+            2,
+            0
+          ],
+          "exponent": -1
+        }
+      },
+      "conversion_output": {
+        "status": "ok",
+        "tuple": {
+          "sign": 0,
+          "digits": [
+            4,
+            2,
+            0
+          ],
+          "exponent": -5
+        }
+      }
+    },
+    {
+      "id": "xls_negative_zero_remains_float",
+      "source_format": "xls",
+      "cell": {
+        "type": "number",
+        "value": -0.0
+      },
+      "python_value": -0.0,
+      "source_unit": "元",
+      "target_unit": "元",
+      "decimal_output": {
+        "status": "ok",
+        "tuple": {
+          "sign": 1,
+          "digits": [
+            0
+          ],
+          "exponent": -1
+        }
+      },
+      "conversion_output": {
+        "status": "ok",
+        "tuple": {
+          "sign": 1,
+          "digits": [
+            0
+          ],
+          "exponent": -1
+        }
+      }
+    },
+    {
+      "id": "xls_boolean_normalizes_to_one",
+      "source_format": "xls",
+      "cell": {
+        "type": "boolean",
+        "value": true
+      },
+      "python_value": true,
+      "source_unit": "元",
+      "target_unit": "万元",
+      "decimal_output": {
+        "status": "ok",
+        "tuple": {
+          "sign": 0,
+          "digits": [
+            1
+          ],
+          "exponent": 0
+        }
+      },
+      "conversion_output": {
+        "status": "ok",
+        "tuple": {
+          "sign": 0,
+          "digits": [
+            1
+          ],
+          "exponent": -4
+        }
+      }
+    },
+    {
+      "id": "xlsx_boolean_is_skipped",
+      "source_format": "xlsx",
+      "cell": {
+        "type": "boolean",
+        "value": true
+      },
+      "python_value": true,
+      "source_unit": "unsupported",
+      "target_unit": "unknown",
+      "decimal_output": {
+        "status": "skipped"
+      },
+      "conversion_output": {
+        "status": "skipped"
+      }
+    },
+    {
+      "id": "grouped_text",
+      "source_format": "xlsx",
+      "cell": {
+        "type": "string",
+        "value": "1,234.500"
+      },
+      "python_value": "1,234.500",
+      "source_unit": "元",
+      "target_unit": "万元",
+      "decimal_output": {
+        "status": "ok",
+        "tuple": {
+          "sign": 0,
+          "digits": [
+            1,
+            2,
+            3,
+            4,
+            5,
+            0,
+            0
+          ],
+          "exponent": -3
+        }
+      },
+      "conversion_output": {
+        "status": "ok",
+        "tuple": {
+          "sign": 0,
+          "digits": [
+            1,
+            2,
+            3,
+            4,
+            5,
+            0,
+            0
+          ],
+          "exponent": -7
+        }
+      }
+    },
+    {
+      "id": "empty_text_is_skipped",
+      "source_format": "xlsx",
+      "cell": {
+        "type": "string",
+        "value": ""
+      },
+      "python_value": "",
+      "source_unit": "unsupported",
+      "target_unit": "unknown",
+      "decimal_output": {
+        "status": "skipped"
+      },
+      "conversion_output": {
+        "status": "skipped"
+      }
+    },
+    {
+      "id": "blank_cell_is_skipped",
+      "source_format": "xlsx",
+      "cell": null,
+      "python_value": null,
+      "source_unit": "unsupported",
+      "target_unit": "unknown",
+      "decimal_output": {
+        "status": "skipped"
+      },
+      "conversion_output": {
+        "status": "skipped"
+      }
+    },
+    {
+      "id": "invalid_text_is_skipped",
+      "source_format": "xlsx",
+      "cell": {
+        "type": "string",
+        "value": "not a number"
+      },
+      "python_value": "not a number",
+      "source_unit": "unsupported",
+      "target_unit": "unknown",
+      "decimal_output": {
+        "status": "skipped"
+      },
+      "conversion_output": {
+        "status": "skipped"
+      }
+    },
+    {
+      "id": "non_finite_text_is_skipped",
+      "source_format": "xlsx",
+      "cell": {
+        "type": "string",
+        "value": "NaN"
+      },
+      "python_value": "NaN",
+      "source_unit": "unsupported",
+      "target_unit": "unknown",
+      "decimal_output": {
+        "status": "skipped"
+      },
+      "conversion_output": {
+        "status": "skipped"
+      }
+    },
+    {
+      "id": "datetime_serial_is_skipped",
+      "source_format": "xlsx",
+      "cell": {
+        "type": "datetime_serial",
+        "value": 45292.0
+      },
+      "python_value": "2024-01-01 00:00:00",
+      "source_unit": "unsupported",
+      "target_unit": "unknown",
+      "decimal_output": {
+        "status": "skipped"
+      },
+      "conversion_output": {
+        "status": "skipped"
+      }
+    },
+    {
+      "id": "error_value_is_skipped",
+      "source_format": "xlsx",
+      "cell": {
+        "type": "error",
+        "value": "Value"
+      },
+      "python_value": "#VALUE!",
+      "source_unit": "unsupported",
+      "target_unit": "unknown",
+      "decimal_output": {
+        "status": "skipped"
+      },
+      "conversion_output": {
+        "status": "skipped"
+      }
+    }
+  ]
+}

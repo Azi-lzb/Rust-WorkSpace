@@ -1,0 +1,53 @@
+【时间】2026-10-23 04:36:32（本机时间）
+【执行者】Codex
+【修改前 commit】不可用；当前 workspace 文件均处于未跟踪 WIP 状态，无法从 Git 索引确定起始快照。
+【修改后 commit】未创建 commit。
+【WIP 情况】保留现有 workspace WIP；没有重置、覆盖或清理其他文件。Open-Data-Audit 与 pytools 两个原始 Python 项目只读。
+
+【修改目的】将 Open-Data-Audit S2 `config.load_config` 和 `load_unit_settings` 迁移到 Rust，通过共享 Calamine reader 加载运行配置，并将配置投影到已有 S2 导入、周期、规则和外部比较模型。只迁移配置读取/解析，不迁移配置检查器 UI 或默认配置写入。
+
+【修改/新增文件】
+- `audit-core/src/s2_config.rs`：新增 S2 配置模型、Calamine 工作簿解析、单位设置加载及到现有 S2 引擎配置的投影。
+- `audit-core/src/lib.rs`：导出 `s2_config` 模块。
+- `audit-core/src/s2_rule_engine.rs`：为规则模型增加序列化/相等比较能力，供统一配置结果和对拍使用。
+- `audit-core/src/s2_period.rs`：为环比档位配置增加序列化/相等比较能力，供统一配置结果和对拍使用。
+- `audit-core/src/s2_external.rs`：扩展外部规则配置模型以保留配置来源及“外部系统”字段；现有比较引擎不依赖这两个字段。
+- `audit-core/tests/compare/generate_s2_config_fixtures.py`：新增合成配置工作簿生成器。
+- `audit-core/tests/compare/run_s2_config_baseline.py`：新增只读 Python 基线生成器，调用原 `load_config` / `load_unit_settings`。
+- `audit-core/tests/fixtures/s2_config/`：新增 15 个案例索引、14 个合成 XLSX 文件和 1 个预期缺失文件场景。
+- `audit-core/tests/s2_config_parity.rs`：新增加载结果逐字段对拍及到现有引擎配置模型的转换断言。
+- `audit-core/probe/reports/s2_config_python_baseline.json`：Python 基线输出。
+- `audit-core/probe/reports/s2_config_parity.json`：登记来源哈希、结果、适用范围和未验证项。
+- `audit-core/MIGRATION_INVENTORY.md`：登记配置加载局部迁移；S2-F01 总体仍未验证。
+- `audit-core/GPT修改记录/20261023_043632_S2配置加载Rust局部迁移对拍.txt`：本记录。
+
+【逻辑、配置及 VBA 变化】
+- 使用共享 `excel_reader::read_value_columns` 读取工作表存储值，复刻通用设置、指标参照、机构参照、外部核对规则、环比策略/旧环比规则及校验规则的解析与告警。
+- 配置加载结果可以投影到当前 `S2ImportConfig`、`S2PeriodConfig`、`S2RuleEngineConfig` 和 `S2ExternalConfig` 输入接口。
+- 未改 Cargo 依赖、生产默认路由、构建配置、VBA、原始 Python 项目或用户配置工作簿。
+
+【基线来源】
+- Python 版本：3.12.10；openpyxl：3.1.5。
+- `config.py` SHA-256：`18AF21C33CA45A791C449A2C484BC66F095921EE0839FB9EE9D9218E6FC56ED6`。
+- `models.py` SHA-256：`8C19D7E5521F9290EC7FAF641C5454BE148188A9B1A7C129127C97E6FC5B903E`。
+- `unit_conversion.py` SHA-256：`BE9AF2EAB715AC6ACDD496363B551C649486DD1A0939B55CB746A7AFCD6761BA`。
+- Python/openpyxl 仅用于合成夹具和只读对拍基线；生产路径没有 Python 调用。
+
+【测试与对拍】
+- `python -B audit-core/tests/compare/generate_s2_config_fixtures.py`：通过，生成 15 个案例索引（14 个有效 XLSX 文件和 1 个缺失文件场景）。
+- `python -B audit-core/tests/compare/run_s2_config_baseline.py`：通过；完整配置 3 个成功、12 个预期错误；单位设置独立加载 7 个成功、8 个预期错误。
+- `cargo test -p audit-core --test s2_config_parity --locked`（WSL Ubuntu）：通过，2 个集成测试通过，0 失败；15 个场景的配置结果/错误及单位设置与 Python 基线一致。
+- `cargo test --workspace --locked -q`（WSL Ubuntu）：通过，81 个测试通过，0 失败。
+- `cargo fmt --all -- --check`：通过。
+- 夹具为合成 XLSX；未运行原 Python 全量测试套件。未测性能/内存，也未在麒麟/UOS 或 glibc 2.28 环境构建/打包。
+
+【已知问题与未完成范围】
+- 未使用真实脱敏或生产 S2 配置工作簿验收；公式值、日期型配置单元格、样式扩展的空白尾行和异常大工作表尺寸未验证。
+- `config_check.py` 配置检查器/UI、`write_default_config` 默认工作簿生成、服务编排及端到端导入到报告输出仍未迁移。
+- S2-F01 仍为未验证；新 Rust 配置 loader 未接入生产默认路由。
+
+【删除清单与回滚提示】
+- 无删除文件。回滚时成组撤销上述 S2 配置模型/loader、引擎配置序列化及来源字段调整、合成夹具/生成器、Python baseline、Rust parity test/报告、迁移清单行及本记录。
+- 保留原始 Python 实现和现有运行路径。
+
+【组件版本】不升级；Cargo package 元数据未改变，workspace 尚未为该模块建立产品组件版本映射。

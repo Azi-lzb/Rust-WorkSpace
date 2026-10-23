@@ -1,0 +1,24 @@
+{
+  "cases": [
+    {
+      "id": "unique_records_and_abnormal_finding_breakdowns",
+      "records": [
+        {"institution_id": "BANK-A", "form_code": "F1"},
+        {"institution_id": "BANK-A", "form_code": ""},
+        {"institution_id": "", "form_code": "F2"},
+        {"institution_id": "BANK-B", "form_code": "F1"}
+      ],
+      "findings": [
+        {"audit_type": "环比", "status": "异常", "severity": "硬性"},
+        {"audit_type": "环比", "status": "异常", "severity": ""},
+        {"audit_type": "", "status": "异常", "severity": "软性"},
+        {"audit_type": "外部核对", "status": "正常", "severity": "硬性"}
+      ]
+    },
+    {
+      "id": "empty_input",
+      "records": [],
+      "findings": []
+    }
+  ]
+}

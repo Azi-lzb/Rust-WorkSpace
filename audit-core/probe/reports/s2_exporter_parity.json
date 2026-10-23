@@ -1,0 +1,35 @@
+{
+  "status": "passed",
+  "python_baseline": {
+    "status": "python_baseline_generated",
+    "baseline_python": "3.12.10",
+    "fixture": "tests/fixtures/s2_exporter/cases.json",
+    "fixture_sha256": "027aae09f46eb6162c0443e6fa501f8c22ee3e0233cfd74c2cf65c2dff9949ae",
+    "case_findings": 5,
+    "sheet_names": [
+      "环比规则",
+      "外部核对规则",
+      "校验规则"
+    ],
+    "source_sha256": {
+      "exporter.py": "ef99d056ba9038bc9aed8bd23d5d8d0d2813941ba54366c1136380ac70a2e02b",
+      "models.py": "8c19d7e5521f9290ec7faf641c5454be148188a9b1a7c129127c97e6fc5b903e"
+    }
+  },
+  "rust_workbook": "C:\\Users\\AZI\\Desktop\\VibeCode\\1.rust-workspace\\audit-core\\probe\\tmp\\s2-exporter\\s2-exporter-1678-1792711511060176646\\报表审核清单_20261023_072511.xlsx",
+  "rust_workbook_sha256": "3921c551c691ab3ac51ae30ff8db7e2e5dd4ed616395d4150989bc50a1dfbecb",
+  "numeric_relative_tolerance": 1e-15,
+  "formula_cache_empty": true,
+  "stats": {
+    "sheets": 3,
+    "cells": 116,
+    "numeric_cells": 11,
+    "formulas": 1,
+    "cell_styles": 0,
+    "column_widths": 0,
+    "hidden_rows": 0,
+    "worksheet_settings": 0
+  },
+  "difference_count": 0,
+  "differences": []
+}

@@ -1,0 +1,137 @@
+{
+  "normalize_names": [
+    "！金融基础数据-单位贷款202605",
+    "!Financial2026-06",
+    "Template_2026.06.30_Archive",
+    "Report202600NoValidToken",
+    "2026-02-Audit",
+    "Template20٢٦-٠٦"
+  ],
+  "comment_cases": [
+    {
+      "name": "rule_id_and_region",
+      "text": "规则编号：DWCK-001\n本地校验区域1\n余额不能为负数"
+    },
+    {
+      "name": "source_prefix_and_rule_id",
+      "text": "来源: 规则编号: QA_02\n联表校验区域#12；余额有误"
+    },
+    {
+      "name": "rule_id_ascii_case_insensitive",
+      "text": "规则ID：AB.09,说明正文"
+    },
+    {
+      "name": "invalid_rule_id",
+      "text": "规则编号：A/B"
+    },
+    {
+      "name": "no_rule_id",
+      "text": "本地校验区域12\n余额异常"
+    },
+    {
+      "name": "unicode_decimal_markers",
+      "text": "说明\n本地校验区域#١\n联表校验区域１２\n保留正文"
+    },
+    {
+      "name": "unicode_decimal_rule_id",
+      "text": "规则编号：A١\n提示文本"
+    }
+  ],
+  "formula_cases": [
+    {
+      "name": "seven_fields",
+      "value": "错|逾期核对|单位贷款|不应该为0|0|0|0"
+    },
+    {
+      "name": "full_width_pipe",
+      "value": "错｜类型｜文本｜描述｜1｜2｜3"
+    },
+    {
+      "name": "soft_and_short",
+      "value": "软性|注册资本|超过百亿，核实是否出现放大倍数的情况"
+    },
+    {
+      "name": "default_marker",
+      "value": "核实|余额异常",
+      "default_severity": "提示",
+      "default_message": "默认说明"
+    },
+    {
+      "name": "tail_join",
+      "value": "错|类型|指标|说明|值|比较|差额|附加|结尾"
+    },
+    {
+      "name": "null_value",
+      "value": null,
+      "default_severity": "核实",
+      "default_message": "无公式结果"
+    },
+    {
+      "name": "boolean_value",
+      "value": true
+    }
+  ],
+  "rule_row_cases": [
+    {
+      "name": "valid_and_blank_id_rows",
+      "rows": [
+        {
+          "规则编号": "JC-A01-001",
+          "启用": "是",
+          "报表代码": "A01",
+          "工作表": " 基础数据 ",
+          "公式单元格": "$h$5",
+          "定位单元格": "$B5",
+          "级别": "",
+          "问题说明": "余额不能为负数"
+        },
+        {
+          "规则编号": "",
+          "启用": "启用",
+          "工作表": "忽略"
+        },
+        {
+          "规则编号": "R.02",
+          "启用": "False",
+          "报表代码": "B02",
+          "工作表": "对照表",
+          "公式单元格": "AA100",
+          "定位单元格": "Z3",
+          "级别": "核实",
+          "问题说明": "请核对"
+        }
+      ]
+    },
+    {
+      "name": "aggregated_errors_and_duplicate",
+      "rows": [
+        {
+          "规则编号": "DUP-1",
+          "启用": "是",
+          "报表代码": "A01",
+          "工作表": "",
+          "公式单元格": "ZZZZ1",
+          "定位单元格": "A0",
+          "级别": "未知",
+          "问题说明": "坏规则"
+        },
+        {
+          "规则编号": "DUP-1",
+          "启用": "否",
+          "工作表": "其他",
+          "公式单元格": "A1",
+          "定位单元格": "B1",
+          "级别": "错误"
+        }
+      ]
+    },
+    {
+      "name": "no_rules",
+      "rows": [{"规则编号": ""}, {}]
+    },
+    {
+      "name": "empty_table",
+      "rows": []
+    }
+  ]
+}

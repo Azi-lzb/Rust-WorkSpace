@@ -1,0 +1,393 @@
+{
+  "status": "python_baseline_generated",
+  "source": {
+    "project": "C:\\Users\\AZI\\Desktop\\VibeCode\\3.open-data-audit",
+    "module": "base_audit.systems.s2_report_collection.config.{load_config,load_unit_settings}",
+    "source_sha256": {
+      "config.py": "18AF21C33CA45A791C449A2C484BC66F095921EE0839FB9EE9D9218E6FC56ED6",
+      "models.py": "8C19D7E5521F9290EC7FAF641C5454BE148188A9B1A7C129127C97E6FC5B903E",
+      "unit_conversion.py": "BE9AF2EAB715AC6ACDD496363B551C649486DD1A0939B55CB746A7AFCD6761BA"
+    },
+    "baseline_python": "3.12.10"
+  },
+  "fixture": {
+    "path": "tests/fixtures/s2_config/cases.json",
+    "case_count": 15
+  },
+  "result": {
+    "comprehensive": {
+      "config": {
+        "bands": [
+          {
+            "data_type": "余额",
+            "description": "降幅低于-96%",
+            "disabled": false,
+            "lower": null,
+            "rule_id": "B001",
+            "severity": "硬性",
+            "strategy_group": "BAL01",
+            "upper": -96.0
+          },
+          {
+            "data_type": "余额",
+            "description": "降幅(-96%,-90%]",
+            "disabled": false,
+            "lower": -96.0,
+            "rule_id": "B002",
+            "severity": "软性",
+            "strategy_group": "BAL01",
+            "upper": -90.0
+          },
+          {
+            "data_type": "余额",
+            "description": "降幅(-80%,50%)",
+            "disabled": true,
+            "lower": -80.0,
+            "rule_id": "B003",
+            "severity": "软性",
+            "strategy_group": "BAL01",
+            "upper": -50.0
+          },
+          {
+            "data_type": "百分数",
+            "description": "增长区间",
+            "disabled": false,
+            "lower": 0.0,
+            "rule_id": "P001",
+            "severity": "",
+            "strategy_group": "PCT01",
+            "upper": 30.0
+          }
+        ],
+        "current_missing_severity": "软性",
+        "external_rules": [
+          {
+            "comparison_method": "等于",
+            "enabled": true,
+            "external_indicator_name": "存款余额",
+            "external_system": "大集中",
+            "indicator_code": "20202001",
+            "rule_id": "D001",
+            "severity": "硬性",
+            "source": {
+              "source_file": "comprehensive.xlsx",
+              "source_row": 2,
+              "source_sheet": "外部核对规则"
+            },
+            "tolerance": 0.0
+          },
+          {
+            "comparison_method": "等于",
+            "enabled": true,
+            "external_indicator_name": "无效级别转硬性",
+            "external_system": "大集中",
+            "indicator_code": "20202001",
+            "rule_id": "D006",
+            "severity": "硬性",
+            "source": {
+              "source_file": "comprehensive.xlsx",
+              "source_row": 7,
+              "source_sheet": "外部核对规则"
+            },
+            "tolerance": 0.0
+          }
+        ],
+        "hide_matching_external_rows": false,
+        "hide_unchanged_period_rows": true,
+        "indicators": {
+          "20201028": {
+            "data_type": "百分数",
+            "disabled": false,
+            "form_code": "20201",
+            "indicator_code": "20201028",
+            "indicator_name": "持股比例",
+            "min_change_value": null,
+            "note": "字符串数值代码",
+            "period_enabled": false,
+            "period_strategy_group": "PCT01"
+          },
+          "20202001": {
+            "data_type": "余额",
+            "disabled": false,
+            "form_code": "20202",
+            "indicator_code": "20202001",
+            "indicator_name": "存款余额",
+            "min_change_value": 0.5,
+            "note": "主指标",
+            "period_enabled": true,
+            "period_strategy_group": "BAL01"
+          },
+          "20202002": {
+            "data_type": "个数",
+            "disabled": true,
+            "form_code": "",
+            "indicator_code": "20202002",
+            "indicator_name": "缺表单",
+            "min_change_value": null,
+            "note": "",
+            "period_enabled": true,
+            "period_strategy_group": ""
+          }
+        },
+        "institutions_by_id": {
+          "9144": {
+            "handling_branch": "三部",
+            "institution_id": "9144",
+            "institution_name": "甲银行",
+            "institution_type": "更新类别",
+            "region": "华中",
+            "report_item": "更新项目",
+            "social_credit_code": "9144"
+          }
+        },
+        "institutions_by_name": {
+          "仅名称机构": {
+            "handling_branch": "",
+            "institution_id": "仅名称机构",
+            "institution_name": "仅名称机构",
+            "institution_type": "",
+            "region": "华南",
+            "report_item": "仅名称项目",
+            "social_credit_code": ""
+          },
+          "甲银行": {
+            "handling_branch": "三部",
+            "institution_id": "9144",
+            "institution_name": "甲银行",
+            "institution_type": "更新类别",
+            "region": "华中",
+            "report_item": "更新项目",
+            "social_credit_code": "9144"
+          }
+        },
+        "previous_missing_severity": "硬性",
+        "rules": [
+          {
+            "description": "未知指标引用",
+            "disabled": false,
+            "expression": "[999999] > 0",
+            "invert": false,
+            "note": "基线规则",
+            "rule_id": "R001",
+            "rule_type": "表达式",
+            "severity": "硬性",
+            "source": {
+              "source_file": "comprehensive.xlsx",
+              "source_row": 2,
+              "source_sheet": "校验规则"
+            },
+            "threshold": 0.1
+          },
+          {
+            "description": "有效规则",
+            "disabled": false,
+            "expression": "[20202001] > Thd",
+            "invert": true,
+            "note": "取反规则",
+            "rule_id": "R002",
+            "rule_type": "表达式",
+            "severity": "软性",
+            "source": {
+              "source_file": "comprehensive.xlsx",
+              "source_row": 3,
+              "source_sheet": "校验规则"
+            },
+            "threshold": 0.05
+          },
+          {
+            "description": "使用默认编号",
+            "disabled": false,
+            "expression": "{20201028} = 0",
+            "invert": false,
+            "note": "",
+            "rule_id": "ROW5",
+            "rule_type": "表达式",
+            "severity": "软性",
+            "source": {
+              "source_file": "comprehensive.xlsx",
+              "source_row": 5,
+              "source_sheet": "校验规则"
+            },
+            "threshold": null
+          }
+        ],
+        "text_change_severity": "软性",
+        "unit_settings": {
+          "external_file_unit": "万元",
+          "output_file_unit": "元",
+          "source_unit": "亿元"
+        },
+        "warnings": [
+          "指标参照存在重复指标代码：20202001",
+          "指标参照第4行指标 20202002 未填写表单代码",
+          "外部核对规则第3行缺少规则编号或指标代码，已跳过",
+          "外部核对规则 D003 引用不存在指标：999999，已跳过",
+          "外部核对规则第5行 D004 配置无效：比较方式须为等于/不等于/大于/大于等于/小于/小于等于，容差须为非负有限数，外部指标名称不能为空；已跳过",
+          "外部核对规则第6行 D005 仅“等于”使用容差；其他比较方式容差必须为0，已跳过",
+          "外部核对规则 D006 级别无效：BAD，按硬性处理",
+          "环比规则 B003 级别无效：异常级别，按软性处理",
+          "环比规则“B003”描述疑似正负号异常：降幅(-80%,50%)；V2 将只按下限/上限数值执行，未自动修改配置。",
+          "环比规则 B004 上限必须大于下限，已跳过",
+          "环比规则空洞：B002 与 B003",
+          "规则 R001 引用不存在指标：999999",
+          "规则 R003 类型暂不支持：未知类型",
+          "规则 ROW5 级别无效：BAD，按软性处理"
+        ]
+      },
+      "unit_settings": {
+        "external_file_unit": "万元",
+        "output_file_unit": "元",
+        "source_unit": "亿元"
+      }
+    },
+    "legacy_band_headers": {
+      "config": {
+        "bands": [
+          {
+            "data_type": "",
+            "description": "旧格式降幅",
+            "disabled": false,
+            "lower": -10.0,
+            "rule_id": "B002",
+            "severity": "软性",
+            "strategy_group": "",
+            "upper": 0.0
+          }
+        ],
+        "current_missing_severity": "软性",
+        "external_rules": [],
+        "hide_matching_external_rows": false,
+        "hide_unchanged_period_rows": true,
+        "indicators": {
+          "A": {
+            "data_type": "余额",
+            "disabled": false,
+            "form_code": "20201",
+            "indicator_code": "A",
+            "indicator_name": "指标A",
+            "min_change_value": 0.0,
+            "note": "",
+            "period_enabled": true,
+            "period_strategy_group": ""
+          }
+        },
+        "institutions_by_id": {},
+        "institutions_by_name": {},
+        "previous_missing_severity": "硬性",
+        "rules": [],
+        "text_change_severity": "软性",
+        "unit_settings": {
+          "external_file_unit": "万元",
+          "output_file_unit": "元",
+          "source_unit": "亿元"
+        },
+        "warnings": []
+      },
+      "unit_settings": {
+        "external_file_unit": "万元",
+        "output_file_unit": "元",
+        "source_unit": "亿元"
+      }
+    },
+    "missing_optional_setting_rows": {
+      "config": {
+        "bands": [],
+        "current_missing_severity": "硬性",
+        "external_rules": [],
+        "hide_matching_external_rows": false,
+        "hide_unchanged_period_rows": false,
+        "indicators": {},
+        "institutions_by_id": {},
+        "institutions_by_name": {},
+        "previous_missing_severity": "硬性",
+        "rules": [],
+        "text_change_severity": "硬性",
+        "unit_settings": {
+          "external_file_unit": "元",
+          "output_file_unit": "元",
+          "source_unit": "元"
+        },
+        "warnings": [
+          "通用设置缺少设置项“源数据单位”，已按默认“元”执行；请补齐该行后重跑。",
+          "通用设置缺少设置项“外部文件单位”，已按默认“元”执行；请补齐该行后重跑。",
+          "通用设置缺少设置项“输出文件单位”，已按默认“元”执行；请补齐该行后重跑。",
+          "通用设置缺少设置项“是否隐藏无变动指标”，已按默认“否”执行；请补齐该行后重跑。",
+          "通用设置缺少设置项“是否隐藏与大集中一致指标”，已按默认“否”执行；请补齐该行后重跑。",
+          "通用设置缺少设置项“文字变动默认级别”，已按默认“硬性”执行；请补齐该行后重跑。",
+          "通用设置缺少设置项“本期缺失默认级别”，已按默认“硬性”执行；请补齐该行后重跑。",
+          "通用设置缺少设置项“上期缺失默认级别”，已按默认“硬性”执行；请补齐该行后重跑。"
+        ]
+      },
+      "unit_settings": {
+        "external_file_unit": "元",
+        "output_file_unit": "元",
+        "source_unit": "元"
+      }
+    },
+    "invalid_general_header": {
+      "config_error": "“通用设置”工作表表头必须为：A1=设置项、B1=设置值、C1=说明。",
+      "unit_settings_error": "“通用设置”工作表表头必须为：A1=设置项、B1=设置值、C1=说明。"
+    },
+    "duplicate_general_setting": {
+      "config_error": "“通用设置”工作表设置项重复：源数据单位",
+      "unit_settings_error": "“通用设置”工作表设置项重复：源数据单位"
+    },
+    "invalid_unit": {
+      "config_error": "“通用设置”工作表第2行“源数据单位”必须为元、万元或亿元：美元",
+      "unit_settings_error": "“通用设置”工作表第2行“源数据单位”必须为元、万元或亿元：美元"
+    },
+    "inline_unit_columns": {
+      "config_error": "单位统一配置应位于本工作簿的“通用设置”工作表；请从“指标参照”删除旧字段：大集中数据单位、源数据单位",
+      "unit_settings": {
+        "external_file_unit": "万元",
+        "output_file_unit": "元",
+        "source_unit": "亿元"
+      }
+    },
+    "missing_indicator_sheet": {
+      "config_error": "比较配置缺少“指标参照”",
+      "unit_settings": {
+        "external_file_unit": "万元",
+        "output_file_unit": "元",
+        "source_unit": "亿元"
+      }
+    },
+    "external_header_order": {
+      "config_error": "“外部核对规则”表头必须依次为：规则编号、指标代码、比较方式、外部指标名称、容差、级别、启用；不再使用“外部系统”列。",
+      "unit_settings": {
+        "external_file_unit": "万元",
+        "output_file_unit": "元",
+        "source_unit": "亿元"
+      }
+    },
+    "missing_external_sheet": {
+      "config_error": "比较配置缺少“外部核对规则”",
+      "unit_settings": {
+        "external_file_unit": "万元",
+        "output_file_unit": "元",
+        "source_unit": "亿元"
+      }
+    },
+    "missing_general_sheet": {
+      "config_error": "报表采集配置“missing_general_sheet.xlsx”缺少必需工作表“通用设置”；请在该配置工作簿中维护单位及显示设置。",
+      "unit_settings_error": "报表采集配置“missing_general_sheet.xlsx”缺少必需工作表“通用设置”；请在该配置工作簿中维护单位及显示设置。"
+    },
+    "invalid_boolean_setting": {
+      "config_error": "“通用设置”工作表第6行“是否隐藏无变动指标”必须为“是”或“否”：true",
+      "unit_settings_error": "“通用设置”工作表第6行“是否隐藏无变动指标”必须为“是”或“否”：true"
+    },
+    "invalid_optional_severity": {
+      "config_error": "“通用设置”工作表第8行“文字变动默认级别”必须为硬性或软性：严重",
+      "unit_settings_error": "“通用设置”工作表第8行“文字变动默认级别”必须为硬性或软性：严重"
+    },
+    "unknown_general_setting": {
+      "config_error": "“通用设置”工作表第11行设置项无效：未知设置",
+      "unit_settings_error": "“通用设置”工作表第11行设置项无效：未知设置"
+    },
+    "missing_file": {
+      "config_error": "V2 比较配置不存在：does_not_exist.xlsx",
+      "unit_settings_error": "V2 比较配置不存在：does_not_exist.xlsx"
+    }
+  },
+  "scope": "S2 runtime config workbook parsing and shared unit-settings loading over synthetic XLSX fixtures. Does not cover config validation UI/checker behavior, default-config XLSX generation, write-back, service orchestration, or real business configuration files."
+}

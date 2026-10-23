@@ -1,0 +1,35 @@
+时间：2026-10-22 13:24:56 UTC
+执行者：Codex
+修改前 commit：无；当前 Git 状态显示项目文件均为未跟踪 WIP。
+修改后 commit：无；未提交、未推送。
+目的：将用户确认的 Rust-first 完整迁移边界落实到 workspace 文档，消除旧规则中禁止 sidecar 公式重算及纳入 PDF 的冲突，并建立业务功能追踪清单。
+修改/新增文件：
+- AGENTS.md
+- README.md
+- audit-core/AGENTS.md
+- audit-core/rules/13_表格读写技术选型与主动优化.md
+- audit-core/MIGRATION_INVENTORY.md
+- pytools-core/MIGRATION_PLAN.md
+- pytools-core/MIGRATION_INVENTORY.md
+- audit-core/GPT修改记录/20261022_132456_workspace_治理规范与迁移清单.txt
+
+变化摘要：
+- workspace 根规范整理为十章，写明源项目只读、业务 crate 隔离、共享库边界、Rust/Go/OOXML 分工、允许的 sidecar 范围、对拍门槛及 glibc 2.28/deb 要求。
+- 公式重算保持默认关闭，但允许显式 sidecar 调用；PDF 与跨类别转换不在范围；打印只写页面设置。
+- pytools 计划纳入 NoComPyTools 差异盘点，列出菜单级迁移项；Audit 清单列出 S1/S2/S3/S5 活跃项和隐藏维护项。
+- 两份清单将尚未由真实样本验证的行为保持为未验证或待确认，没有以合成报告推断业务通过。
+
+测试/检查：
+- 文档编辑后尚未执行全套 Cargo 检查或对拍。
+- 本次检查 PowerShell 环境中 cargo 与 rustc 不在 PATH，故未执行编译。
+- 只读盘点两个源项目文件；未修改源项目文件或业务代码。
+
+已知问题：
+- 尚无经批准的真实脱敏业务模板；当前已有对拍报告只覆盖合成样本。
+- Audit 隐藏维护项 S5-F02/F03/F04 的业务入口仍待源码确认；S4 正式迁移范围待确认。
+- pytools 的 NoComPyTools 与 PyCode 差异、真实格式覆盖、目标机验收尚未完成。
+- cargo-zigbuild/rust 工具链及 Linux 目标环境尚未安装和验证。
+
+删除清单：无。
+回滚提示：本仓库当前内容全为未跟踪 WIP；若需回退，仅回退上述七个文档变更和本记录文件，保留其余 workspace 文件。不要通过重置仓库清理 WIP。
+组件版本：不升级（仅文档与治理规则）。

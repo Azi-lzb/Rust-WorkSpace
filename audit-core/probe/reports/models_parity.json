@@ -1,0 +1,28 @@
+{
+  "source": "base_audit.models",
+  "rust_module": "audit_core::models",
+  "baseline": "models_python_baseline.json",
+  "baseline_command": "python3 -B audit-core/tests/compare/run_models_baseline.py --source-root <read-only Open-Data-Audit root> --output audit-core/probe/reports/models_python_baseline.json",
+  "rust_test_command": "cargo test -p audit-core --locked",
+  "workspace_test_command": "cargo test --workspace --locked",
+  "status": "passed",
+  "workspace_test_status": "passed",
+  "workspace_test_count": 22,
+  "python_version": "3.12.3 (WSL Ubuntu)",
+  "baseline_records": 12,
+  "model_types": 10,
+  "model_instances": 11,
+  "constructor_default_cases": 7,
+  "checks": [
+    "JSON field names and values round-trip for all baseline model instances",
+    "Dataclass constructor defaults match for all default-bearing model types",
+    "Preflight failed-file count and summary text match",
+    "Audit success/failure counts and summary text match"
+  ],
+  "real_workbook_fixture": "not_applicable",
+  "not_covered": [
+    "Audit workflow orchestration",
+    "Workbook reading, modification, and report writing",
+    "Real business files and target Linux package runtime"
+  ]
+}

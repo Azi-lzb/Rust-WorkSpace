@@ -1,0 +1,56 @@
+# PT-3-3 配置打印执行候选与三模式对拍
+
+时间：2026-10-23 19:31（Asia/Shanghai）  
+执行者：Codex  
+修改前/后 commit：不可用；当前 workspace 无可解析的 HEAD。Git 状态显示 workspace 文件均为未跟踪文件，本轮未暂存、提交或清理。  
+WIP：修改前检查 `GPT修改记录/`，未发现 WIP 文件。  
+组件版本：不升级；本轮为迁移候选，不是产品发布验收。
+
+## 目的
+
+推进 PyTools PT-3-3“按配置准备打印文件”。落实用户已确认的合同：只创建配置指定的新目标文件；目标路径已存在时在预校验和计划构建阶段拒绝，不清空、覆盖或改写目标簿。继续通过 `ExcelEditPlan` / `ExcelModifier` 执行，未创建生产 capability，也未改变生产默认路由。
+
+## 修改文件
+
+- `pytools-core/src/print_ops.rs`
+- `pytools-core/src/bin/pytools.rs`
+- `crates/excel-editor/src/umya_backend.rs`
+- `pytools-core/tests/print_config_new_target.rs`
+- `pytools-core/probe/compare_print_config_execution.py`
+- `pytools-core/probe/reports/print_config_execution_parity_20261023.json`
+- `pytools-core/probe/reports/PT_semantic_decisions_20261023.json`
+- `pytools-core/MIGRATION_INVENTORY.md`
+- `docs/architecture/feature-dataflow-matrix.md`
+- 本记录
+
+删除文件：无。未修改 `4.pytools-main` 或 `3.open-data-audit` 源项目。
+
+## 逻辑变化
+
+- `build_config_print_plans` 将 `ExcelEditPlan.output` 指向配置中的 `目标工作簿`，不再生成 `--output-dir` 下的随机候选名。`--output-dir` 仍用于计划 JSON。已有目标（包括符号链接）被拒绝。
+- 计划构造/plan-only 不创建目标父目录；只有调用方显式提供匹配 capability 并执行修改时，CLI 才创建目标父目录。新输出仍由 ExcelModifier 经临时文件、验证和安全发布处理。
+- `run_print_config_plan` 显式给出 `--output-dir` 时不再提前求值全局配置；执行成功路径会为配置目标创建父目录。命令用法将该参数说明为计划报告目录。
+- Umya 页脚写入补齐 `&C` 居中标记。新建工作表不写 `scale="0"`；对已有工作表要求清除 scale 时，因 Umya 3.1.1 无安全清除 API，在写入前拒绝。
+- 集成测试覆盖已有目标拒绝与字节不变、计划阶段无目标目录副作用、实际执行创建配置指定路径并验证值、样式、批注、合并、行列尺寸和页面设置。
+- Python/Rust probe 执行模式 1、2、3 各一个合成任务。模式 2 列宽出现约 1 ULP 的浮点表示差异，依 `rules/13 §9.1` 使用相对/绝对容差 `1e-15`；其余投影字段一致。仅为测试生成临时 Passed capability，未登记产品能力。
+- 更新 PT-3-3 状态和数据流证据，仍标“未验证”，并明确旧 Python 可修改已有目标，而新候选遵循用户确认的拒绝合同。
+
+## 测试结果
+
+- `cargo fmt --all -- --check`：通过。
+- `cargo test -p pytools-core --offline --locked --test print_config_new_target -q`：2/2 通过。
+- `cargo test --workspace --offline --locked -q`：通过；默认测试集中仍有需要隔离 openpyxl runtime 的测试按标记跳过。
+- `C:\Users\AZI\Desktop\VibeCode\4.pytools-main\.venv\Scripts\python.exe -B pytools-core\probe\compare_print_config_execution.py`：通过，合成模式 1/2/3 的 Python/Rust 执行投影一致；报告 `pytools-core/probe/reports/print_config_execution_parity_20261023.json`。
+- Windows 会话没有 `cargo` 命令，因此 Rust 测试由 Ubuntu/WSL2 x86_64 登录 shell 执行；不是目标麒麟/UOS 环境验收。
+
+## 未执行项、已知问题与状态
+
+- 当前用户没有提供真实 PyTools 打印配置和真实业务工作簿。真实配置、真实样式/页面组合、未列 OOXML 部件及同一目标多任务组合仍未验证。
+- Windows 原生 Rust 构建、麒麟 V10、统信 UOS V20、glibc 2.28 和离线 deb 未验证。模式对拍使用临时合成 XLSX，不能据此声称 PT-3-3 或打印菜单完成迁移。
+- 生产 capability 未登记；能力路由仍默认只产出计划，未更改默认引擎。
+- 本次只验证 PT-3-3，未完成 PT-3-1/3-2 的实际执行保真验收。
+- 测试期间严格浮点相等首次报告列宽约 1 ULP 差异；应用规定容差后重新运行 probe，三种模式通过。
+
+## 回滚提示
+
+本 workspace 当前无 Git 基线提交且文件未跟踪，不能使用 `git reset`、`git clean` 或覆盖式 checkout 回滚。若需撤销本次候选，只恢复本记录列出的 PT-3-3 代码、测试、probe、报告和清单改动；保留工作区其余既有文件。当前没有生产 capability 或默认路由需要回滚。

@@ -1,0 +1,56 @@
+{
+  "status": "passed_synthetic_parity",
+  "source": {
+    "project": "C:\\Users\\AZI\\Desktop\\VibeCode\\3.open-data-audit",
+    "module": "core/src/base_audit/systems/s2_report_collection/rule_engine.py::RuleEngine",
+    "rule_engine_sha256": "E80F7A03CCA7EAC89FD668148C798300BD4C4E6FCD9D33191F156B3368F2D2B0",
+    "models_sha256": "8C19D7E5521F9290EC7FAF641C5454BE148188A9B1A7C129127C97E6FC5B903E",
+    "unit_conversion_sha256": "BE9AF2EAB715AC6ACDD496363B551C649486DD1A0939B55CB746A7AFCD6761BA",
+    "baseline_python": "3.12.10"
+  },
+  "rust_modules": [
+    "audit-core/src/s2_rule_engine.rs",
+    "audit-core/src/s2_expression.rs",
+    "audit-core/src/s2_validation.rs"
+  ],
+  "fixtures": {
+    "path": "audit-core/tests/fixtures/s2_rule_engine/cases.json",
+    "case_count": 13,
+    "finding_count": 10,
+    "quality_finding_count": 3
+  },
+  "comparison": "The Rust test compares serialized findings and quality findings exactly against the read-only Python RuleEngine baseline after source_file path normalization. Finding fields, ordering, Decimal tuples, values, severities, references, descriptions, and calculation traces are compared structurally.",
+  "checks": {
+    "baseline_command": "python -B audit-core/tests/compare/run_s2_rule_engine_baseline.py",
+    "baseline_generated": true,
+    "rust_parity_command": "cargo test -p audit-core --test s2_rule_engine_parity --locked -- --nocapture",
+    "rust_parity_tests_passed": 1,
+    "rust_parity_tests_failed": 0,
+    "audit_core_library_tests_passed": 24,
+    "workspace_test_command": "cargo test --workspace --locked (WSL Ubuntu)",
+    "workspace_tests_passed": 76,
+    "workspace_tests_failed": 0,
+    "format_command": "cargo fmt --all -- --check",
+    "format_check": "passed"
+  },
+  "preserved": [
+    "Decimal expression arithmetic, comparisons, boolean composition, and the 50-digit half-even context for covered expressions",
+    "Current-period and prior-period placeholders, including the legacy eight-segment indicator-code form",
+    "One cumulative non-decrease finding per violated indicator",
+    "Missing and invalid-value quality findings with source-compatible diagnostic text",
+    "Threshold substitution and amount-unit conversion for configured amount indicators",
+    "Finding identity, ordering, source references, related records, severity, and calculation traces for the covered cases"
+  ],
+  "scope": "Synthetic S2 cumulative and expression rule evaluation over already imported IndicatorRecord values and JSON rule configuration. This slice does not load workbooks or configuration files, import reporting directories, compare external data, orchestrate a service run, or write reports. It is not connected to a production route.",
+  "unverified": [
+    "real sanitized S2 templates and importer-to-rule-to-report end-to-end behavior",
+    "full production rule-expression language and unsupported Python AST constructs",
+    "duplicate logical keys and all input ordering combinations",
+    "configuration workbook loading, external comparisons, service orchestration, and report writing",
+    "performance, peak memory, Windows, Kylin/UOS, glibc 2.28, and offline packaging"
+  ],
+  "performance": "not_measured",
+  "dependencies_or_routes_changed": false,
+  "production_default_changed": false,
+  "rollback": "Revert the S2 rule-engine and expression modules, module exports/visibility change, fixture, baseline generator and outputs, migration-inventory row, and matching change record together. The original Python project remains read-only."
+}

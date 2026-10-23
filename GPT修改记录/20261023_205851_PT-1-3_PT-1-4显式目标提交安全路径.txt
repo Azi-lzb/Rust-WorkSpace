@@ -1,0 +1,48 @@
+# GPT 修改记录：PT-1-3/PT-1-4 显式目标提交安全路径
+
+- 时间：2026-10-23 20:58（Asia/Shanghai）
+- 执行者：Codex
+- 修改前/后 commit：不可取得；workspace 没有可解析的 `HEAD`，全部工作文件显示为未跟踪。未暂存、提交、重置或清理现有内容。
+- WIP：修改前检查 `git status`、PyTools 迁移清单、Excel 安全规则和已有修改记录。保留当前 workspace 与两个源 Python 项目；没有覆盖源文件或历史记录。
+- 组件版本：`pytools-core 0.1.0`、共享 Excel crate 版本均未升级。
+
+## 修改目的
+
+补齐 PT-1-3/PT-1-4 既有配置目标工作簿的安全提交步骤。先前 Rust CLI 经 ExcelModifier 生成候选，但没有提交回配置目标路径；现在允许调用方显式选择 `--commit-target`。默认仍只产生候选，生产 capability 和默认路由没有改变。
+
+## 文件与实现
+
+- `pytools-core/src/dedup_ops.rs`、`pytools-core/src/timeline_ops.rs`：append plan 在读取既有目标前记录 SHA-256，并在构造完整计划后再次核验，发现目标在计划构建期间变化即拒绝生成计划；原本不存在的目标若在构建期间出现也拒绝。serde 默认兼容旧计划文件，旧计划缺少哈希时不能显式提交。
+- `pytools-core/src/file_commit.rs`：校验候选工作簿，使用同目录临时副本和哈希核验；新目标用不覆盖发布；既有目标核对规划哈希、保留原文件备份后原子替换。目标写出后核对哈希并由 Calamine 重开；验证/目录同步失败时尝试恢复原目标。保留权限，并在提交报告中记录 operation、前后哈希、耗时和备份清理诊断。
+- `pytools-core/src/bin/pytools.rs`：`dedup-append-execute` 新增独立布尔选项 `--commit-target`。既有目标先校验 plan 哈希、再过 ExcelModifier capability gate 和候选/替换合同校验，最后提交；新目标在候选生成与重开后以不覆盖方式发布。缺省不提交。结果 JSON 的 `execution_summary` 包含成功/跳过数量、追加/去重计数、总耗时、阶段状态/耗时和实际引擎；错误上下文标明阶段。
+- `pytools-core/tests/file_commit.rs`：新增 5 项安全发布测试，覆盖无覆盖创建、有效替换、旧哈希拒绝、无效候选拒绝，以及规划期间目标新增/变化检测。
+- `pytools-core/tests/dedup_append_execution.rs`：增加既有目标显式提交、新目标提交、目标计划后被其他写入者占用、规划后目标变化拒绝等 CLI 集成验证；保留默认候选模式不触碰目标的回归测试。
+- `pytools-core/probe/compare_wide_summary.py`：扩展新目标和既有目标两种行头模式，执行提交并校验配置目标与候选字节一致。
+- `pytools-core/probe/reports/wide_summary_existing_target_parity_20261023.json`：记录四种合成场景的对拍、实际引擎、任务摘要、阶段耗时、提交哈希与未触及工作表抽查结果。
+- `pytools-core/MIGRATION_INVENTORY.md`：更新当前 CLI/迁移数据流和限制；PT-1-3/1-4 仍为“未验证”。
+- 本记录：记录变更、测试、风险和回滚边界。
+
+依赖声明与模块导出 `Cargo.toml`、`Cargo.lock`、`pytools-core/Cargo.toml`、`pytools-core/src/lib.rs` 在本轮开始前已存在于未提交工作区，本轮保留并沿用（`sha2` 用于文件哈希，`windows-sys` 用于 Windows 原子文件发布/替换）。本记录不把这些既有文件声明为本轮新改动。
+
+## 测试与对拍
+
+- `wsl -e sh -lc 'cd /mnt/c/Users/AZI/Desktop/VibeCode/1.rust-workspace && cargo fmt --all -- --check'`：通过。
+- `wsl -e sh -lc 'cd /mnt/c/Users/AZI/Desktop/VibeCode/1.rust-workspace && cargo test -p pytools-core --test file_commit --test dedup_append_execution --offline --locked'`：最终 11/11 通过（快照稳定性回归测试加入后）。
+- `wsl -e sh -lc 'cd /mnt/c/Users/AZI/Desktop/VibeCode/1.rust-workspace && cargo test --workspace --offline --locked -q'`：通过；既有隔离 openpyxl runtime 测试继续按约定 ignored，输出含既有弃用 API 与 unused import 警告。
+- `wsl -e sh -lc 'cd /mnt/c/Users/AZI/Desktop/VibeCode/1.rust-workspace && cargo check -p pytools-core --target x86_64-pc-windows-gnu --offline --locked'`：通过。此为 WSL 中 Windows GNU 目标交叉检查，不等于 Windows 原生运行测试。
+- 使用临时 Python 3.12.10 环境（NumPy 2.1.3、pandas 2.2.3、openpyxl 3.1.5）运行 `pytools-core/probe/compare_wide_summary.py`：通过。行头加/不加后缀 × 新/既有目标共四个合成 XLSX 场景。既有目标两例的 Python/Rust 单元格值/类型投影、sheet 顺序、日期格式通过；未触及 sheet 抽查值、样式填充、批注、合并、行高与列宽通过。配置目标字节与已验证候选相同，源工作簿与配置字节未改变。该对拍不是全量 OOXML 保真或真实性能结论。
+- 本机没有真实脱敏工作簿样本；临时 Passed capability 只用于合成测试，未登记生产能力。
+
+## 未执行项与已知问题
+
+- 真实 pytools 配置/业务模板、目标 sheet 全部样式/OOXML 属性、含公式模板和 Excel/WPS 打开尚未验收；公式夹具未覆盖。
+- Windows 原生 Rust 执行未完成；Windows GNU target `cargo check` 只证明该目标代码可编译。麒麟 V10、统信 UOS、glibc 2.28 和 deb 未验证。
+- `execution_summary` 是 CLI 完成后的结构化摘要，不是完整统一运行日志系统；实时进度推送、普通用户/开发者视图切换、持久历史记录仍待建设。
+- 规划时前后 SHA-256 校验可发现持续存在的目标并发变化；它不是对外部写入者的原子锁，最终提交前仍需执行计划哈希检查。
+- 计时仅为本轮小型合成样本的单次阶段观测（目标提交约 149ms/226–244ms）；未执行同机完整调用链多轮性能比较，不作加速结论。
+- 本轮 Python 对拍曾因新 CLI 输出多行 JSON 被按单行解析而失败；修复后重跑通过。早期失败探针可能在系统临时目录遗留一个合成目录 `pytools-wide-probe-8v20ynbt`；成功运行目录已清理，未触碰源项目或用户数据。
+
+## 删除清单与回滚提示
+
+- 删除清单：无；没有清理、覆盖或修改两个只读源 Python 项目。
+- 回滚：workspace 没有 Git commit 基线，禁止整体 reset/clean。仅当明确需要撤销本功能时，逐项反向移除 `target_sha256` 字段与 `--commit-target` 调用、`file_commit` 实现/导出、对应 tests/probe 报告段和本记录；保留其他未提交文件、现有 candidate-only 能力及既有工作区改动。

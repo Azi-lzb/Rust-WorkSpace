@@ -1,0 +1,41 @@
+时间：2026-10-23 02:56:42 +08:00
+执行者：Codex
+修改前/后 commit：当前仓库无可用 HEAD；未创建提交。
+WIP：workspace 文件处于未提交状态；遵循增量迁移，仅新增/局部修改本轮所需文件。
+
+目的
+- 将只读源项目 `base_audit.systems.s2_report_collection.unit_conversion` 中金额类型标记、Decimal 解析、单位缩放和 `to_yuan` 兼容入口迁移为 Rust 纯 helper。
+- 金额表示采用 sign + 任意长度十进制系数 digits + 十进制 exponent；单位转换只调整 exponent，不先转二进制浮点、不量化、不舍入。
+
+修改文件
+- `audit-core/src/unit_conversion.rs`
+- `audit-core/src/lib.rs`
+- `audit-core/src/discovery.rs`（将已有 Unicode 15.0 十进制数字映射函数可见性扩大为 `pub(crate)`，供金额解析复用；既有行为不变）
+- `audit-core/tests/fixtures/unit_conversion_cases.json`
+- `audit-core/tests/compare/run_unit_conversion_baseline.py`
+- `audit-core/tests/unit_conversion_parity.rs`
+- `audit-core/probe/reports/unit_conversion_python_baseline.json`
+- `audit-core/probe/reports/unit_conversion_parity.json`
+- `audit-core/MIGRATION_INVENTORY.md`
+- 本记录
+
+迁移范围和对拍
+- 覆盖 `AMOUNT_DATA_TYPES` 成员判定、`as_decimal`、`convert_amount`、`to_yuan`。
+- 43 个 fixture case 与只读 Python Decimal 基线逐项比较，包括 sign/digits/exponent 元组、错误类型和错误消息；覆盖大精度、尾零、逗号和下划线清理、科学计数法、Unicode 15.0 十进制数字、非十进制数值字符、非有限值、单位错误优先级及 alias。
+- 源模块 SHA-256：`BE9AF2EAB715AC6ACDD496363B551C649486DD1A0939B55CB746A7AFCD6761BA`。源项目目录未修改。
+- Rust 定向命令：`cargo test -p audit-core --lib --test unit_conversion_parity --locked`，9 个 audit-core 单测和 1 个 parity 测试通过；parity 测试比较 43 个 fixture case。
+- Python 源项目定向回归：`python -B -m pytest -q -p no:cacheprovider tests/test_s2_units.py -k 'amount_conversion_is_exact_without_decimal_context_rounding or unit_conversion_rejects_unsupported_unit'`，2 passed，49 deselected。
+- Workspace 回归：`cargo test --workspace --locked`，53 passed，0 failed。
+- 格式检查：`cargo fmt --all -- --check`，passed。
+
+未迁移与已知限制
+- 当前仅迁移值级 helper，未接入 S2 importer、规则引擎、周期比较或外部数据比较，也未迁移 Excel 读取和报告写入流程。
+- Rust API 接收十进制文本；Calamine `Data`、浮点值或其他运行时类型到十进制文本的适配与语义尚未实现，后续必须单独定义和对拍，不能隐式经 `f64` 舍入。
+- 极端 exponent 溢出边界、真实工作簿、全量 S2 业务流程、麒麟/UOS 及 glibc 2.28 未验证。
+- 未修改依赖、Cargo.toml/Cargo.lock、Excel 默认路由、pytools-core 或原始 Python 项目；本轮不升级 audit-core 版本。
+
+回滚提示
+- 删除 `audit-core/src/unit_conversion.rs`，移除 `audit-core/src/lib.rs` 的 `pub mod unit_conversion;`，并将 `discovery.rs` 的 `decimal_digit` 恢复为私有；删除本轮 fixture、基线脚本、对拍测试、两个报告及 Inventory 对应行。
+- 不要回滚此前已验收的 discovery、CSV、模型、模板解析或 name_config 实现。
+
+【组件版本】audit-core 0.1.0（本轮不改 Cargo 包版本；未发布）。

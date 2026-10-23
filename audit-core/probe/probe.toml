@@ -1,0 +1,17 @@
+[probe]
+fixtures = "tests/fixtures"
+umya_probe_report = "probe/reports/umya_probe.json"
+umya_raw_compare_report = "probe/reports/umya_raw_compare.json"
+umya_patched_compare_report = "probe/reports/umya_patched_compare.json"
+ooxml_patch_report = "probe/reports/ooxml_patch.json"
+fastpath_read_report = "probe/reports/fastpath_read_compare.json"
+fastpath_writer_report = "probe/reports/fastpath_writer_compare.json"
+summary_dir = "GPT修改记录"
+
+
+rust_dump_schema_version = 3
+reader_dump_report = "probe/reports/reader_dump.json"
+reader_compare_report = "probe/reports/reader_compare.json"
+central_csv_cases = "tests/fixtures/central_csv_cases.json"
+central_csv_python_baseline_report = "probe/reports/central_csv_python_baseline.json"
+central_csv_parity_report = "probe/reports/central_csv_parity.json"

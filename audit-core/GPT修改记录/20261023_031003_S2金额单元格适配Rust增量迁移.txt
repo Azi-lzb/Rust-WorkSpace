@@ -1,0 +1,43 @@
+时间：2026-10-23 03:10:03 +08:00
+执行者：Codex
+修改前/后 commit：当前仓库无可用 HEAD；未创建提交。
+WIP：workspace 文件处于未提交状态；本轮仅在现有 S2 金额 helper 和共享 reader API 上追加适配，不回滚既有实现。
+
+目的
+- 补齐现有 S2 金额单位 Rust helper 只接受十进制文本、不能直接表达 Calamine 读取类型的缺口。
+- 提供共享 `excel_reader::CellValue`，映射 Calamine `Data` 类型，同时保持现有 `WorkbookDump` tagged JSON 结构不变，避免业务层直接依赖 Calamine 类型。
+- 在 Audit helper 中适配源 importer 对 XLS 与 XLSX 数值的不同归一方式，并对拍 `Decimal` 元组及单位换算。
+
+修改文件
+- `crates/excel-reader/src/lib.rs`
+- `audit-core/src/unit_conversion.rs`
+- `audit-core/tests/fixtures/unit_conversion_cases.json`
+- `audit-core/tests/compare/run_unit_conversion_baseline.py`
+- `audit-core/tests/unit_conversion_parity.rs`
+- `audit-core/probe/reports/unit_conversion_python_baseline.json`
+- `audit-core/probe/reports/unit_conversion_parity.json`
+- `audit-core/MIGRATION_INVENTORY.md`
+- 本记录
+
+迁移范围和对拍
+- 新增共享 `CellValue` DTO，并由它统一映射 Calamine 的 Empty/String/Float/Int/Bool/DateTime/ISO Duration/Error；其序列化输出保持原 `{type,value}` JSON 形状。WorkbookDump 仍使用 `serde_json::Value`，没有改动 pytools 现有调用点。
+- `CellValue::from_probe_json` 负责按共享 reader 契约解码；历史 `json!` 对非有限浮点会序列化成 `null`，该解码器将其映射为非有限数，使金额适配器按源 importer 语义跳过，不引入读取 panic。
+- 新增 `AmountSourceFormat::{Xls, XlsxLike}`、`decimal_number_from_cell` 和 `convert_amount_from_cell`。XLS 路径对整数转 f64、布尔转 0/1；XLSX-like 路径把 2^53 范围内的整数浮点归一为整数；空、布尔（XLSX-like）、日期、错误、无效文本及非有限值按源 `_decimal_number` 行为跳过。
+- 19 个 typed-cell fixture 直接使用源 `importer._normalize_fast_value`、`_decimal_number` 和 `convert_amount` 生成 Python 基线，与既有 43 项合计 62 项。覆盖 int/float、科学计数法、2^53 边界、负零、XLS 布尔差异、文本逗号、空值/错误/日期和单位转换。
+- 源 helper SHA-256：`BE9AF2EAB715AC6ACDD496363B551C649486DD1A0939B55CB746A7AFCD6761BA`；源 importer SHA-256：`EEF44740DE8EB7AB0E09DE7C074FF06F22F515CC9A1518982FA662D123A49BEC`。本轮前后两份源文件哈希一致，源项目只读。
+- 定向 Rust 命令 `cargo test -p excel-reader -p audit-core --locked` 通过：Audit 11 个单测、1 个对拍测试；excel-reader 3 个单测。
+- workspace 回归 `cargo test --workspace --locked`：56 passed，0 failed。
+- 源项目定向回归：`python -B -m pytest -q -p no:cacheprovider tests/test_s2_units.py -k 'amount_conversion_is_exact_without_decimal_context_rounding or unit_conversion_rejects_unsupported_unit or source_amounts_convert_to_output_unit_before_engines_and_keep_other_types'`：3 passed，48 deselected。
+- `cargo fmt --all -- --check`：passed。
+
+未迁移与已知限制
+- 仍未接入 S2 importer、期间/规则/外部比较流程或报告输出；尚无从真实业务工作簿读取后一路运行的 Rust 端到端证据。
+- 19 个 typed-cell fixture 对拍的是已登记的 JSON DTO 与源 Python 归一语义；Calamine Data→DTO 已作单元测试，但本轮未新增真实工作簿样本或改变读取路由。
+- XLSX-like 归一只覆盖源 helper 当前规则；XLSB、ET、其他来源类型未验收。超出 Rust i64 exponent 表示范围的值、麒麟/UOS/glibc 2.28 仍未验证。
+- binary64 值到 Decimal 的最短十进制文本只在本轮列出的 float fixture 上与 Python 对拍，尚未穷举全部有限 f64 值。
+- 未改依赖、Cargo.toml/Cargo.lock、生产默认路由、pytools-core 或源 Python 项目。
+
+回滚提示
+- 回滚本增量时，只移除 `CellValue` DTO/映射测试、`AmountSourceFormat` 与两个 cell helper、19 个新 fixture 及相应 baseline/parity/inventory 更新，并删除本记录；保留上一轮已验收的文本金额 helper、既有 43 个 fixture 和其他既有迁移。
+
+【组件版本】audit-core 0.1.0（本轮不改包版本；未发布）。

@@ -1,0 +1,49 @@
+时间：2026-10-23 22:57（Asia/Shanghai）
+执行者：Codex
+修改前 commit：无（workspace main 尚无 HEAD commit，当前文件整体未跟踪）
+修改后 commit：无
+WIP 状态：检查到整个 workspace 尚未建立 Git 初始提交，既有代码、规则、夹具和记录均为未跟踪内容。没有 stage、commit、reset、clean 或覆盖其他工作。
+
+目的
+- 将 PyTools PT-4-4 批量工作表改名从仅生成计划推进到可从 Rust CLI 发起的、能力门控的候选执行链。
+- 以只读旧 Python `run_batch_rename_sheet_37` 的合成基线验证业务行为；保留缺少真实业务样本时的“未验证”状态。
+
+修改文件
+- `pytools-core/src/sheet_rename.rs`：增加按配置生成 RenameSheet 批次、顺序/目标名冲突处理、文件与目录扫描、递归选项、逐文件结果与阶段计时，并经已有 ExcelEditPlan/ExcelModifier 能力门控执行。候选写入同目录临时文件，验证后安全替换；只接收 XLSX，未验收格式明确跳过。
+- `pytools-core/src/bin/pytools.rs`：接入 `rename-sheets` CLI，接收配置、capability 文件、平台、递归选项及文件/目录路径。
+- `crates/excel-editor/src/umya_backend.rs`：对齐旧 openpyxl 工作表改名语义。Umya 会更新工作表附着的所有引用名称；候选现保留自定义名称原引用，仅更新打印区域。打印区域在简单 sheet 名上的引号差异按 OOXML 引用语义归一比较。
+- `pytools-core/tests/sheet_rename_execution.rs`：集成测试真实 CLI、能力拒绝、源文件安全、递归目录批处理、Python 基线投影和 opt-in Rust 候选 JSON 报告。
+- `pytools-core/probe/pt44_sheet_rename_baseline.py`：只读调用旧 Python 源实现并生成脱敏合成对拍基线。
+- `pytools-core/tests/fixtures/sheet_rename/`：本 workspace 内的合成输入、配置和旧 Python 预期输出；未复制真实业务文件。
+- `pytools-core/probe/reports/PT-4-4_python_baseline_20261023.json`、`PT-4-4_rust_candidate_20261023.json`：Python 基线和 Rust 候选机器报告。
+- `pytools-core/MIGRATION_INVENTORY.md`：记录候选实现、证据边界和未验证状态。
+- 本修改记录。
+
+数据流与执行路由
+- `pytools rename-sheets` → Calamine 读取 XLSX 工作表名并由 Rust 解析映射/生成 ExcelEditPlan → ExcelModifier 根据临时测试 Passed capability 路由 UmyaSpreadsheet → 写临时工作簿、验证 → 检查原输入快照并安全替换 → 返回每文件计数、实际引擎和阶段耗时 JSON。
+- 没有生产 capability、没有改变默认路由。测试临时 capability 只在测试目录生成并清理。
+- 不支持/未验收格式不会触发其他引擎回退。当前候选只处理 XLSX；XLSM、XLS、XLSB 及 ET 转换链仍待验收。
+
+测试与对拍
+- 只读 Python 基线：PyTools 原项目虚拟环境 Python 3.12.10、openpyxl 3.1.5、pandas 2.2.3；1 个合成工作簿得到 5 次改名、5 次跳过。源项目目录未修改。
+- 基线脚本入口：`pytools-core/probe/pt44_sheet_rename_baseline.py --source-root C:\Users\AZI\Desktop\VibeCode\4.pytools-main --report pytools-core/probe/reports/PT-4-4_python_baseline_20261023.json --expected-xlsx pytools-core/tests/fixtures/sheet_rename/python_expected.xlsx`。
+- `cargo fmt --all -- --check`：通过。
+- `cargo test -p excel-editor -p pytools-core --offline --locked`：通过。包含 3 个 PT-4-4 CLI/集成用例（端到端投影对拍、无 capability 时拒绝且源文件不变、递归目录批处理和 `.xls` 跳过）以及两个 package 的其余非 ignored 测试。既有需要隔离 openpyxl runtime 的测试仍按仓库配置 ignored。
+- 最后追加耗时断言后，复跑 `PYTOOLS_PT44_REPORT_PATH=/mnt/c/Users/AZI/Desktop/VibeCode/1.rust-workspace/pytools-core/probe/reports/PT-4-4_rust_candidate_20261023.json cargo test -p pytools-core --test sheet_rename_execution --offline --locked -- --nocapture`：3 passed。
+- PT-4-4 合成投影对拍覆盖 sheet 顺序、A1 数据、公式文本、自定义定义名称、目标 sheet 的样式/批注/合并区/行列尺寸/页面方向/打印区域。打印区域的简单 sheet 名引号只做引用语义规范化。
+- 最终 Rust 报告中的 302 ms 是单个小型合成工作簿的一次端到端观测，不是性能基准或规模承诺；本轮没有专门性能测试。
+- Rust 命令在 Ubuntu/WSL2 x86_64 工具链执行。Windows 原生 Rust 工具链不可用。
+
+未执行项与已知问题
+- 用户尚无真实脱敏样本；PT-4-4 整体生产验收状态仍为“未验证”。合成对拍不代表真实模板验收。
+- 未在 Windows 原生 Rust 环境、麒麟 V10、统信 UOS V20、glibc 2.28 或离线 deb 上验证。
+- 未测试 XLSM/VBA、XLS、XLSB、ET、复杂定义名称/公式、更多 OOXML 保留对象或并发场景；当前未做专项性能/内存测量。
+- 当前 CLI JSON 在结束时提供阶段耗时和实际引擎；实时进度、普通用户/开发者双视图与统一历史运行日志未完成，后续按统一日志目标增量接入，不阻断其他功能迁移。
+- 生产 capability 与默认路由没有变化。不得把临时测试 capability 抄入生产能力登记。
+- 全量测试仍输出 workspace 中已有的 umya deprecated API 与两处 unused-import 警告；本轮未做无关清理。
+
+组件版本
+- 未修改 Cargo.toml、Cargo.lock、依赖版本或产品版本。
+
+回滚提示
+- 当前没有 Git commit 可用于整仓回滚。若需撤销本轮工作，只回退上方列出的 PT-4-4 源码、测试、probe、fixture、报告、inventory 和本记录增量；不要 reset/clean 整个 workspace，也不要触碰两个只读 Python 源项目。

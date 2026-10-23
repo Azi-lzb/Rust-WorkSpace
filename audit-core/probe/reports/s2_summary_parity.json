@@ -1,0 +1,47 @@
+{
+  "case_count": 2,
+  "cases": [
+    {
+      "case": "unique_records_and_abnormal_finding_breakdowns",
+      "status": "passed"
+    },
+    {
+      "case": "empty_input",
+      "status": "passed"
+    }
+  ],
+  "python_baseline": {
+    "baseline_python": "3.12.10",
+    "exporter_sha256": "EF99D056BA9038BC9AED8BD23D5D8D0D2813941BA54366C1136380AC70A2E02B",
+    "models_sha256": "8C19D7E5521F9290EC7FAF641C5454BE148188A9B1A7C129127C97E6FC5B903E",
+    "module": "base_audit.systems.s2_report_collection.exporter.build_summary"
+  },
+  "result": {
+    "empty_input": {
+      "abnormal_findings": 0,
+      "by_severity": {},
+      "by_type": {},
+      "forms": 0,
+      "indicators": 0,
+      "institutions": 0,
+      "total_findings": 0
+    },
+    "unique_records_and_abnormal_finding_breakdowns": {
+      "abnormal_findings": 3,
+      "by_severity": {
+        "硬性": 1,
+        "软性": 1
+      },
+      "by_type": {
+        "": 1,
+        "环比": 2
+      },
+      "forms": 2,
+      "indicators": 4,
+      "institutions": 3,
+      "total_findings": 4
+    }
+  },
+  "scope": "S2 summary aggregation only; does not cover S2 orchestration, workbook export, real templates, or target Linux packaging.",
+  "status": "passed"
+}

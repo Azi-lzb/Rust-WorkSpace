@@ -1,0 +1,42 @@
+时间：2026-10-23 02:42:01 +08:00
+执行者：Codex
+修改前/后 commit：当前仓库无可用 HEAD；未创建提交。
+WIP：workspace 文件处于未提交状态；按本轮范围增量修改，保留其他文件。
+
+目的
+- 增量迁移 `base_audit.name_config` 中不依赖 Excel/文件系统的纯值部分，为后续配置驱动规则迁移准备可复用的 Rust 业务模型和函数。
+
+修改文件
+- `audit-core/src/name_config.rs`
+- `audit-core/src/lib.rs`
+- `audit-core/tests/fixtures/name_config_helper_cases.json`
+- `audit-core/tests/compare/run_name_config_baseline.py`
+- `audit-core/tests/name_config_helpers_parity.rs`
+- `audit-core/probe/reports/name_config_helpers_python_baseline.json`
+- `audit-core/probe/reports/name_config_helpers_parity.json`
+- `audit-core/MIGRATION_INVENTORY.md`
+- `audit-core/GPT修改记录/20261023_024201_Audit名称配置纯函数迁移.txt`（本记录）
+
+变化
+- 迁移 `FeatureMapping` 数据类及 `split_names`、`is_limited`、`features_of_type`、`matches_named_range` 四个纯 helper。
+- 对拍 fixture 共 31 例：映射 4、名称拆分 5、限定标记 9、类型筛选 3、命名区域匹配 10。
+- 只比较 caller 已读出的值，不加载、校验、初始化或保存 config.xlsx，也未接入审核流程。
+- 不修改原 Python 项目；未修改 Cargo.toml/Cargo.lock、依赖、Excel 后端默认路由或 Excel 引擎。
+
+对拍与测试
+- Python 基线通过 `run_name_config_baseline.py` 从只读源模块生成；`name_config.py` SHA-256 为 `1D56FFD7AFB82B015102EB4CCDFA2EECFD3609B5A774E6841BA9F2C5B7C9664C`。
+- Rust 对拍：`cargo test -p audit-core --test name_config_helpers_parity --locked -q`：1 passed，31 个 fixture case 的归一化结果逐项一致。
+- 原项目只读回归：`python -B -m pytest -q -p no:cacheprovider core/tests/test_template.py`：18 passed。
+- workspace 回归：`cargo test --workspace --locked -q`：49 passed，0 failed。
+- 格式检查：`cargo fmt --all -- --check`：passed。
+
+未完成与已知风险
+- `matches_named_range` 使用 Rust Unicode 小写转换；Python `str.casefold()` 的特殊展开映射（例如某些兼容字符）未覆盖，当前候选样例限定中文及普通 ASCII 大小写。
+- config.xlsx 的加载、缺列/错误行策略、默认映射回退、Excel 初始化/写入均未迁移。
+- 真实配置簿、审核流程及目标 Linux/glibc 2.28 环境未验证。
+
+回滚提示
+- 若对拍不通过，恢复 `audit-core/src/lib.rs` 中本模块导出并删除 `src/name_config.rs`；移除本轮 fixture、baseline 生成器、对拍测试、两份 probe 报告及 Inventory 中对应行。
+- 不要回滚此前已完成的模板 helper、模型、CSV 或期间解析迁移。
+
+【组件版本】audit-core 0.1.0（本轮不改 Cargo 包版本；未发布）。

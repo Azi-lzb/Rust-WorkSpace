@@ -1,0 +1,33 @@
+时间：2026-10-23 03:39:00（Asia/Shanghai）
+执行者：Codex
+修改前/后 commit：均不可取得；workspace 当前没有可解析的 Git HEAD，目录内容显示为未跟踪工作树文件。
+WIP：修改前查看了 workspace 指引、迁移清单和 git status；沿用已有 S2 导入切片，没有覆盖业务代码或清理用户文件。
+
+修改目的：把 Open-Data-Audit 的 S2 导入后质量发现转换迁移为 Rust 局部实现，覆盖重复项、缺失身份、导入警告、配置警告和外部数据警告，并与 Python 基线逐字段对拍。
+
+修改/新增文件：
+- Cargo.toml、Cargo.lock、audit-core/Cargo.toml：登记 `sha1` 0.10 workspace 依赖，用于兼容 Python 侧确定性 finding ID。
+- audit-core/src/lib.rs、audit-core/src/s2_validation.rs：导出 S2 质量发现模型与三个转换函数。
+- audit-core/tests/s2_validation_parity.rs：端到端比较 finding 字段及 ID。
+- audit-core/tests/compare/run_s2_import_baseline.py：在 workspace 侧的 Python 基线脚本中增加 validation baseline 生成；按文件名归一比较绝对路径。
+- audit-core/probe/reports/s2_validation_python_baseline.json、audit-core/probe/reports/s2_validation_parity.json：保存 Python 基线与对拍证据。
+- audit-core/tests/fixtures/s2_import/ 与 audit-core/probe/reports/s2_import_python_baseline.json：重跑共享合成基线生成器；S2 导入基线仍为 12 条记录、2 对重复项、3 条警告。
+- audit-core/MIGRATION_INVENTORY.md：登记 validation 的局部迁移边界。
+
+迁移结果：11 条 Python `AuditFinding` 与 Rust 序列化值逐字段一致：7 条导入质量发现、2 条配置警告发现、2 条外部警告发现。合成输入包含跨表单重复、1 条人为构造的缺少身份记录及两类告警。跨平台 probe 只将 source_file 和 calculation_trace 内的主机路径归一到文件名，不改变 finding 文本、字段或业务计算结果。S2 规则引擎和生产服务尚未连接。
+
+实际验证：
+- `cargo test -p audit-core --test s2_validation_parity --locked`：1 项通过，0 失败。
+- `cargo test --workspace --locked`（WSL Ubuntu）：63 项通过，0 失败。
+- 源项目 `core` 目录执行 `python -B -m pytest -q -p no:cacheprovider tests/test_period_v2.py -k 'test_v2_duplicate_and_cross_form_conflict_are_data_quality_findings'`：1 项通过，103 项筛除，0 失败。
+- `cargo fmt --all -- --check`：通过。
+- 原始 Python 项目未改动；本轮仅通过其现有虚拟环境执行只读测试和基线导入。
+
+未执行/未完成：S2 配置工作簿加载、周期/表达式规则、外部 workbook 导入与比较、service orchestration、结果报表、真实脱敏模板、目标 Linux/离线 deb/glibc 2.28 验证均未完成。
+
+已知风险：finding ID 使用 SHA-1 是为了兼容旧 Python 输出，不是安全用途。`S2AuditFinding` 当前只由导入校验使用；后续迁移其他 S2 引擎时须统一领域模型，不能另造不兼容 finding 结构。新增 `sha1` 依赖需随 Cargo.lock 一并保留或回滚。
+
+路由/配置影响：未改生产默认路由；唯一依赖变化为 workspace sha1 0.10。
+【组件版本】：不升级。
+删除清单：无。
+回滚提示：恢复上述 Cargo 文件、Rust source/tests、baseline 脚本、S2 夹具和 probe/reports，并恢复 MIGRATION_INVENTORY；无 Git HEAD 可自动回退。源项目保持只读。

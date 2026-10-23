@@ -1,0 +1,50 @@
+{
+  "status": "passed_synthetic_parity",
+  "source": {
+    "project": "C:\\Users\\AZI\\Desktop\\VibeCode\\3.open-data-audit",
+    "module": "core/src/base_audit/systems/s2_report_collection/period_engine.py",
+    "period_engine_sha256": "75C549C3384EF6123C94B5FB08256B07C398B2753FA1B1A6A905478F90A6A4C3",
+    "models_sha256": "8C19D7E5521F9290EC7FAF641C5454BE148188A9B1A7C129127C97E6FC5B903E",
+    "baseline_python": "3.12.10"
+  },
+  "rust_module": "audit-core/src/s2_period.rs",
+  "fixtures": {
+    "path": "audit-core/tests/fixtures/s2_period/cases.json",
+    "case_count": 13,
+    "finding_count": 15,
+    "expected_rule_configuration_error_count": 2
+  },
+  "comparison": "Exact structural equality of serialized findings and expected rule errors after source_file path normalization. Decimal tuples, calculation traces, severities, rule identities and finding fields are compared exactly.",
+  "checks": {
+    "baseline_command": "python -B audit-core/tests/compare/run_s2_period_baseline.py",
+    "baseline_generated": true,
+    "rust_parity_command": "cargo test -p audit-core --lib --test s2_period_parity --locked",
+    "rust_unit_tests_passed": 17,
+    "rust_parity_tests_passed": 1,
+    "rust_parity_tests_failed": 0,
+    "workspace_test_command": "cargo test --workspace --locked (WSL Ubuntu)",
+    "workspace_tests_passed": 67,
+    "workspace_tests_failed": 0,
+    "format_command": "cargo fmt --all -- --check",
+    "format_check": "passed"
+  },
+  "preserved": [
+    "Decimal amount subtraction and division with Python Decimal context precision and half-even rounding",
+    "relative change using absolute previous value and percentage-point handling",
+    "strategy group matching, half-open bands, overlap/no-match errors and minimum-change gating",
+    "text change, missing-side, form mismatch, disabled-indicator and nonnumeric branches",
+    "finding fields, source references, severity, calculation traces and serialized Decimal change_rate"
+  ],
+  "scope": "Synthetic two-period comparison rules only, using imported IndicatorRecord values and JSON rule configurations. This does not migrate the S2 end-to-end workflow and is not connected to a production route.",
+  "unverified": [
+    "real sanitized S2 workbooks and end-to-end importer-to-report behavior",
+    "configuration workbook loading and validation against production configuration files",
+    "external comparisons, expression rules, service orchestration and report writing",
+    "broader Decimal edge cases outside the 13 fixture scenarios",
+    "performance, memory, Windows, Kylin/UOS, glibc 2.28 and offline packaging"
+  ],
+  "performance": "not_measured",
+  "dependencies_or_routes_changed": false,
+  "production_default_changed": false,
+  "rollback": "Revert the listed S2 period implementation, test fixture, baseline/parity files, inventory row and matching change record together. The source Python project remains read-only."
+}

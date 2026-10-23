@@ -1,0 +1,64 @@
+{
+  "status": "passed_synthetic_parity",
+  "source": {
+    "project": "C:\\Users\\AZI\\Desktop\\VibeCode\\3.open-data-audit",
+    "module": "core/src/base_audit/systems/s2_report_collection/validation.py",
+    "sha256": "AE453446AD2AC10D4457D19C5C14C02F8D95517B0E9559F9959E66726E964195",
+    "models_module": "core/src/base_audit/systems/s2_report_collection/models.py",
+    "models_sha256": "8C19D7E5521F9290EC7FAF641C5454BE148188A9B1A7C129127C97E6FC5B903E",
+    "baseline_python": "3.12.10"
+  },
+  "rust_module": "audit-core/src/s2_validation.rs",
+  "source_functions": [
+    "validate_import",
+    "validate_config_warnings",
+    "validate_external_warnings"
+  ],
+  "comparison": "Exact serialized AuditFinding field equality against the read-only Python baseline. source_file and source paths embedded in calculation_trace are normalized to basenames only to remove host-specific absolute prefixes.",
+  "fixtures": {
+    "importer_fixture": "audit-core/tests/fixtures/s2_import",
+    "validation_only_missing_identity_records": 1,
+    "config_warning_inputs": 2,
+    "external_warning_inputs": 2,
+    "import_findings": 7,
+    "config_findings": 2,
+    "external_findings": 2,
+    "total_findings": 11
+  },
+  "checks": {
+    "rust_parity_command": "cargo test -p audit-core --test s2_validation_parity --locked",
+    "rust_parity_passed": 1,
+    "rust_parity_failed": 0,
+    "workspace_test_command": "cargo test --workspace --locked (WSL Ubuntu)",
+    "workspace_tests_passed": 63,
+    "workspace_tests_failed": 0,
+    "source_test_command": "python -B -m pytest -q -p no:cacheprovider tests/test_period_v2.py -k 'test_v2_duplicate_and_cross_form_conflict_are_data_quality_findings' (source core directory)",
+    "source_tests_passed": 1,
+    "source_tests_deselected": 103,
+    "source_tests_failed": 0,
+    "format_command": "cargo fmt --all -- --check",
+    "format_check": "passed"
+  },
+  "behavior": {
+    "finding_ids": "SHA-1 first 16 lowercase hexadecimal characters, matching source Python; used only for deterministic IDs, not security",
+    "duplicate_cross_form_suffix": "preserved",
+    "missing_institution_and_form_findings": "preserved",
+    "warning_severity_and_rule_ids": "preserved",
+    "finding_field_defaults": "preserved"
+  },
+  "scope": "Pure S2 finding conversion from an import result and warning lists. It does not implement rule evaluation or connect to the product service/report route.",
+  "unverified": [
+    "real S2 data and configuration workbooks",
+    "period and expression rule engines",
+    "external workbook import and external comparison",
+    "end-to-end service orchestration and report writing",
+    "target Linux runtime, offline deb packaging and glibc 2.28"
+  ],
+  "performance": "not_measured",
+  "dependencies_changed": {
+    "added": "sha1 0.10 workspace dependency for source-compatible finding IDs",
+    "other": false
+  },
+  "production_route_changed": false,
+  "rollback": "Revert the S2 validation source/test/baseline/report/inventory changes and remove the sha1 workspace dependency; the S2 importer remains an independent non-production candidate."
+}

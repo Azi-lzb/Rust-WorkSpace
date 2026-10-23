@@ -1,0 +1,58 @@
+【时间】2026-10-23 00:48:10 +08:00
+【执行者】Codex
+【修改前/后 commit】workspace 当前没有可解析的 HEAD；本轮不创建 commit。
+【WIP 状态】workspace 文件处于未跟踪状态。仅编辑本记录列出的规则/治理文档；未清理、覆盖其他未跟踪文件。
+
+【修改目的】
+从 Rust workspace 视角审查 audit-core 与 pytools-core 的迁移规则入口，明确子项目旧 Python 技术说明的适用范围，避免 Agent 将其误作生产实现规范。
+
+【修改文件】
+- AGENTS.md
+- audit-core/AGENTS.md
+- audit-core/rules/02_核心架构与跨平台.md
+- audit-core/rules/03_Excel与OOXML边界.md
+- audit-core/rules/04_模板工作流与数据边界.md
+- audit-core/rules/05_UI与接口.md
+- audit-core/rules/06_VBA复刻与配置复核.md
+- audit-core/rules/07_测试与发布.md
+- audit-core/rules/09_技术实现参考.md
+- audit-core/rules/10_VBA与配置迁移规范.md
+- audit-core/rules/11_版本管理与组件编号.md
+- audit-core/rules/13_表格读写技术选型与主动优化.md
+- rules/13_Rust_Excel读写修改与引擎路由规范.md
+- pytools-core/AGENTS.md（新增）
+- pytools-core/MIGRATION_PLAN.md
+- GPT修改记录/20261023_004810_迁移规则Workspace治理.txt
+
+【变更内容】
+- 根 AGENTS 明确：适用的 AGENTS.md 会约束各自子树；规则文件需由规则入口或具体任务引用。Audit 的 Python 历史规则只保留业务语义，技术方案服从 workspace；pytools 的本地迁移入口为新建的 pytools-core/AGENTS.md 与迁移清单。
+- 新增 pytools-core/AGENTS.md，规定生产路径 Rust、Python 仅限 probe/测试基线、Excel 原语通过 crates/ 共享库、通用第三方依赖由根 Cargo.toml 管理、两个产品不得互相依赖，并标注机构名称规范化工作簿候选尚未接入 ExcelEditPlan。
+- 更新 Audit 的平台、Excel/OOXML、模板工作流、UI、VBA/配置迁移、测试、技术参考和 Excel 选型规则。将旧 Python/openpyxl/COM/Office 工作流标为来源行为；明确 calamine、rust_xlsxwriter、ExcelEditPlan/ExcelModifier、OOXML Patch/umya/Excelize 的 workspace 边界和 sidecar 白名单。
+- 将 audit-core/rules/11 限定为旧产品组件版本制度，不将 VERSION_MANIFEST、Sx-Fxx/Sx-CFG SemVer 迁入 workspace；修改记录中的版本治理改为 Cargo 规则。
+- 明确共享 crates 约束针对 Excel/跨产品复用能力；通用第三方依赖在 workspace 根 Cargo.toml 管理，避免把现有 anyhow/serde/clap/rayon 依赖误判为业务 crate 互相依赖。
+- 区分 workspace 根级和 Audit 子项目级修改记录目录。
+
+【冲突检查与代码审视】
+- 冲突：Audit rules/02、03、04、07、09、10 存在 Python/openpyxl/COM/Office 主路径或旧 core/shell 路径指令；rule/13 中存在 pandas 处理层、旧 writer 路径、python-calamine API 参考、渲染阶段及 rules/11 版本制度入口。均已改写或加上明确的历史来源和 workspace 优先级边界。
+- 自动读取：root AGENTS.md 约束整个 workspace；audit-core/AGENTS.md 和 pytools-core/AGENTS.md 约束各自子树。普通 rules/ 文档不是自动全量读取，因此根入口和各子项目 AGENTS 已给出按主题查阅指引。
+- crate 依赖：audit-core 与 pytools-core 的 Excel 原语依赖来自 crates/ 下共享库，没有相互依赖；通用第三方 crate 由 workspace 根 Cargo.toml 管理版本。业务 crate 未直接依赖 calamine、umya、rust_xlsxwriter 等具体底层库。根规则已将共享库约束表述为 Excel/跨产品共享能力边界，避免误把通用 workspace 依赖判作违规。
+- Python 文件审视：workspace 内 Python 文件位于 probe/ 或 tests/compare 等基线/测试路径，未发现 Rust 生产路径调用 Python、PyO3 或 python-calamine 依赖。
+- 已知架构偏差：pytools-core/src/institution_normalize.rs 的合成样本候选直接调用 excel-editor 的 open_xlsx/save_xlsx 并操作其 Cell，没有提交 ExcelEditPlan。现有 EXCEL_ENGINE_ARCHITECTURE.md 已把它记录为非默认候选与架构偏差；本轮在 pytools-core/AGENTS.md 强调不得复制该模式，未修改业务代码。
+- Go Excelize worker 尚不存在，sidecar/lo-convert 尚未接通；这是未完成迁移范围，不属于本轮发现的规则违规。
+- 两个原始 Python 项目均未修改。
+
+【验证】
+- 检查了根/子项目 AGENTS、Audit rules/02–13、两个业务 crate 的 Cargo.toml、Rust 业务源码导入，以及 workspace 内 Python 文件路径。
+- 检查根规则、子项目规则与迁移计划/清单文件存在；未运行 cargo test、Python 对拍或目标 Linux 验收，本轮为规则文档治理变更。
+
+【未完成项与已知风险】
+- 机构名称规范化候选尚未通过 ExcelEditPlan/ExcelModifier 统一边界；迁移该功能时必须调整接口并重新进行模板保真对拍。
+- 迁移规则的纠正不等于两个产品功能已完成迁移；真实模板覆盖、业务调用链和 Linux deb 验收仍按迁移计划继续。
+- audit-core/rules/11 保留旧版本治理正文供历史追溯，但其顶部现已明确不适用于 workspace。
+
+【回滚提示】
+- 本 workspace 当前无 HEAD 且文件为未跟踪 WIP，禁止用 git reset/checkout 清理回滚。
+- 若需回退本轮治理，只反向恢复上述具体 AGENTS/rules 段落和 pytools-core/AGENTS.md；保留其他工作区文件。
+
+【组件版本】
+不升级；仅规则和治理文档变更，不写入用户版更新日志。

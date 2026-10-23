@@ -1,0 +1,33 @@
+[package]
+name = "audit-core"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+axum.workspace = true
+chrono.workspace = true
+clap.workspace = true
+csv.workspace = true
+encoding_rs.workspace = true
+excel-editor = { path = "../crates/excel-editor" }
+excel-reader = { path = "../crates/excel-reader" }
+excel-writer = { path = "../crates/excel-writer" }
+ooxml-patch = { path = "../crates/ooxml-patch" }
+serde.workspace = true
+serde_json.workspace = true
+sha1.workspace = true
+tokio.workspace = true
+
+[[bin]]
+name = "open-data-audit"
+path = "src/bin/open-data-audit.rs"
+
+[[bin]]
+name = "umya-probe"
+path = "src/bin/umya-probe.rs"
+
+[[bin]]
+name = "rust-fastpath-probe"
+path = "src/bin/rust-fastpath-probe.rs"

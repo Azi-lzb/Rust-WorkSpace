@@ -1,0 +1,65 @@
+{
+  "schema_version": 1,
+  "suite": "audit.period_detection",
+  "source_project": "Open-Data-Audit",
+  "source_functions": [
+    "base_audit.discovery.source_workbooks",
+    "base_audit.discovery.detect_period"
+  ],
+  "rust_functions": [
+    "audit_core::discovery::source_workbooks",
+    "audit_core::discovery::detect_period"
+  ],
+  "source_baseline": "probe/reports/period_detection_python_baseline.json",
+  "source_python_version": "3.12.10",
+  "status": "保留（局部）",
+  "parity": {
+    "cases": 9,
+    "passed": 9,
+    "failed": 0
+  },
+  "items": [
+    {
+      "item": "xlsx 路径扫描、排序与递归深度",
+      "status": "保留",
+      "cases": 9
+    },
+    {
+      "item": "临时文件、审核版与排除目录过滤",
+      "status": "保留",
+      "cases": 3
+    },
+    {
+      "item": "文件名期间识别、目录回退与冲突详情",
+      "status": "保留",
+      "cases": 9
+    },
+    {
+      "item": "真实脱敏业务模板行为",
+      "status": "未验证"
+    },
+    {
+      "item": "文件系统权限错误与遍历中断策略",
+      "status": "未验证"
+    },
+    {
+      "item": "完整业务工作流和目标 Linux 行为",
+      "status": "未验证"
+    },
+    {
+      "item": "运行性能",
+      "status": "未测量"
+    }
+  ],
+  "verification": {
+    "python_command": "python tests\\compare\\run_period_detection_baseline.py --source-root C:\\Users\\AZI\\Desktop\\VibeCode\\3.open-data-audit",
+    "python_result": "通过；已生成 9 个合成目录场景的旧项目基线",
+    "rust_command": "cargo fmt --all && cargo test -p audit-core --locked",
+    "rust_result": "通过；2 个 audit-core 单测通过，逐项比较 49 个期间解析向量和 9 个文件发现/期间识别场景"
+  },
+  "limitations": [
+    "仅覆盖 source_workbooks 与 detect_period 局部流程，不代表 Open-Data-Audit 业务功能已迁移。",
+    "合成目录对拍不能替代真实脱敏模板验收。",
+    "没有因局部对拍改变其他迁移清单状态或共享 Excel 后端决策。"
+  ]
+}

@@ -1,0 +1,42 @@
+时间：2026-10-22 21:59:28（Asia/Shanghai）
+执行者：Codex 子代理（audit-core 范围）
+修改前 commit：不可取得；workspace 根目录当前没有可解析的 HEAD。
+修改后 commit：未创建；本次未执行 git 操作。
+WIP 检查：修改前 `git status --short` 显示 workspace 文件树为未跟踪状态（`?? audit-core/` 等），未发现可覆盖的已跟踪 audit-core 文件；按分配范围仅在 audit-core 内新增/更新文件。源 Python 项目只读，并使用 `python -B` 防止写入字节码缓存。
+
+## 目的
+
+从 Open-Data-Audit 的 `base_audit.discovery._periods_in_text` 迁移一个边界清晰的纯文本期间解析 helper。此项不代表目录发现或任何业务工作流已经迁移。
+
+## 文件变化
+
+- 新增 `audit-core/src/discovery.rs`，提供 `periods_in_text`，识别源项目的分隔与紧凑年月格式，并按源正则处理月份字符类、日 token 形状、数字边界和 Unicode 十进制数字。
+- 更新 `audit-core/src/lib.rs` 导出 `discovery` 模块。
+- 新增 `audit-core/tests/compare/run_period_parser_baseline.py`，只读导入原项目函数并生成基线；输入通过 `-B` 运行，输出仅写入 workspace。
+- 新增 `audit-core/probe/reports/period_parser_python_baseline.json` 和 `period_parser_parity.json`，保存 49 条源函数结果与本次对拍摘要。
+- 更新 `audit-core/MIGRATION_INVENTORY.md`，单独列出已验证的 helper，并明确不改变其他功能的未验证状态。
+- 新增本修改记录。
+
+## 行为、配置与版本影响
+
+- 覆盖行为：解析文本中的 `YYYY-MM`，支持 `2026-6`、`2026年06月`、`2026/06/30`、`202606`、`20260630` 等源项目格式；结果去重并排序。
+- 不改变源 Python 项目、配置、VBA 或用户可见产品行为。
+- 【组件版本】不升级：当前 Rust helper 尚未接入产品工作流，workspace 也没有可更新的源产品组件版本清单。
+
+## 验证
+
+- 基线命令：`C:\Users\AZI\Desktop\VibeCode\3.open-data-audit\.venv\Scripts\python.exe -B audit-core/tests/compare/run_period_parser_baseline.py --source-root C:\Users\AZI\Desktop\VibeCode\3.open-data-audit`；Python 3.12.10 从只读源函数导出 49 条结果。
+- 格式化：`cargo fmt -p audit-core`（WSL Ubuntu）。
+- 对拍：`cargo test -p audit-core periods_in_text_matches_python_baseline --locked`（WSL Ubuntu）；49/49 向量通过，Rust 测试进程退出码 0。
+
+## 未执行项与已知限制
+
+- 未执行全 workspace 测试；交由主代理在 audit-core 文件稳定后统一验证。
+- 未迁移 `source_workbooks`、目录排除/遍历、`detect_period` 的文件名共识/目录回退/冲突详情，也未覆盖端到端业务流程。
+- 没有真实脱敏模板参与本项；期间 helper 无工作簿 I/O。
+- 49 条向量是 helper 级对拍证据，不能用于推断任何业务功能通过。
+
+## 删除清单与回滚
+
+- 无删除。
+- 回滚时移除新增的 discovery 模块、比较脚本、两份 JSON 报告及本记录，并撤销 `lib.rs` 与 `MIGRATION_INVENTORY.md` 的对应改动；不触碰两个原始 Python 项目。

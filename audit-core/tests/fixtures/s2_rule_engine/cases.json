@@ -1,0 +1,122 @@
+{
+  "cases": [
+    {
+      "id": "decimal_balance_no_finding",
+      "current": [
+        {"indicator_code":"A","indicator_name":"资产总计","period":"2026-06","form_code":"20203","normalized_value":{"type":"decimal","value":{"sign":0,"digits":[9,6,9,7,9,9,8,7,1],"exponent":-2}},"source_file":"current/asset.xlsx","source_row":4},
+        {"indicator_code":"B","indicator_name":"负债合计","period":"2026-06","form_code":"20203","normalized_value":{"type":"decimal","value":{"sign":0,"digits":[8,8,7,5,2,9,0,7,7],"exponent":-2}},"source_file":"current/debt.xlsx","source_row":5},
+        {"indicator_code":"C","indicator_name":"权益合计","period":"2026-06","form_code":"20203","normalized_value":{"type":"decimal","value":{"sign":0,"digits":[8,2,2,7,0,7,9,4],"exponent":-2}},"source_file":"current/equity.xlsx","source_row":6}
+      ],
+      "previous": [],
+      "config": {"rules":[{"rule_id":"R-BAL","rule_type":"表达式","description":"资产负债平衡","expression":"[A] <> [B] + [C]","severity":"硬性"}]}
+    },
+    {
+      "id": "decimal_balance_finding_with_rule_source",
+      "current": [
+        {"indicator_code":"A","indicator_name":"资产总计","period":"2026-06","form_code":"20203","normalized_value":{"type":"decimal","value":{"sign":0,"digits":[9,6,9,7,9,9,8,7,2],"exponent":-2}},"source_file":"current/asset.xlsx","source_row":4},
+        {"indicator_code":"B","indicator_name":"负债合计","period":"2026-06","form_code":"20203","normalized_value":{"type":"decimal","value":{"sign":0,"digits":[8,8,7,5,2,9,0,7,7],"exponent":-2}},"source_file":"current/debt.xlsx","source_row":5},
+        {"indicator_code":"C","indicator_name":"权益合计","period":"2026-06","form_code":"20203","normalized_value":{"type":"decimal","value":{"sign":0,"digits":[8,2,2,7,0,7,9,4],"exponent":-2}},"source_file":"current/equity.xlsx","source_row":6}
+      ],
+      "previous": [],
+      "config": {"rules":[{"rule_id":"R-BAL","rule_type":"表达式","description":"资产负债平衡","expression":"[A] <> [B] + [C]","severity":"硬性","source":{"source_file":"rules.xlsx","source_sheet":"校验规则","source_row":8}}]}
+    },
+    {
+      "id": "cross_form_rule_and_related_records",
+      "current": [
+        {"indicator_code":"20201099","indicator_name":"本表指标","period":"2026-06","form_code":"20201","normalized_value":{"type":"number","value":10.0},"source_file":"current/form_a.xlsx","source_sheet":"20201","source_row":3},
+        {"indicator_code":"20202001","indicator_name":"跨表指标","period":"2026-06","form_code":"20202","normalized_value":{"type":"number","value":8.0},"source_file":"current/form_b.xlsx","source_sheet":"20202","source_row":7}
+      ],
+      "previous": [],
+      "config": {"rules":[{"rule_id":"R-CROSS","rule_type":"表达式","description":"跨表不相等","expression":"[20201099]<>[20202001]","severity":"硬性"}]}
+    },
+    {
+      "id": "cumulative_one_finding_per_violated_indicator",
+      "current": [
+        {"indicator_code":"A","indicator_name":"当年指标A","period":"2026-06","normalized_value":{"type":"number","value":8.0},"source_file":"current/a.xlsx","source_row":4},
+        {"indicator_code":"B","indicator_name":"当年指标B","period":"2026-06","normalized_value":{"type":"number","value":3.0},"source_file":"current/b.xlsx","source_row":5},
+        {"indicator_code":"C","indicator_name":"未下降指标C","period":"2026-06","normalized_value":{"type":"number","value":4.0},"source_file":"current/c.xlsx","source_row":6}
+      ],
+      "previous": [
+        {"indicator_code":"A","indicator_name":"当年指标A","period":"2026-03","normalized_value":{"type":"number","value":10.0},"source_file":"previous/a.xlsx","source_row":4},
+        {"indicator_code":"B","indicator_name":"当年指标B","period":"2026-03","normalized_value":{"type":"number","value":5.0},"source_file":"previous/b.xlsx","source_row":5},
+        {"indicator_code":"C","indicator_name":"未下降指标C","period":"2026-03","normalized_value":{"type":"number","value":2.0},"source_file":"previous/c.xlsx","source_row":6}
+      ],
+      "config": {"rules":[{"rule_id":"R-CUM","rule_type":"累计不降(当年)","description":"当年累计不应减少","expression":"A，B;C","severity":"软性"}]}
+    },
+    {
+      "id": "missing_indicators_are_quality_findings",
+      "current": [
+        {"indicator_code":"ANCHOR","indicator_name":"锚点指标","period":"2026-06","normalized_value":{"type":"number","value":1.0},"source_file":"current/anchor.xlsx","source_row":2}
+      ],
+      "previous": [],
+      "config": {"rules":[{"rule_id":"R-MISSING","rule_type":"表达式","description":"监管线检查","expression":"[MISSING_A] < 0.055 * [MISSING_B]","severity":"软性"}]}
+    },
+    {
+      "id": "blank_and_invalid_values_are_not_zero_inputs",
+      "current": [
+        {"indicator_code":"A","indicator_name":"空报指标","period":"2026-06","normalized_value":{"type":"empty"},"source_file":"current/blank.xlsx","source_row":2},
+        {"indicator_code":"B","indicator_name":"文字指标","period":"2026-06","normalized_value":{"type":"string","value":"not-a-number"},"source_file":"current/text.xlsx","source_row":3}
+      ],
+      "previous": [],
+      "config": {"rules":[{"rule_id":"R-BLANK","rule_type":"表达式","description":"不可执行规则","expression":"[A] > [B]","severity":"软性"}]}
+    },
+    {
+      "id": "legacy_eight_segment_placeholder_and_decimal_threshold",
+      "current": [
+        {"indicator_code":"20203045","indicator_name":"核心一级资本净额","form_code":"20203","period":"2026-08","normalized_value":{"type":"number","value":100.0},"source_file":"current/capital.xlsx","source_row":5},
+        {"indicator_code":"20203048","indicator_name":"风险加权资产","form_code":"20203","period":"2026-08","normalized_value":{"type":"number","value":2000.0},"source_file":"current/rwa.xlsx","source_row":6}
+      ],
+      "previous": [],
+      "config": {"rules":[{"rule_id":"R-LEGACY","rule_type":"表达式","description":"核心一级资本比例","expression":"[,,,20203045,] < 0.055 * [,,,20203048,]","severity":"软性"}]}
+    },
+    {
+      "id": "threshold_without_config_is_quality_finding",
+      "current": [
+        {"indicator_code":"A","indicator_name":"阈值指标","period":"2026-06","normalized_value":{"type":"number","value":1.0},"source_file":"current/a.xlsx","source_row":2}
+      ],
+      "previous": [],
+      "config": {"rules":[{"rule_id":"R-THD-MISSING","rule_type":"表达式","description":"缺阈值","expression":"[A] < Thd","severity":"软性"}]}
+    },
+    {
+      "id": "threshold_converts_from_ten_thousand_yuan_to_output_yuan",
+      "current": [
+        {"indicator_code":"AMOUNT","indicator_name":"金额指标","period":"2026-06","normalized_value":{"type":"decimal","value":{"sign":0,"digits":[5,0,0],"exponent":0}},"source_file":"current/amount.xlsx","source_row":3}
+      ],
+      "previous": [],
+      "config": {"indicators":{"AMOUNT":{"data_type":"余额"}},"unit_settings":{"output_file_unit":"元"},"rules":[{"rule_id":"R-THD-UNIT","rule_type":"表达式","description":"金额阈值","expression":"[AMOUNT] < Thd","severity":"硬性","threshold":0.055}]}
+    },
+    {
+      "id": "threshold_is_not_scaled_for_non_amount_indicator",
+      "current": [
+        {"indicator_code":"PERCENT","indicator_name":"比例指标","period":"2026-06","normalized_value":{"type":"number","value":0.04},"source_file":"current/percent.xlsx","source_row":3}
+      ],
+      "previous": [],
+      "config": {"indicators":{"PERCENT":{"data_type":"百分数"}},"rules":[{"rule_id":"R-THD-PERCENT","rule_type":"表达式","description":"比例阈值","expression":"[PERCENT] < Thd","severity":"软性","threshold":0.055}]}
+    },
+    {
+      "id": "inverted_expression_has_trace_suffix",
+      "current": [
+        {"indicator_code":"A","indicator_name":"逆向指标","period":"2026-06","normalized_value":{"type":"number","value":5.0},"source_file":"current/a.xlsx","source_row":3}
+      ],
+      "previous": [],
+      "config": {"rules":[{"rule_id":"R-INVERT","rule_type":"表达式","description":"取反规则","expression":"[A] > 10","severity":"硬性","invert":true}]}
+    },
+    {
+      "id": "boolean_helpers_and_single_equals_normalization",
+      "current": [
+        {"indicator_code":"A","indicator_name":"指标A","period":"2026-06","normalized_value":{"type":"number","value":2.0},"source_file":"current/a.xlsx","source_row":3},
+        {"indicator_code":"B","indicator_name":"指标B","period":"2026-06","normalized_value":{"type":"number","value":4.0},"source_file":"current/b.xlsx","source_row":4}
+      ],
+      "previous": [],
+      "config": {"rules":[{"rule_id":"R-BOOL","rule_type":"表达式","description":"布尔组合","expression":"AND([A] = 2, NOT([B] = 3))","severity":"软性"}]}
+    },
+    {
+      "id": "text_number_expression_uses_float_conversion",
+      "current": [
+        {"indicator_code":"TEXTNUM","indicator_name":"文本数字","period":"2026-06","normalized_value":{"type":"string","value":"2.675"},"source_file":"current/textnum.xlsx","source_row":3}
+      ],
+      "previous": [],
+      "config": {"rules":[{"rule_id":"R-TEXTNUM","rule_type":"表达式","description":"文本数字转换","expression":"[TEXTNUM] < 2.68","severity":"软性"}]}
+    }
+  ]
+}

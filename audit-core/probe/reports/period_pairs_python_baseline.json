@@ -1,0 +1,116 @@
+{
+  "schema_version": 1,
+  "suite": "audit.period_pairs",
+  "baseline": "base_audit.period_compare.list_period_pairs + report_source.report_source_warning",
+  "source_python_version": "3.12.10",
+  "source_root": "C:\\Users\\AZI\\Desktop\\VibeCode\\3.open-data-audit",
+  "source_sha256": {
+    "period_compare.py": "8a5c9a7e5124248a11f6a10ac2b05915c8780f58233738eab63f528cf7f7213f",
+    "report_source.py": "10300b133381d2bfaa95df34d00455a245ed0ff35530ba2d3065cf3f816ca1c8"
+  },
+  "fixture_cases": 1,
+  "results": [
+    {
+      "id": "mixed_source_shapes_and_one_sided_items",
+      "warning": "发现 banks 导出文件（本期2个、上期2个）。该格式不含机构名称，名称需依赖机构参照映射。建议在来源系统选择“默认单sheet”或“按报表单sheet”重新导出，使用“机构代码#日期#01#表单#机构名称”或“reports#机构代码#日期#01#机构名称”这两类文件名。",
+      "pairs": [
+        {
+          "org": "20202",
+          "form": "20202",
+          "orgName": "20202",
+          "socialCreditCode": "20202",
+          "curName": "banks#2026-06-30#02#20202.xlsx",
+          "curPath": "banks#2026-06-30#02#20202.xlsx",
+          "curSheet": "20202",
+          "curDate": "2026-06-30",
+          "preName": "banks#2026-03-31#02#20202.xlsx",
+          "prePath": "banks#2026-03-31#02#20202.xlsx",
+          "preSheet": "20202",
+          "preDate": "2026-03-31",
+          "matched": true,
+          "side": "both"
+        },
+        {
+          "org": "20203",
+          "form": "20202",
+          "orgName": "20203",
+          "socialCreditCode": "20203",
+          "curName": "banks#2026-06-30#02#20202.xlsx",
+          "curPath": "banks#2026-06-30#02#20202.xlsx",
+          "curSheet": "20203",
+          "curDate": "2026-06-30",
+          "preName": "banks#2026-03-31#02#20202.xlsx",
+          "prePath": "banks#2026-03-31#02#20202.xlsx",
+          "preSheet": "20203",
+          "preDate": "2026-03-31",
+          "matched": true,
+          "side": "both"
+        },
+        {
+          "org": "9144",
+          "form": "20202",
+          "orgName": "甲银行",
+          "socialCreditCode": "9144",
+          "curName": "9144#2026-06-30#x#20202#甲银行.xlsx",
+          "curPath": "9144#2026-06-30#x#20202#甲银行.xlsx",
+          "curSheet": "20202",
+          "curDate": "2026-06-30",
+          "preName": "9144#2026-03-31#x#20202#甲银行.xlsx",
+          "prePath": "9144#2026-03-31#x#20202#甲银行.xlsx",
+          "preSheet": "20202",
+          "preDate": "2026-03-31",
+          "matched": true,
+          "side": "both"
+        },
+        {
+          "org": "9144",
+          "form": "20203",
+          "orgName": "甲银行",
+          "socialCreditCode": "9144",
+          "curName": "9144#2026-06-30#x#20202#甲银行.xlsx",
+          "curPath": "9144#2026-06-30#x#20202#甲银行.xlsx",
+          "curSheet": "20203",
+          "curDate": "2026-06-30",
+          "preName": "9144#2026-03-31#x#20202#甲银行.xlsx",
+          "prePath": "9144#2026-03-31#x#20202#甲银行.xlsx",
+          "preSheet": "20203",
+          "preDate": "2026-03-31",
+          "matched": true,
+          "side": "both"
+        },
+        {
+          "org": "9200",
+          "form": "20202",
+          "orgName": "乙银行",
+          "socialCreditCode": "9200",
+          "curName": "reports#9200#2026-06-30#01#乙银行.xlsx",
+          "curPath": "reports#9200#2026-06-30#01#乙银行.xlsx",
+          "curSheet": "20202",
+          "curDate": "2026-06-30",
+          "preName": "reports#9200#2026-03-31#01#乙银行.xlsx",
+          "prePath": "reports#9200#2026-03-31#01#乙银行.xlsx",
+          "preSheet": "20202",
+          "preDate": "2026-03-31",
+          "matched": true,
+          "side": "both"
+        },
+        {
+          "org": "legacy",
+          "form": "20202",
+          "orgName": "legacy",
+          "socialCreditCode": "",
+          "curName": "legacy.xlsx",
+          "curPath": "legacy.xlsx",
+          "curSheet": "20202",
+          "curDate": "",
+          "preName": "",
+          "prePath": "",
+          "preSheet": "",
+          "preDate": "",
+          "matched": false,
+          "side": "cur"
+        }
+      ]
+    }
+  ]
+}

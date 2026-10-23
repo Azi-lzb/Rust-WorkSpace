@@ -1,0 +1,16 @@
+{
+  "status": "python_baseline_generated",
+  "baseline_python": "3.12.10",
+  "fixture": "tests/fixtures/s2_exporter/cases.json",
+  "fixture_sha256": "027aae09f46eb6162c0443e6fa501f8c22ee3e0233cfd74c2cf65c2dff9949ae",
+  "case_findings": 5,
+  "sheet_names": [
+    "环比规则",
+    "外部核对规则",
+    "校验规则"
+  ],
+  "source_sha256": {
+    "exporter.py": "ef99d056ba9038bc9aed8bd23d5d8d0d2813941ba54366c1136380ac70a2e02b",
+    "models.py": "8c19d7e5521f9290ec7faf641c5454be148188a9b1a7c129127c97e6fc5b903e"
+  }
+}

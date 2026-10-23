@@ -1,0 +1,33 @@
+时间：2026-10-23 03:33:00（Asia/Shanghai）
+执行者：Codex
+修改前/后 commit：均不可取得；workspace 当前没有可解析的 Git HEAD，目录内容显示为未跟踪工作树文件。
+WIP：修改前检查了 git status；没有覆盖或清理现有文件。本次只调整 S2 候选导入切片、其合成对拍资产、迁移清单和本记录。
+
+修改目的：继续将 Open-Data-Audit S2 报表目录导入作为 Rust 增量切片迁移；对齐 Python `_code` 对大于 i64::MAX 的整数浮点指标代码转换，补齐机器可读对拍报告和范围声明。
+
+修改/新增文件：
+- audit-core/src/s2_import.rs：整数浮点代码改为无范围截断的十进制格式化；增加 2^63 边界单元测试。
+- audit-core/tests/compare/run_s2_import_baseline.py：增加 2^63 数字指标代码合成样例。
+- audit-core/tests/s2_import_parity.rs：cargo fmt 格式化。
+- audit-core/tests/fixtures/s2_import/config.json、9144#2026-06-30#x#20202#甲银行.xlsx、#2026-06-30#x#20202#乙银行.xlsx、unrecognized.xlsx、~$ignored.xlsx：重新生成的专用合成夹具；主夹具加入大整数代码用例。
+- audit-core/probe/reports/s2_import_python_baseline.json：由只读 Python importer 重新生成，来源 importer SHA-256 为 EEF44740DE8EB7AB0E09DE7C074FF06F22F515CC9A1518982FA662D123A49BEC。
+- audit-core/probe/reports/s2_import_parity.json：记录 Rust/Python 逐字段对拍范围和限制。
+- audit-core/MIGRATION_INVENTORY.md：将 S2 导入局部状态更新为 12 条记录对拍，并列出未验证范围。
+
+迁移范围与结果：合成 XLSX 目录导入，覆盖文件名身份、A-C 列第 4 行起的指标记录、机构/指标补充、金额单位归一、去重、告警及大整数代码。Rust 结果与源 Python importer 序列化结果逐结构相同；仅将 source_file 绝对路径归一为文件名。对拍结果为 12 条记录、2 对重复项、3 条警告，baseline scenario_count 为 17。该切片仍未连接生产默认路由。
+
+实际验证：
+- `cargo test --workspace --locked`（WSL Ubuntu）：62 项通过，0 失败。
+- `cargo test -p audit-core --test s2_import_parity --locked`：1 项通过，0 失败（已包含在 workspace 测试内）。
+- 源项目 `core` 目录执行 `python -B -m pytest -q -p no:cacheprovider tests/test_s2_units.py`：51 项通过，0 失败。
+- `cargo fmt --all -- --check`：通过。
+- 源 Python 项目只读；本次测试未写入源项目文件。
+
+未执行/未完成：真实脱敏 XLSX 模板、有效 BIFF XLS、XLSB、公式缓存边界、文件读取失败策略、进度回调、生产配置加载、周期/规则/外部比较、报告写入与服务路由、性能/峰值内存、目标 Linux 离线 deb 和 glibc 2.28 验证均未完成。不得据此宣称 S2 业务流程迁移完成。
+
+已知问题：源 Python importer 在基线环境有 python-calamine/旧 reader 路由选择；Rust 候选固定使用共享 Calamine adapter，遇到 Calamine 读取错误时不以其他 reader 掩盖。有效 XLS/XLSB 与 fallback 策略未对拍。
+
+配置/VBA 影响：未改 Cargo 配置、依赖、构建配置、生产路由或 VBA 逻辑。
+【组件版本】：不升级。
+删除清单：无。
+回滚提示：若需回滚本轮，可从工作树删除新增 `s2_import_parity.json` 与本记录，并恢复本轮修改过的 S2 importer、baseline generator、fixture/baseline、inventory 和 parity test 文件；无 Git HEAD 可用于自动恢复。不要修改源 Python 项目。

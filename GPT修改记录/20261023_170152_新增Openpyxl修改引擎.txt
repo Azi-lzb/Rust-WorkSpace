@@ -1,0 +1,44 @@
+# 新增 openpyxl Excel 修改引擎
+
+- 时间：2026-10-23 17:36（Asia/Shanghai；复验结果追加更新）
+- 执行者：Codex
+- 修改前/后 commit：当前 Git 分支为 `main`，仓库尚无可解析的 HEAD；工作区原有文件均处于未跟踪状态，不能用 Git diff/checkout 形成可靠回滚点。
+- WIP 检查：修改前检查了 `git status --short`、GPT修改记录目录及文件名中的 WIP 标记；没有发现 WIP 记录。workspace 文件处于未跟踪状态，未暂存或提交。
+- 目的：在现有 ExcelEditPlan/ExcelModifier 边界新增隔离的 openpyxl 批量工作簿修改候选，并在真实模板和目标平台证据不足时保持能力门控，不改变生产默认路由。
+
+## 修改文件
+
+- 新增 `crates/excel-editor/python/openpyxl_worker.py`：一个 ExcelEditPlan 一次子进程，结构化 JSON 请求/响应；实现值/公式/批注/行列尺寸/sheet 结构/填充/区域复制与导入/页面设置等首批 XLSX 修改，拒绝行列插删和带非空公式缓存的文件。
+- 新增 `crates/excel-editor/src/openpyxl_backend.rs`；修改 `crates/excel-editor/src/plan.rs`、`crates/excel-editor/src/lib.rs`、`crates/excel-editor/src/workbook_profile.rs`：注册 `OpenpyxlWorker`，使用隔离 runtime 显式路径，按计划整批调用 worker，验证请求身份、输入未变、输出摘要和 Rust 独立读回结果；修正 openpyxl legacy comment VML 部件识别。
+- 修改 `crates/excel-editor/Cargo.toml`、`Cargo.lock`：加入 JSON 协议依赖及测试依赖锁定。
+- 修改 `pytools-core/src/edit_plan.rs`：将 OpenpyxlWorker 接入 pytools 的 capability-gated ExcelModifier dispatcher；仍需调用方提供匹配 capability 证据。
+- 新增 `crates/excel-editor/tests/openpyxl_worker.rs`、`crates/excel-editor/tests/python/test_openpyxl_worker.py`：集成、worker 与端到端延迟测试。
+- 新增 `packaging/openpyxl/README.md`、`requirements.txt`、`python-version.txt`、`stage-runtime.sh`：为离线包准备隔离 Python runtime staging；未生成 runtime 或 deb。
+- 修订 `AGENTS.md`、`rules/13_Rust_Excel读写修改与引擎路由规范.md`、`EXCEL_ENGINE_ARCHITECTURE.md`、`audit-core/AGENTS.md`、`audit-core/rules/03_Excel与OOXML边界.md`、`audit-core/rules/07_测试与发布.md`、`audit-core/rules/13_表格读写技术选型与主动优化.md`、`pytools-core/AGENTS.md`，加入 narrow openpyxl runtime 例外、限制及未验收边界。
+
+## 实际验证
+
+- `cargo fmt --all`：通过。
+- `cargo test -p excel-editor --offline`：通过；Rust 单元/已有集成测试通过，需隔离 runtime 的 4 项进程测试默认忽略。
+- `RUST_WORKSPACE_OPENPYXL_PYTHON=<isolated-test-python> cargo test -p excel-editor --offline --test openpyxl_worker -- --ignored --nocapture`：4/4 通过，覆盖单工作簿批量调用、源文件/导入源不变、Rust 独立读回、超时不发布、异常退出不静默回退，以及固定 5,000×10 合成文件完整流程耗时。
+- 最新固定合成文件的 5 次 ExcelModifier 完整流程耗时为 11,780 / 12,510 / 12,572 / 12,830 / 13,005 ms，中位数 12,572 ms。该结果包含 Rust 计划序列化、进程启动、Python/openpyxl 导入、读写、Rust 校验与安全发布，只是当前 Windows/WSL2 开发环境的合成样本观测，不用于生产路由决策，也不与先前轮次合并或平均。
+- `.test-openpyxl-venv/bin/python -m unittest discover -s crates/excel-editor/tests/python -p 'test_*.py' -v`：4/4 通过，含带公式缓存 XLSX 的写前拒绝及结构化错误验证。
+- `cargo check -p pytools-core --offline`：通过。
+- `cargo test --workspace --offline --locked -q`：通过；workspace 默认测试通过，4 项需隔离 runtime 的 openpyxl 集成测试按设计忽略，另已显式运行并通过。
+- `bash -n packaging/openpyxl/stage-runtime.sh`：通过。
+
+## 能力、限制与未执行项
+
+- OpenpyxlWorker 已进入 ExcelModifier 的候选路由和 pytools dispatcher；只接受 XLSX，能力由传入的精确 Passed capability 门控。没有创建 production capability JSON，没有改任何生产默认路由。
+- 当前 synthetic 测试验证了普通值/公式文本、批注文本及位置保留、sheet 身份顺序、合并区域、填充、行列尺寸、页面设置、CopyRange/ImportRange 等首批操作。Rust 独立读回会验证 ImportRange/CopyRange 的样式语义、设定的行高/列宽、填充色、日期格式与页面设置；打印区域从输出包 `workbook.xml` 用 namespace-aware parser 读回。它不证明真实模板保真或打印渲染一致。
+- ImportRange 的行高/列宽/隐藏/outline 复制标志在 Rust adapter 写前拒绝，直到补齐这些属性的独立 Rust 读回验证；worker 内部虽实现相关操作，不能据此开放路由能力。
+- 不支持行/列插删；不支持非 XLSX；拒绝未知 OOXML 部件、带非空公式缓存的输入及未验证复杂公式对象。数组/数据表公式复制无支持保证。Excelize 仍是占位，未实现 Go worker。
+- 没有收到两个原始项目的脱敏真实模板。本轮未产生真实样本对拍，不声称 Audit 或 pytools 的任何 openpyxl 能力已完成生产验收。当前 Audit 没有接入此 backend 的业务调用链；pytools 只有通用 capability dispatcher 注册，没有新增业务操作。
+- packaging staging 脚本只接受已准备好的可重定位 Python runtime；本轮开发环境使用 Python 3.12.3/openpyxl 3.1.5。尚未构建目标 Python 3.8.10 runtime、deb，也未在麒麟 V10、统信 V20 或 glibc 2.28/2.31 验证。
+- 公式计算、审核/统计业务、读取、新建 XLSX 不由 worker 承担；两个源 Python 项目没有修改。
+
+## 已知问题与回滚
+
+- 本机 Git 仓库目前没有 HEAD 且原有 workspace 文件是未跟踪状态，因此没有可用的版本化回滚点；不得用 Git 清理命令清除这些文件。回滚需根据以上清单删除本轮新增文件并从事前工作区快照恢复修改文件。
+- 临时测试 runtime `.test-openpyxl-venv/` 位于 workspace 内。本轮确认其绝对路径后尝试用 PowerShell 删除，但终端策略拒绝递归删除；为避免绕过策略，临时目录仍在，未加入产品包。需后续在允许清理时删除。
+- 最初公式缓存 Python 测试夹具没有实际写入缓存值，已改为对合成工作簿 OOXML 进行 namespace-aware 节点修改并复跑，最终通过。最近补充验证时，umya 未能读到 openpyxl 写入的本地 Print_Area；Rust 校验改为直接 namespace-aware 解析输出 workbook.xml，现整组进程测试通过。页脚中心位置的 OOXML `&C` 标记也纳入语义读回比较。

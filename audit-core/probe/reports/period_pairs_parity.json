@@ -1,0 +1,51 @@
+{
+  "status": "passed_on_synthetic_fixture",
+  "suite": "audit.period_pairs",
+  "source": {
+    "project": "C:\\Users\\AZI\\Desktop\\VibeCode\\3.open-data-audit",
+    "baseline": "base_audit.period_compare.list_period_pairs + report_source.report_source_warning",
+    "python_version": "3.12.10",
+    "sha256": {
+      "period_compare.py": "8a5c9a7e5124248a11f6a10ac2b05915c8780f58233738eab63f528cf7f7213f",
+      "report_source.py": "10300b133381d2bfaa95df34d00455a245ed0ff35530ba2d3065cf3f816ca1c8"
+    }
+  },
+  "fixture": {
+    "cases": 1,
+    "distinct_fixture_workbooks": 2,
+    "renamed_workbook_entries": 10,
+    "formats": ["xlsx"],
+    "scenario": "mixed_source_shapes_and_one_sided_items"
+  },
+  "result": {
+    "pair_rows": 6,
+    "matched_rows": 5,
+    "one_sided_rows": 1,
+    "field_differences": 0,
+    "warning_differences": 0,
+    "path_normalization": "curPath/prePath compared by filename; all other fields exact",
+    "banks_warning": "本期2个、上期2个",
+    "covered": [
+      "standard institution-per-workbook names",
+      "reports names",
+      "banks names and reminder text",
+      "multiple worksheets",
+      "temporary workbook filtering",
+      "last sorted duplicate identity wins",
+      "current-only and matched period rows"
+    ]
+  },
+  "rust": {
+    "shared_reader": "excel_reader::read_sheet_names (Calamine 0.37.0)",
+    "tests": [
+      "cargo test -p audit-core period_pairs --locked",
+      "cargo test -p audit-core --test period_pairs_parity -- --nocapture"
+    ]
+  },
+  "not_verified": [
+    "valid .xls workbook sheet-name reading (no valid .xls fixture available)",
+    "real business directories and duplicate-name collision frequency",
+    "performance on large directories",
+    "Kylin/UOS and glibc 2.28 deployment"
+  ]
+}

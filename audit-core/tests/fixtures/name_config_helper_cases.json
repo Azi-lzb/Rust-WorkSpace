@@ -1,0 +1,60 @@
+{
+  "feature_mappings": [
+    {
+      "name": "结构",
+      "feature_type": "type-a",
+      "range_names": ["结构区域", "表结构区域"],
+      "workbook_limited": false,
+      "workbook_keyword": "",
+      "remark": "结构检查"
+    },
+    {
+      "name": "公式",
+      "feature_type": "type-b",
+      "range_names": ["校验区域"],
+      "workbook_limited": true,
+      "workbook_keyword": "Ledger",
+      "remark": "复制公式",
+      "output": "审核副本",
+      "input_note": "模板文件"
+    },
+    {
+      "name": "结构二",
+      "feature_type": "type-a",
+      "range_names": ["结构区域_扩展"],
+      "workbook_limited": false,
+      "workbook_keyword": "",
+      "remark": "另一个结构映射",
+      "output": "日志"
+    },
+    {
+      "name": "收入",
+      "feature_type": "type-c",
+      "range_names": ["Revenue"],
+      "workbook_limited": false,
+      "workbook_keyword": "",
+      "remark": "English name"
+    }
+  ],
+  "split_names": [
+    "校验区域、表结构区域，明细;首行\n尾行；",
+    "  A , B ,, C  ",
+    "；；",
+    "A\tB\n C",
+    ""
+  ],
+  "limited_values": ["是", "Y", "YES", "True", "1", "否", " false ", "０", "yEs"],
+  "features_of_type": ["type-a", "type-b", "missing"],
+  "named_range_cases": [
+    {"mapping_index": 0, "candidate": "结构区域", "expected": true},
+    {"mapping_index": 0, "candidate": "表结构区域_001", "expected": true},
+    {"mapping_index": 0, "candidate": "结构区域-001", "expected": false},
+    {"mapping_index": 0, "candidate": "前缀结构区域_001", "expected": false},
+    {"mapping_index": 1, "candidate": "模板.xlsx!校验区域_005", "expected": true},
+    {"mapping_index": 1, "candidate": "'Sheet 1'!校验区域_005", "expected": true},
+    {"mapping_index": 1, "candidate": " '校验区域_1' ", "expected": true},
+    {"mapping_index": 3, "candidate": "revenue", "expected": true},
+    {"mapping_index": 3, "candidate": "REVENUE_总", "expected": true},
+    {"mapping_index": 3, "candidate": "rev", "expected": false}
+  ]
+}

@@ -1,0 +1,39 @@
+时间：2026-10-23 06:52:02 Asia/Shanghai
+执行者：Codex
+修改前 commit：不可用（workspace 尚无首次提交）
+修改后 commit：未创建
+WIP 情况：workspace 已有大量未跟踪文件；本轮只按文件清单增量修改，没有清理、覆盖或提交既有 WIP。
+
+目的：将 Open-Data-Audit S2 报告摘要统计 helper `exporter.build_summary` 迁移为 Rust，并继续标明它只是 S2-F01 的局部能力。
+
+修改/新增文件：
+- audit-core/src/lib.rs
+- audit-core/src/s2_summary.rs
+- audit-core/tests/fixtures/s2_summary/cases.json
+- audit-core/tests/compare/run_s2_summary_baseline.py
+- audit-core/probe/reports/s2_summary_python_baseline.json
+- audit-core/probe/reports/s2_summary_parity.json
+- audit-core/MIGRATION_INVENTORY.md
+- EXCEL_ENGINE_ARCHITECTURE.md
+- audit-core/GPT修改记录/20261023_065202_s2_summary_parity.txt（本记录）
+
+变化：
+- 新增 `audit_core::s2_summary::build_summary`，统计唯一机构、非空表单、记录数、发现总数、异常发现数及异常发现的类型/级别分布，沿用源 Python `build_summary` 对空机构、空表单、空类型、空严重级别与非异常状态的处理。
+- 增加共享 JSON fixture 和只读 Python baseline；Rust 测试以同一 fixture 对比 Python exporter 输出。
+- 更新迁移清单与架构快照。没有实现 S2 service、XLSX 报告写入、产品入口或生产默认路由；没有删除或改写 Python 原实现。
+
+配置及 VBA 影响：无。依赖/Cargo manifest：无变化。源 Python 项目：只读，未修改。
+【组件版本】audit-core 0.1.0，不升级；新增仅为局部摘要数据 helper。
+
+实际验证：
+- 使用只读 Open-Data-Audit `.venv` 中 Python 3.12.10 运行 `run_s2_summary_baseline.py`：2 个基线案例生成成功；基线记录 `exporter.py` SHA-256。
+- `cargo fmt --all`：通过；`cargo fmt --all -- --check` 曾先发现新文件的一处格式差异，格式化后通过。
+- `AUDIT_S2_SUMMARY_PARITY_REPORT=... cargo test -p audit-core --locked s2_summary::tests::summary_counts_match_read_only_python_exporter_baseline -- --nocapture`：1/1 通过，生成独立机器报告。
+- `cargo fmt --all -- --check && cargo test --workspace --locked -q`：通过，所有测试组退出码为 0。
+- 目标 Linux/glibc 2.28、真实业务模板和性能尚未验证。
+
+未执行/已知问题：
+- 两个案例均为合成数据，未运行完整 S2 service、ExcelExporter 或工作簿写入；S2-F01 仍未验证。
+- 未测量大数据量性能/峰值内存；目标麒麟/UOS 与 deb 未验收。
+
+回滚提示：可单独移除新增摘要模块、fixture、baseline 脚本/报告和对应清单记录；不要清理其他未跟踪文件或改动源 Python 项目。

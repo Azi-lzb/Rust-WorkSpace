@@ -1,0 +1,90 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "id": "same_period_across_filenames",
+      "parents": [],
+      "root_name": "input",
+      "recursive": false,
+      "files": ["001_甲银行_2026年6月.xlsx", "002_乙银行_20260630.xlsx"],
+      "directories": []
+    },
+    {
+      "id": "conflicting_filename_periods",
+      "parents": [],
+      "root_name": "input",
+      "recursive": false,
+      "files": ["001_甲银行_2026-05.xlsx", "002_乙银行_2026-06.xlsx"],
+      "directories": []
+    },
+    {
+      "id": "filename_period_takes_precedence_over_folder",
+      "parents": ["batch_2026-07"],
+      "root_name": "input",
+      "recursive": false,
+      "files": ["甲银行_2026-08.xlsx"],
+      "directories": []
+    },
+    {
+      "id": "fallback_to_parent_folder_period",
+      "parents": ["batch_2026-07"],
+      "root_name": "input",
+      "recursive": false,
+      "files": ["甲银行.xlsx"],
+      "directories": []
+    },
+    {
+      "id": "folder_name_conflict",
+      "parents": [],
+      "root_name": "input_2026-05_to_2026-06",
+      "recursive": false,
+      "files": ["甲银行.xlsx"],
+      "directories": []
+    },
+    {
+      "id": "recursive_depth_one_and_source_filters",
+      "parents": [],
+      "root_name": "input",
+      "recursive": 1,
+      "files": [
+        "root_2026-09.xlsx",
+        "机构甲/child_2026-10.xlsx",
+        "机构甲/历史材料_skip/deep_2026-11.xlsx",
+        "机构乙/deep_2026-12.xlsx",
+        "~$temporary_2026-05.xlsx",
+        "草稿_审核版_2026-06.xlsx",
+        "执行结果/old_2026-07.xlsx"
+      ],
+      "directories": []
+    },
+    {
+      "id": "recursive_full_depth_finds_files_but_skips_outputs",
+      "parents": [],
+      "root_name": "input",
+      "recursive": true,
+      "files": [
+        "机构甲/normal_2026-09.xlsx",
+        "执行结果/generated_2026-08.xlsx",
+        "归档_skip/ignored_2026-07.xlsx",
+        "附件.csv"
+      ],
+      "directories": []
+    },
+    {
+      "id": "xlsx_suffix_directory_matches_source_filter",
+      "parents": [],
+      "root_name": "input",
+      "recursive": false,
+      "files": ["银行.xlsx/ignored.txt"],
+      "directories": ["目录期_202610.xlsx"]
+    },
+    {
+      "id": "no_period_in_files_or_folders",
+      "parents": [],
+      "root_name": "input",
+      "recursive": false,
+      "files": ["甲银行.xlsx", "说明.docx"],
+      "directories": []
+    }
+  ]
+}

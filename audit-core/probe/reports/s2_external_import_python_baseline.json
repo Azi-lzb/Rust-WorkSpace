@@ -1,0 +1,551 @@
+{
+  "status": "python_baseline_generated",
+  "source": {
+    "project": "C:\\Users\\AZI\\Desktop\\VibeCode\\3.open-data-audit",
+    "module": "base_audit.systems.s2_report_collection.importer.import_external_workbook",
+    "reader_engine": "OPENPYXL",
+    "sha256": {
+      "importer.py": "EEF44740DE8EB7AB0E09DE7C074FF06F22F515CC9A1518982FA662D123A49BEC"
+    },
+    "baseline_python": "3.12.10",
+    "openpyxl": "3.1.5"
+  },
+  "fixture": {
+    "path": "tests/fixtures/s2_external_import/cases.json",
+    "case_count": 12
+  },
+  "result": {
+    "plain_layout": {
+      "result": {
+        "time_series": false,
+        "values": [
+          {
+            "data_date": "",
+            "row_label": "资产A",
+            "indicator_name": "余额",
+            "value": {
+              "type": "decimal",
+              "value": {
+                "sign": 0,
+                "digits": [
+                  9,
+                  0,
+                  0
+                ],
+                "exponent": -2
+              }
+            },
+            "source": {
+              "source_file": "plain_layout.xlsx",
+              "source_sheet": "集中系统数据",
+              "source_row": 8
+            },
+            "fallback_reason": ""
+          },
+          {
+            "data_date": "",
+            "row_label": "资产A",
+            "indicator_name": "指标X",
+            "value": {
+              "type": "decimal",
+              "value": {
+                "sign": 0,
+                "digits": [
+                  5
+                ],
+                "exponent": 0
+              }
+            },
+            "source": {
+              "source_file": "plain_layout.xlsx",
+              "source_sheet": "集中系统数据",
+              "source_row": 8
+            },
+            "fallback_reason": ""
+          },
+          {
+            "data_date": "",
+            "row_label": "资产B",
+            "indicator_name": "余额",
+            "value": {
+              "type": "decimal",
+              "value": {
+                "sign": 0,
+                "digits": [
+                  0
+                ],
+                "exponent": 0
+              }
+            },
+            "source": {
+              "source_file": "plain_layout.xlsx",
+              "source_sheet": "集中系统数据",
+              "source_row": 7
+            },
+            "fallback_reason": ""
+          },
+          {
+            "data_date": "",
+            "row_label": "资产B",
+            "indicator_name": "指标X",
+            "value": {
+              "type": "decimal",
+              "value": {
+                "sign": 0,
+                "digits": [
+                  0
+                ],
+                "exponent": 0
+              }
+            },
+            "source": {
+              "source_file": "plain_layout.xlsx",
+              "source_sheet": "集中系统数据",
+              "source_row": 7
+            },
+            "fallback_reason": ""
+          }
+        ],
+        "available_dates": [],
+        "date_labels": [],
+        "row_labels": [
+          "资产A",
+          "资产B"
+        ],
+        "indicator_names": [
+          "余额",
+          "指标X"
+        ],
+        "blank_values": [
+          [
+            "资产B",
+            "余额"
+          ]
+        ],
+        "missing_label_fallback": null,
+        "warnings": [
+          "集中系统数据第5行：行名称及指标数据均为空，已忽略该行；如属导出空行，可忽略。",
+          "集中系统数据第6行：行名称为空，但指标列“指标X”有数据；本行无法匹配报表项目，未参与外部核对。请检查行名称是否被误删。",
+          "集中系统数据第7行、报表项目“资产B”：“余额”为空白；“指标X”内容“无效”不是数值，已按 0 参与外部核对；请核查是否误删或改动了数据。"
+        ],
+        "external_org_map": {
+          "code-a": "映射A后行",
+          "code-c": "映射C"
+        }
+      }
+    },
+    "plain_missing_label": {
+      "result": {
+        "time_series": false,
+        "values": [],
+        "available_dates": [],
+        "date_labels": [],
+        "row_labels": [],
+        "indicator_names": [],
+        "blank_values": [],
+        "missing_label_fallback": {
+          "data_date": "",
+          "row_label": "",
+          "indicator_name": "",
+          "value": {
+            "type": "decimal",
+            "value": {
+              "sign": 0,
+              "digits": [
+                0
+              ],
+              "exponent": 0
+            }
+          },
+          "source": {
+            "source_file": "plain_missing_label.xlsx",
+            "source_sheet": "集中系统数据",
+            "source_row": 1
+          },
+          "fallback_reason": "机构行标签列未识别，外部数按0参与比较"
+        },
+        "warnings": [],
+        "external_org_map": {}
+      }
+    },
+    "plain_zero_headers": {
+      "result": {
+        "time_series": false,
+        "values": [
+          {
+            "data_date": "",
+            "row_label": "项目A",
+            "indicator_name": "余额",
+            "value": {
+              "type": "decimal",
+              "value": {
+                "sign": 0,
+                "digits": [
+                  9,
+                  9
+                ],
+                "exponent": 0
+              }
+            },
+            "source": {
+              "source_file": "plain_zero_headers.xlsx",
+              "source_sheet": "集中系统数据",
+              "source_row": 2
+            },
+            "fallback_reason": ""
+          }
+        ],
+        "available_dates": [],
+        "date_labels": [],
+        "row_labels": [
+          "项目A"
+        ],
+        "indicator_names": [
+          "余额"
+        ],
+        "blank_values": [],
+        "missing_label_fallback": null,
+        "warnings": [],
+        "external_org_map": {}
+      }
+    },
+    "plain_legacy_reference": {
+      "result": {
+        "time_series": false,
+        "values": [
+          {
+            "data_date": "",
+            "row_label": "项目A",
+            "indicator_name": "余额",
+            "value": {
+              "type": "decimal",
+              "value": {
+                "sign": 0,
+                "digits": [
+                  1,
+                  2
+                ],
+                "exponent": 0
+              }
+            },
+            "source": {
+              "source_file": "plain_legacy_reference.xlsx",
+              "source_sheet": "集中系统数据",
+              "source_row": 2
+            },
+            "fallback_reason": ""
+          }
+        ],
+        "available_dates": [],
+        "date_labels": [],
+        "row_labels": [
+          "项目A"
+        ],
+        "indicator_names": [
+          "余额"
+        ],
+        "blank_values": [],
+        "missing_label_fallback": null,
+        "warnings": [],
+        "external_org_map": {
+          "code-old": "旧版映射"
+        }
+      }
+    },
+    "time_series": {
+      "result": {
+        "time_series": true,
+        "values": [
+          {
+            "data_date": "2026-06-30",
+            "row_label": "银行丙",
+            "indicator_name": "余额",
+            "value": {
+              "type": "decimal",
+              "value": {
+                "sign": 0,
+                "digits": [
+                  0
+                ],
+                "exponent": 0
+              }
+            },
+            "source": {
+              "source_file": "time_series.xlsx",
+              "source_sheet": "集中系统数据",
+              "source_row": 6
+            },
+            "fallback_reason": ""
+          },
+          {
+            "data_date": "2026-06-30",
+            "row_label": "银行丙",
+            "indicator_name": "指标B",
+            "value": {
+              "type": "decimal",
+              "value": {
+                "sign": 0,
+                "digits": [
+                  8
+                ],
+                "exponent": 0
+              }
+            },
+            "source": {
+              "source_file": "time_series.xlsx",
+              "source_sheet": "集中系统数据",
+              "source_row": 6
+            },
+            "fallback_reason": ""
+          },
+          {
+            "data_date": "2026-06-30",
+            "row_label": "银行甲",
+            "indicator_name": "余额",
+            "value": {
+              "type": "decimal",
+              "value": {
+                "sign": 0,
+                "digits": [
+                  1,
+                  0,
+                  0,
+                  5,
+                  0
+                ],
+                "exponent": -2
+              }
+            },
+            "source": {
+              "source_file": "time_series.xlsx",
+              "source_sheet": "集中系统数据",
+              "source_row": 4
+            },
+            "fallback_reason": ""
+          },
+          {
+            "data_date": "2026-06-30",
+            "row_label": "银行甲",
+            "indicator_name": "指标B",
+            "value": {
+              "type": "decimal",
+              "value": {
+                "sign": 0,
+                "digits": [
+                  3
+                ],
+                "exponent": 0
+              }
+            },
+            "source": {
+              "source_file": "time_series.xlsx",
+              "source_sheet": "集中系统数据",
+              "source_row": 4
+            },
+            "fallback_reason": ""
+          },
+          {
+            "data_date": "2026-07-31",
+            "row_label": "银行乙",
+            "indicator_name": "余额",
+            "value": {
+              "type": "decimal",
+              "value": {
+                "sign": 0,
+                "digits": [
+                  0
+                ],
+                "exponent": 0
+              }
+            },
+            "source": {
+              "source_file": "time_series.xlsx",
+              "source_sheet": "集中系统数据",
+              "source_row": 5
+            },
+            "fallback_reason": ""
+          },
+          {
+            "data_date": "2026-07-31",
+            "row_label": "银行乙",
+            "indicator_name": "指标B",
+            "value": {
+              "type": "decimal",
+              "value": {
+                "sign": 0,
+                "digits": [
+                  0
+                ],
+                "exponent": 0
+              }
+            },
+            "source": {
+              "source_file": "time_series.xlsx",
+              "source_sheet": "集中系统数据",
+              "source_row": 5
+            },
+            "fallback_reason": ""
+          },
+          {
+            "data_date": "2026-08-31",
+            "row_label": "银行丁",
+            "indicator_name": "余额",
+            "value": {
+              "type": "decimal",
+              "value": {
+                "sign": 0,
+                "digits": [
+                  7
+                ],
+                "exponent": 0
+              }
+            },
+            "source": {
+              "source_file": "time_series.xlsx",
+              "source_sheet": "集中系统数据",
+              "source_row": 8
+            },
+            "fallback_reason": ""
+          },
+          {
+            "data_date": "2026-08-31",
+            "row_label": "银行丁",
+            "indicator_name": "指标B",
+            "value": {
+              "type": "decimal",
+              "value": {
+                "sign": 0,
+                "digits": [
+                  9
+                ],
+                "exponent": 0
+              }
+            },
+            "source": {
+              "source_file": "time_series.xlsx",
+              "source_sheet": "集中系统数据",
+              "source_row": 8
+            },
+            "fallback_reason": ""
+          }
+        ],
+        "available_dates": [
+          "2026-06-30",
+          "2026-07-31",
+          "2026-08-31"
+        ],
+        "date_labels": [
+          [
+            "2026-06-30",
+            "银行丙"
+          ],
+          [
+            "2026-06-30",
+            "银行甲"
+          ],
+          [
+            "2026-07-31",
+            "银行乙"
+          ],
+          [
+            "2026-08-31",
+            "银行丁"
+          ]
+        ],
+        "row_labels": [
+          "银行丁",
+          "银行丙",
+          "银行乙",
+          "银行甲"
+        ],
+        "indicator_names": [
+          "余额",
+          "指标B"
+        ],
+        "blank_values": [
+          [
+            "2026-07-31",
+            "银行乙",
+            "余额"
+          ]
+        ],
+        "missing_label_fallback": null,
+        "warnings": [
+          "集中系统数据第5行、报表项目“银行乙”：“余额”为空白；“指标B”内容“无效”不是数值，已按 0 参与外部核对；请核查是否误删或改动了数据。",
+          "集中系统数据第7行：行名称及指标数据均为空，已忽略该行；如属导出空行，可忽略。",
+          "集中系统数据第9行、行名称“银行戊”：数据日期空白为空或无效，本行未参与时序匹配；请检查数据日期是否误删或格式错误。",
+          "集中系统数据第10行、行名称“银行己”：数据日期“2026/09/30 12:00:00”为空或无效，本行未参与时序匹配；请检查数据日期是否误删或格式错误。",
+          "集中系统数据第11行：行名称为空，但指标列“余额”、“指标B”有数据；本行无法匹配报表项目，未参与外部核对。请检查行名称是否被误删。"
+        ],
+        "external_org_map": {}
+      }
+    },
+    "time_series_1904": {
+      "result": {
+        "time_series": true,
+        "values": [
+          {
+            "data_date": "2024-02-29",
+            "row_label": "银行1904",
+            "indicator_name": "余额",
+            "value": {
+              "type": "decimal",
+              "value": {
+                "sign": 0,
+                "digits": [
+                  1,
+                  5
+                ],
+                "exponent": 0
+              }
+            },
+            "source": {
+              "source_file": "time_series_1904.xlsx",
+              "source_sheet": "集中系统数据",
+              "source_row": 2
+            },
+            "fallback_reason": ""
+          }
+        ],
+        "available_dates": [
+          "2024-02-29"
+        ],
+        "date_labels": [
+          [
+            "2024-02-29",
+            "银行1904"
+          ]
+        ],
+        "row_labels": [
+          "银行1904"
+        ],
+        "indicator_names": [
+          "余额"
+        ],
+        "blank_values": [],
+        "missing_label_fallback": null,
+        "warnings": [],
+        "external_org_map": {}
+      }
+    },
+    "time_series_duplicate": {
+      "error": "集中系统数据第2、3行：日期 2026-06-30、报表项目“银行甲”重复，请保留本轮使用的唯一记录，不自动合计或覆盖不同报表版本"
+    },
+    "time_series_duplicate_title": {
+      "error": "集中系统数据第1行：时序格式的指标列“余额”重复，无法确定取数列"
+    },
+    "time_series_partial_header": {
+      "error": "集中系统数据第1行：时序表头不完整，必须同时包含“数据日期”和“行名称”"
+    },
+    "missing_main_sheet": {
+      "error": "大集中文件缺少“集中系统数据”工作表"
+    },
+    "bad_org_map": {
+      "error": "大集中文件“机构参照表”缺少必要表头：社会信用代码（或统一社会信用代码）、报表项目"
+    },
+    "unsupported_csv": {
+      "error": "大集中数据仅支持 .xlsx 工作簿：unsupported.csv（.xls/.csv 会丢失「机构参照表/参照表」机构映射，不支持）"
+    }
+  },
+  "scope": "S2 external .xlsx workbook parsing: ordinary/time-series layouts, date and value normalization, blank-value tracking, warnings, organization reference sheet selection, and expected input errors. Does not cover service orchestration or report export."
+}

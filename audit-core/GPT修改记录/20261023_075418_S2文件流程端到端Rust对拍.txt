@@ -1,0 +1,46 @@
+时间：2026-10-23 07:54:18 Asia/Shanghai
+执行者：Codex
+修改前 commit：不可用（workspace 尚无首次提交）
+修改后 commit：未创建
+WIP 情况：workspace 根 `git status` 显示现有文件均未跟踪；修改前检查并保留了既有 WIP，未清理、重置或覆盖其他文件。
+
+目的：把已经分别对拍的 S2 配置、导入、规则/期间/外部比较、汇总和报表写出候选串成文件级 Rust service，并使用只读 Python `PeriodAuditV2Service.run` 做服务结果和输出文件对拍。本候选不接产品 CLI 或生产默认路由。
+
+本轮文件：
+- `audit-core/src/s2_import.rs`：保留旧导入 API，新增可选文件进度回调及最终整理事件。
+- `audit-core/src/s2_analysis.rs`：将统一 findings/summary 汇总抽为 crate 内共享函数，供内存分析 API 和文件 service 复用。
+- `audit-core/src/s2_service.rs`：新增 `run_s2_audit`，串联配置检查/加载、两期目录导入、期间与规则、可选外部工作簿、质量发现、结果汇总和三表输出；完成事件只在写出成功后发送。
+- `audit-core/src/lib.rs`：导出 service 模块。
+- `audit-core/tests/s2_service_parity.rs`：新增文件级 Rust 集成测试，覆盖无外部数据、含外部工作簿、阻断配置三场景及输入字节不变。
+- `audit-core/tests/compare/run_s2_service_parity.py`：新增只读 Python service 基线和对拍运行器；Windows 下调用 WSL Rust 测试，比较 findings、summary、进度及三表 XLSX。
+- `audit-core/probe/reports/s2_service_parity.json`：保存本轮机器可读对拍报告及只读 Python 基线源码 SHA-256。
+- `audit-core/MIGRATION_INVENTORY.md`、`EXCEL_ENGINE_ARCHITECTURE.md`：更新 S2-F01 状态、service 候选证据及限制。
+- 本记录。
+
+业务边界：
+- 生产逻辑只在 Rust 中执行；Python 仅在 tests/compare 中读取旧实现作基线。Open-Data-Audit 源目录只读。
+- 当前/上期目录从 `audit-core/tests/fixtures/s2_import/` 复制同一份合成 XLSX，只有文件名中的报告期不同；配置使用 `check_valid.xlsx`，可选外部工作簿使用 `s2_external_import/plain_layout.xlsx`。无效配置使用 `check_gap_duplicate.xlsx`。
+- 各步骤仍通过现有共享 `excel-reader`、`excel-writer` 与已对拍的 S2 业务模块完成。未引入新依赖，未更改 Cargo manifest/lock、生产默认路由或 CLI。
+- 为跨 Windows/WSL 对拍，finding 来源路径和报告中的绝对路径按 Windows 盘符到 `/mnt/<drive>` 的映射归一；不是业务数据忽略规则。外部 reader 完成事件中的引擎/版本/耗时是动态字段，只比较该事件的 stage、label、percent、current、total；其他进度消息逐项比较。
+
+对拍及验证：
+- `cargo fmt --all -- --check`（WSL Ubuntu）：通过。
+- `cargo test --workspace --locked`（WSL Ubuntu）：105 项单元/集成测试通过，0 失败；doc-tests 0 项。
+- `run_s2_service_parity.py --source-root C:\Users\AZI\Desktop\VibeCode\3.open-data-audit`，基线由只读项目 `.venv`（Python 3.12.10、openpyxl 3.1.5）运行；Python 与 Rust service 三场景通过：
+  - 无外部数据：15 条发现，摘要 1 个机构、1 个表单、11 个指标、15 条发现，其中 4 条异常；22 个进度事件。三表 268 个比较单元格、36 个数值格，0 个业务/进度/工作簿差异。
+  - 有外部数据：18 条发现，摘要 1 个机构、1 个表单、11 个指标、18 条发现，其中 7 条异常；26 个进度事件。三表 304 个比较单元格、36 个数值格，0 个业务/进度/工作簿差异。
+  - 阻断配置：Python/Rust 错误文本及配置阶段进度一致；两侧都没有创建输出目录。
+  - 数值比较相对容差 `1e-15`。每个有效场景有 4 个跨 OS 绝对路径记法差异，按路径映射归一后其余报告格相同。`inputs_unchanged=true`、`source_unchanged=true`。
+- 机器报告：`audit-core/probe/reports/s2_service_parity.json`。源基线 `service.py` SHA-256 为 `601ee1dde3b97860d48408f37114a62ac28ba43434365121633f3d5ae4832528`；完整相关文件哈希均在该 JSON 中。
+
+未完成与风险：
+- 仅合成 fixtures；本期/上期复用相同数据，改文件名报告期，不代表真实期间变化、真实配置或完整输出分布。
+- 没有取得经批准的真实脱敏业务模板；真实 Excel/WPS 保真、全部读取/写出异常和失败回退、性能/峰值内存未验证。
+- 未在 Windows 原生 Rust、麒麟 V10、统信 UOS/glibc 2.28 构建或运行，未打 deb。
+- service 未接入产品 CLI/UI，不作为任何生产默认路由；旧 Python 功能未删除。S2-F01 整体仍未完成。
+
+依赖与版本：未新增依赖；Cargo manifest/lock 和产品版本未修改。
+
+回滚：只在确认依赖关系后，撤销 `s2_service` 模块导出、service 文件级编排、`s2_analysis::build_analysis_result`/进度 API 关联改动，并删除本轮服务集成测试、Python 对拍脚本、报告、迁移台账条目和本记录。workspace 尚无首次提交且其他文件均为 WIP，不使用全仓重置/清理命令；不要改动只读源 Python 项目。
+
+【组件版本】audit-core 0.1.0，不升级。

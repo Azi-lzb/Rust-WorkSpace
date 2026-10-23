@@ -1,0 +1,212 @@
+{
+  "source": {
+    "project": "C:\\Users\\AZI\\Desktop\\VibeCode\\3.open-data-audit",
+    "module": "core/src/base_audit/name_config.py",
+    "sha256": "1D56FFD7AFB82B015102EB4CCDFA2EECFD3609B5A774E6841BA9F2C5B7C9664C"
+  },
+  "feature_mappings": [
+    {
+      "name": "结构",
+      "feature_type": "type-a",
+      "range_names": [
+        "结构区域",
+        "表结构区域"
+      ],
+      "workbook_limited": false,
+      "workbook_keyword": "",
+      "remark": "结构检查",
+      "output": "",
+      "input_note": ""
+    },
+    {
+      "name": "公式",
+      "feature_type": "type-b",
+      "range_names": [
+        "校验区域"
+      ],
+      "workbook_limited": true,
+      "workbook_keyword": "Ledger",
+      "remark": "复制公式",
+      "output": "审核副本",
+      "input_note": "模板文件"
+    },
+    {
+      "name": "结构二",
+      "feature_type": "type-a",
+      "range_names": [
+        "结构区域_扩展"
+      ],
+      "workbook_limited": false,
+      "workbook_keyword": "",
+      "remark": "另一个结构映射",
+      "output": "日志",
+      "input_note": ""
+    },
+    {
+      "name": "收入",
+      "feature_type": "type-c",
+      "range_names": [
+        "Revenue"
+      ],
+      "workbook_limited": false,
+      "workbook_keyword": "",
+      "remark": "English name",
+      "output": "",
+      "input_note": ""
+    }
+  ],
+  "split_names": [
+    {
+      "input": "校验区域、表结构区域，明细;首行\n尾行；",
+      "output": [
+        "校验区域",
+        "表结构区域",
+        "明细",
+        "首行",
+        "尾行"
+      ]
+    },
+    {
+      "input": "  A , B ,, C  ",
+      "output": [
+        "A",
+        "B",
+        "C"
+      ]
+    },
+    {
+      "input": "；；",
+      "output": []
+    },
+    {
+      "input": "A\tB\n C",
+      "output": [
+        "A\tB",
+        "C"
+      ]
+    },
+    {
+      "input": "",
+      "output": []
+    }
+  ],
+  "limited_values": [
+    {
+      "input": "是",
+      "output": true
+    },
+    {
+      "input": "Y",
+      "output": true
+    },
+    {
+      "input": "YES",
+      "output": true
+    },
+    {
+      "input": "True",
+      "output": true
+    },
+    {
+      "input": "1",
+      "output": true
+    },
+    {
+      "input": "否",
+      "output": false
+    },
+    {
+      "input": " false ",
+      "output": false
+    },
+    {
+      "input": "０",
+      "output": false
+    },
+    {
+      "input": "yEs",
+      "output": true
+    }
+  ],
+  "features_of_type": [
+    {
+      "feature_type": "type-a",
+      "indices": [
+        0,
+        2
+      ]
+    },
+    {
+      "feature_type": "type-b",
+      "indices": [
+        1
+      ]
+    },
+    {
+      "feature_type": "missing",
+      "indices": []
+    }
+  ],
+  "named_range_cases": [
+    {
+      "mapping_index": 0,
+      "candidate": "结构区域",
+      "expected": true,
+      "output": true
+    },
+    {
+      "mapping_index": 0,
+      "candidate": "表结构区域_001",
+      "expected": true,
+      "output": true
+    },
+    {
+      "mapping_index": 0,
+      "candidate": "结构区域-001",
+      "expected": false,
+      "output": false
+    },
+    {
+      "mapping_index": 0,
+      "candidate": "前缀结构区域_001",
+      "expected": false,
+      "output": false
+    },
+    {
+      "mapping_index": 1,
+      "candidate": "模板.xlsx!校验区域_005",
+      "expected": true,
+      "output": true
+    },
+    {
+      "mapping_index": 1,
+      "candidate": "'Sheet 1'!校验区域_005",
+      "expected": true,
+      "output": true
+    },
+    {
+      "mapping_index": 1,
+      "candidate": " '校验区域_1' ",
+      "expected": true,
+      "output": true
+    },
+    {
+      "mapping_index": 3,
+      "candidate": "revenue",
+      "expected": true,
+      "output": true
+    },
+    {
+      "mapping_index": 3,
+      "candidate": "REVENUE_总",
+      "expected": true,
+      "output": true
+    },
+    {
+      "mapping_index": 3,
+      "candidate": "rev",
+      "expected": false,
+      "output": false
+    }
+  ]
+}

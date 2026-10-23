@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "baseline": "Open-Data-Audit PythonConditionalRuleEvaluator",
+  "workbook_sha256": "3c6def48a5a84e3fb89cfd42938f1ab13842264275a08b295a78418a78b5d5d0",
+  "source_sha256": {
+    "cf_reader.py": "b928e372293e21f95dbc7b6ed97574e915037a65b729f29a78bd54405e2477ff",
+    "conditional_evaluators.py": "c6f8843537b9d2558ba8bf209d377b030fe9cf6af3dc32a8eb5dd2be12c2be47",
+    "conditional_format.py": "1ab893ba2a33b2e438db8ff47763256025caa8f4e3e3e713cdd06a7bac28b430"
+  },
+  "rules_total": 7,
+  "rules_supported": 6,
+  "evaluated_cells": 12,
+  "triggered": [
+    {
+      "sheet": "S1Conditional",
+      "cell": "B2",
+      "applies_to": "B2:B4",
+      "rule_type": "cellis",
+      "formula": "0",
+      "triggered": true
+    },
+    {
+      "sheet": "S1Conditional",
+      "cell": "C5",
+      "applies_to": "C5:C7",
+      "rule_type": "expression",
+      "formula": "AND(C5>0,C5>1)",
+      "triggered": true
+    },
+    {
+      "sheet": "S1Conditional",
+      "cell": "C7",
+      "applies_to": "C5:C7",
+      "rule_type": "expression",
+      "formula": "AND(C5>0,C5>1)",
+      "triggered": true
+    },
+    {
+      "sheet": "S1Conditional",
+      "cell": "E2",
+      "applies_to": "E2",
+      "rule_type": "expression",
+      "formula": "$A$1+$A$2+$A$3=$C$2",
+      "triggered": true
+    }
+  ],
+  "unsupported_cells": 3,
+  "error_count": 1,
+  "diagnostics_by_status": {
+    "unsupported_cells": 3,
+    "errors": 1
+  }
+}

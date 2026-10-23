@@ -1,0 +1,51 @@
+【时间】2026-10-23 04:23:33（本机时间）
+【执行者】Codex
+【修改前 commit】不可用；当前 workspace 文件均处于未跟踪 WIP 状态，无法从 Git 索引确定起始快照。
+【修改后 commit】未创建 commit。
+【WIP 情况】保留现有 workspace WIP；没有重置、覆盖或清理其他文件。两个原始 Python 项目只读。
+
+【修改目的】将 Open-Data-Audit S2 累计不降和表达式规则计算迁移到 Rust，在已导入记录及内存配置边界与只读 Python `RuleEngine` 逐字段对拍。该切片不加载工作簿、不编排完整审核流程，也未接入生产默认路由。
+
+【修改/新增文件】
+- `audit-core/src/s2_expression.rs`：新增受限 Decimal 表达式求值器，支持数值运算、比较、布尔组合及源语法中的运算符规范化。
+- `audit-core/src/s2_rule_engine.rs`：新增累计不降和表达式规则评估、Thd 阈值单位换算、质量诊断与 finding 组装。
+- `audit-core/src/lib.rs`：导出 `s2_expression` 和 `s2_rule_engine` 模块。
+- `audit-core/src/s2_validation.rs`：将空 finding 构造器设为 crate 内可见，供规则引擎复用。
+- `audit-core/tests/fixtures/s2_rule_engine/cases.json`：新增 13 个合成规则案例。
+- `audit-core/tests/compare/run_s2_rule_engine_baseline.py`：新增只读 Python 基线生成器，使用 `python -B` 调用原 `RuleEngine`，不改源项目。
+- `audit-core/tests/s2_rule_engine_parity.rs`：新增 Rust 与 Python 基线逐字段集成对拍。
+- `audit-core/probe/reports/s2_rule_engine_python_baseline.json`：生成的 Python 基线数据。
+- `audit-core/probe/reports/s2_rule_engine_parity.json`：登记源哈希、对拍结果、适用范围及未验证项。
+- `audit-core/MIGRATION_INVENTORY.md`：登记 S2 规则计算局部迁移；S2-F01 总体仍未验证。
+- `audit-core/GPT修改记录/20261023_042333_S2规则引擎Rust局部迁移对拍.txt`：本记录。
+
+【逻辑、配置及 VBA 变化】
+- 覆盖当前/上期指标占位符、旧八段指标码、累计不降逐指标发现、Decimal 表达式、逻辑组合、阈值与金额单位换算，以及缺失/无效值的规则质量诊断。
+- 对拍发现 Rust 对无效文本的计算轨迹错误地显示为 `0.00`；已调整为保留源 Python 诊断中的原始文本，并通过重新生成基线后的完整对拍。
+- 未改配置文件、VBA、依赖、生产路由、构建配置或两个原始 Python 项目。
+
+【基线来源】
+- Python 版本：3.12.10。
+- `rule_engine.py` SHA-256：`E80F7A03CCA7EAC89FD668148C798300BD4C4E6FCD9D33191F156B3368F2D2B0`。
+- `models.py` SHA-256：`8C19D7E5521F9290EC7FAF641C5454BE148188A9B1A7C129127C97E6FC5B903E`。
+- `unit_conversion.py` SHA-256：`BE9AF2EAB715AC6ACDD496363B551C649486DD1A0939B55CB746A7AFCD6761BA`。
+- Python 仅用于测试基线；产品运行路径没有 Python 调用。
+
+【测试与对拍】
+- `python -B audit-core/tests/compare/run_s2_rule_engine_baseline.py`：通过，13 个案例产生 10 条规则发现和 3 条质量发现。
+- `cargo test -p audit-core --test s2_rule_engine_parity --locked -- --nocapture`（WSL Ubuntu）：通过，1 个逐字段对拍测试通过，0 失败。
+- `cargo test -p audit-core --lib --locked`（WSL Ubuntu）：通过，24 个库单元测试通过，0 失败。
+- `cargo test --workspace --locked`（WSL Ubuntu）：通过，76 个测试通过，0 失败。
+- `cargo fmt --all -- --check`：通过。
+- 对拍输入为合成 JSON 记录和内存规则配置；未使用真实工作簿。没有测量性能/内存，也没有在麒麟/UOS 或 glibc 2.28 环境构建/打包。
+
+【已知问题与未完成范围】
+- 仅覆盖 13 个合成案例；Python 规则表达式支持的全部语法、重复逻辑键、所有输入顺序组合和真实脱敏模板仍未验证。
+- 未迁移配置工作簿加载、S2 服务编排、报表目录导入到规则链路的完整闭环、外部比较集成或报告写入；S2-F01 仍为未验证。
+- 当前 Rust 规则引擎未接入生产默认路由，目标系统离线运行、性能及资源占用未验证。
+
+【删除清单与回滚提示】
+- 回滚时成组撤销上述规则引擎/表达式实现、模块导出与可见性调整、fixture、基线生成器和输出、对拍报告、迁移清单行及本记录。
+- 保留原始 Python 源代码及现有生产路径。
+
+【组件版本】不升级；Cargo package 元数据未改变，workspace 尚未为该模块建立产品组件版本映射。

@@ -1,0 +1,39 @@
+{
+  "status": "passed_on_fixture",
+  "source": {
+    "project": "C:\\Users\\AZI\\Desktop\\VibeCode\\3.open-data-audit",
+    "module": "core/src/base_audit/template.py",
+    "sha256": "E64338FFCBA01773AAC7E579EB2EBD2C437C44D9C79673E8B1CD43142573B5A0",
+    "baseline_python": "3.12.10",
+    "baseline_unicode_data": "15.0.0"
+  },
+  "rust_module": "audit-core/src/template.rs",
+  "fixtures": {
+    "normalize_template_name": 6,
+    "comment_helpers": 7,
+    "formula_results": 7,
+    "rule_rows": 4,
+    "total_cases": 24
+  },
+  "comparison": "Exact equality of normalized result JSON and error text against the Python baseline generated from the read-only source module.",
+  "checks": {
+    "rust_parity_command": "cargo test -p audit-core --test template_parser_parity --locked -q",
+    "rust_parity_passed": 1,
+    "rust_parity_failed": 0,
+    "python_source_test_command": "python -B -m pytest -q -p no:cacheprovider core/tests/test_template.py",
+    "python_source_tests_passed": 18,
+    "python_source_tests_failed": 0,
+    "workspace_test_command": "cargo test --workspace --locked -q",
+    "workspace_tests_passed": 48,
+    "workspace_tests_failed": 0,
+    "format_command": "cargo fmt --all -- --check",
+    "format_check": "passed"
+  },
+  "scope": "Pure value-level template helper migration only. Workbook loading, OOXML comments extraction, ExcelSession, rule execution, and end-to-end audit behavior are not covered.",
+  "unverified": [
+    "Python str() behavior for arbitrary JSON arrays and objects is not equivalent-tested; workbook inputs are expected to be scalar values.",
+    "The Unicode Decimal_Number table is pinned to the Python 3.12.10 Unicode 15.0.0 baseline; changing the baseline Unicode database requires regenerating and revalidating the table.",
+    "Real workbook templates and target Linux execution are not tested by this helper-level parity report."
+  ],
+  "dependencies_or_routes_changed": false
+}

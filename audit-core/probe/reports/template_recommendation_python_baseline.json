@@ -1,0 +1,76 @@
+{
+  "schema_version": 1,
+  "suite": "audit.s1_template_recommendation",
+  "source_project": "Open-Data-Audit",
+  "source": {
+    "module": "core/src/base_audit/discovery.py",
+    "sha256": "6206EA12B6D51F02253682EA32C2055040A6DA9EE162C808EADD27BB5D860EC7",
+    "python_version": "3.12.10"
+  },
+  "source_function": "base_audit.discovery.recommend_template",
+  "cases": [
+    {
+      "id": "source_sheet_subset_with_template_helpers",
+      "result": {
+        "template": "综合模板.xlsx",
+        "confidence": 1.0,
+        "matched": true,
+        "details": "自动匹配：综合模板.xlsx（1 个源文件；源文件工作表全部包含于模板；已忽略未能识别的非报送工作簿）",
+        "alternatives": [
+          [
+            "综合模板.xlsx",
+            1.0
+          ]
+        ]
+      }
+    },
+    {
+      "id": "mixed_source_report_types",
+      "result": {
+        "template": null,
+        "confidence": 0.0,
+        "matched": false,
+        "details": "源数据目录可能包含多种报表，请按报表类型分目录后再审核",
+        "alternatives": []
+      }
+    },
+    {
+      "id": "near_tied_partial_templates_require_manual_selection",
+      "result": {
+        "template": null,
+        "confidence": 0.8000000000000002,
+        "matched": false,
+        "details": "有多个相近模板，已停止自动选择，请手动确认。候选：模板乙.xlsx（工作表集合 80%）；模板甲.xlsx（工作表集合 80%）",
+        "alternatives": [
+          [
+            "模板乙.xlsx",
+            0.8
+          ],
+          [
+            "模板甲.xlsx",
+            0.8
+          ]
+        ]
+      }
+    },
+    {
+      "id": "unmatched_source_sheets",
+      "result": {
+        "template": null,
+        "confidence": 0.0,
+        "matched": false,
+        "details": "未找到可信度足够的模板，请手动选择",
+        "alternatives": [
+          [
+            "模板乙.xlsx",
+            0.0
+          ],
+          [
+            "模板甲.xlsx",
+            0.0
+          ]
+        ]
+      }
+    }
+  ]
+}

@@ -1,0 +1,32 @@
+时间：2026-10-22（Asia/Shanghai）
+执行者：Codex
+修改前状态：workspace 尚无首次 Git 提交，既有工程文件均为未跟踪 WIP；未清理或覆盖。
+
+目的：
+- 基于当前 workspace、历史探针报告和两个只读 Python 源项目，建立 Excel 引擎架构与初始修改操作迁移清单。
+- 明确业务层只生成 ExcelEditPlan，由 ExcelModifier 按一批操作选择单一候选引擎，并具备原始文件回退、临时输出验证和安全替换。
+- 同步移除 AGENTS.md 中“umya 全局优先”的过时规则。
+
+修改文件：
+- 新增 EXCEL_ENGINE_ARCHITECTURE.md。
+- 修改 AGENTS.md：编辑器按已验证能力路由；Go Excelize 作为基于实际对拍结果决定是否保留的候选/保底；同一修改计划失败后从原始文件回退。
+- 新增本记录。
+
+盘点证据：
+- 检查 workspace Cargo 成员和 crates/excel-reader、excel-writer、excel-editor、ooxml-patch、probe 的 Cargo/API。
+- 检查 audit-core 与 pytools-core 迁移清单、Rust 调用点、已有 probe/reports 和 GPT修改记录。
+- 对两个只读源项目的 core 目录静态检索 openpyxl、Workbook 写入、公式、样式、批注、合并、尺寸、页面设置、工作表结构及 OOXML/ZIP 路径。
+- 现有历史报告为合成工作簿证据；真实业务模板为 0。本轮没有重跑 cargo test，也没有修改源项目。
+
+主要结果：
+- 确认 excel-editor 目前仅为 umya 薄包装；ooxml-patch 当前仅有部件拒绝与列定义补丁；excel-writer 当前导出 rust_xlsxwriter 类型；尚无 ExcelModifier/ExcelEditPlan/Go worker。
+- 确认 pytools-core/src/institution_normalize.rs 目前直接依赖 umya 编辑入口，需在后续迁移中收敛到计划边界。
+- 保存的读取/新建写入/umya/OOXML/pytools 局部 helper 对拍数据及范围记录在 EXCEL_ENGINE_ARCHITECTURE.md。
+
+未完成：
+- 每个菜单和源函数的完整调用链及输出契约映射。
+- PyCode 与 NoComPyTools 独有行为差异核实。
+- 真实脱敏模板、全格式读写矩阵、三个候选修改引擎比较和目标 Linux 验收。
+
+回退方式：
+- 本次仅为治理文档修改。可以单独回退 EXCEL_ENGINE_ARCHITECTURE.md、AGENTS.md 的三处规则更新和本记录；不得清理其他未跟踪 WIP。

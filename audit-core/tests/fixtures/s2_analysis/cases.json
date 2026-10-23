@@ -1,0 +1,78 @@
+{
+  "config": {
+    "indicators": {
+      "A": {"indicator_name": "各项存款", "form_code": "20202", "data_type": "余额", "period_enabled": true, "period_strategy_group": "", "min_change_value": 0.0},
+      "B": {"indicator_name": "负债合计", "form_code": "20202", "data_type": "余额", "period_enabled": false},
+      "C": {"indicator_name": "权益合计", "form_code": "20202", "data_type": "余额", "period_enabled": false},
+      "ANCHOR": {"indicator_name": "锚点指标", "form_code": "20202", "data_type": "数值", "period_enabled": false}
+    },
+    "institutions_by_id": {
+      "9144": {"institution_id": "9144", "institution_name": "甲银行", "social_credit_code": "C9144", "institution_type": "农商行", "handling_branch": "一部", "region": "示例地区", "report_item": "资产负债表"}
+    },
+    "bands": [
+      {"rule_id": "A-BAND", "lower": 0.0, "upper": 0.2, "description": "余额变动提示", "severity": "软性"}
+    ],
+    "external_rules": [
+      {"rule_id": "EXT-A", "indicator_code": "A", "external_system": "大集中", "external_indicator_name": "存款余额", "comparison_method": "等于", "tolerance": 0.0, "severity": "硬性", "enabled": true}
+    ],
+    "rules": [
+      {"rule_id": "R-BAL", "rule_type": "表达式", "description": "资产负债平衡", "expression": "[A] <> [B] + [C]", "severity": "硬性"},
+      {"rule_id": "R-MISSING", "rule_type": "表达式", "description": "监管线缺项", "expression": "[MISSING_A] < 0.055 * [MISSING_B]", "severity": "软性"}
+    ],
+    "warnings": ["配置提示"],
+    "unit_settings": {"source_unit": "万元", "external_file_unit": "万元", "output_file_unit": "万元"},
+    "hide_unchanged_period_rows": false,
+    "hide_matching_external_rows": false,
+    "text_change_severity": "硬性",
+    "current_missing_severity": "硬性",
+    "previous_missing_severity": "硬性"
+  },
+  "cases": [
+    {
+      "id": "period_external_rules_and_quality_order",
+      "current": [
+        {"indicator_code": "A", "indicator_name": "各项存款", "period": "2026-06", "value_type": "余额", "normalized_value": {"type": "decimal", "value": {"sign": 0, "digits": [1, 1, 0], "exponent": 0}}, "source_file": "current.xlsx", "source_sheet": "20202", "source_row": 4},
+        {"indicator_code": "B", "indicator_name": "负债合计", "period": "2026-06", "value_type": "余额", "normalized_value": {"type": "decimal", "value": {"sign": 0, "digits": [4, 0], "exponent": 0}}, "source_file": "current.xlsx", "source_sheet": "20202", "source_row": 5},
+        {"indicator_code": "C", "indicator_name": "权益合计", "period": "2026-06", "value_type": "余额", "normalized_value": {"type": "decimal", "value": {"sign": 0, "digits": [6, 0], "exponent": 0}}, "source_file": "current.xlsx", "source_sheet": "20202", "source_row": 6},
+        {"indicator_code": "ANCHOR", "indicator_name": "锚点指标", "period": "2026-06", "value_type": "数值", "normalized_value": {"type": "number", "value": 1.0}, "source_file": "current.xlsx", "source_sheet": "20202", "source_row": 7}
+      ],
+      "previous": [
+        {"indicator_code": "A", "indicator_name": "各项存款", "period": "2026-03", "value_type": "余额", "normalized_value": {"type": "decimal", "value": {"sign": 0, "digits": [1, 0, 0], "exponent": 0}}, "source_file": "previous.xlsx", "source_sheet": "20202", "source_row": 4},
+        {"indicator_code": "B", "indicator_name": "负债合计", "period": "2026-03", "value_type": "余额", "normalized_value": {"type": "decimal", "value": {"sign": 0, "digits": [4, 0], "exponent": 0}}, "source_file": "previous.xlsx", "source_sheet": "20202", "source_row": 5},
+        {"indicator_code": "C", "indicator_name": "权益合计", "period": "2026-03", "value_type": "余额", "normalized_value": {"type": "decimal", "value": {"sign": 0, "digits": [6, 0], "exponent": 0}}, "source_file": "previous.xlsx", "source_sheet": "20202", "source_row": 6}
+      ],
+      "current_duplicates": [
+        {
+          "first": {"indicator_code": "A", "indicator_name": "各项存款", "period": "2026-06", "value_type": "余额", "normalized_value": {"type": "decimal", "value": {"sign": 0, "digits": [1, 1, 0], "exponent": 0}}, "source_file": "current.xlsx", "source_sheet": "20202", "source_row": 4},
+          "duplicate": {"indicator_code": "A", "indicator_name": "各项存款", "period": "2026-06", "value_type": "余额", "normalized_value": {"type": "decimal", "value": {"sign": 0, "digits": [2, 0, 0], "exponent": 0}}, "source_file": "current.xlsx", "source_sheet": "20202", "source_row": 8}
+        }
+      ],
+      "current_warnings": ["本期导入提示"],
+      "previous_warnings": ["上期导入提示"],
+      "external": {
+        "external_org_map": {"C9144": "row-9144"},
+        "warnings": ["外部导入提示"],
+        "data": {
+          "time_series": false,
+          "values": [
+            {"data_date": "", "row_label": "row-9144", "indicator_name": "存款余额", "value": {"type": "decimal", "value": {"sign": 0, "digits": [1, 0, 5], "exponent": 0}}, "source": {"source_file": "central.xlsx", "source_sheet": "集中系统数据", "source_row": 5}, "fallback_reason": ""}
+          ],
+          "available_dates": [],
+          "date_labels": [],
+          "row_labels": ["row-9144"],
+          "indicator_names": ["存款余额"],
+          "blank_values": [],
+          "missing_label_fallback": null
+        }
+      }
+    },
+    {
+      "id": "empty_inputs_without_external_data",
+      "current": [],
+      "previous": [],
+      "current_duplicates": [],
+      "current_warnings": [],
+      "previous_warnings": []
+    }
+  ]
+}

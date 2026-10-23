@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "suite": "audit.period_pairs",
+  "cases": [
+    {
+      "id": "mixed_source_shapes_and_one_sided_items",
+      "current": [
+        {
+          "fixture": "s2_import/9144#2026-06-30#x#20202#甲银行.xlsx",
+          "name": "9144#2026-06-30#x#20202#甲银行.xlsx"
+        },
+        {
+          "fixture": "s2_import/#2026-06-30#x#20202#乙银行.xlsx",
+          "name": "reports#9200#2026-06-30#01#乙银行.xlsx"
+        },
+        {
+          "fixture": "s2_import/9144#2026-06-30#x#20202#甲银行.xlsx",
+          "name": "banks#2026-06-30#01#20202.xlsx"
+        },
+        {
+          "fixture": "s2_import/9144#2026-06-30#x#20202#甲银行.xlsx",
+          "name": "banks#2026-06-30#02#20202.xlsx"
+        },
+        {
+          "fixture": "s2_import/#2026-06-30#x#20202#乙银行.xlsx",
+          "name": "legacy.xlsx"
+        },
+        {
+          "fixture": "s2_import/9144#2026-06-30#x#20202#甲银行.xlsx",
+          "name": "~$temporary.xlsx"
+        }
+      ],
+      "previous": [
+        {
+          "fixture": "s2_import/9144#2026-06-30#x#20202#甲银行.xlsx",
+          "name": "9144#2026-03-31#x#20202#甲银行.xlsx"
+        },
+        {
+          "fixture": "s2_import/#2026-06-30#x#20202#乙银行.xlsx",
+          "name": "reports#9200#2026-03-31#01#乙银行.xlsx"
+        },
+        {
+          "fixture": "s2_import/9144#2026-06-30#x#20202#甲银行.xlsx",
+          "name": "banks#2026-03-31#01#20202.xlsx"
+        },
+        {
+          "fixture": "s2_import/9144#2026-06-30#x#20202#甲银行.xlsx",
+          "name": "banks#2026-03-31#02#20202.xlsx"
+        }
+      ]
+    }
+  ]
+}

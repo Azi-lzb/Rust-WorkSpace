@@ -1,0 +1,190 @@
+{
+  "schema_version": 1,
+  "suite": "pytools.pt_1_3_1_4_existing_target_replacement_parity",
+  "environment": {
+    "python": "3.12.10",
+    "python_packages": {
+      "numpy": "2.1.3",
+      "pandas": "2.2.3",
+      "openpyxl": "3.1.5"
+    },
+    "python_baseline": "C:\\Users\\AZI\\Desktop\\VibeCode\\4.pytools-main",
+    "rust_execution": "WSL2 cargo run via pytools CLI; Windows Python executes baseline and comparisons",
+    "sample_kind": "synthetic XLSX only"
+  },
+  "comparison_contract": {
+    "worksheet_names_order_values_and_types": "exact except numeric values compared with relative and absolute tolerance 1e-15",
+    "formula_text": "comparison handles formula strings, but the synthetic fixture contains no formulas; preservation is unverified",
+    "data_date_number_formats": "exact",
+    "existing_target_behavior": "rebuild target worksheet from existing rows plus accepted non-duplicate rows; preserve untouched sheets",
+    "target_sheet_replacement": "legacy replacement/drop behavior checked for selected style/comment/merge/row/column attributes; not full style parity",
+    "untouched_sheet_properties": "selected values, A1 fill/comment, merges, row height, and column width",
+    "original_target_input": "configured target is replaced only after capability execution, candidate validation, SHA-256 check, atomic sibling publication, and Calamine reopen; source and config remain unchanged",
+    "test_capability": "temporary per-run capability; not registered in workspace production capabilities"
+  },
+  "existing_target_cases": [
+    {
+      "row_suffix": false,
+      "summary_status": "passed",
+      "existing_target_replacement_status": "passed",
+      "engine": "umya_spreadsheet",
+      "target_commit": {
+        "backup_path": null,
+        "cleanup_warning": null,
+        "elapsed_ms": 226,
+        "operation": "replaced",
+        "sha256_after": "5b7a4ebd1708abb5e689d103b3dd7c6a479ed0317c112ab89f1b15f21dd3c164",
+        "sha256_before": "702b8f6c1a5d31fefdcbbb5bc89c9525853b21d19a0f3cf9625fff32ca04ad4e",
+        "target": "/mnt/c/Users/AZI/AppData/Local/Temp/pytools-wide-probe-x6ojtgs9/existing_no_suffix/rust_output/target.xlsx"
+      },
+      "execution_summary": {
+        "appended_rows": 1,
+        "duplicate_rows_filtered": 2,
+        "elapsed_ms": 929,
+        "function": "append_target_execute",
+        "stages": [
+          {
+            "elapsed_ms": 338,
+            "engine": "umya_spreadsheet",
+            "name": "excel_modify",
+            "status": "succeeded"
+          },
+          {
+            "elapsed_ms": 121,
+            "name": "replacement_contract_validation",
+            "status": "succeeded"
+          },
+          {
+            "elapsed_ms": 226,
+            "name": "target_commit",
+            "status": "succeeded"
+          }
+        ],
+        "status": "succeeded",
+        "task_skipped_count": 0,
+        "task_success_count": 1
+      },
+      "candidate_sha256": "5b7a4ebd1708abb5e689d103b3dd7c6a479ed0317c112ab89f1b15f21dd3c164",
+      "python_reference_sha256": "cc344342ea8b0ebf9de165e517297b421b2d5aa46d6e59da6ab79019001b4391",
+      "candidate_artifacts_retained": false,
+      "committed_target_sha256": "5b7a4ebd1708abb5e689d103b3dd7c6a479ed0317c112ab89f1b15f21dd3c164",
+      "candidate_matches_committed_target_bytes": true,
+      "compared_sheet_order": [
+        "Before",
+        "Append",
+        "After"
+      ],
+      "compared_cell_count": 467,
+      "source_input_and_config_unchanged": true,
+      "configured_target_bytes_unchanged": false,
+      "configured_target_committed": true,
+      "configured_target_changed_from_seed": true,
+      "intentional_target_sheet_drops": [
+        "styles",
+        "comments",
+        "merged_ranges",
+        "row_dimensions",
+        "column_dimensions"
+      ],
+      "untouched_sheets": [
+        "Before",
+        "After"
+      ],
+      "untouched_sheet_checks": [
+        "values",
+        "style_fill",
+        "comments",
+        "merges",
+        "row_height",
+        "column_width"
+      ],
+      "temporary_test_capability_only": true
+    },
+    {
+      "row_suffix": true,
+      "summary_status": "passed",
+      "existing_target_replacement_status": "passed",
+      "engine": "umya_spreadsheet",
+      "target_commit": {
+        "backup_path": null,
+        "cleanup_warning": null,
+        "elapsed_ms": 244,
+        "operation": "replaced",
+        "sha256_after": "f601ad3813d01a69479d0b64f8fff662130f9ae3fb521cbb5155260d9ee9858e",
+        "sha256_before": "861e2c9adcda679fc6780c9183bf692939321255a22e6904461ee28073141ba5",
+        "target": "/mnt/c/Users/AZI/AppData/Local/Temp/pytools-wide-probe-x6ojtgs9/existing_suffix/rust_output/target.xlsx"
+      },
+      "execution_summary": {
+        "appended_rows": 2,
+        "duplicate_rows_filtered": 1,
+        "elapsed_ms": 1013,
+        "function": "append_target_execute",
+        "stages": [
+          {
+            "elapsed_ms": 369,
+            "engine": "umya_spreadsheet",
+            "name": "excel_modify",
+            "status": "succeeded"
+          },
+          {
+            "elapsed_ms": 134,
+            "name": "replacement_contract_validation",
+            "status": "succeeded"
+          },
+          {
+            "elapsed_ms": 244,
+            "name": "target_commit",
+            "status": "succeeded"
+          }
+        ],
+        "status": "succeeded",
+        "task_skipped_count": 0,
+        "task_success_count": 1
+      },
+      "candidate_sha256": "f601ad3813d01a69479d0b64f8fff662130f9ae3fb521cbb5155260d9ee9858e",
+      "python_reference_sha256": "b8dbe632228649b170a475e5ed82a1cd22e2b260bd7b401a7bea5d3402a3329f",
+      "candidate_artifacts_retained": false,
+      "committed_target_sha256": "f601ad3813d01a69479d0b64f8fff662130f9ae3fb521cbb5155260d9ee9858e",
+      "candidate_matches_committed_target_bytes": true,
+      "compared_sheet_order": [
+        "Before",
+        "Append",
+        "After"
+      ],
+      "compared_cell_count": 476,
+      "source_input_and_config_unchanged": true,
+      "configured_target_bytes_unchanged": false,
+      "configured_target_committed": true,
+      "configured_target_changed_from_seed": true,
+      "intentional_target_sheet_drops": [
+        "styles",
+        "comments",
+        "merged_ranges",
+        "row_dimensions",
+        "column_dimensions"
+      ],
+      "untouched_sheets": [
+        "Before",
+        "After"
+      ],
+      "untouched_sheet_checks": [
+        "values",
+        "style_fill",
+        "comments",
+        "merges",
+        "row_height",
+        "column_width"
+      ],
+      "temporary_test_capability_only": true
+    }
+  ],
+  "commands": {
+    "probe": "<temporary Python 3.12.10 venv> pytools-core/probe/compare_wide_summary.py"
+  },
+  "limitations": [
+    "No sanitized real business sample was available.",
+    "Temporary capability evidence is test-only and does not register a production route.",
+    "Windows native Rust and 麒麟/UOS glibc 2.28 deb remain unverified.",
+    "The fixture contains no formulas; the probe compares values and selected object properties only and is not a universal workbook-preservation claim."
+  ]
+}

@@ -1,0 +1,40 @@
+时间：2026-10-23 07:05:31 Asia/Shanghai
+执行者：Codex
+修改前 commit：不可用（workspace 尚无首次提交）
+修改后 commit：未创建
+WIP 情况：workspace 已有大量未跟踪文件；本轮只按下列文件增量修改，没有清理、覆盖或提交既有 WIP。
+
+目的：在已有 S2 导入、配置、周期比较、规则计算、外部比较、质量发现和摘要模块之上，新增纯内存分析编排切片；不将其宣称为完整 S2-F01 服务或 XLSX 报告工作流。
+
+修改/新增文件：
+- audit-core/src/lib.rs
+- audit-core/src/s2_analysis.rs
+- audit-core/tests/fixtures/s2_analysis/cases.json
+- audit-core/tests/s2_analysis_parity.rs
+- audit-core/tests/compare/run_s2_analysis_baseline.py
+- audit-core/probe/reports/s2_analysis_python_baseline.json
+- audit-core/probe/reports/s2_analysis_parity.json
+- audit-core/MIGRATION_INVENTORY.md
+- EXCEL_ENGINE_ARCHITECTURE.md
+- audit-core/GPT修改记录/20261023_070531_S2内存分析编排局部对拍.txt（本记录）
+
+逻辑变化：
+- 新增 `audit_core::s2_analysis::analyze_imports`，输入为已导入的本期/上期结果、已加载 `S2AuditConfig` 和可选 `S2ExternalImportResult`，输出唯一记录、分组发现、完整发现列表及摘要。
+- 逻辑键去重保留首条并维持源顺序；发现列表沿用 Python 服务的周期、外部、规则、导入/配置质量、规则质量顺序。
+- 配置检查/加载、XLSX 导入、进度回调、ExcelExporter 和文件系统操作均不在本 API 中。未改变生产路由、CLI、共享 Excel 引擎或原 Python 实现。
+- Python 基线源文件 SHA-256 写入 `s2_analysis_python_baseline.json`。
+
+配置、依赖及 VBA 影响：无；Cargo.toml/Cargo.lock 未改，源 Python 项目只读。
+【组件版本】audit-core 0.1.0，不升级；本次只新增局部内存分析编排能力。
+
+实际验证：
+- 使用只读 Open-Data-Audit `.venv`（Python 3.12.10）执行 `run_s2_analysis_baseline.py`：2 个场景生成成功。
+- `cargo test -p audit-core --test s2_analysis_parity -- --nocapture`（WSL）：1/1 通过；Rust 与 Python 组件输出逐字段一致。
+- `cargo fmt --all -- --check && cargo test --workspace --locked -q`（WSL）：格式检查及 workspace 全部测试通过，退出码 0。
+- Rust 单元测试覆盖重复逻辑键首条保留及输入顺序。
+
+未执行项与已知限制：
+- 仅使用合成输入，不覆盖真实业务模板、文件发现/导入、配置校验与加载、进度/UI、XLSX 报告导出、目标麒麟/UOS/glibc 2.28、deb、性能/峰值内存或生产路由。
+- S2-F01 仍未完成；本切片不替代完整 `PeriodAuditV2Service.run` 的端到端对拍。
+
+回滚：删除上述新建编排模块、测试/夹具、基线脚本与报告，恢复 `audit-core/src/lib.rs` 中 `s2_analysis` 导出，并移除迁移清单、架构快照和本记录中的对应条目。不要删除其他未跟踪文件；无需改动或回滚只读源 Python 项目。

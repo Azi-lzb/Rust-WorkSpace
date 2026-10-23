@@ -1,0 +1,10 @@
+时间：2026-10-22 13:36:03 UTC
+执行者：Codex
+修改前/后 commit：均无；workspace 当前文件为未跟踪 WIP。
+目的：消除根 AGENTS.md 对共享 fixtures 根目录与业务 crate 私有 fixtures 目录的结构歧义。
+修改文件：AGENTS.md
+变化：结构图改为 audit-core/tests/fixtures 与 pytools-core/tests/fixtures；明确 JSON 报告存各自 probe/reports，日期化人工报告存各自 GPT修改记录/。此调整遵守两个产品样本、配置和报告隔离的约束。
+验证：核对 pytools-core/tests/fixtures 与 audit-core/probe/probe.toml 的实际布局；未运行 Cargo 检查，本次仅文档修改。
+删除清单：无。
+回滚提示：仅回退 AGENTS.md 中 workspace 目录图和报告位置说明；不要清理任何 workspace WIP。
+组件版本：不升级。

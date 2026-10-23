@@ -1,0 +1,1275 @@
+//! Pure selection and area-extraction rules for the worksheet extraction flow.
+//!
+//! File reading and workbook writing remain in their respective adapters; this
+//! module keeps the source feature's keyword, range, stitching, and compaction
+//! behavior independently testable.
+
+use crate::config::ExtractTask;
+use crate::edit_plan::apply_plan_with_capability_file;
+use anyhow::{bail, ensure, Context, Result};
+use chrono::Local;
+use excel_editor::{
+    inspect_xlsx_profile, EditOperation, ExcelEditPlan, PreservationRequirement, RangeStyleMode,
+    WorkbookFormat,
+};
+use excel_reader::{
+    read_value_columns_with_iso_dates, read_workbook, read_xlsx_worksheet_extents, CellValue,
+    SheetValues,
+};
+use excel_writer::Workbook;
+use serde::Serialize;
+use serde_json::Value;
+use std::collections::{BTreeMap, BTreeSet};
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
+
+pub type CellMatrix = Vec<Vec<Option<Value>>>;
+
+const EXCEL_MAX_COLUMNS: usize = 16_384;
+
+/// Statistics from a new-workbook worksheet extraction candidate.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+pub struct ExtractSheetsAreaResult {
+    pub files: usize,
+    pub extracted_sheets: usize,
+    pub output_files: usize,
+    pub failed_files: usize,
+    pub paths: Vec<String>,
+}
+
+struct SparseSheet {
+    name: String,
+    max_row: usize,
+    max_column: usize,
+    values: BTreeMap<(usize, usize), Value>,
+}
+
+struct ExpectedSheet {
+    name: String,
+    max_row: usize,
+    max_column: usize,
+    non_empty_cells: usize,
+}
+
+struct PendingWorkbook {
+    path: PathBuf,
+    workbook: Workbook,
+    sheets: Vec<ExpectedSheet>,
+    sheet_names: Vec<String>,
+    import_operations: Vec<EditOperation>,
+}
+
+const FULL_AREA_WORDS: &[&str] = &["", "整表", "全部", "全表"];
+
+pub fn normalize_range_spec(text: &str) -> String {
+    let mut normalized = text.replace([' ', '\t'], "");
+    for separator in ['，', '、', '；', ';'] {
+        normalized = normalized.replace(separator, ",");
+    }
+    normalized.replace('：', ":")
+}
+
+pub fn token_to_index(token: &str, is_row: bool) -> usize {
+    let token = token.trim();
+    if token.is_empty() {
+        return 0;
+    }
+    if token.bytes().all(|byte| byte.is_ascii_digit()) {
+        return token.parse().unwrap_or(0);
+    }
+    if is_row || !token.bytes().all(|byte| byte.is_ascii_alphabetic()) {
+        return 0;
+    }
+    column_number(token)
+}
+
+/// Parse the legacy row/column index syntax retained by the source helpers.
+pub fn parse_indexes(spec: &str, max_value: usize, is_row: bool) -> Vec<usize> {
+    if spec.is_empty() || max_value == 0 {
+        return (1..=max_value).collect();
+    }
+
+    let mut result = Vec::new();
+    for segment in normalize_range_spec(spec).split(',') {
+        let segment = segment.trim();
+        if segment.is_empty() {
+            continue;
+        }
+        if let Some((start, end)) = segment.split_once(':') {
+            let mut start = token_to_index(start, is_row);
+            let mut end = token_to_index(end, is_row);
+            if start == 0 || end == 0 {
+                continue;
+            }
+            if start > end {
+                std::mem::swap(&mut start, &mut end);
+            }
+            let lower = start.max(1);
+            let upper = end.min(max_value);
+            if lower <= upper {
+                result.extend(lower..=upper);
+            }
+        } else {
+            let index = token_to_index(segment, is_row);
+            if (1..=max_value).contains(&index) {
+                result.push(index);
+            }
+        }
+    }
+
+    if result.is_empty() {
+        return (1..=max_value).collect();
+    }
+    let mut seen = BTreeSet::new();
+    result.retain(|value| seen.insert(*value));
+    result
+}
+
+pub fn build_exact_name(keywords: &[String]) -> String {
+    keywords
+        .iter()
+        .filter(|keyword| !keyword.trim().is_empty())
+        .cloned()
+        .collect::<Vec<_>>()
+        .join("-")
+}
+
+pub fn sheet_matches_all(name: &str, keywords: &[String]) -> bool {
+    let name = name.to_lowercase();
+    keywords
+        .iter()
+        .map(|keyword| keyword.trim())
+        .filter(|keyword| !keyword.is_empty())
+        .all(|keyword| name.contains(&keyword.to_lowercase()))
+}
+
+/// Return sheet indices in source order, except an exact joined-name match is
+/// promoted to the first result just like the source implementation.
+pub fn find_matched_sheets(sheet_names: &[String], keywords: &[String]) -> Vec<usize> {
+    let exact = build_exact_name(keywords);
+    let exact_index = (!exact.is_empty())
+        .then(|| sheet_names.iter().position(|name| name == &exact))
+        .flatten();
+    let mut matched = Vec::new();
+    if let Some(index) = exact_index {
+        matched.push(index);
+    }
+    for (index, name) in sheet_names.iter().enumerate() {
+        if Some(index) != exact_index && sheet_matches_all(name, keywords) {
+            matched.push(index);
+        }
+    }
+    matched
+}
+
+pub fn split_keyword_groups(text: &str) -> Vec<Vec<String>> {
+    text.replace('；', ";")
+        .split(';')
+        .map(|group| {
+            group
+                .replace('，', ",")
+                .split([',', '|'])
+                .map(str::trim)
+                .filter(|option| !option.is_empty())
+                .map(str::to_owned)
+                .collect::<Vec<_>>()
+        })
+        .filter(|group| !group.is_empty())
+        .collect()
+}
+
+pub fn name_matches_keyword_options(name: &str, keyword_text: &str) -> bool {
+    let groups = split_keyword_groups(keyword_text);
+    let name = name.to_lowercase();
+    groups.iter().all(|group| {
+        group
+            .iter()
+            .any(|option| name.contains(&option.to_lowercase()))
+    })
+}
+
+pub fn workbook_matches(source_file_name: &str, task: &ExtractTask) -> bool {
+    name_matches_keyword_options(source_file_name, &task.workbook_keywords)
+}
+
+pub fn name_matches_exclude(name: &str, exclude_keywords: &str) -> bool {
+    !exclude_keywords.trim().is_empty() && name_matches_keyword_options(name, exclude_keywords)
+}
+
+pub fn find_matched_sheets_for_task(
+    sheet_names: &[String],
+    sheet_keywords: &str,
+    exclude_keywords: &str,
+) -> Vec<usize> {
+    let mut seen = BTreeSet::new();
+    sheet_names
+        .iter()
+        .enumerate()
+        .filter_map(|(index, name)| {
+            if !seen.insert(name) {
+                return None;
+            }
+            if name_matches_exclude(name, exclude_keywords)
+                || !name_matches_keyword_options(name, sheet_keywords)
+            {
+                None
+            } else {
+                Some(index)
+            }
+        })
+        .collect()
+}
+
+pub fn sanitize_sheet_name(name: &str) -> String {
+    name.chars()
+        .map(|character| {
+            if matches!(character, ':' | '\\' | '/' | '?' | '*' | '[' | ']') {
+                '_'
+            } else {
+                character
+            }
+        })
+        .take(31)
+        .collect()
+}
+
+pub fn unique_sheet_name(used_names: &[String], base: &str, fallback_time: &str) -> String {
+    let base = sanitize_sheet_name(base);
+    if !used_names.iter().any(|name| name == &base) {
+        return base;
+    }
+    let root = base.chars().take(28).collect::<String>();
+    for index in 2..=100 {
+        let candidate = format!("{root}_{index}");
+        if !used_names.iter().any(|name| name == &candidate) {
+            return candidate;
+        }
+    }
+    format!("{root}_{fallback_time}")
+}
+
+pub fn is_full_area_spec(spec: &str) -> bool {
+    FULL_AREA_WORDS.contains(&spec.trim())
+}
+
+pub fn split_area_specs(area_spec: &str) -> Vec<String> {
+    let text = area_spec.trim();
+    if is_full_area_spec(text) {
+        return vec![String::new()];
+    }
+    let parts = text
+        .replace('；', ";")
+        .split(';')
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    if parts.is_empty() {
+        vec![String::new()]
+    } else {
+        parts
+    }
+}
+
+/// Parse an A1 cell/range, whole column range, whole row range, or full-sheet
+/// marker. Returned row/column indices are one-based to mirror the source.
+pub fn parse_area_indexes(
+    area_spec: &str,
+    max_row: usize,
+    max_col: usize,
+) -> Option<(Vec<usize>, Vec<usize>)> {
+    let area = area_spec.trim().replace([' ', '\t'], "").replace('：', ":");
+    if is_full_area_spec(&area) {
+        return Some(((1..=max_row).collect(), (1..=max_col).collect()));
+    }
+    if max_row == 0 || max_col == 0 {
+        return Some((Vec::new(), Vec::new()));
+    }
+
+    if let Some((start, end)) = area.split_once(':') {
+        if let (Some((start_row, start_col)), Some((end_row, end_col))) =
+            (parse_cell(start), parse_cell(end))
+        {
+            let (row_start, row_end) = ordered(start_row, end_row);
+            let (col_start, col_end) = ordered(start_col, end_col);
+            return Some((
+                bounded_range(row_start, row_end, max_row),
+                bounded_range(col_start, col_end, max_col),
+            ));
+        }
+        if start.bytes().all(|byte| byte.is_ascii_alphabetic())
+            && end.bytes().all(|byte| byte.is_ascii_alphabetic())
+            && !start.is_empty()
+            && !end.is_empty()
+        {
+            let (col_start, col_end) = ordered(column_number(start), column_number(end));
+            return Some((
+                (1..=max_row).collect(),
+                bounded_range(col_start, col_end, max_col),
+            ));
+        }
+        if start.bytes().all(|byte| byte.is_ascii_digit())
+            && end.bytes().all(|byte| byte.is_ascii_digit())
+            && !start.is_empty()
+            && !end.is_empty()
+        {
+            let (row_start, row_end) = ordered(start.parse().ok()?, end.parse().ok()?);
+            return Some((
+                bounded_range(row_start, row_end, max_row),
+                (1..=max_col).collect(),
+            ));
+        }
+        return None;
+    }
+
+    if let Some((row, column)) = parse_cell(&area) {
+        if row <= max_row && column <= max_col {
+            return Some((vec![row], vec![column]));
+        }
+        return Some((Vec::new(), Vec::new()));
+    }
+    None
+}
+
+pub fn extract_area_values(data: &CellMatrix, area_spec: &str) -> Option<CellMatrix> {
+    if data.is_empty() {
+        return Some(Vec::new());
+    }
+    let max_row = data.len();
+    let max_col = data.iter().map(Vec::len).max().unwrap_or(0);
+    if max_col == 0 {
+        return Some(Vec::new());
+    }
+    let (rows, columns) = parse_area_indexes(area_spec, max_row, max_col)?;
+    Some(
+        rows.into_iter()
+            .map(|row| {
+                columns
+                    .iter()
+                    .map(|column| {
+                        data.get(row - 1)
+                            .and_then(|source| source.get(column - 1))
+                            .cloned()
+                            .unwrap_or(None)
+                    })
+                    .collect()
+            })
+            .collect(),
+    )
+}
+
+pub fn stitch_area_values(area_values: &[CellMatrix], stitch_mode: &str) -> CellMatrix {
+    if area_values.is_empty() {
+        return Vec::new();
+    }
+    if stitch_mode.trim() == "纵向追加" {
+        return area_values.iter().flatten().cloned().collect();
+    }
+
+    let max_rows = area_values.iter().map(Vec::len).max().unwrap_or(0);
+    let widths = area_values
+        .iter()
+        .map(|values| values.iter().map(Vec::len).max().unwrap_or(0))
+        .collect::<Vec<_>>();
+    (0..max_rows)
+        .map(|row_index| {
+            let mut row = Vec::new();
+            for (values, width) in area_values.iter().zip(&widths) {
+                if let Some(source_row) = values.get(row_index) {
+                    row.extend(source_row.iter().cloned());
+                    row.extend(std::iter::repeat_n(
+                        None,
+                        width.saturating_sub(source_row.len()),
+                    ));
+                } else {
+                    row.extend(std::iter::repeat_n(None, *width));
+                }
+            }
+            row
+        })
+        .collect()
+}
+
+pub fn extract_configured_values(
+    data: &CellMatrix,
+    area_spec: &str,
+    stitch_mode: &str,
+) -> Option<CellMatrix> {
+    let mut areas = Vec::new();
+    for part in split_area_specs(area_spec) {
+        areas.push(extract_area_values(data, &part)?);
+    }
+    if areas.len() == 1 {
+        areas.into_iter().next()
+    } else {
+        Some(stitch_area_values(&areas, stitch_mode))
+    }
+}
+
+pub fn compact(values: &CellMatrix) -> CellMatrix {
+    let rows = values
+        .iter()
+        .filter(|row| row.iter().any(|value| !is_empty_cell(value.as_ref())))
+        .collect::<Vec<_>>();
+    if rows.is_empty() {
+        return Vec::new();
+    }
+    let max_columns = rows.iter().map(|row| row.len()).max().unwrap_or(0);
+    let keep_columns = (0..max_columns)
+        .map(|column| {
+            rows.iter().any(|row| {
+                row.get(column)
+                    .is_some_and(|value| !is_empty_cell(value.as_ref()))
+            })
+        })
+        .collect::<Vec<_>>();
+    rows.into_iter()
+        .map(|row| {
+            keep_columns
+                .iter()
+                .enumerate()
+                .filter_map(|(column, keep)| keep.then(|| row.get(column).cloned().unwrap_or(None)))
+                .collect()
+        })
+        .collect()
+}
+
+pub fn is_blank_spec(spec: &str) -> bool {
+    spec.trim().is_empty()
+}
+
+pub fn is_full_sheet_task(task: &ExtractTask) -> bool {
+    is_full_area_spec(&task.area_spec)
+}
+
+pub fn output_path_for_task(task: &ExtractTask, output_dir: &Path, default_name: &str) -> PathBuf {
+    let folder = task.output_folder.trim();
+    let base_dir = if folder.is_empty() {
+        output_dir.to_path_buf()
+    } else {
+        let folder = Path::new(folder);
+        if folder.is_absolute() {
+            folder.to_path_buf()
+        } else {
+            output_dir.join(folder)
+        }
+    };
+    let name = if task.output_name.trim().is_empty() {
+        default_name.trim()
+    } else {
+        task.output_name.trim()
+    };
+    let mut path = PathBuf::from(name);
+    match path_suffix(&path) {
+        Some(extension) if extension.eq_ignore_ascii_case("xlsx") => {}
+        Some(_) => {
+            path.set_extension("xlsx");
+        }
+        None => {
+            if let Some(file_name) = path
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+            {
+                path.set_file_name(format!("{file_name}.xlsx"));
+            } else {
+                path.set_extension("xlsx");
+            }
+        }
+    }
+    if !path.is_absolute() {
+        base_dir.join(path)
+    } else {
+        path
+    }
+}
+
+/// Run extraction against new XLSX outputs. Full-sheet tasks use one
+/// evidence-gated `ImportRange` batch per output workbook; area-only tasks use
+/// the Rust reader/writer path. Existing output workbooks are not appended.
+pub fn run_extract_sheets_area_candidate(
+    source_workbooks: &[PathBuf],
+    tasks: &[ExtractTask],
+    output_dir: &Path,
+    append_existing: bool,
+    default_output_name: Option<&str>,
+) -> Result<ExtractSheetsAreaResult> {
+    run_extract_sheets_candidate(
+        source_workbooks,
+        tasks,
+        output_dir,
+        append_existing,
+        default_output_name,
+        None,
+        None,
+    )
+}
+
+/// Run ordinary worksheet extraction. Area-only tasks need only the shared
+/// reader/writer path. Full-sheet tasks additionally require a matching,
+/// evidence-backed ExcelModifier capability for XLSX `ImportRange`.
+pub fn run_extract_sheets_candidate(
+    source_workbooks: &[PathBuf],
+    tasks: &[ExtractTask],
+    output_dir: &Path,
+    append_existing: bool,
+    default_output_name: Option<&str>,
+    capability_path: Option<&Path>,
+    platform: Option<&str>,
+) -> Result<ExtractSheetsAreaResult> {
+    let mut result = ExtractSheetsAreaResult::default();
+    if tasks.is_empty() {
+        return Ok(result);
+    }
+    if append_existing {
+        bail!("unsupported: worksheet extraction append mode requires an accepted editor route");
+    }
+    ensure!(
+        capability_path.is_some() == platform.is_some(),
+        "--capabilities and --platform must be provided together"
+    );
+    if tasks.iter().any(is_full_sheet_task) && capability_path.is_none() {
+        bail!(
+            "full-sheet extraction requires an accepted XLSX ImportRange capability; provide --capabilities and --platform"
+        );
+    }
+
+    let generated_name;
+    let default_name = match default_output_name {
+        Some(name) => name,
+        None => {
+            generated_name = format!("提取结果_{}", Local::now().format("%Y%m%d_%H%M%S"));
+            &generated_name
+        }
+    };
+    fs::create_dir_all(output_dir)
+        .with_context(|| format!("create output directory {}", output_dir.display()))?;
+
+    let mut output_indexes = BTreeMap::<String, usize>::new();
+    let mut outputs = Vec::<PendingWorkbook>::new();
+    let fallback_time = Local::now().format("%H%M%S").to_string();
+
+    for source_path in source_workbooks {
+        let source_sheets = match read_value_columns_with_iso_dates(source_path, EXCEL_MAX_COLUMNS)
+        {
+            Ok(sheets) => sheets,
+            Err(_) => {
+                result.failed_files += 1;
+                continue;
+            }
+        };
+        result.files += 1;
+
+        let source_file_name = source_path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let sheet_names = source_sheets
+            .iter()
+            .map(|sheet| sheet.name.clone())
+            .collect::<Vec<_>>();
+        let mut sparse_sheets = source_sheets
+            .iter()
+            .map(sparse_sheet)
+            .collect::<Result<Vec<_>>>()?;
+        let has_matching_full_sheet_task = tasks.iter().any(|task| {
+            is_full_sheet_task(task)
+                && workbook_matches(&source_file_name, task)
+                && !name_matches_exclude(&source_file_name, &task.exclude_keywords)
+        });
+        if has_matching_full_sheet_task
+            && source_path
+                .extension()
+                .and_then(|extension| extension.to_str())
+                .is_some_and(|extension| extension.eq_ignore_ascii_case("xlsx"))
+        {
+            let extents = read_xlsx_worksheet_extents(source_path).with_context(|| {
+                format!("read stored-cell extents from {}", source_path.display())
+            })?;
+            ensure!(
+                extents.len() == sparse_sheets.len(),
+                "OOXML extent inventory disagrees with Calamine sheet count in {}",
+                source_path.display()
+            );
+            for (sheet, extent) in sparse_sheets.iter_mut().zip(extents) {
+                ensure!(
+                    sheet.name == extent.name,
+                    "OOXML extent inventory disagrees with Calamine sheet order in {}",
+                    source_path.display()
+                );
+                sheet.max_row = sheet.max_row.max(extent.max_row);
+                sheet.max_column = sheet.max_column.max(extent.max_column);
+            }
+        }
+
+        for task in tasks {
+            if !workbook_matches(&source_file_name, task)
+                || name_matches_exclude(&source_file_name, &task.exclude_keywords)
+            {
+                continue;
+            }
+            let matched_indexes = find_matched_sheets_for_task(
+                &sheet_names,
+                &task.sheet_keywords,
+                &task.exclude_keywords,
+            );
+            for sheet_index in matched_indexes {
+                let source_sheet = &sparse_sheets[sheet_index];
+                let full_sheet = is_full_sheet_task(task);
+                let values = if full_sheet {
+                    None
+                } else {
+                    let Some(values) = extract_sparse_configured_values(
+                        source_sheet,
+                        &task.area_spec,
+                        &task.stitch_mode,
+                    ) else {
+                        continue;
+                    };
+                    let values = compact(&values);
+                    if values.is_empty() {
+                        continue;
+                    }
+                    Some(values)
+                };
+                if full_sheet {
+                    ensure!(
+                        source_path
+                            .extension()
+                            .and_then(|extension| extension.to_str())
+                            .is_some_and(|extension| extension.eq_ignore_ascii_case("xlsx")),
+                        "full-sheet extraction requires XLSX input for style import; convert {} to .xlsx first",
+                        source_path.display()
+                    );
+                }
+
+                let output_path = output_path_for_task(task, output_dir, default_name);
+                if normalized_path_key(&output_path)? == normalized_path_key(source_path)? {
+                    bail!(
+                        "refuse to replace source workbook with extraction output: {}",
+                        source_path.display()
+                    );
+                }
+                let key = normalized_path_key(&output_path)?;
+                let output_index = match output_indexes.get(&key).copied() {
+                    Some(index) => index,
+                    None => {
+                        let index = outputs.len();
+                        output_indexes.insert(key, index);
+                        outputs.push(PendingWorkbook {
+                            path: output_path,
+                            workbook: Workbook::new(),
+                            sheets: Vec::new(),
+                            sheet_names: Vec::new(),
+                            import_operations: Vec::new(),
+                        });
+                        index
+                    }
+                };
+                let pending = &mut outputs[output_index];
+                let sheet_name =
+                    unique_sheet_name(&pending.sheet_names, &source_sheet.name, &fallback_time);
+                let worksheet = pending.workbook.add_worksheet();
+                worksheet
+                    .set_name(&sheet_name)
+                    .with_context(|| format!("name extracted worksheet {sheet_name:?}"))?;
+
+                let (max_row, max_column, non_empty_cells, import_operation) = if full_sheet {
+                    let max_row = source_sheet.max_row.max(1);
+                    let max_column = source_sheet.max_column.max(1);
+                    ensure!(
+                        max_row <= 1_048_576 && max_column <= EXCEL_MAX_COLUMNS,
+                        "source worksheet {:?} exceeds Excel's row or column limit",
+                        source_sheet.name
+                    );
+                    let source_range = format!("A1:{}{}", column_name(max_column), max_row);
+                    let import_operation = EditOperation::ImportRange {
+                        source_workbook: source_path.clone(),
+                        source_sheet: source_sheet.name.clone(),
+                        source_range,
+                        target_sheet: sheet_name.clone(),
+                        target_start: "A1".to_owned(),
+                        copy_values: true,
+                        copy_formulas: false,
+                        style_mode: RangeStyleMode::Full,
+                        copy_comments: false,
+                        copy_merges: true,
+                        copy_row_heights: true,
+                        copy_column_widths: true,
+                        copy_row_hidden: true,
+                        copy_column_hidden: true,
+                        copy_outline_levels: true,
+                        copy_all_row_dimensions: true,
+                        copy_all_column_dimensions: true,
+                        materialize_blank_cells: true,
+                        hide_zero: false,
+                    };
+                    let non_empty_cells = source_sheet
+                        .values
+                        .values()
+                        .filter(|value| !is_empty_cell(Some(value)))
+                        .count();
+                    (max_row, max_column, non_empty_cells, Some(import_operation))
+                } else {
+                    let values = values.as_ref().expect("area extraction has values");
+                    let mut non_empty_cells = 0;
+                    let mut max_row = 0;
+                    let mut max_column = 0;
+                    for (row_index, row) in values.iter().enumerate() {
+                        for (column_index, value) in row.iter().enumerate() {
+                            let Some(value) = value.as_ref() else {
+                                continue;
+                            };
+                            if is_empty_cell(Some(value)) {
+                                continue;
+                            }
+                            let row = u32::try_from(row_index)
+                                .context("extracted worksheet exceeds Excel row index range")?;
+                            let column = u16::try_from(column_index)
+                                .context("extracted worksheet exceeds Excel column index range")?;
+                            write_extracted_value(worksheet, row, column, value).with_context(
+                                || {
+                                    format!(
+                                        "write extracted value at {}{} from worksheet {:?}",
+                                        column_name(column_index + 1),
+                                        row_index + 1,
+                                        source_sheet.name
+                                    )
+                                },
+                            )?;
+                            non_empty_cells += 1;
+                            max_row = max_row.max(row_index + 1);
+                            max_column = max_column.max(column_index + 1);
+                        }
+                    }
+                    ensure!(
+                        non_empty_cells > 0,
+                        "compacted extraction unexpectedly contains no non-empty cells"
+                    );
+                    (max_row, max_column, non_empty_cells, None)
+                };
+                if let Some(operation) = import_operation {
+                    pending.import_operations.push(operation);
+                }
+                pending.sheet_names.push(sheet_name.clone());
+                pending.sheets.push(ExpectedSheet {
+                    name: sheet_name,
+                    max_row,
+                    max_column,
+                    non_empty_cells,
+                });
+                result.extracted_sheets += 1;
+            }
+        }
+    }
+
+    let mut staged = Vec::<(PathBuf, PathBuf)>::new();
+    let mut temporary_files = Vec::<PathBuf>::new();
+    let stage_result = (|| -> Result<()> {
+        for pending in &mut outputs {
+            ensure!(
+                !pending.path.exists(),
+                "refuse to overwrite existing extraction output {}",
+                pending.path.display()
+            );
+            let parent = pending.path.parent().unwrap_or(output_dir);
+            fs::create_dir_all(parent)
+                .with_context(|| format!("create output directory {}", parent.display()))?;
+            let stage_path = unique_stage_path(&pending.path)?;
+            staged.push((stage_path.clone(), pending.path.clone()));
+            temporary_files.push(stage_path.clone());
+            if pending.import_operations.is_empty() {
+                pending
+                    .workbook
+                    .save(&stage_path)
+                    .with_context(|| format!("save staged workbook {}", stage_path.display()))?;
+            } else {
+                let capability_path =
+                    capability_path.context("full-sheet extraction requires a capability file")?;
+                let platform = platform.context("full-sheet extraction requires a platform id")?;
+                let skeleton_path = unique_stage_path(&pending.path)?;
+                temporary_files.push(skeleton_path.clone());
+                pending.workbook.save(&skeleton_path).with_context(|| {
+                    format!("save extraction skeleton {}", skeleton_path.display())
+                })?;
+                let mut workbook_profile = inspect_xlsx_profile(&skeleton_path)?;
+                let mut imported_source_profiles =
+                    BTreeMap::<String, excel_editor::WorkbookProfile>::new();
+                for operation in &pending.import_operations {
+                    if let EditOperation::ImportRange {
+                        source_workbook, ..
+                    } = operation
+                    {
+                        let source_key = normalized_path_key(source_workbook)?;
+                        let source_profile =
+                            if let Some(profile) = imported_source_profiles.get(&source_key) {
+                                profile.clone()
+                            } else {
+                                let profile =
+                                    inspect_xlsx_profile(source_workbook).with_context(|| {
+                                        format!(
+                                            "inventory full-sheet extraction source {}",
+                                            source_workbook.display()
+                                        )
+                                    })?;
+                                imported_source_profiles.insert(source_key, profile.clone());
+                                profile
+                            };
+                        ensure!(
+                            source_profile.inventory_complete,
+                            "full-sheet extraction source has an incomplete OOXML inventory: {}",
+                            source_workbook.display()
+                        );
+                        workbook_profile
+                            .features_present
+                            .extend(source_profile.features_present);
+                    }
+                }
+                let plan = ExcelEditPlan {
+                    request_id: format!(
+                        "pytools-extract-sheets-{}",
+                        Local::now().format("%Y%m%d%H%M%S%f")
+                    ),
+                    input: skeleton_path.clone(),
+                    output: stage_path.clone(),
+                    format: WorkbookFormat::Xlsx,
+                    workbook: workbook_profile,
+                    operations: std::mem::take(&mut pending.import_operations),
+                    preserve: [
+                        PreservationRequirement::CellValuesAndTypes,
+                        PreservationRequirement::Styles,
+                        PreservationRequirement::MergedRanges,
+                        PreservationRequirement::RowAndColumnDimensions,
+                        PreservationRequirement::UnmodifiedPackageParts,
+                        PreservationRequirement::SheetIdentityAndOrder,
+                    ]
+                    .into_iter()
+                    .collect(),
+                    drop_allowed: Default::default(),
+                };
+                plan.validate()?;
+                let import_operations = plan.operations.clone();
+                apply_plan_with_capability_file(&plan, capability_path, platform)
+                    .with_context(|| "apply full-sheet extraction through ExcelModifier")?;
+                validate_full_sheet_imports(&import_operations, &stage_path)?;
+                fs::remove_file(&skeleton_path).with_context(|| {
+                    format!("remove extraction skeleton {}", skeleton_path.display())
+                })?;
+            }
+            validate_staged_workbook(&stage_path, &pending.sheets)?;
+        }
+        Ok(())
+    })();
+    if let Err(error) = stage_result {
+        remove_staged_files(&staged);
+        remove_temp_files(&temporary_files);
+        return Err(error);
+    }
+
+    let mut committed = Vec::<PathBuf>::new();
+    for (stage_path, output_path) in &staged {
+        if output_path.exists() {
+            remove_staged_files(&staged);
+            remove_temp_files(&temporary_files);
+            for committed_path in &committed {
+                let _ = fs::remove_file(committed_path);
+            }
+            bail!(
+                "refuse to overwrite extraction output created during run: {}",
+                output_path.display()
+            );
+        }
+        if let Err(error) = fs::hard_link(stage_path, output_path) {
+            remove_staged_files(&staged);
+            remove_temp_files(&temporary_files);
+            for committed_path in &committed {
+                let _ = fs::remove_file(committed_path);
+            }
+            return Err(error).with_context(|| {
+                format!(
+                    "commit extraction output without replacing an existing file {}",
+                    output_path.display()
+                )
+            });
+        }
+        if let Err(error) = fs::remove_file(stage_path) {
+            let _ = fs::remove_file(output_path);
+            remove_staged_files(&staged);
+            remove_temp_files(&temporary_files);
+            for committed_path in &committed {
+                let _ = fs::remove_file(committed_path);
+            }
+            return Err(error)
+                .with_context(|| format!("remove staged workbook {}", stage_path.display()));
+        }
+        committed.push(output_path.clone());
+        result
+            .paths
+            .push(output_path.to_string_lossy().into_owned());
+        result.output_files += 1;
+    }
+
+    Ok(result)
+}
+
+fn sparse_sheet(sheet: &SheetValues) -> Result<SparseSheet> {
+    ensure!(
+        sheet.max_column <= EXCEL_MAX_COLUMNS,
+        "worksheet {:?} exceeds Excel's column limit",
+        sheet.name
+    );
+    let mut values = BTreeMap::new();
+    for (address, value) in &sheet.values {
+        let (row, column) = parse_cell(address)
+            .with_context(|| format!("invalid Calamine cell coordinate {address:?}"))?;
+        ensure!(
+            row <= sheet.max_row && column <= sheet.max_column,
+            "Calamine cell {address} falls outside worksheet dimensions"
+        );
+        values.insert((row, column), serde_json::to_value(value)?);
+    }
+    Ok(SparseSheet {
+        name: sheet.name.clone(),
+        max_row: sheet.max_row,
+        max_column: sheet.max_column,
+        values,
+    })
+}
+
+fn extract_sparse_configured_values(
+    sheet: &SparseSheet,
+    area_spec: &str,
+    stitch_mode: &str,
+) -> Option<CellMatrix> {
+    let mut areas = Vec::new();
+    for area_spec in split_area_specs(area_spec) {
+        if sheet.max_row == 0 || sheet.max_column == 0 {
+            areas.push(Vec::new());
+            continue;
+        }
+        let (rows, columns) =
+            parse_area_indexes(area_spec.as_str(), sheet.max_row, sheet.max_column)?;
+        let mut values = Vec::with_capacity(rows.len());
+        for row in rows {
+            let mut row_values = Vec::with_capacity(columns.len());
+            for column in &columns {
+                row_values.push(sheet.values.get(&(row, *column)).cloned());
+            }
+            values.push(row_values);
+        }
+        areas.push(values);
+    }
+    if areas.len() == 1 {
+        areas.into_iter().next()
+    } else {
+        Some(stitch_area_values(&areas, stitch_mode))
+    }
+}
+
+fn write_extracted_value(
+    worksheet: &mut excel_writer::Worksheet,
+    row: u32,
+    column: u16,
+    value: &Value,
+) -> Result<()> {
+    let cell_value = CellValue::from_probe_json(value)?;
+    match cell_value {
+        CellValue::Text(text) => {
+            worksheet.write_string(row, column, text)?;
+        }
+        CellValue::Number(number) if number.is_finite() => {
+            worksheet.write_number(row, column, number)?;
+        }
+        CellValue::Number(_) => bail!("non-finite numeric cell is unsupported by XLSX output"),
+        CellValue::Integer(number) => {
+            const MAX_EXACT_F64_INTEGER: i64 = 9_007_199_254_740_992;
+            ensure!(
+                (-MAX_EXACT_F64_INTEGER..=MAX_EXACT_F64_INTEGER).contains(&number),
+                "integer cell exceeds exact XLSX numeric precision"
+            );
+            worksheet.write_number(row, column, number as f64)?;
+        }
+        CellValue::Boolean(value) => {
+            worksheet.write_boolean(row, column, value)?;
+        }
+        CellValue::Empty => {}
+        CellValue::DateTimeSerial(_)
+        | CellValue::DateTimeIso(_)
+        | CellValue::DurationIso(_)
+        | CellValue::Error(_) => {
+            bail!("unsupported cell type for the area-only writer; output was not committed")
+        }
+    }
+    Ok(())
+}
+
+fn validate_staged_workbook(path: &Path, expected_sheets: &[ExpectedSheet]) -> Result<()> {
+    let actual_sheets = read_value_columns_with_iso_dates(path, EXCEL_MAX_COLUMNS)
+        .with_context(|| format!("reopen staged workbook {}", path.display()))?;
+    ensure!(
+        actual_sheets.len() == expected_sheets.len(),
+        "staged workbook has an unexpected worksheet count"
+    );
+    for (actual, expected) in actual_sheets.iter().zip(expected_sheets) {
+        ensure!(
+            actual.name == expected.name,
+            "staged worksheet name changed"
+        );
+        ensure!(
+            actual.max_row == expected.max_row && actual.max_column == expected.max_column,
+            "staged worksheet dimensions changed for {:?}",
+            expected.name
+        );
+        let actual_non_empty = actual
+            .values
+            .values()
+            .filter(|value| !matches!(value, CellValue::Text(text) if text.trim().is_empty()))
+            .count();
+        ensure!(
+            actual_non_empty == expected.non_empty_cells,
+            "staged worksheet cell count changed for {:?}",
+            expected.name
+        );
+    }
+    Ok(())
+}
+
+fn validate_full_sheet_imports(operations: &[EditOperation], output: &Path) -> Result<()> {
+    let output_dump = read_workbook(output)
+        .with_context(|| format!("reopen full-sheet candidate {}", output.display()))?;
+    for operation in operations {
+        let EditOperation::ImportRange {
+            source_workbook,
+            source_sheet,
+            target_sheet,
+            copy_values,
+            copy_formulas,
+            copy_comments,
+            copy_merges,
+            ..
+        } = operation
+        else {
+            continue;
+        };
+        ensure!(
+            *copy_values && !copy_formulas,
+            "full-sheet extraction must use cached values only"
+        );
+        ensure!(
+            !copy_comments,
+            "ordinary full-sheet extraction must not copy comments"
+        );
+        let source_dump = read_workbook(source_workbook)
+            .with_context(|| format!("reopen extraction source {}", source_workbook.display()))?;
+        let source = source_dump
+            .sheets
+            .iter()
+            .find(|sheet| sheet.name == *source_sheet)
+            .with_context(|| format!("source worksheet {source_sheet:?} disappeared"))?;
+        let target = output_dump
+            .sheets
+            .iter()
+            .find(|sheet| sheet.name == *target_sheet)
+            .with_context(|| format!("extracted worksheet {target_sheet:?} is missing"))?;
+        ensure!(
+            source.values.len() == target.values.len()
+                && source.values.iter().all(|(address, value)| {
+                    target
+                        .values
+                        .get(address)
+                        .is_some_and(|target_value| cell_values_match(value, target_value))
+                }),
+            "full-sheet extraction changed stored values or cell types in {source_sheet:?}"
+        );
+        ensure!(
+            target.formulas.is_empty(),
+            "full-sheet extraction unexpectedly retained formula text in {target_sheet:?}"
+        );
+        ensure!(
+            target.comments.is_empty(),
+            "ordinary full-sheet extraction unexpectedly copied comments into {target_sheet:?}"
+        );
+        if *copy_merges {
+            let mut source_merges = source.merges.clone();
+            let mut target_merges = target.merges.clone();
+            source_merges.sort();
+            target_merges.sort();
+            ensure!(
+                source_merges == target_merges,
+                "full-sheet extraction changed merged ranges in {source_sheet:?}"
+            );
+        }
+    }
+    Ok(())
+}
+
+fn cell_values_match(source: &Value, target: &Value) -> bool {
+    let (Ok(source), Ok(target)) = (
+        CellValue::from_probe_json(source),
+        CellValue::from_probe_json(target),
+    ) else {
+        return false;
+    };
+    match (source, target) {
+        (CellValue::Number(left), CellValue::Number(right))
+        | (CellValue::DateTimeSerial(left), CellValue::DateTimeSerial(right)) => {
+            if !left.is_finite() || !right.is_finite() {
+                return left == right;
+            }
+            let scale = left.abs().max(right.abs()).max(1.0);
+            (left - right).abs() <= scale * 1e-15
+        }
+        (CellValue::Text(left), CellValue::Text(right))
+        | (CellValue::DateTimeIso(left), CellValue::DateTimeIso(right))
+        | (CellValue::DurationIso(left), CellValue::DurationIso(right))
+        | (CellValue::Error(left), CellValue::Error(right)) => left == right,
+        (CellValue::Integer(left), CellValue::Integer(right)) => left == right,
+        (CellValue::Boolean(left), CellValue::Boolean(right)) => left == right,
+        (CellValue::Empty, CellValue::Empty) => true,
+        _ => false,
+    }
+}
+
+fn normalized_path_key(path: &Path) -> Result<String> {
+    let absolute = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir()?.join(path)
+    };
+    let mut normalized = PathBuf::new();
+    for component in absolute.components() {
+        match component {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                normalized.pop();
+            }
+            other => normalized.push(other.as_os_str()),
+        }
+    }
+    let normalized = normalized.to_string_lossy().into_owned();
+    Ok(if cfg!(windows) {
+        normalized.to_lowercase()
+    } else {
+        normalized
+    })
+}
+
+fn unique_stage_path(output_path: &Path) -> Result<PathBuf> {
+    let parent = output_path.parent().context("output path has no parent")?;
+    let stem = output_path
+        .file_stem()
+        .context("output path has no file name")?
+        .to_string_lossy();
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .context("system clock is before Unix epoch")?
+        .as_nanos();
+    Ok(parent.join(format!(
+        ".{stem}.{}.{}.stage.xlsx",
+        std::process::id(),
+        nonce
+    )))
+}
+
+fn remove_staged_files(staged: &[(PathBuf, PathBuf)]) {
+    for (stage_path, _) in staged {
+        let _ = fs::remove_file(stage_path);
+    }
+}
+
+fn remove_temp_files(paths: &[PathBuf]) {
+    for path in paths {
+        let _ = fs::remove_file(path);
+    }
+}
+
+fn column_name(mut column: usize) -> String {
+    let mut name = String::new();
+    while column > 0 {
+        column -= 1;
+        name.insert(0, (b'A' + (column % 26) as u8) as char);
+        column /= 26;
+    }
+    name
+}
+
+fn path_suffix(path: &Path) -> Option<&str> {
+    let name = path.file_name()?.to_str()?;
+    let dot = name.rfind('.')?;
+    if dot == 0 || dot + 1 == name.len() {
+        None
+    } else {
+        Some(&name[dot + 1..])
+    }
+}
+
+fn is_empty_cell(value: Option<&Value>) -> bool {
+    match value {
+        None | Some(Value::Null) => true,
+        Some(Value::String(text)) => text.trim().is_empty(),
+        Some(Value::Object(object))
+            if object.get("type").and_then(Value::as_str) == Some("empty") =>
+        {
+            true
+        }
+        Some(Value::Object(object))
+            if object.get("type").and_then(Value::as_str) == Some("string") =>
+        {
+            object
+                .get("value")
+                .and_then(Value::as_str)
+                .map_or(true, |text| text.trim().is_empty())
+        }
+        Some(_) => false,
+    }
+}
+
+fn parse_cell(token: &str) -> Option<(usize, usize)> {
+    let letters = token
+        .bytes()
+        .take_while(|byte| byte.is_ascii_alphabetic())
+        .count();
+    if letters == 0 || letters == token.len() {
+        return None;
+    }
+    let row = token[letters..].parse::<usize>().ok()?;
+    if row == 0 {
+        return None;
+    }
+    let column = column_number(&token[..letters]);
+    (column > 0).then_some((row, column))
+}
+
+fn column_number(letters: &str) -> usize {
+    if letters.is_empty() || letters.len() > 3 {
+        return 0;
+    }
+    let column = letters.bytes().fold(0usize, |column, letter| {
+        column
+            .saturating_mul(26)
+            .saturating_add((letter.to_ascii_uppercase() - b'A' + 1) as usize)
+    });
+    if column > 18_278 {
+        0
+    } else {
+        column
+    }
+}
+
+fn ordered<T: Ord>(left: T, right: T) -> (T, T) {
+    if left <= right {
+        (left, right)
+    } else {
+        (right, left)
+    }
+}
+
+fn bounded_range(start: usize, end: usize, max: usize) -> Vec<usize> {
+    let lower = start.max(1);
+    let upper = end.min(max);
+    if lower > upper {
+        Vec::new()
+    } else {
+        (lower..=upper).collect()
+    }
+}

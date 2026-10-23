@@ -1,0 +1,156 @@
+{
+  "baseline": "s2_config_check_python_baseline.json",
+  "cases": [
+    {
+      "blocking_errors": 1,
+      "business_check_passed": false,
+      "id": "check_datetime_indicator_flag",
+      "status": "passed",
+      "warnings": 1
+    },
+    {
+      "blocking_errors": 2,
+      "business_check_passed": false,
+      "id": "check_gap_duplicate",
+      "status": "passed",
+      "warnings": 1
+    },
+    {
+      "blocking_errors": 0,
+      "business_check_passed": true,
+      "id": "check_legacy_severity",
+      "status": "passed",
+      "warnings": 1
+    },
+    {
+      "blocking_errors": 0,
+      "business_check_passed": true,
+      "id": "check_valid",
+      "status": "passed",
+      "warnings": 0
+    },
+    {
+      "blocking_errors": 21,
+      "business_check_passed": false,
+      "id": "comprehensive",
+      "status": "passed",
+      "warnings": 10
+    },
+    {
+      "blocking_errors": 3,
+      "business_check_passed": false,
+      "id": "duplicate_general_setting",
+      "status": "passed",
+      "warnings": 0
+    },
+    {
+      "blocking_errors": 3,
+      "business_check_passed": false,
+      "id": "external_header_order",
+      "status": "passed",
+      "warnings": 0
+    },
+    {
+      "blocking_errors": 3,
+      "business_check_passed": false,
+      "id": "inline_unit_columns",
+      "status": "passed",
+      "warnings": 0
+    },
+    {
+      "blocking_errors": 3,
+      "business_check_passed": false,
+      "id": "invalid_boolean_setting",
+      "status": "passed",
+      "warnings": 0
+    },
+    {
+      "blocking_errors": 3,
+      "business_check_passed": false,
+      "id": "invalid_general_header",
+      "status": "passed",
+      "warnings": 0
+    },
+    {
+      "blocking_errors": 3,
+      "business_check_passed": false,
+      "id": "invalid_optional_severity",
+      "status": "passed",
+      "warnings": 0
+    },
+    {
+      "blocking_errors": 3,
+      "business_check_passed": false,
+      "id": "invalid_unit",
+      "status": "passed",
+      "warnings": 0
+    },
+    {
+      "blocking_errors": 3,
+      "business_check_passed": false,
+      "id": "legacy_band_headers",
+      "status": "passed",
+      "warnings": 0
+    },
+    {
+      "blocking_errors": 4,
+      "business_check_passed": false,
+      "id": "missing_external_sheet",
+      "status": "passed",
+      "warnings": 0
+    },
+    {
+      "blocking_errors": 1,
+      "business_check_passed": false,
+      "id": "missing_file",
+      "status": "passed",
+      "warnings": 0
+    },
+    {
+      "blocking_errors": 4,
+      "business_check_passed": false,
+      "id": "missing_general_sheet",
+      "status": "passed",
+      "warnings": 0
+    },
+    {
+      "blocking_errors": 4,
+      "business_check_passed": false,
+      "id": "missing_indicator_sheet",
+      "status": "passed",
+      "warnings": 0
+    },
+    {
+      "blocking_errors": 3,
+      "business_check_passed": false,
+      "id": "missing_optional_setting_rows",
+      "status": "passed",
+      "warnings": 0
+    },
+    {
+      "blocking_errors": 3,
+      "business_check_passed": false,
+      "id": "unknown_general_setting",
+      "status": "passed",
+      "warnings": 0
+    }
+  ],
+  "coverage": {
+    "formatted_report": "passed",
+    "input_fixtures_unchanged": "passed",
+    "structured_report": "passed"
+  },
+  "fixture": {
+    "case_count": 19,
+    "path": "tests/fixtures/s2_config/check_cases.json"
+  },
+  "schema_version": 1,
+  "scope": "Synthetic S2 configuration workbooks only; does not establish parity for real business configurations, service orchestration, report writing, or target Linux systems.",
+  "source_sha256": {
+    "config.py": "18AF21C33CA45A791C449A2C484BC66F095921EE0839FB9EE9D9218E6FC56ED6",
+    "config_check.py": "9D45DF493604751FA12E61D9B7D65FF2968401E37E779761F58DABCE70873502",
+    "models.py": "8C19D7E5521F9290EC7FAF641C5454BE148188A9B1A7C129127C97E6FC5B903E",
+    "unit_conversion.py": "BE9AF2EAB715AC6ACDD496363B551C649486DD1A0939B55CB746A7AFCD6761BA"
+  },
+  "status": "passed"
+}

@@ -1,0 +1,30 @@
+{
+  "suite": "audit.s3.central_csv_importer",
+  "rust_api": "audit_core::central_csv::parse_central_csv",
+  "baseline": "Open-Data-Audit Python read_central_csv",
+  "generated_at": "2026-10-23",
+  "python_version": "3.12.10",
+  "python_source_sha256": "1B4EB2E0C7990D25361082BC581FFA929BB4C68FD9D345A1A81F205FD6D28D10",
+  "status": "passed_synthetic_parity",
+  "case_count": 3,
+  "rust_validation": "cargo test --workspace --locked (WSL Ubuntu); 30 unit/integration tests passed",
+  "checks": {
+    "encoding_gbk_and_utf8_bom": "preserved",
+    "fixed_14_column_header": "preserved",
+    "quoted_comma_and_escaped_quote": "preserved",
+    "blank_record_issue_row_number": "preserved",
+    "date_normalization_and_invalid_date_issue": "preserved",
+    "unit_conversion_and_exempt_indicator": "preserved",
+    "abnormal_text_and_empty_value": "preserved",
+    "short_row_padding": "preserved",
+    "duplicate_key_last_record_wins": "preserved"
+  },
+  "unverified": [
+    "XLS and XLSX reader dispatch",
+    "real sanitized S3 batch files",
+    "end-to-end S3 business workflows",
+    "malformed CSV compatibility outside the covered cases",
+    "large-file throughput and peak memory"
+  ],
+  "performance": "not_measured"
+}

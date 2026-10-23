@@ -1,0 +1,53 @@
+{
+  "items": [
+    {
+      "item": "sheet-set score and source-sheet subset contract",
+      "status": "保留"
+    },
+    {
+      "item": "mixed report types stop automatic selection",
+      "status": "保留"
+    },
+    {
+      "item": "near-tied candidates require manual selection",
+      "status": "保留"
+    },
+    {
+      "item": "config-real plus 2026-07-31 source-tree smoke (68 source workbooks, 8 templates)",
+      "status": "保留"
+    },
+    {
+      "item": "other real template sets and reporting periods",
+      "status": "未验证"
+    },
+    {
+      "item": "complete S1-F01 audit workflow",
+      "status": "未验证"
+    },
+    {
+      "item": "performance and target Linux",
+      "status": "未测量"
+    }
+  ],
+  "parity": {
+    "cases": 4,
+    "failed": 0,
+    "passed": 4
+  },
+  "rust_functions": [
+    "audit_core::s1_template::recommend_template",
+    "audit_core::s1_template::recommend_from_sheet_sets"
+  ],
+  "schema_version": 1,
+  "source_baseline": "probe/reports/template_recommendation_python_baseline.json",
+  "source_functions": [
+    "base_audit.discovery.recommend_template"
+  ],
+  "source_project": "Open-Data-Audit",
+  "status": "保留（模板推荐局部）",
+  "suite": "audit.s1_template_recommendation",
+  "verification": {
+    "real_smoke": "probe/reports/template_recommendation_real_smoke.json",
+    "rust": "compares all synthetic fixture cases with the read-only Python baseline"
+  }
+}

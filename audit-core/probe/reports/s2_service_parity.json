@@ -1,0 +1,217 @@
+{
+  "status": "passed",
+  "baseline_python": "3.12.10",
+  "source_root": "C:\\Users\\AZI\\Desktop\\VibeCode\\3.open-data-audit",
+  "source_sha256": {
+    "service.py": "601ee1dde3b97860d48408f37114a62ac28ba43434365121633f3d5ae4832528",
+    "config.py": "18af21c33ca45a791c449a2c484bc66f095921ee0839fb9ee9d9218e6fc56ed6",
+    "config_check.py": "9d45df493604751fa12e61d9b7d65ff2968401e37e779761f58dabce70873502",
+    "importer.py": "eef44740de8eb7ab0e09de7c074ff06f22f515cc9a1518982fa662d123a49bec",
+    "validation.py": "ae453446ad2ac10d4457d19c5c14c02f8d95517b0e9559f9959e66726e964195",
+    "period_engine.py": "75c549c3384ef6123c94b5fb08256b07c398b2753fa1b1a6a905478f90a6a4c3",
+    "external_engine.py": "4113ad8b3211ae6ee8b5227b5bbdc1f954dd24d836aae0199124d512e1420bdd",
+    "rule_engine.py": "e80f7a03cca7eac89fd668148c798300bd4c4e6fcd9d33191f156b3368f2d2b0",
+    "exporter.py": "ef99d056ba9038bc9aed8bd23d5d8d0d2813941ba54366c1136380ac70a2e02b",
+    "models.py": "8c19d7e5521f9290ec7faf641c5454be148188a9b1a7c129127c97e6fc5b903e",
+    "unit_conversion.py": "be9af2eab715ac6acdd496363b551c649486dd1a0939b55cb746a7afcd6761ba"
+  },
+  "numeric_relative_tolerance": "1e-15",
+  "scenarios": {
+    "without_external": {
+      "findings": 15,
+      "summary": {
+        "institutions": 1,
+        "forms": 1,
+        "indicators": 11,
+        "total_findings": 15,
+        "abnormal_findings": 4,
+        "by_type": {
+          "校验规则": 4
+        },
+        "by_severity": {
+          "硬性": 4
+        }
+      },
+      "progress_events": 22,
+      "business_difference_count": 0,
+      "business_differences": [],
+      "progress_difference_count": 0,
+      "progress_differences": [],
+      "workbook_stats": {
+        "sheets": 3,
+        "cells": 268,
+        "numeric_cells": 36,
+        "formulas": 0,
+        "cell_styles": 0,
+        "column_widths": 0,
+        "hidden_rows": 0,
+        "worksheet_settings": 0
+      },
+      "workbook_difference_count": 0,
+      "workbook_differences": [],
+      "platform_path_difference_count": 4,
+      "rust_workbook_sha256": "a87451246f6c667b7b4f75df20fa0ef7bbfec88219f1a97469daa073b2c7c707",
+      "python_workbook_sha256": "a7e449bd391d76c1c5faefac87775d9476a78eeb8bbe760cb0beadeac65bc206",
+      "error_message": null,
+      "python_output_created": true,
+      "rust_output_created": true,
+      "cli_summary": {
+        "abnormal_findings": 4,
+        "by_severity": {
+          "硬性": 4
+        },
+        "by_type": {
+          "校验规则": 4
+        },
+        "forms": 1,
+        "indicators": 11,
+        "institutions": 1,
+        "total_findings": 15
+      },
+      "cli_progress_events": 22,
+      "cli_business_difference_count": 0,
+      "cli_business_differences": [],
+      "cli_progress_difference_count": 0,
+      "cli_progress_differences": [],
+      "cli_workbook_stats": {
+        "sheets": 3,
+        "cells": 268,
+        "numeric_cells": 36,
+        "formulas": 0,
+        "cell_styles": 0,
+        "column_widths": 0,
+        "hidden_rows": 0,
+        "worksheet_settings": 0
+      },
+      "cli_workbook_difference_count": 0,
+      "cli_workbook_differences": [],
+      "cli_platform_path_difference_count": 4,
+      "cli_report_sha256": "47a23930a0d2bf468366e292ef73df6e85802855fab5790ef425bd763e1d7b9a",
+      "cli_output_created": true,
+      "cli_error_message": null
+    },
+    "with_external": {
+      "findings": 18,
+      "summary": {
+        "institutions": 1,
+        "forms": 1,
+        "indicators": 11,
+        "total_findings": 18,
+        "abnormal_findings": 7,
+        "by_type": {
+          "校验规则": 7
+        },
+        "by_severity": {
+          "硬性": 4,
+          "软性": 3
+        }
+      },
+      "progress_events": 26,
+      "business_difference_count": 0,
+      "business_differences": [],
+      "progress_difference_count": 0,
+      "progress_differences": [],
+      "workbook_stats": {
+        "sheets": 3,
+        "cells": 304,
+        "numeric_cells": 36,
+        "formulas": 0,
+        "cell_styles": 0,
+        "column_widths": 0,
+        "hidden_rows": 0,
+        "worksheet_settings": 0
+      },
+      "workbook_difference_count": 0,
+      "workbook_differences": [],
+      "platform_path_difference_count": 4,
+      "rust_workbook_sha256": "24172cffea73dabb37e09f803774cf6b7f79cb633cf2ead8c458c0461c08314a",
+      "python_workbook_sha256": "9b0640e8008e6a66f9d021b909a7360564d0af3fd94c948cc23fd36be5cae95f",
+      "error_message": null,
+      "python_output_created": true,
+      "rust_output_created": true,
+      "cli_summary": {
+        "abnormal_findings": 7,
+        "by_severity": {
+          "硬性": 4,
+          "软性": 3
+        },
+        "by_type": {
+          "校验规则": 7
+        },
+        "forms": 1,
+        "indicators": 11,
+        "institutions": 1,
+        "total_findings": 18
+      },
+      "cli_progress_events": 26,
+      "cli_business_difference_count": 0,
+      "cli_business_differences": [],
+      "cli_progress_difference_count": 0,
+      "cli_progress_differences": [],
+      "cli_workbook_stats": {
+        "sheets": 3,
+        "cells": 304,
+        "numeric_cells": 36,
+        "formulas": 0,
+        "cell_styles": 0,
+        "column_widths": 0,
+        "hidden_rows": 0,
+        "worksheet_settings": 0
+      },
+      "cli_workbook_difference_count": 0,
+      "cli_workbook_differences": [],
+      "cli_platform_path_difference_count": 4,
+      "cli_report_sha256": "2fd87d1665d62090fc5d65b6b5c0245306ba44c82648b0a3eca6a7b016e1a1ed",
+      "cli_output_created": true,
+      "cli_error_message": null
+    },
+    "invalid_config": {
+      "findings": 0,
+      "summary": null,
+      "progress_events": 1,
+      "business_difference_count": 0,
+      "business_differences": [],
+      "progress_difference_count": 0,
+      "progress_differences": [],
+      "workbook_stats": {},
+      "workbook_difference_count": 0,
+      "workbook_differences": [],
+      "platform_path_difference_count": 0,
+      "rust_workbook_sha256": null,
+      "python_workbook_sha256": null,
+      "error_message": "审核配置存在阻断错误，不能执行报表规则：策略组+规则编号重复：G1/B1；环比策略组 G1 存在空档：B1 与 B1",
+      "python_output_created": false,
+      "rust_output_created": false,
+      "cli_summary": null,
+      "cli_progress_events": 1,
+      "cli_business_difference_count": 0,
+      "cli_business_differences": [],
+      "cli_progress_difference_count": 0,
+      "cli_progress_differences": [],
+      "cli_workbook_stats": {},
+      "cli_workbook_difference_count": 0,
+      "cli_workbook_differences": [],
+      "cli_platform_path_difference_count": 0,
+      "cli_report_sha256": null,
+      "cli_output_created": false,
+      "cli_error_message": "审核配置存在阻断错误，不能执行报表规则：策略组+规则编号重复：G1/B1；环比策略组 G1 存在空档：B1 与 B1"
+    }
+  },
+  "input_sha256_before_python": {
+    "current/9144#2026-06-30#x#20202#甲银行.xlsx": "02541d0a4a074510a370b281f6b9ab302ae2daf0e48cb503c832ea3a583ff62f",
+    "previous/9144#2026-03-31#x#20202#甲银行.xlsx": "02541d0a4a074510a370b281f6b9ab302ae2daf0e48cb503c832ea3a583ff62f",
+    "check_valid.xlsx": "7e31072903b0cb9b0cc52d7eb02bfd488e6a3897262c2c0ae56d5d46ad921dc4",
+    "check_gap_duplicate.xlsx": "738fa9755c534561dc8563b004eac493e5e0170cf80a112b6ac2220fd607d801",
+    "plain_layout.xlsx": "8b4131e84ed0fd53834f939493cb528ad3cca575055e998cdc21a75d3ce36f0b"
+  },
+  "input_sha256_after_python": {
+    "current/9144#2026-06-30#x#20202#甲银行.xlsx": "02541d0a4a074510a370b281f6b9ab302ae2daf0e48cb503c832ea3a583ff62f",
+    "previous/9144#2026-03-31#x#20202#甲银行.xlsx": "02541d0a4a074510a370b281f6b9ab302ae2daf0e48cb503c832ea3a583ff62f",
+    "check_valid.xlsx": "7e31072903b0cb9b0cc52d7eb02bfd488e6a3897262c2c0ae56d5d46ad921dc4",
+    "check_gap_duplicate.xlsx": "738fa9755c534561dc8563b004eac493e5e0170cf80a112b6ac2220fd607d801",
+    "plain_layout.xlsx": "8b4131e84ed0fd53834f939493cb528ad3cca575055e998cdc21a75d3ce36f0b"
+  },
+  "inputs_unchanged": true,
+  "rust_inputs_unchanged": true,
+  "source_unchanged": true
+}

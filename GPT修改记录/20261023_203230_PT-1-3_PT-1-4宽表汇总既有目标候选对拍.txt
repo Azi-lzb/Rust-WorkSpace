@@ -1,0 +1,39 @@
+# GPT 修改记录：PT-1-3/PT-1-4 宽表汇总既有目标候选对拍
+
+- 时间：2026-10-23 20:32（Asia/Shanghai）
+- 执行者：Codex
+- 修改前/后 commit：不可取得。workspace 当前没有可解析的 `HEAD`；`git status --short` 显示文件整体未跟踪。未暂存、提交、重置或清理工作区。
+- WIP：修改前检查 Git 状态与 `GPT修改记录/`；工作区已有未跟踪文件，未发现命名为 WIP/进行中的记录。仅修改本记录列出的文件，保留其他未跟踪内容。
+- 组件版本：`pytools-core 0.1.0`、`excel-editor 0.1.0`，均未升级。
+
+## 修改目的
+
+继续 PT-1-3/PT-1-4 宽表汇总迁移，核验已存在的目标 sheet 重建语义是否与旧 PyCode 保持一致，并验证 capability-gated ExcelModifier 候选执行和源文件保护。保持生产能力目录、默认路由和产品代码不变。
+
+## 修改文件
+
+- `pytools-core/probe/compare_wide_summary.py`：修复对拍器只解析单行 JSON 导致误报的问题；增强 Windows/WSL 临时文件清理的有限重试；机器报告记录包版本、逐格数量、输出文件 SHA-256、原输入不变断言及临时 capability 限定。明确合成夹具没有公式，公式文本保留仍未验证。
+- `pytools-core/probe/reports/wide_summary_existing_target_parity_20261023.json`：记录两种行头模式的既有目标替换候选执行结果。SHA-256 只作为输出产物标识，不用于跨引擎判等；实际临时产物已由成功的探针运行清理。
+- `pytools-core/MIGRATION_INVENTORY.md`：记录 PT-1-3/PT-1-4 既有目标候选证据、真实 Rust 数据流和当前缺口；生产状态仍为“未验证”。
+- 本记录：保存本轮依据、命令、限制及回滚提示。
+
+未修改 Rust 业务源码、Cargo 依赖/构建配置、生产 capability、默认路由或两个源 Python 项目。本轮 Rust 实现为既有工作区代码，仅进行核验。
+
+## 测试与结果
+
+- Windows Python/Rust 合成对拍：使用系统临时目录中的隔离 Python 3.12.10 环境（NumPy 2.1.3、pandas 2.2.3、openpyxl 3.1.5）运行 `pytools-core/probe/compare_wide_summary.py`，最终运行通过。旧 Python 基线直接调用只读 `PyCode/core/wide_397_398.py`；Rust CLI 通过 WSL2 Ubuntu 的 Cargo 执行。
+- 结果：行头加后缀/不加后缀两种模式的既有目标 sheet 重建均通过。测试保留一条旧数据、过滤一条批次重复数据、追加非重复数据；`Before`/`After` 工作表顺序及抽查值、填充、批注、合并、行高和列宽与 Python 基线一致。目标 sheet 上被重建丢弃的样式/批注/合并/行列尺寸标记符合旧版 `if_sheet_exists="replace"` 行为。Rust 候选、Python 结果和原目标数据投影通过对拍；源工作簿、配置和 Rust 原目标字节不变。临时 Passed capability 仅在测试临时目录使用，没有写入生产能力目录。
+- `wsl -e sh -lc 'cd /mnt/c/Users/AZI/Desktop/VibeCode/1.rust-workspace && cargo fmt --all -- --check && cargo test --workspace --offline --locked -q'`：退出码 0。workspace 测试运行通过；两项要求隔离 openpyxl runtime 的测试保持 ignored。输出含既有 Umya 弃用 API 与 unused import 警告。
+- 运行证据：`pytools-core/probe/reports/wide_summary_existing_target_parity_20261023.json`。Windows 原生没有 `cargo`，所以本轮 Rust 编译/测试使用 WSL2；这不代表麒麟/UOS 目标平台验收。
+
+## 未执行项与已知问题
+
+- 没有脱敏真实业务样本；用户此前确认尚无样本。合成 fixture 不含公式，公式文本保留未验证。
+- 当前既有目标执行产出经验证的独立候选文件，尚无产品步骤将其提交回配置目标路径。因此 PT-1-3/PT-1-4 仍未完成真实可交付验收，不能登记生产 capability 或切换默认路由。
+- 未验证完整样式/OOXML 部件、XLS/XLSM/XLSB/ET、Windows 原生 Rust、麒麟 V10/UOS V20、glibc 2.28 和离线 deb。
+- 最终成功探针运行清理了其自身夹具；前两次因 JSON 解析器/Windows 文件清理竞态失败的尝试在 `%TEMP%` 留有临时诊断目录（不在 workspace 或源项目）。当前执行环境的递归删除请求被策略拒绝，故保留这些临时目录，不触碰其他旧测试目录。它们未被当作验收产物，也不含生产数据。
+
+## 删除清单与回滚提示
+
+- 删除清单：无。没有删除源文件、用户数据或原有未提交工作。
+- 回滚：没有 Git 基线，禁止整体 reset/clean。若需回滚，仅撤销本记录列出的 probe 脚本 hunk 和迁移清单段落，并移除 `wide_summary_existing_target_parity_20261023.json` 与本记录；保留所有其他现有未跟踪文件。

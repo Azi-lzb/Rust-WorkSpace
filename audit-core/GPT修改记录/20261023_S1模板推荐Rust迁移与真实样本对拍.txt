@@ -1,0 +1,45 @@
+时间：2026-10-23 +08:00
+执行者：Codex
+工作区修改前/后 commit：无可解析的 HEAD；workspace 当前为首次提交前状态，文件均未跟踪
+工作区 WIP：本轮只在现有未跟踪 workspace 上增量修改；未暂存或提交其他文件
+
+【目的】
+回应生产路径是否残留 Python 的盘点，并继续实现一个可独立验收的 Audit S1 切片：按工作表集合推荐模板。Python 仅作为只读对拍基线和测试辅助，不进入产品运行路径。该实现不代表 S1-F01 完整迁移。
+
+【修改文件】
+- `crates/excel-reader/src/lib.rs`：增加只读取 XLSX `xl/workbook.xml` sheet directory 的 namespace-aware OOXML 元数据 API；不读取单元格值，不在错误时回退到 Calamine。
+- `audit-core/src/s1_template.rs`、`audit-core/src/lib.rs`、`audit-core/src/bin/open-data-audit.rs`：移植模板候选排序/置信度/人工确认规则，并接入 `open-data-audit template-suggest`。
+- `audit-core/tests/fixtures/template_recommendation_cases.json`、`audit-core/tests/compare/run_template_recommendation_baseline.py`、`run_template_recommendation_real_smoke.py`、`audit-core/tests/s1_template_recommendation_parity.rs`：增加合成夹具、Python 对拍辅助和 Rust 集成对拍。Python 文件只用于对拍，不由产品启动。
+- `audit-core/probe/reports/template_recommendation_python_baseline.json`、`template_recommendation_parity.json`、`template_recommendation_real_smoke.json`：记录基线、合成对拍、真实只读样本结果和有限性能观测。
+- `audit-core/README.md`、`audit-core/MIGRATION_INVENTORY.md`、`EXCEL_ENGINE_ARCHITECTURE.md`：修正读取实现说明、更新局部迁移状态/证据范围和 Python 文件盘点。
+- 新增本记录。
+
+【Python 代码盘点】
+- 扫描 `audit-core/src/`、`pytools-core/src/`、`crates/`、`sidecar/`：未发现 `.py` 生产源文件、Python 子进程入口、PyO3/python-calamine 生产依赖。
+- 当前 workspace 共 50 个 `.py` 文件，全部位于 `probe/` 或 `tests/compare/`，用途为旧实现基线、对拍、夹具生成或测试辅助；保留这些脚本以便重复验证，未把它们打入产品路径。
+- 当前没有 Go 生产实现或 `go.mod`；`audit-core/core-go/` 仅有说明文件。业务逻辑目前是部分 Rust 迁移，Go 仍是按规则评估的候选，不应描述为已完成。
+
+【样本与对拍】
+- 源项目 `C:\Users\AZI\Desktop\VibeCode\3.open-data-audit` 保持只读；真实模板/输入没有复制到 workspace。
+- 4 个合成推荐场景逐字段与旧 Python 基线一致。
+- 只读真实样本包含 8 个 `config-real` 模板与 2026-07-31 S1 目录中的 68 个 XLSX。Python/Rust 的匹配状态、置信度、说明及候选一致；真实模板集合和输入集合的读前/读后 SHA-256 相同。
+- 模板工作表名称专用读取使用 OOXML metadata adapter。一次完整命令进程耗时（含进程启动、递归扫描、sheet-directory 读取、排序和 JSON 输出）在 Ubuntu 24.04 / WSL2 x86_64，文件位于 `/mnt/c`：Rust Release + OOXML 中位数 1.37 秒（1.36、1.37、1.37、1.37、1.39）；Python 基线中位数 1.76 秒（1.82、1.78、1.73、1.73、1.76）；Rust Release + Calamine 对照中位数 3.70 秒（3.55、3.80、3.76、3.57、3.70）。这只是一个真实目录树的实测，不外推至其他任务、输入格式或目标系统，也不改变 workspace 的通用 reader 默认路由。
+
+【验证】
+- `cargo fmt --all`：通过。
+- `cargo test -p excel-reader --locked`：8 项通过。
+- `cargo test -p audit-core --locked`：43 个单元测试与 17 个集成测试通过。
+- `cargo build --release -p audit-core --bin open-data-audit --locked`：通过。
+- 合成 Python/Rust 对拍：4/4 通过；真实只读 smoke：Rust 与 Python 输出一致，源数据集合哈希不变。
+- 本轮没有重跑 workspace 全量测试、Windows 原生构建、麒麟/UOS/glibc 2.28、S1 规则/公式/回写/历史端到端或 deb 验收。
+
+【未完成与风险】
+- 目前只迁移模板发现与推荐，S1-F01 仍为“未验证”。规则执行、公式计算、结果写回、历史、重复运行和 UI 工作流没有包含在此切片中。
+- 本轮模板 sheet-directory 读取适配器只支持 `.xlsx`；其他格式和真实配置/模板全集未验证。
+- 性能观察只针对单一 Ubuntu/WSL2 样本和完整进程口径，不构成其他场景的速度承诺。
+- 48 个旧 `.py` 的初始盘点数现增至 50，是本轮新增两份测试/对拍辅助脚本；它们不是生产代码。
+
+【Git 与回滚】
+- workspace 尚无首次 commit，当前文件均为未跟踪状态；本轮未暂存、提交或推送。由于没有 HEAD，无法生成有基线的 git diff；后续应先确认首次受控快照范围，再按用户授权建立提交。
+- 两个原始 Python 项目、原始配置和真实工作簿均未修改；真实文件只读打开，且报告不保存文件名或单元格内容。
+- 回滚可单独删除本记录并撤销上述 Rust、夹具、报告与文档增量；不得删除既有 Python baseline/helper。

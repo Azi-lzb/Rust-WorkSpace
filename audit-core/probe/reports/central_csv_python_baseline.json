@@ -1,0 +1,264 @@
+{
+  "baseline": "Open-Data-Audit Python read_central_csv",
+  "cases": [
+    {
+      "dataset": {
+        "freq_dates": {},
+        "issues": [
+          {
+            "message": "数据值非纯数值：'无'",
+            "row": 4
+          }
+        ],
+        "key_index": {
+          "人民币6k0i440000033370本期数人民币月2": {
+            "batch": "2",
+            "biz_class": "人民币",
+            "currency": "人民币",
+            "data_attr": "本期数",
+            "frequency": "月",
+            "indicator": "33370",
+            "indicator_name": "重复键后值",
+            "order_code": "4",
+            "org_code": "6k0i",
+            "org_name": "示例甲银行",
+            "record_date": "2026-08-31",
+            "region_code": "4400000",
+            "region_name": "广东省",
+            "value": 0.001
+          },
+          "人民币6k0i440000033371本期数人民币月2": {
+            "batch": "2",
+            "biz_class": "人民币",
+            "currency": "人民币",
+            "data_attr": "本期数",
+            "frequency": "月",
+            "indicator": "33371",
+            "indicator_name": "各项贷款余额",
+            "order_code": "2",
+            "org_code": "6k0i",
+            "org_name": "示例甲银行",
+            "record_date": "2026-08-31",
+            "region_code": "4400000",
+            "region_name": "广东省",
+            "value": "无"
+          },
+          "人民币6k0i440000033372本期数人民币月2": {
+            "batch": "2",
+            "biz_class": "人民币",
+            "currency": "人民币",
+            "data_attr": "本期数",
+            "frequency": "月",
+            "indicator": "33372",
+            "indicator_name": "特殊指标",
+            "order_code": "3",
+            "org_code": "6k0i",
+            "org_name": "示例甲银行",
+            "record_date": "2026-08-31",
+            "region_code": "4400000",
+            "region_name": "广东省",
+            "value": 100.0
+          }
+        },
+        "record_date": "2026-08-31",
+        "records": [
+          {
+            "batch": "2",
+            "biz_class": "人民币",
+            "currency": "人民币",
+            "data_attr": "本期数",
+            "frequency": "月",
+            "indicator": "33370",
+            "indicator_name": "各项贷款",
+            "order_code": "1",
+            "org_code": "6k0i",
+            "org_name": "示例, \"甲\"银行",
+            "record_date": "2026-08-31",
+            "region_code": "4400000",
+            "region_name": "广东省",
+            "value": 1.234567
+          },
+          {
+            "batch": "2",
+            "biz_class": "人民币",
+            "currency": "人民币",
+            "data_attr": "本期数",
+            "frequency": "月",
+            "indicator": "33371",
+            "indicator_name": "各项贷款余额",
+            "order_code": "2",
+            "org_code": "6k0i",
+            "org_name": "示例甲银行",
+            "record_date": "2026-08-31",
+            "region_code": "4400000",
+            "region_name": "广东省",
+            "value": "无"
+          },
+          {
+            "batch": "2",
+            "biz_class": "人民币",
+            "currency": "人民币",
+            "data_attr": "本期数",
+            "frequency": "月",
+            "indicator": "33372",
+            "indicator_name": "特殊指标",
+            "order_code": "3",
+            "org_code": "6k0i",
+            "org_name": "示例甲银行",
+            "record_date": "2026-08-31",
+            "region_code": "4400000",
+            "region_name": "广东省",
+            "value": 100.0
+          },
+          {
+            "batch": "2",
+            "biz_class": "人民币",
+            "currency": "人民币",
+            "data_attr": "本期数",
+            "frequency": "月",
+            "indicator": "33370",
+            "indicator_name": "重复键后值",
+            "order_code": "4",
+            "org_code": "6k0i",
+            "org_name": "示例甲银行",
+            "record_date": "2026-08-31",
+            "region_code": "4400000",
+            "region_name": "广东省",
+            "value": 0.001
+          }
+        ]
+      },
+      "id": "gbk_records_conversion_exception_and_duplicate_key"
+    },
+    {
+      "dataset": {
+        "freq_dates": {},
+        "issues": [],
+        "key_index": {
+          "本外币机构0144000004001期末人民币月1": {
+            "batch": "1",
+            "biz_class": "本外币",
+            "currency": "人民币",
+            "data_attr": "期末",
+            "frequency": "月",
+            "indicator": "4001",
+            "indicator_name": "余额",
+            "order_code": "1",
+            "org_code": "机构01",
+            "org_name": "示例机构",
+            "record_date": "2026-08-31",
+            "region_code": "4400000",
+            "region_name": "广东省",
+            "value": null
+          }
+        },
+        "record_date": "2026-08-31",
+        "records": [
+          {
+            "batch": "1",
+            "biz_class": "本外币",
+            "currency": "人民币",
+            "data_attr": "期末",
+            "frequency": "月",
+            "indicator": "4001",
+            "indicator_name": "余额",
+            "order_code": "1",
+            "org_code": "机构01",
+            "org_name": "示例机构",
+            "record_date": "2026-08-31",
+            "region_code": "4400000",
+            "region_name": "广东省",
+            "value": null
+          }
+        ]
+      },
+      "id": "utf8_bom_date_and_empty_value"
+    },
+    {
+      "dataset": {
+        "freq_dates": {},
+        "issues": [
+          {
+            "message": "数据日期无法解析：'坏日期'",
+            "row": 2
+          },
+          {
+            "message": "数据值非纯数值：'无'",
+            "row": 2
+          }
+        ],
+        "key_index": {
+          "人民币": {
+            "batch": "",
+            "biz_class": "人民币",
+            "currency": "",
+            "data_attr": "",
+            "frequency": "",
+            "indicator": "",
+            "indicator_name": "",
+            "order_code": "",
+            "org_code": "",
+            "org_name": "",
+            "record_date": "2026-08-31",
+            "region_code": "",
+            "region_name": "",
+            "value": null
+          },
+          "人民币机构0244000004002余额人民币月1": {
+            "batch": "1",
+            "biz_class": "人民币",
+            "currency": "人民币",
+            "data_attr": "余额",
+            "frequency": "月",
+            "indicator": "4002",
+            "indicator_name": "贷款",
+            "order_code": "1",
+            "org_code": "机构02",
+            "org_name": "示例机构",
+            "record_date": "",
+            "region_code": "4400000",
+            "region_name": "广东省",
+            "value": "无"
+          }
+        },
+        "record_date": "2026-08-31",
+        "records": [
+          {
+            "batch": "1",
+            "biz_class": "人民币",
+            "currency": "人民币",
+            "data_attr": "余额",
+            "frequency": "月",
+            "indicator": "4002",
+            "indicator_name": "贷款",
+            "order_code": "1",
+            "org_code": "机构02",
+            "org_name": "示例机构",
+            "record_date": "",
+            "region_code": "4400000",
+            "region_name": "广东省",
+            "value": "无"
+          },
+          {
+            "batch": "",
+            "biz_class": "人民币",
+            "currency": "",
+            "data_attr": "",
+            "frequency": "",
+            "indicator": "",
+            "indicator_name": "",
+            "order_code": "",
+            "org_code": "",
+            "org_name": "",
+            "record_date": "2026-08-31",
+            "region_code": "",
+            "region_name": "",
+            "value": null
+          }
+        ]
+      },
+      "id": "utf8_invalid_date_and_short_row"
+    }
+  ],
+  "suite": "audit.s3.central_csv_importer"
+}

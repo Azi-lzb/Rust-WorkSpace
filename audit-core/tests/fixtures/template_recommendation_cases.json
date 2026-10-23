@@ -1,0 +1,42 @@
+{
+  "cases": [
+    {
+      "id": "source_sheet_subset_with_template_helpers",
+      "sources": [["单位贷款"]],
+      "templates": [
+        {
+          "name": "综合模板.xlsx",
+          "sheets": ["单位贷款", "个人贷款", "机构说明", "兜底模板"]
+        },
+        {
+          "name": "其他模板.xlsx",
+          "sheets": ["个人贷款", "机构说明", "兜底模板"]
+        }
+      ]
+    },
+    {
+      "id": "mixed_source_report_types",
+      "sources": [["单位贷款"], ["个人贷款"]],
+      "templates": [
+        {"name": "单位模板.xlsx", "sheets": ["单位贷款"]},
+        {"name": "个人模板.xlsx", "sheets": ["个人贷款"]}
+      ]
+    },
+    {
+      "id": "near_tied_partial_templates_require_manual_selection",
+      "sources": [["甲", "乙", "丙", "丁", "戊"]],
+      "templates": [
+        {"name": "模板甲.xlsx", "sheets": ["甲", "乙", "丙", "丁", "己"]},
+        {"name": "模板乙.xlsx", "sheets": ["甲", "乙", "丙", "丁", "庚"]}
+      ]
+    },
+    {
+      "id": "unmatched_source_sheets",
+      "sources": [["未知业务"]],
+      "templates": [
+        {"name": "模板甲.xlsx", "sheets": ["甲"]},
+        {"name": "模板乙.xlsx", "sheets": ["乙"]}
+      ]
+    }
+  ]
+}

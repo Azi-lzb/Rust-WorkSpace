@@ -1,0 +1,99 @@
+{
+  "source": "C:\\Users\\AZI\\Desktop\\VibeCode\\1.rust-workspace\\audit-core\\tests\\fixtures\\synthetic_probe.xlsx",
+  "output": "C:\\Users\\AZI\\AppData\\Local\\Temp\\audit-workspace-probes\\umya\\synthetic_probe_umya_patched.xlsx",
+  "checks": [
+    {
+      "name": "openpyxl_openability",
+      "passed": true,
+      "detail": "source and output both open"
+    },
+    {
+      "name": "sheet_names_and_order",
+      "passed": true,
+      "detail": "source=['Synthetic']; output=['Synthetic']"
+    },
+    {
+      "name": "Synthetic:merged_ranges",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "name": "Synthetic:conditional_formatting_and_dxf",
+      "passed": true,
+      "detail": "source_count=1; output_count=1"
+    },
+    {
+      "name": "Synthetic:data_validations",
+      "passed": true,
+      "detail": "source_count=1; output_count=1"
+    },
+    {
+      "name": "Synthetic:comment_text",
+      "passed": true,
+      "detail": "source={'H2': 'synthetic comment text'}; output={'H2': 'synthetic comment text'}"
+    },
+    {
+      "name": "Synthetic:defined_names",
+      "passed": true,
+      "detail": "source={'global:SyntheticNamedCell': 'SYNTHETIC!E5'}; expected={'global:SyntheticNamedCell': 'SYNTHETIC!E5'}; output={'global:SyntheticNamedCell': 'SYNTHETIC!E5'}"
+    },
+    {
+      "name": "Synthetic:requested_row_dimensions",
+      "passed": true,
+      "detail": "expected={'2': {'height': 18.0, 'hidden': True, 'style': 0, 'outline': 0}, '3': {'height': 30.0, 'hidden': False, 'style': 0, 'outline': 0}}; output={'2': {'height': 18.0, 'hidden': True, 'style': 0, 'outline': 0}, '3': {'height': 30.0, 'hidden': False, 'style': 0, 'outline': 0}}"
+    },
+    {
+      "name": "Synthetic:requested_column_width",
+      "passed": true,
+      "detail": "requested I=25; output={'width': 25.0, 'hidden': False, 'style': 0, 'min': 9, 'max': 9}"
+    },
+    {
+      "name": "Synthetic:other_column_dimensions_preserved",
+      "passed": true,
+      "detail": "expected={'I': {'width': 25.0, 'hidden': False, 'style': 0, 'min': 9, 'max': 9}}; output={'I': {'width': 25.0, 'hidden': False, 'style': 0, 'min': 9, 'max': 9}}"
+    },
+    {
+      "name": "Synthetic:freeze_panes",
+      "passed": true,
+      "detail": "C3 -> C3"
+    },
+    {
+      "name": "Synthetic:auto_filter",
+      "passed": true,
+      "detail": "A1:H10 -> A1:H10"
+    },
+    {
+      "name": "Synthetic:print_area",
+      "passed": true,
+      "detail": "'Synthetic'!$A$1:$D$10 -> 'Synthetic'!$A$1:$D$10"
+    },
+    {
+      "name": "Synthetic:print_settings",
+      "passed": true,
+      "detail": "source={'orientation': 'landscape', 'paperSize': None, 'fitToWidth': 1, 'fitToHeight': 0, 'scale': None, 'firstPageNumber': None, 'useFirstPageNumber': None, 'fitToPage': True, 'margins': {'left': 0.3, 'right': 0.3, 'top': 1.0, 'bottom': 1.0, 'header': 0.5, 'footer': 0.5}, 'print_options': {'horizontalCentered': True, 'verticalCentered': None, 'gridLines': None, 'headings': None}}; output={'orientation': 'landscape', 'paperSize': None, 'fitToWidth': 1, 'fitToHeight': 0, 'scale': None, 'firstPageNumber': None, 'useFirstPageNumber': None, 'fitToPage': True, 'margins': {'left': 0.3, 'right': 0.3, 'top': 1.0, 'bottom': 1.0, 'header': 0.5, 'footer': 0.5}, 'print_options': {'horizontalCentered': True, 'verticalCentered': None, 'gridLines': None, 'headings': None}}"
+    },
+    {
+      "name": "Synthetic:formula_text",
+      "passed": true,
+      "detail": "expected={'D4': '=SUM(A1:A3)'}; output={'D4': '=SUM(A1:A3)'}"
+    },
+    {
+      "name": "Synthetic:requested_cell_changes",
+      "passed": true,
+      "detail": "checked A1, B2, E5, F2, G2, H2 and D4"
+    },
+    {
+      "name": "Synthetic:font_fill_border_number_format",
+      "passed": true,
+      "detail": "bold=True; fill=FFFFFF00; left=thin; number_format=0.00"
+    },
+    {
+      "name": "Synthetic:random_unmodified_cells",
+      "passed": true,
+      "detail": "seed=20261022; checked=50; cells=['J6', 'N3', 'L5', 'J3', 'M7', 'L2', 'M1', 'P2', 'O2', 'J7', 'J1', 'L6', 'Q4', 'A2', 'K7', 'M2', 'Q7', 'K3', 'O5', 'N5', 'P1', 'Q5', 'J2', 'O4', 'Q1', 'N2', 'K4', 'O6', 'N7', 'K6', 'L7', 'N1', 'M4', 'J5', 'P6', 'K1', 'O3', 'J4', 'M3', 'Q6', 'L1', 'L4', 'M6', 'K2', 'P7', 'P4', 'C4', 'M5', 'K5', 'Q3']"
+    }
+  ],
+  "passed": 18,
+  "total": 18,
+  "rate": 1.0
+}

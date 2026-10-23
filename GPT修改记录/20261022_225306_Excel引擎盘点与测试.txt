@@ -1,0 +1,40 @@
+时间：2026-10-22 22:53（Asia/Shanghai）
+执行者：Codex
+workspace HEAD：不可取得；根目录无首次提交，现存文件均为未跟踪工作文件。
+修改前 WIP 检查：确认工作区文件均未跟踪；保留根目录 `13_Rust_ExcelWorkspace excel 读写、修改与引擎路由规范.md` 建议稿，未覆盖或移动。
+
+## 目的
+
+按更新后的迁移目标复核现有 Rust workspace 与测试，并在开始实现候选修改引擎前，补充 Excel 操作族与旧 Office 引擎的边界清单。
+
+## workspace 验证
+
+- 在 WSL Ubuntu 执行：`cd /mnt/c/Users/AZI/Desktop/VibeCode/1.rust-workspace && cargo test --workspace --locked`。
+- 结果：成功，退出码 0；20 个单元/集成测试通过，0 失败。其余 crate 和文档测试无测试项。
+- 测试覆盖当前 Rust helper、读写探针、配置/规则/抽取的合成数据对拍。此结果不证明真实模板、端到端产品业务、完整 Excel 保真或 Linux 离线 deb 已验收。
+- PowerShell 环境未将 `cargo` 配入 PATH；实际测试使用已有 WSL Ubuntu Rust 工具链完成，未安装或更改系统工具链。
+
+## 修改文件
+
+- `EXCEL_ENGINE_ARCHITECTURE.md`：新增按操作类别的首轮引擎候选与拒绝条件；强调对象操作只需比较 umya/Excelize，不代表已确认必须引入其中任何一个；补充配置簿、旧 COM/LO 执行器的边界及盘点状态。
+- `PYTHON_EXCEL_OPERATION_INVENTORY.md`：补充 PyCode COM 分支范围和 audit `ExcelSession`、LibreOffice 旧执行器、转换入口的迁移边界。除公式重算和同类格式转换外，旧 COM/Office 业务工作流不能作为旁路保留。
+- 本记录：记载本次扫描、测试、未完成项与回退方式。
+
+## 源码与迁移范围
+
+- 对 `4.pytools-main/PyCode/core`、`4.pytools-main/NoComPyTools/nocompytools/core`、`3.open-data-audit/core/src` 做只读 AST/文本检索；无源项目代码、配置、测试、数据或报告写入。
+- 本轮没有新增业务实现，没有开发 OOXML Patch、umya 修改适配器或 Excelize worker；没有删除或替换 Python 功能。
+- 新明确边界：audit `base_audit/excel_com.py` 的 ExcelSession 集成业务读取、模板检查、规则执行、复制和报告写入，不能整体留给 sidecar；只可将经确认的公式重算职责拆出。pytools `*_com.py` 也是基线/差异参考，不可被包装成一般业务旁路。
+- 调用点扫描确认 ExcelSession 被 `excel_wps.py`、`merge_org.py`、`service.py`、`region_summary.py`、workflow runner/handlers 与 S3 `office_eval.py` 使用；`PyCode/main.py` 也会在多个功能入口分派普通版和 COM 版。清单已记录这些跨模块关系及 PDF 导出排除项，逐入口数据流仍未全部追完。
+
+## 未完成与已知风险
+
+- 菜单/dispatcher 到 helper、配置字段、输入输出和异常保存行为的完整调用链仍未完成；AST 扫描不能证明分支可达或执行顺序。
+- PyCode 与 NoComPyTools 的完整共有/独有行为尚未比对；COM 变体待按菜单入口逐项核实。
+- 真实脱敏业务模板尚未进入 workspace；编辑器报告仍为合成文件历史证据。
+- ExcelEditPlan / ExcelModifier 尚未实现，当前业务层 `institution_normalize` 仍直接使用 umya 候选适配器。
+- 未运行真实样本性能/峰值内存测试、glibc 2.28 交叉构建、离线 deb 或麒麟/UOS 验收。
+
+## 回退
+
+本轮只增加/修改架构与盘点文档。若需回退，仅移除此记录，并撤回 `EXCEL_ENGINE_ARCHITECTURE.md` 中新增的 4.1、5.1 段及对应 checklist 行、以及 `PYTHON_EXCEL_OPERATION_INVENTORY.md` 本轮补入的静态扫描说明和 3.4 节；源 Python 项目与 Rust 代码没有需要回退的变化。

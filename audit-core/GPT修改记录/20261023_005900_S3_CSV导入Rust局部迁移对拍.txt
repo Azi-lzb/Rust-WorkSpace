@@ -1,0 +1,45 @@
+时间：2026-10-23 00:59:00（Asia/Shanghai）
+执行者：Codex（workspace 迁移）
+修改前 commit：不可取得；workspace 根目录没有可解析的 HEAD，现有文件均为未跟踪 WIP。
+修改后 commit：未创建；本次未执行 git 操作。
+WIP 检查：保留已有 workspace 代码和探针；只在本 workspace 中新增/更新 CSV 迁移文件。Open-Data-Audit 源目录只读。本次基线源 `csv_importer.py` SHA-256：`1B4EB2E0C7990D25361082BC581FFA929BB4C68FD9D345A1A81F205FD6D28D10`。
+
+## 目的
+
+迁移 Open-Data-Audit S3 大集中导数导入中的 CSV 解析与标准化分支，使用 Python `read_central_csv` 生成行为基线。此项只完成 CSV 支路的纯逻辑，不代表 XLS/XLSX 导入或 S3 工作流已迁移。
+
+## 文件变化
+
+- 新增 `audit-core/src/central_csv.rs`：用 Rust `csv` 与 `encoding_rs` 解码 CSV、校验固定 14 列表头、标准化字段、解析日期/数值、执行单位换算与豁免、保留异常文本和日志行号、构建重复键后值覆盖索引。
+- 更新 `Cargo.toml`、`audit-core/Cargo.toml`、`Cargo.lock`：集中管理并锁定 `chrono`、`csv`、`encoding_rs` 依赖。
+- 更新 `audit-core/src/lib.rs` 导出该局部模块。
+- 新增 `audit-core/tests/fixtures/central_csv_cases.json` 与 `tests/compare/run_central_csv_baseline.py`，在 workspace 内维护合成输入，并只读调用原项目生成 Python 基线。
+- 新增 `audit-core/probe/reports/central_csv_python_baseline.json` 和 `central_csv_parity.json`；更新 `probe/probe.toml` 登记输入与报告路径。
+- 更新 `audit-core/MIGRATION_INVENTORY.md` 和根 `EXCEL_ENGINE_ARCHITECTURE.md`，记录局部完成边界与未验证项。
+- 新增本修改记录。
+
+## 行为与范围
+
+- 对拍覆盖：GBK；UTF-8 BOM；固定 14 列表头；引号字段中的逗号及双引号；空行的异常行号语义；日期归一化与日期异常；数值换算、豁免指标、异常文本、空值；短行补齐；重复键由后行覆盖。
+- 这轮对拍最初发现 Rust `csv` 默认跳过空记录，造成异常行号不一致。增加只识别引号外空物理记录的兼容步骤后，三例与 Python 结果一致。
+- 金额仍按源实现的 `f64` 语义换算；统一财务精度/舍入策略仍待整体业务迁移时确认。
+- 不改 Python 源项目、原有配置、VBA、产品输出路径或业务入口；本模块目前尚未被 S3 工作流调用。
+
+## 验证
+
+- Python 版本：本机 `python -B`（Python 3.12.10）；基线命令：`python -B audit-core/tests/compare/run_central_csv_baseline.py --source-root C:\Users\AZI\Desktop\VibeCode\3.open-data-audit`；生成 3 条 Python 基线。
+- 格式化：`cargo fmt --manifest-path /mnt/c/Users/AZI/Desktop/VibeCode/1.rust-workspace/Cargo.toml --all -- --check`（WSL Ubuntu），通过。
+- 定向测试：`cargo test --manifest-path /mnt/c/Users/AZI/Desktop/VibeCode/1.rust-workspace/Cargo.toml -p audit-core --locked`（WSL Ubuntu），6/6 通过，其中 3 个 CSV 合成场景与 Python 基线逐字段一致。
+- 全 workspace 回归：`cargo test --manifest-path /mnt/c/Users/AZI/Desktop/VibeCode/1.rust-workspace/Cargo.toml --workspace --locked`（WSL Ubuntu），30 个单元/集成测试通过，doc-tests 0 项。
+- 未运行 Python 项目全量测试；基线只导入 S3 CSV 相关源模块。未执行 Linux glibc 2.28 构建、deb 打包或目标机验收。
+
+## 未完成项与已知风险
+
+- XLS/XLSX 路径尚未接入 `excel-reader`/calamine；本模块当前只接收 CSV 字节和文件名，不能替代完整 `read_central_csv`。
+- 只有合成样例，没有真实脱敏 S3 文件；未测性能、超大文件峰值内存和异常编码边界。
+- 公式、工作簿格式保留、ExcelModifier 与产品端到端 S3 流程不在本轮范围。
+- 金额运算遵循旧 float 行为，尚未确认金融精度策略。
+
+## 回滚
+
+移除新增 `central_csv.rs`、CSV 对拍夹具/脚本/报告和本记录，撤销 `Cargo.toml`、`Cargo.lock`、`audit-core/Cargo.toml`、`audit-core/src/lib.rs`、`probe/probe.toml`、`MIGRATION_INVENTORY.md` 与 `EXCEL_ENGINE_ARCHITECTURE.md` 中相应变化即可。不得回滚或改动两个源 Python 项目。
