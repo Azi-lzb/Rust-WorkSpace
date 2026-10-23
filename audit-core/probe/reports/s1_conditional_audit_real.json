@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "suite": "audit.s1_conditional_issue_extraction",
+  "baseline": "Open-Data-Audit ConditionalFormatService(PYTHON)",
+  "status": "passed",
+  "python_issue_count": 348,
+  "rust_issue_count": 348,
+  "missing_in_rust": 0,
+  "missing_in_python": 0,
+  "field_difference_counts": {},
+  "mismatch_count": 0,
+  "python_evaluated_cells": 366,
+  "rust_evaluated_cells": 366,
+  "python_rules_total": 4,
+  "rust_rules_total": 4,
+  "python_unsupported_cells": 0,
+  "rust_diagnostics": 0,
+  "execution": {
+    "python_engine": "PythonConditionalRuleEvaluator + Direct OOXML reader",
+    "python_rule_read_time_s": 0.0,
+    "python_rule_normalize_time_s": 0.031000000002677552,
+    "python_evaluation_time_s": 0.03199999999196734,
+    "python_issue_build_time_s": 0.3120000000053551,
+    "python_total_time_s": 0.375,
+    "rust_engine": "calamine+namespace_aware_ooxml",
+    "rust_read_time_ms": 578,
+    "rust_evaluation_time_ms": 36,
+    "rust_issue_build_time_ms": 4,
+    "rust_total_time_ms": 618,
+    "scope": "single real-workbook run; not a performance benchmark"
+  },
+  "verification": {
+    "source_workbook": "read-only",
+    "comparison_workbook": "temporary ASCII-path copy of the source used for both runs; removed after comparison",
+    "issue_identity": "both runs used the same temporary ASCII basename; identity from the original workbook filename was not checked",
+    "formula_recalculation": "not performed",
+    "issue_order": "ignored; issue records are matched by issue_id",
+    "source_paths": "compared by basename; not included in output"
+  }
+}

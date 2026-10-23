@@ -66,6 +66,30 @@ a general performance claim. See
 `probe/reports/template_recommendation_parity.json` and
 `probe/reports/template_recommendation_real_smoke.json`.
 
+## Rust S1 conditional-format issue extraction slice
+
+`open-data-audit conditional-audit` evaluates supported static conditional
+format rules and converts triggers into Audit `Issue` records in Rust. Supply
+the S1 metadata already resolved by a caller; optional scan and structure
+areas use `Sheet!A1:B20` notation:
+
+```text
+open-data-audit conditional-audit --workbook <source.xlsx> --period <period> --batch-id <id> --audit-time <timestamp> [--source-file <original-path>] [--org-code <code>] [--org-name <name>] [--scan-area Sheet1!A1:Z200] [--structure-area Sheet1!A1:Z1] [--developer-view]
+```
+
+The command prints issue records as JSON on stdout. `--developer-view` emits
+JSON progress events on stderr with the reader/evaluator engine and stage
+timings. Formula cells use stored caches; no recalculation or workbook write
+occurs. `--structure-area` lets the caller resolve `check_field`. This is only
+the conditional-format issue-generation stage: S1 config/template selection,
+ordinary business rules, output workbook writeback, and history are not yet
+connected. The synthetic evaluator, issue mapping, and CLI tests pass; one
+read-only real-workbook comparison matched all 348 Python issues field by field
+(see `probe/reports/s1_conditional_audit_real.json`). Both runs used the same
+temporary ASCII basename to work around WSL Unicode argument handling, so
+Issue identity with the original workbook filename remains unverified. Full
+S1-F01 remains unverified.
+
 ## Rust web UI bridge (incremental)
 
 The original Audit frontend is copied without edits to `frontend/web/index.html`;

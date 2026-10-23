@@ -5,8 +5,8 @@
 //! stored/cached cell values. Unsupported rule types and formula syntax remain
 //! explicit diagnostics; they are never treated as FALSE.
 
-use anyhow::{Context, Result, bail};
-use excel_reader::{SheetDump, read_workbook};
+use anyhow::{bail, Context, Result};
+use excel_reader::{read_workbook, SheetDump, WorkbookDump};
 use serde::Serialize;
 use serde_json::Value as JsonValue;
 use std::{
@@ -86,6 +86,7 @@ pub struct ConditionalTrigger {
     pub rule_type: String,
     pub operator: String,
     pub formula: String,
+    pub message: String,
     pub priority: u32,
     pub confidence: String,
     #[serde(skip_serializing_if = "String::is_empty")]
@@ -170,6 +171,17 @@ pub fn evaluate_xlsx_workbook(
     path: impl AsRef<Path>,
     scan_areas: &[String],
 ) -> Result<ConditionalEvaluationReport> {
+    let (report, _) = evaluate_xlsx_workbook_with_dump(path, scan_areas)?;
+    Ok(report)
+}
+
+/// Evaluate conditional formatting and return the exact workbook projection
+/// used by the evaluator so Audit can construct business findings without
+/// opening and parsing the input a second time.
+pub fn evaluate_xlsx_workbook_with_dump(
+    path: impl AsRef<Path>,
+    scan_areas: &[String],
+) -> Result<(ConditionalEvaluationReport, WorkbookDump)> {
     let total_started = Instant::now();
     let path = path.as_ref();
     if !path
@@ -182,12 +194,13 @@ pub fn evaluate_xlsx_workbook(
     let read_started = Instant::now();
     let workbook = read_workbook(path).with_context(|| format!("读取工作簿 {}", path.display()))?;
     let read_time_ms = read_started.elapsed().as_millis();
-    evaluate_dump(
+    let report = evaluate_dump(
         &workbook.sheets,
         scan_areas,
         read_time_ms,
         total_started.elapsed().as_millis(),
-    )
+    )?;
+    Ok((report, workbook))
 }
 
 fn evaluate_dump(
@@ -317,6 +330,7 @@ fn evaluate_dump(
                                 rule_type: rule.rule_type.clone(),
                                 operator: rule.operator.clone(),
                                 formula,
+                                message: trigger_message(&rule, &address, row, column),
                                 priority: rule.priority,
                                 confidence: if partial_reason.is_empty() {
                                     "FULL".to_owned()
@@ -525,6 +539,193 @@ fn cell_address(column: i32, row: i32) -> Result<String> {
         number /= 26;
     }
     Ok(format!("{letters}{row}"))
+}
+
+fn trigger_message(rule: &Rule, address: &str, row: i32, column: i32) -> String {
+    let raw_formula = rule
+        .formulas
+        .first()
+        .map(|formula| formula.trim_start_matches('='))
+        .unwrap_or_default();
+    let formula = translate_formula_refs(
+        raw_formula,
+        row - rule.anchor_row,
+        column - rule.anchor_column,
+    )
+    .replace('$', "");
+    match rule.rule_type.as_str() {
+        "cellis" => {
+            let operator = match rule.operator.to_ascii_lowercase().as_str() {
+                "equal" => "=",
+                "notequal" => "<>",
+                "greaterthan" => ">",
+                "greaterthanorequal" => ">=",
+                "lessthan" => "<",
+                "lessthanorequal" => "<=",
+                _ if !rule.operator.is_empty() => rule.operator.as_str(),
+                _ => "?",
+            };
+            format!(
+                "条件格式规则：{}{operator}{formula}",
+                address.replace('$', "")
+            )
+        }
+        "expression" => format!("条件格式规则：{formula}"),
+        _ => format!("条件格式规则：{}", rule.rule_type),
+    }
+}
+
+/// Shift cell references in a displayed conditional-format formula using the
+/// same relative/absolute reference rules used when evaluating the rule.
+fn translate_formula_refs(formula: &str, row_delta: i32, column_delta: i32) -> String {
+    if row_delta == 0 && column_delta == 0 {
+        return formula.to_owned();
+    }
+
+    let chars = formula.chars().collect::<Vec<_>>();
+    let mut output = String::with_capacity(formula.len());
+    let mut position = 0usize;
+    while position < chars.len() {
+        if chars[position] == '"' {
+            output.push('"');
+            position += 1;
+            while position < chars.len() {
+                let current = chars[position];
+                output.push(current);
+                position += 1;
+                if current == '"' {
+                    if chars.get(position) == Some(&'"') {
+                        output.push('"');
+                        position += 1;
+                    } else {
+                        break;
+                    }
+                }
+            }
+            continue;
+        }
+
+        let previous_is_word = position > 0 && is_formula_word(chars[position - 1]);
+        if !previous_is_word {
+            if let Some((first, first_end)) = parse_formula_ref(&chars, position) {
+                let (last, end) = if chars.get(first_end) == Some(&':') {
+                    parse_formula_ref(&chars, first_end + 1)
+                        .filter(|(_, second_end)| *second_end > first_end + 1)
+                        .map_or((None, first_end), |(cell, second_end)| {
+                            (Some(cell), second_end)
+                        })
+                } else {
+                    (None, first_end)
+                };
+                let next_non_space = chars[end..]
+                    .iter()
+                    .position(|ch| !ch.is_whitespace())
+                    .map(|offset| chars[end + offset]);
+                let has_valid_end = chars.get(end).map_or(true, |ch| !is_formula_word(*ch))
+                    && next_non_space != Some('(');
+                if has_valid_end {
+                    output.push_str(&shift_formula_ref(first, row_delta, column_delta));
+                    if let Some(last) = last {
+                        output.push(':');
+                        output.push_str(&shift_formula_ref(last, row_delta, column_delta));
+                    }
+                    position = end;
+                    continue;
+                }
+            }
+        }
+        output.push(chars[position]);
+        position += 1;
+    }
+    output
+}
+
+fn parse_formula_ref(chars: &[char], start: usize) -> Option<(CellRef, usize)> {
+    let mut position = start;
+    let column_absolute = chars.get(position) == Some(&'$');
+    if column_absolute {
+        position += 1;
+    }
+    let column_start = position;
+    while chars
+        .get(position)
+        .is_some_and(|ch| ch.is_ascii_alphabetic())
+        && position - column_start < 3
+    {
+        position += 1;
+    }
+    if position == column_start
+        || chars
+            .get(position)
+            .is_some_and(|ch| ch.is_ascii_alphabetic())
+    {
+        return None;
+    }
+    let mut column = 0i32;
+    for ch in &chars[column_start..position] {
+        column = column * 26 + (ch.to_ascii_uppercase() as i32 - 'A' as i32 + 1);
+    }
+
+    let row_absolute = chars.get(position) == Some(&'$');
+    if row_absolute {
+        position += 1;
+    }
+    let row_start = position;
+    while chars.get(position).is_some_and(|ch| ch.is_ascii_digit()) {
+        position += 1;
+    }
+    if position == row_start {
+        return None;
+    }
+    let row = chars[row_start..position]
+        .iter()
+        .collect::<String>()
+        .parse::<i32>()
+        .ok()?;
+    if column < 1 || row < 1 {
+        return None;
+    }
+    Some((
+        CellRef {
+            column,
+            row,
+            column_absolute,
+            row_absolute,
+        },
+        position,
+    ))
+}
+
+fn shift_formula_ref(cell: CellRef, row_delta: i32, column_delta: i32) -> String {
+    let row = if cell.row_absolute {
+        cell.row
+    } else {
+        cell.row + row_delta
+    };
+    let column = if cell.column_absolute {
+        cell.column
+    } else {
+        cell.column + column_delta
+    };
+    if row < 1 || column < 1 {
+        return "#REF!".to_owned();
+    }
+    let mut address = cell_address(column, row).unwrap_or_else(|_| "#REF!".to_owned());
+    if cell.column_absolute {
+        address.insert(0, '$');
+    }
+    let column_end = address
+        .chars()
+        .take_while(|ch| ch.is_ascii_alphabetic() || *ch == '$')
+        .count();
+    if cell.row_absolute {
+        address.insert(column_end, '$');
+    }
+    address
+}
+
+fn is_formula_word(ch: char) -> bool {
+    ch.is_ascii_alphanumeric() || ch == '_'
 }
 
 fn contains(bounds: Bounds, column: i32, row: i32) -> bool {

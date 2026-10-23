@@ -1,9 +1,9 @@
 {
   "status": "evaluated_static_rules",
   "reader": "calamine+namespace_aware_ooxml",
-  "read_time_ms": 77,
-  "evaluation_time_ms": 17,
-  "total_time_ms": 98,
+  "read_time_ms": 3229,
+  "evaluation_time_ms": 72,
+  "total_time_ms": 3521,
   "rules_total": 7,
   "rules_supported": 6,
   "scanned_cells": 12,
@@ -15,6 +15,7 @@
       "rule_type": "cellis",
       "operator": "greaterThan",
       "formula": "0",
+      "message": "条件格式规则：B2>0",
       "priority": 1,
       "confidence": "FULL"
     },
@@ -25,6 +26,7 @@
       "rule_type": "expression",
       "operator": "",
       "formula": "AND(C5>0,C5>1)",
+      "message": "条件格式规则：AND(C5>0,C5>1)",
       "priority": 2,
       "confidence": "FULL"
     },
@@ -35,6 +37,7 @@
       "rule_type": "expression",
       "operator": "",
       "formula": "AND(C5>0,C5>1)",
+      "message": "条件格式规则：AND(C7>0,C7>1)",
       "priority": 2,
       "confidence": "FULL"
     },
@@ -45,6 +48,7 @@
       "rule_type": "expression",
       "operator": "",
       "formula": "$A$1+$A$2+$A$3=$C$2",
+      "message": "条件格式规则：A1+A2+A3=C2",
       "priority": 3,
       "confidence": "FULL"
     }

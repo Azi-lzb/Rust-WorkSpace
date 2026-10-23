@@ -1,15 +1,17 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use audit_core::{
     conditional_format::evaluate_xlsx_workbook,
     discovery::ScanDepth,
+    models::CopyRange,
+    s1_conditional_audit::{extract_conditional_issues, S1ConditionalMetadata},
     s1_template::recommend_template,
-    s2_service::{S2ProgressEvent, S2RunRequest, run_s2_audit},
+    s2_service::{run_s2_audit, S2ProgressEvent, S2RunRequest},
     s2_summary::S2AuditSummary,
     web_bridge::serve_web_ui,
 };
 use clap::{Args, Parser, Subcommand};
 use serde::Serialize;
-use std::path::PathBuf;
+use std::{path::PathBuf, time::Instant};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -30,6 +32,8 @@ enum Command {
     TemplateSuggest(TemplateSuggestArgs),
     /// Evaluate the Rust-supported static conditional-format rules in an XLSX workbook.
     ConditionalEvaluate(ConditionalEvaluateArgs),
+    /// Extract static conditional-format results into S1-F01 Audit issue records.
+    ConditionalAudit(ConditionalAuditArgs),
     /// Serve the bundled Audit frontend through the Rust API bridge on localhost.
     Serve(ServeArgs),
 }
@@ -43,6 +47,49 @@ struct ConditionalEvaluateArgs {
     /// Optional scan range in Sheet!A1:B20 form. Repeat for multiple ranges. Defaults to rule AppliesTo ranges.
     #[arg(long = "scan-area")]
     scan_areas: Vec<String>,
+}
+
+#[derive(Debug, Args)]
+struct ConditionalAuditArgs {
+    /// Workbook containing the values and conditional-format rules to audit.
+    #[arg(long)]
+    workbook: PathBuf,
+
+    /// Original report path used for Audit issue identity. Defaults to --workbook.
+    #[arg(long)]
+    source_file: Option<PathBuf>,
+
+    /// Reporting period recorded on the generated Audit issues.
+    #[arg(long)]
+    period: String,
+
+    /// S1 run/batch identifier recorded on the generated Audit issues.
+    #[arg(long)]
+    batch_id: String,
+
+    /// Audit timestamp recorded on the generated Audit issues.
+    #[arg(long)]
+    audit_time: String,
+
+    /// Institution code when it was resolved by the calling workflow.
+    #[arg(long, default_value = "")]
+    org_code: String,
+
+    /// Institution name when it was resolved by the calling workflow.
+    #[arg(long, default_value = "")]
+    org_name: String,
+
+    /// Optional evaluation area in Sheet!A1:B20 form. Repeat for multiple areas.
+    #[arg(long = "scan-area")]
+    scan_areas: Vec<String>,
+
+    /// Optional template structure area used to resolve check_field. Repeat as needed.
+    #[arg(long = "structure-area")]
+    structure_areas: Vec<String>,
+
+    /// Emit developer-view JSON progress events with actual engine and timings.
+    #[arg(long, default_value_t = false)]
+    developer_view: bool,
 }
 
 #[derive(Debug, Args)]
@@ -152,6 +199,103 @@ fn run() -> Result<()> {
             let report = evaluate_xlsx_workbook(&arguments.workbook, &arguments.scan_areas)?;
             println!("{}", serde_json::to_string_pretty(&report)?);
         }
+        Command::ConditionalAudit(arguments) => {
+            let structure_ranges = arguments
+                .structure_areas
+                .iter()
+                .map(|area| parse_copy_range(area))
+                .collect::<Result<Vec<_>>>()?;
+            let source_file = arguments
+                .source_file
+                .unwrap_or_else(|| arguments.workbook.clone());
+            let metadata = S1ConditionalMetadata {
+                period: arguments.period,
+                batch_id: arguments.batch_id,
+                audit_time: arguments.audit_time,
+                org_code: arguments.org_code,
+                org_name: arguments.org_name,
+            };
+            let run_started = Instant::now();
+            let started_at = chrono::Local::now().to_rfc3339();
+            if arguments.developer_view {
+                eprintln!(
+                    "{}",
+                    serde_json::to_string(&serde_json::json!({
+                        "type": "progress",
+                        "product": "open-data-audit",
+                        "feature": "S1-F01",
+                        "step": "conditional_format_issue_extraction",
+                        "status": "started",
+                        "batch_id": metadata.batch_id,
+                        "started_at": started_at
+                    }))?
+                );
+            } else {
+                eprintln!("正在执行 S1-F01 条件格式检查…");
+            }
+            let report = match extract_conditional_issues(
+                &arguments.workbook,
+                &source_file,
+                &arguments.scan_areas,
+                &structure_ranges,
+                &metadata,
+            ) {
+                Ok(report) => report,
+                Err(error) => {
+                    if arguments.developer_view {
+                        eprintln!(
+                            "{}",
+                            serde_json::to_string(&serde_json::json!({
+                                "type": "progress",
+                                "product": "open-data-audit",
+                                "feature": "S1-F01",
+                                "step": "conditional_format_issue_extraction",
+                                "status": "failed",
+                                "finished_at": chrono::Local::now().to_rfc3339(),
+                                "elapsed_ms": run_started.elapsed().as_millis(),
+                                "error": format!("{error:#}")
+                            }))?
+                        );
+                    } else {
+                        eprintln!("条件格式检查失败，未生成审核项。");
+                    }
+                    return Err(error);
+                }
+            };
+            if arguments.developer_view {
+                eprintln!(
+                    "{}",
+                    serde_json::to_string(&serde_json::json!({
+                        "type": "progress",
+                        "product": "open-data-audit",
+                        "feature": "S1-F01",
+                        "step": "conditional_format_issue_extraction",
+                        "status": "completed",
+                        "batch_id": metadata.batch_id,
+                        "started_at": started_at,
+                        "finished_at": chrono::Local::now().to_rfc3339(),
+                        "elapsed_ms": run_started.elapsed().as_millis(),
+                        "engine": report.evaluation.reader,
+                        "rules_total": report.evaluation.rules_total,
+                        "rules_supported": report.evaluation.rules_supported,
+                        "scanned_cells": report.evaluation.scanned_cells,
+                        "issues": report.issues.len(),
+                        "diagnostics": report.evaluation.diagnostics.len(),
+                        "read_time_ms": report.evaluation.read_time_ms,
+                        "evaluation_time_ms": report.evaluation.evaluation_time_ms,
+                        "issue_build_time_ms": report.issue_build_time_ms,
+                        "total_time_ms": report.evaluation.total_time_ms + report.issue_build_time_ms
+                    }))?
+                );
+            } else {
+                eprintln!(
+                    "条件格式检查完成：形成 {} 条审核项，耗时 {} 毫秒。",
+                    report.issues.len(),
+                    run_started.elapsed().as_millis()
+                );
+            }
+            println!("{}", serde_json::to_string_pretty(&report)?);
+        }
     }
     Ok(())
 }
@@ -172,4 +316,19 @@ fn default_s2_config_path() -> PathBuf {
         .into_iter()
         .find(|path| path.is_file())
         .unwrap_or_else(|| PathBuf::from("2.报表采集系统_配置.xlsx"))
+}
+
+fn parse_copy_range(specification: &str) -> Result<CopyRange> {
+    let (sheet_name, address) = specification
+        .split_once('!')
+        .context("结构区域应使用 Sheet!A1:B20 格式")?;
+    let sheet_name = sheet_name.trim().trim_matches('\'');
+    let address = address.trim();
+    if sheet_name.is_empty() || address.is_empty() {
+        anyhow::bail!("结构区域应包含工作表名称和单元格范围");
+    }
+    Ok(CopyRange {
+        sheet_name: sheet_name.to_owned(),
+        address: address.to_owned(),
+    })
 }
