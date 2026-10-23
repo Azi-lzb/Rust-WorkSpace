@@ -562,6 +562,9 @@ def run_rust(command_name: str, args: list[Path], output: Path) -> tuple[Path | 
                     raise RuntimeError("Rust CLI PT-6-1 run log did not record success")
                 if len(run_log.get("events", [])) != len(events):
                     raise RuntimeError("Rust CLI progress stream and saved run log differ")
+                input_filter_events = [
+                    event for event in events if event.get("phase") == "input_filter"
+                ]
                 result["progress_log"] = {
                     "view": "developer",
                     "status": run_log["status"],
@@ -581,11 +584,61 @@ def run_rust(command_name: str, args: list[Path], output: Path) -> tuple[Path | 
                         if event.get("status") == "succeeded"
                         and event.get("stage_elapsed_ms") is not None
                     },
+                    "skipped_input_names": [
+                        event.get("file_name")
+                        for event in input_filter_events
+                        if event.get("status") == "skipped"
+                    ],
+                    "input_filter_events_have_no_engine": all(
+                        event.get("actual_engine") is None
+                        for event in input_filter_events
+                    ),
                 }
             return (from_wsl_path(path) if path else None), result
         except json.JSONDecodeError:
             continue
     raise RuntimeError(f"Rust summary CLI emitted no JSON: {stdout}\n{stderr}")
+
+
+def compare_used_range_extension_filter(
+    sources: list[Path], root: Path
+) -> dict[str, object]:
+    root.mkdir(parents=True, exist_ok=True)
+    unsupported = []
+    for extension in (".xls", ".xlsb"):
+        path = root / f"ignored_source{extension}"
+        path.write_bytes(b"not a workbook; expected to be skipped by the PyCode contract")
+        unsupported.append(path)
+
+    all_sources = [*sources, *unsupported]
+    before = source_fingerprints(all_sources)
+    python_output = python_used_range_only(all_sources, root / "python_extension_filter")
+    rust_output, rust_report = run_rust(
+        "summary-used-range", all_sources, root / "rust_extension_filter"
+    )
+    assert_equivalent(python_output, rust_output, "6-1 input extension filter")
+    if rust_report.get("files") != len(sources):
+        raise AssertionError("Rust summary did not skip unsupported .xls/.xlsb inputs")
+    if rust_report.get("rows") != 19:
+        raise AssertionError("unsupported inputs changed the summary row count")
+    progress_log = rust_report.get("progress_log", {})
+    expected_skipped = sorted(path.name for path in unsupported)
+    if progress_log.get("skipped_input_names") != expected_skipped:
+        raise AssertionError("Rust CLI did not report both unsupported input extensions")
+    if progress_log.get("input_filter_events_have_no_engine") is not True:
+        raise AssertionError("unsupported inputs were associated with a reader engine")
+    if before != source_fingerprints(all_sources):
+        raise AssertionError("an extension-filter input was modified")
+    return {
+        "python_supported_extensions": [".xlsx", ".xlsm"],
+        "unsupported_extensions_skipped": [".xls", ".xlsb"],
+        "python_rust_output": "exact",
+        "files_summarized": rust_report["files"],
+        "summary_rows": rust_report["rows"],
+        "skipped_input_names": expected_skipped,
+        "skipped_inputs_used_no_engine": True,
+        "progress_log": progress_log,
+    }
 
 
 def run_rust_comments(template: Path, source: Path, output: Path) -> tuple[Path | None, dict[str, object]]:
@@ -831,6 +884,9 @@ def main() -> int:
         python_used, python_comments = python_baselines(sources, source, template, root)
         nocom_used = python_nocom_used_range(sources, root)
         rust_used, used_report = run_rust("summary-used-range", sources, root / "rust_used")
+        extension_filter_report = compare_used_range_extension_filter(
+            sources, root / "extension_filter_probe"
+        )
         rust_comments, comments_report = run_rust_comments(template, source, root / "rust_comments")
         assert_equivalent(python_used, rust_used, "6-1 used-range summary")
         used_sheets, _ = workbook_projection(rust_used)
@@ -965,6 +1021,7 @@ def main() -> int:
             },
             "rust_execution": used_report.get("execution"),
             "progress_logging": used_report.get("progress_log"),
+            "input_filter_probe": extension_filter_report,
             "offset_used_range_probe": {
                 "source_sheet": "Offset",
                 "source_bounds": "D5:F6",

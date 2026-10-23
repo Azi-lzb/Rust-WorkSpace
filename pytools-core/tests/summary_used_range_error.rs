@@ -13,6 +13,18 @@ fn summary_used_range_cli_preserves_excel_error_cells() -> Result<()> {
         .join("tests/fixtures/summary_used_range/error_value.xlsx");
     let original = fs::read(&fixture)?;
     let output_dir = unique_test_dir();
+    let unsupported_dir = output_dir.join("unsupported_inputs");
+    fs::create_dir_all(&unsupported_dir)?;
+    let unsupported_xls = unsupported_dir.join("ignored.xls");
+    let unsupported_xlsb = unsupported_dir.join("ignored.xlsb");
+    fs::write(
+        &unsupported_xls,
+        b"not an Excel workbook; PyCode skips .xls",
+    )?;
+    fs::write(
+        &unsupported_xlsb,
+        b"not an Excel workbook; PyCode skips .xlsb",
+    )?;
     let output = Command::new(env!("CARGO_BIN_EXE_pytools"))
         .arg("summary-used-range")
         .arg("--output-dir")
@@ -20,6 +32,8 @@ fn summary_used_range_cli_preserves_excel_error_cells() -> Result<()> {
         .arg("--log-dir")
         .arg(output_dir.join("logs"))
         .arg(&fixture)
+        .arg(&unsupported_xls)
+        .arg(&unsupported_xlsb)
         .output()
         .context("run pytools summary-used-range")?;
     assert!(
@@ -31,6 +45,7 @@ fn summary_used_range_cli_preserves_excel_error_cells() -> Result<()> {
     assert_eq!(report["saved"], true);
     assert_eq!(report["rows"], 2);
     assert_eq!(report["files"], 1);
+    assert!(report["run_log_path"].is_string());
     assert_eq!(report["execution"]["reader_engine"], "calamine");
     assert_eq!(report["execution"]["writer_engine"], "rust_xlsxwriter");
     assert_eq!(report["execution"]["ooxml_error_cells_patched"], 7);
@@ -38,6 +53,7 @@ fn summary_used_range_cli_preserves_excel_error_cells() -> Result<()> {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("正在扫描工作簿范围"));
     assert!(stderr.contains("工作簿读取完成"));
+    assert!(stderr.contains("忽略不支持的输入"));
     assert!(!stderr.contains("calamine"));
     assert!(!stderr.contains("rust_xlsxwriter"));
 
@@ -52,9 +68,19 @@ fn summary_used_range_cli_preserves_excel_error_cells() -> Result<()> {
     assert_eq!(run_log["product"], "pytools");
     assert_eq!(run_log["feature_id"], "PT-6-1");
     assert_eq!(run_log["status"], "succeeded");
+    assert_eq!(run_log["total_inputs"], 3);
+    assert_eq!(run_log["events"][0]["progress"]["total_files"], 1);
     assert!(run_log["events"]
         .as_array()
         .is_some_and(|events| !events.is_empty()));
+    for extension in ["xls", "xlsb"] {
+        assert!(run_log["events"].as_array().unwrap().iter().any(|event| {
+            event["phase"] == "input_filter"
+                && event["status"] == "skipped"
+                && event["file_name"] == format!("ignored.{extension}")
+                && event["actual_engine"].is_null()
+        }));
+    }
     assert!(run_log_text.contains("calamine"));
     assert!(run_log_text.contains("rust_xlsxwriter"));
     assert!(!run_log_text.contains("#DATA!"));
@@ -69,6 +95,8 @@ fn summary_used_range_cli_preserves_excel_error_cells() -> Result<()> {
         .arg("--log-view")
         .arg("developer")
         .arg(&fixture)
+        .arg(&unsupported_xls)
+        .arg(&unsupported_xlsb)
         .output()
         .context("run pytools summary-used-range in developer log view")?;
     assert!(
@@ -98,6 +126,10 @@ fn summary_used_range_cli_preserves_excel_error_cells() -> Result<()> {
             && event["actual_engine"] == "rust_xlsxwriter"
             && event["stage_elapsed_ms"].is_number()
     }));
+    assert!(developer_events
+        .iter()
+        .filter(|event| { event["phase"] == "input_filter" && event["status"] == "skipped" })
+        .all(|event| event["actual_engine"].is_null()));
     for (index, event) in developer_events.iter().enumerate() {
         assert_eq!(event["sequence"], index + 1);
     }
@@ -123,6 +155,8 @@ fn summary_used_range_cli_preserves_excel_error_cells() -> Result<()> {
         .arg("--log-view")
         .arg("off")
         .arg(&fixture)
+        .arg(&unsupported_xls)
+        .arg(&unsupported_xlsb)
         .output()
         .context("run pytools summary-used-range with logging disabled")?;
     assert!(

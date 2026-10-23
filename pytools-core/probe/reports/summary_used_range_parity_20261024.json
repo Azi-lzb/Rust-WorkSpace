@@ -26,7 +26,8 @@
       "merged range used as an extent",
       "cached formula values and missing formula-cache semantics",
       "date, boolean, numeric, text and blank semantics",
-      "seven common Excel error values preserved as error-typed cells"
+      "seven common Excel error values preserved as error-typed cells",
+      "mixed .xlsx/.xlsm inputs with invalid .xls/.xlsb files match the PyCode extension filter"
     ]
   },
   "comparison": {
@@ -330,5 +331,58 @@
     "view": "developer",
     "status": "validated",
     "event_stream_matches_saved_history": true
+  },
+  "input_filter_probe": {
+    "python_supported_extensions": [
+      ".xlsx",
+      ".xlsm"
+    ],
+    "unsupported_extensions_skipped": [
+      ".xls",
+      ".xlsb"
+    ],
+    "python_rust_output": "exact",
+    "files_summarized": 2,
+    "summary_rows": 19,
+    "skipped_input_names": [
+      "ignored_source.xls",
+      "ignored_source.xlsb"
+    ],
+    "skipped_inputs_used_no_engine": true,
+    "progress_log": {
+      "view": "developer",
+      "status": "succeeded",
+      "event_stream_matches_saved_history": true,
+      "event_count": 19,
+      "phases": [
+        "extent_scan",
+        "input_filter",
+        "ooxml_error_patch",
+        "output_save",
+        "output_workbook",
+        "row_write",
+        "run",
+        "value_read"
+      ],
+      "actual_engines": [
+        "OOXML Patch",
+        "calamine",
+        "excel-reader::read_xlsx_worksheet_extents",
+        "rust_xlsxwriter"
+      ],
+      "completed_stage_elapsed_ms": {
+        "extent_scan": 14,
+        "value_read": 42,
+        "row_write": 0,
+        "output_save": 73,
+        "ooxml_error_patch": 118,
+        "run": 407
+      },
+      "skipped_input_names": [
+        "ignored_source.xls",
+        "ignored_source.xlsb"
+      ],
+      "input_filter_events_have_no_engine": true
+    }
   }
 }
