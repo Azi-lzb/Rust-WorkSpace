@@ -15,6 +15,7 @@ use audit_core::{
         S1ConditionalBatchAuditResult, S1ConditionalBatchInput, S1ConditionalBatchProgress,
         S1ConditionalMetadata,
     },
+    s1_formula_audit::{extract_s1_formula_issues, S1FormulaMetadata},
     s1_structure_compare::{
         compare_s1_source_structure, read_s1_structure_template_with_required_sheets,
     },
@@ -60,6 +61,8 @@ enum Command {
     ConditionalAuditDirectory(ConditionalAuditDirectoryArgs),
     /// Discover and validate an S1 template's formula rules without recalculation.
     S1TemplateRules(S1TemplateRulesArgs),
+    /// Extract standard S1 Issues from formula values already stored in an audit copy.
+    S1FormulaAudit(S1FormulaAuditArgs),
     /// Serve the bundled Audit frontend through the Rust API bridge on localhost.
     Serve(ServeArgs),
 }
@@ -232,6 +235,49 @@ struct S1TemplateRulesArgs {
     include_rule_definitions: bool,
 
     /// Emit developer-view JSON progress events with reader and timing details.
+    #[arg(long, default_value_t = false)]
+    developer_view: bool,
+}
+
+#[derive(Debug, Args)]
+struct S1FormulaAuditArgs {
+    /// S1 template workbook containing named formula ranges or an “审核规则” sheet.
+    #[arg(long)]
+    template_workbook: PathBuf,
+
+    /// Audit copy with stored formula result values. This command does not recalculate.
+    #[arg(long)]
+    audit_workbook: PathBuf,
+
+    /// Original report path used for Audit issue identity. Defaults to --audit-workbook.
+    #[arg(long)]
+    source_file: Option<PathBuf>,
+
+    /// Reporting period recorded on the generated Audit issues.
+    #[arg(long)]
+    period: String,
+
+    /// S1 run/batch identifier recorded on the generated Audit issues.
+    #[arg(long)]
+    batch_id: String,
+
+    /// Audit timestamp. Defaults to the current local time.
+    #[arg(long)]
+    audit_time: Option<String>,
+
+    /// Institution code when it was resolved by the calling workflow.
+    #[arg(long, default_value = "")]
+    org_code: String,
+
+    /// Institution name when it was resolved by the calling workflow.
+    #[arg(long, default_value = "")]
+    org_name: String,
+
+    /// Optional Audit config workbook containing the “模块化功能” mappings.
+    #[arg(long)]
+    mapping_config: Option<PathBuf>,
+
+    /// Emit developer-view JSON progress events with actual engines and timings.
     #[arg(long, default_value_t = false)]
     developer_view: bool,
 }
@@ -517,6 +563,9 @@ fn run() -> Result<()> {
         Command::S1TemplateRules(arguments) => {
             run_s1_template_rules(arguments)?;
         }
+        Command::S1FormulaAudit(arguments) => {
+            run_s1_formula_audit(arguments)?;
+        }
     }
     Ok(())
 }
@@ -605,6 +654,146 @@ fn run_s1_template_rules(arguments: S1TemplateRulesArgs) -> Result<()> {
     if arguments.include_rule_definitions {
         output["definition"] = serde_json::to_value(plan.definition)?;
     }
+    println!("{}", serde_json::to_string_pretty(&output)?);
+    Ok(())
+}
+
+fn run_s1_formula_audit(arguments: S1FormulaAuditArgs) -> Result<()> {
+    let started = Instant::now();
+    let started_at = chrono::Local::now().to_rfc3339();
+    if arguments.developer_view {
+        eprintln!(
+            "{}",
+            serde_json::to_string(&serde_json::json!({
+                "type": "progress",
+                "product": "open-data-audit",
+                "feature": "S1-F01",
+                "step": "formula_result_issue_extraction",
+                "status": "started",
+                "template_reader": "calamine+namespace_aware_ooxml",
+                "result_reader": "calamine",
+                "batch_id": arguments.batch_id,
+                "started_at": started_at
+            }))?
+        );
+    } else {
+        eprintln!("正在读取 S1 模板规则并提取已保存公式结果对应的审核项…");
+    }
+
+    let plan = match load_s1_template_rule_plan(
+        &arguments.template_workbook,
+        arguments.mapping_config.as_deref(),
+    ) {
+        Ok(plan) => plan,
+        Err(error) => {
+            if arguments.developer_view {
+                eprintln!(
+                    "{}",
+                    serde_json::to_string(&serde_json::json!({
+                        "type": "progress",
+                        "product": "open-data-audit",
+                        "feature": "S1-F01",
+                        "step": "formula_result_issue_extraction",
+                        "status": "failed",
+                        "stage": "template_rule_read",
+                        "finished_at": chrono::Local::now().to_rfc3339(),
+                        "elapsed_ms": started.elapsed().as_millis(),
+                        "error": format!("{error:#}")
+                    }))?
+                );
+            } else {
+                eprintln!("S1 模板规则读取失败：{error:#}");
+            }
+            return Err(error);
+        }
+    };
+    let metadata = S1FormulaMetadata {
+        period: arguments.period,
+        batch_id: arguments.batch_id,
+        audit_time: arguments
+            .audit_time
+            .unwrap_or_else(|| chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string()),
+        org_code: arguments.org_code,
+        org_name: arguments.org_name,
+    };
+    let result = match extract_s1_formula_issues(
+        &plan.definition,
+        &arguments.audit_workbook,
+        arguments.source_file.as_deref(),
+        &metadata,
+    ) {
+        Ok(result) => result,
+        Err(error) => {
+            if arguments.developer_view {
+                eprintln!(
+                    "{}",
+                    serde_json::to_string(&serde_json::json!({
+                        "type": "progress",
+                        "product": "open-data-audit",
+                        "feature": "S1-F01",
+                        "step": "formula_result_issue_extraction",
+                        "status": "failed",
+                        "stage": "stored_result_read_or_issue_build",
+                        "batch_id": metadata.batch_id,
+                        "finished_at": chrono::Local::now().to_rfc3339(),
+                        "elapsed_ms": started.elapsed().as_millis(),
+                        "error": format!("{error:#}")
+                    }))?
+                );
+            } else {
+                eprintln!("S1 公式结果提取失败，未生成审核项：{error:#}");
+            }
+            return Err(error);
+        }
+    };
+
+    if arguments.developer_view {
+        eprintln!(
+            "{}",
+            serde_json::to_string(&serde_json::json!({
+                "type": "progress",
+                "product": "open-data-audit",
+                "feature": "S1-F01",
+                "step": "formula_result_issue_extraction",
+                "status": "completed",
+                "batch_id": metadata.batch_id,
+                "started_at": started_at,
+                "finished_at": chrono::Local::now().to_rfc3339(),
+                "elapsed_ms": started.elapsed().as_millis(),
+                "template_reader": plan.summary.engine,
+                "template_read_time_ms": plan.summary.read_time_ms,
+                "result_reader": result.summary.reader,
+                "rules_total": result.summary.rules_total,
+                "rules_enabled": result.summary.rules_enabled,
+                "rules_selected": result.summary.rules_selected,
+                "formula_result_values_nonempty": result.summary.formula_result_values_nonempty,
+                "issues": result.summary.issue_count,
+                "result_read_time_ms": result.summary.read_time_ms,
+                "issue_build_time_ms": result.summary.issue_build_time_ms,
+                "total_time_ms": started.elapsed().as_millis()
+            }))?
+        );
+    } else {
+        eprintln!(
+            "S1 公式结果提取完成：模板规则 {} 条，选中 {} 条，读取器 {}，非空结果值 {} 格，生成审核项 {} 条；模板读取 {} ms、工作簿读取 {} ms、组装 {} ms、实际耗时 {} ms。未执行公式重算。",
+            result.summary.rules_total,
+            result.summary.rules_selected,
+            result.summary.reader,
+            result.summary.formula_result_values_nonempty,
+            result.summary.issue_count,
+            plan.summary.read_time_ms,
+            result.summary.read_time_ms,
+            result.summary.issue_build_time_ms,
+            started.elapsed().as_millis()
+        );
+    }
+
+    let output = serde_json::json!({
+        "status": result.status,
+        "template_summary": plan.summary,
+        "summary": result.summary,
+        "issues": result.issues
+    });
     println!("{}", serde_json::to_string_pretty(&output)?);
     Ok(())
 }
