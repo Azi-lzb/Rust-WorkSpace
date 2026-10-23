@@ -1,0 +1,47 @@
+# S1-F01 命名区域计划接入审核计算
+
+- 时间：2026-10-24 02:22:30（Asia/Shanghai）
+- 执行者：Codex
+- 分支：audit-dev
+- Worktree：C:/Users/AZI/Desktop/VibeCode/audit-dev
+- 修改前 commit：42a6ac6；工作区干净
+- 功能 commit：812e1ff
+- 本记录与迁移清单由后续独立提交纳入版本控制
+- 【组件版本】不升级；workspace crate 版本未变。
+
+## 目的与改动
+
+继续 S1-F01 条件格式计算与模板映射集成。在 Audit 业务层新增 S1ConditionalAreaPlan 和 resolve_s1_conditional_area_plan：按工作流功能名选择条件格式映射，将 reader 已解析的 Defined Names 目标转换成 conditional evaluator 使用的扫描区域语法，并将表结构映射解析成 check_field 区域。工作表名统一加引号并转义单引号，地址规范化和稳定去重沿用已有 Audit mapper。条件格式映射无匹配区域时保留 Python 业务语义，由 evaluator 回退到规则 AppliesTo；不存在配置的工作流模块则明确报错。
+
+合成测试通过现有 Rust evaluator 消费生成的扫描区域，覆盖下划线后缀、多区域、重复目标去重、结构区域映射、带单引号工作表名和 AppliesTo 回退。共享 Defined Names 读取仍由 main 负责，Audit 未重复实现 OOXML 解析。
+
+修改文件：
+
+- audit-core/src/name_config.rs
+- audit-core/tests/s1_feature_mapping_config.rs
+- audit-core/MIGRATION_INVENTORY.md
+- 本记录
+
+未修改 DEVELOPMENT_GOAL.md、pytools-core、crates、根 Cargo 文件、Cargo.lock 或 Python 源项目；未提交真实配置、工作簿或输出数据。
+
+## 验证结果
+
+- WSL Ubuntu：cargo fmt --all -- --check 通过。
+- WSL Ubuntu：cargo test -p audit-core --locked 全量通过，0 失败。
+- 定向测试：S1 配置/区域计划 4 项、命名区域 mapper 1 项、条件格式单文件 CLI 1 项、批量 CLI 2 项均通过。
+- 在最终增加未知工作流模块显式错误断言后，配置/区域计划 4 项定向测试再次通过。
+- Python 只读源基线：合成模板的 named_ranges 返回 2 个条件扫描区域和 1 个结构区域，重复目标去重；与 Rust 计划的地址集合及顺序一致。
+- Rust evaluator 集成测试：接受带单引号工作表名称的转义范围表达式；合成 XLSX 无条件格式规则时正常完成。
+- Windows Git：git diff --check 通过。
+
+## 未执行项与已知范围
+
+- 本轮没有接入真实 CLI：共享 excel-reader 目前没有 Defined Names API，模板区域计划尚无生产调用方。main 落地 API 后应从配置簿加载映射、读取模板 Defined Names，按每个报送工作簿的 sheet 集合解析区域，再传给 conditional-audit-batch。
+- 本轮未重跑真实条件格式工作簿；已有 348 条真实 Issue 的 Python/Rust 对拍仍仅覆盖 AppliesTo 默认扫描范围，不能证明模板命名范围接入。
+- 本轮未运行 Windows 原生 Cargo、麒麟 V10/UOS V20 目标构建、glibc 2.28 检查或 deb 安装验收。既有 excel-editor 弃用 API 警告来自共享代码。
+
+## 删除清单与回滚
+
+- 删除文件：无。
+- 代码与测试回滚：git revert 812e1ff。
+- 迁移清单和本记录是后续独立留痕提交；如需回滚文档，仅撤销该文档提交，不删除历史记录文件。
