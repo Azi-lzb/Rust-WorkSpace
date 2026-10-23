@@ -133,6 +133,8 @@ pub fn summarize_used_ranges(sources: &[PathBuf], output_dir: &Path) -> Result<S
                 *bounds_by_sheet.get(&ws.name).with_context(|| {
                     format!("worksheet {:?} is missing from the extent scan", ws.name)
                 })?;
+            let merged_ranges = parse_merged_ranges(&ws.merges)
+                .with_context(|| format!("parse merge regions for worksheet {:?}", ws.name))?;
             seen_sheets.insert(ws.name.clone());
             if min_row == 0 || max_row < min_row || max_col < min_col {
                 continue;
@@ -143,9 +145,11 @@ pub fn summarize_used_ranges(sources: &[PathBuf], output_dir: &Path) -> Result<S
                 sheet.write_number(out_row, 2, row as f64)?;
                 for col in 1..=max_col {
                     if col >= min_col {
-                        if let Some(value) =
-                            ws.values.get(&format!("{}{}", column_letters(col), row))
-                        {
+                        let address = format!("{}{}", column_letters(col), row);
+                        if let Some(value) = ws.values.get(&address) {
+                            if is_merged_non_anchor(&merged_ranges, row, col) {
+                                continue;
+                            }
                             if value.get("type").and_then(serde_json::Value::as_str)
                                 == Some("error")
                             {
@@ -681,6 +685,41 @@ fn summary_bounds(extent: &WorksheetExtent) -> (usize, usize, usize, usize) {
         extent.max_column,
     )
 }
+fn parse_merged_ranges(merges: &[String]) -> Result<Vec<(usize, usize, usize, usize)>> {
+    merges
+        .iter()
+        .map(|reference| {
+            let normalized = reference.replace('$', "");
+            let (start, end) = normalized
+                .split_once(':')
+                .unwrap_or((normalized.as_str(), normalized.as_str()));
+            let (start_row, start_column) =
+                parse_a1(start).with_context(|| format!("invalid merged range start {start:?}"))?;
+            let (end_row, end_column) =
+                parse_a1(end).with_context(|| format!("invalid merged range end {end:?}"))?;
+            anyhow::ensure!(
+                start_row <= end_row && start_column <= end_column,
+                "merged range has reversed bounds: {reference:?}"
+            );
+            Ok((start_row, start_column, end_row, end_column))
+        })
+        .collect()
+}
+fn is_merged_non_anchor(
+    merges: &[(usize, usize, usize, usize)],
+    row: usize,
+    column: usize,
+) -> bool {
+    merges
+        .iter()
+        .any(|(min_row, min_column, max_row, max_column)| {
+            row >= *min_row
+                && row <= *max_row
+                && column >= *min_column
+                && column <= *max_column
+                && (row != *min_row || column != *min_column)
+        })
+}
 fn parse_a1(address: &str) -> Option<(usize, usize)> {
     let index = address.find(|c: char| c.is_ascii_digit())?;
     let col = address[..index].chars().try_fold(0usize, |v, c| {
@@ -1043,5 +1082,25 @@ mod comment_region_tests {
             parse_comment_ranges(&comments, "行区域"),
             vec![(3, 5, 1, 1)]
         );
+    }
+}
+
+#[cfg(test)]
+mod merged_cell_tests {
+    use super::*;
+
+    #[test]
+    fn merged_range_non_anchor_cells_are_omitted() -> Result<()> {
+        let merges = parse_merged_ranges(&["$A$1:$AG$1".to_owned(), "C3:D4".to_owned()])?;
+
+        assert!(!is_merged_non_anchor(&merges, 1, 1));
+        assert!(is_merged_non_anchor(&merges, 1, 2));
+        assert!(is_merged_non_anchor(&merges, 1, 33));
+        assert!(!is_merged_non_anchor(&merges, 1, 34));
+        assert!(!is_merged_non_anchor(&merges, 3, 3));
+        assert!(is_merged_non_anchor(&merges, 3, 4));
+        assert!(is_merged_non_anchor(&merges, 4, 3));
+        assert!(is_merged_non_anchor(&merges, 4, 4));
+        Ok(())
     }
 }

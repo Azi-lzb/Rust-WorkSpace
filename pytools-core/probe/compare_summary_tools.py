@@ -8,6 +8,7 @@ import hashlib
 import json
 import logging
 import math
+import posixpath
 import shlex
 import subprocess
 import sys
@@ -224,67 +225,178 @@ def python_used_range_only(sources: list[Path], output: Path) -> Path | None:
 
 
 def compare_real_used_range_sample() -> dict[str, object]:
-    sample = PYTOOLS_SOURCE / "xlsx" / "2.报表不分口径.xlsx"
-    if not sample.is_file():
-        raise FileNotFoundError(sample)
-    before = source_fingerprints([sample])
+    sample_batches = [
+        [
+            "2.报表不分口径.xlsx",
+            "2.报表校验关系.xlsx",
+            "2.报表校验关系(仅公式校验).xlsx",
+        ],
+        ["1.报表分口径.xlsx"],
+    ]
+    samples = [
+        PYTOOLS_SOURCE / "xlsx" / name
+        for batch in sample_batches
+        for name in batch
+    ]
+    missing = [sample for sample in samples if not sample.is_file()]
+    if missing:
+        raise FileNotFoundError(missing[0])
+    before = source_fingerprints(samples)
+    sys.path.insert(0, str(PYTOOLS_SOURCE / "PyCode"))
+    from core.summary_321_322 import _used_bounds as python_used_bounds
+
+    source_summaries = []
+    for sample in samples:
+        source_workbook = load_workbook(
+            sample,
+            data_only=True,
+            read_only=False,
+            keep_vba=sample.suffix.lower() == ".xlsm",
+        )
+        try:
+            bounds = [python_used_bounds(sheet) for sheet in source_workbook.worksheets]
+            source_summaries.append({
+                "relative_path": sample.relative_to(PYTOOLS_SOURCE).as_posix(),
+                "sheet_count": len(source_workbook.worksheets),
+                "worksheet_dimensions_missing": missing_worksheet_dimension_count(sample),
+                "used_range_rows": sum(
+                    max(0, end_row - start_row + 1)
+                    for start_row, _, end_row, _ in bounds
+                ),
+                "max_used_rows": max(
+                    (end_row for _, _, end_row, _ in bounds), default=0
+                ),
+                "max_used_columns": max(
+                    (end_column for _, _, _, end_column in bounds), default=0
+                ),
+            })
+        finally:
+            source_workbook.close()
     with tempfile.TemporaryDirectory(
         prefix="pytools-real-summary-parity-", ignore_cleanup_errors=True
     ) as temporary:
         root = Path(temporary)
-        python_started = time.perf_counter()
-        python_output = python_used_range_only([sample], root / "python")
-        python_elapsed_ms = round((time.perf_counter() - python_started) * 1000)
-        if python_output is None:
-            raise AssertionError("PyCode did not save the real-sample used-range summary")
-
-        rust_started = time.perf_counter()
-        rust_output, rust_result = run_rust(
-            "summary-used-range", [sample], root / "rust"
-        )
-        rust_cli_wall_elapsed_ms = round((time.perf_counter() - rust_started) * 1000)
-        if rust_output is None:
-            raise AssertionError("Rust CLI did not save the real-sample used-range summary")
-        assert_equivalent(python_output, rust_output, "PT-6-1 real source-project workbook")
-
-        source_workbook = load_workbook(sample, read_only=True, data_only=True)
-        try:
-            source_sheet_count = len(source_workbook.worksheets)
-            source_max_used_rows = max(
-                (sheet.max_row for sheet in source_workbook.worksheets), default=0
+        summaries_by_path = {
+            item["relative_path"]: item for item in source_summaries
+        }
+        batch_reports = []
+        for batch_index, batch_names in enumerate(sample_batches, start=1):
+            batch_samples = [PYTOOLS_SOURCE / "xlsx" / name for name in batch_names]
+            python_started = time.perf_counter()
+            python_output = python_used_range_only(
+                batch_samples, root / f"python_{batch_index}"
             )
-            source_max_used_columns = max(
-                (sheet.max_column for sheet in source_workbook.worksheets), default=0
-            )
-        finally:
-            source_workbook.close()
+            python_elapsed_ms = round((time.perf_counter() - python_started) * 1000)
+            if python_output is None:
+                raise AssertionError("PyCode did not save the real-sample used-range batch")
 
-        python_sheets, python_dimensions = workbook_projection(python_output)
-        _, rust_dimensions = workbook_projection(rust_output)
-        summary_rows = len(python_sheets[0]["rows"]) - 1
-        if rust_result.get("rows") != summary_rows or rust_result.get("files") != 1:
-            raise AssertionError("Rust CLI and PyCode real-sample row/file counts differ")
-        after = source_fingerprints([sample])
+            rust_started = time.perf_counter()
+            rust_output, rust_result = run_rust(
+                "summary-used-range", batch_samples, root / f"rust_{batch_index}"
+            )
+            rust_cli_wall_elapsed_ms = round(
+                (time.perf_counter() - rust_started) * 1000
+            )
+            if rust_output is None:
+                raise AssertionError("Rust CLI did not save the real-sample used-range batch")
+            python_dimensions, rust_dimensions = assert_equivalent(
+                python_output,
+                rust_output,
+                f"PT-6-1 real source-project batch {batch_index}",
+            )
+            summary_rows = python_dimensions[0]["rows"] - 1
+            source_used_range_rows = sum(
+                summaries_by_path[
+                    sample.relative_to(PYTOOLS_SOURCE).as_posix()
+                ]["used_range_rows"]
+                for sample in batch_samples
+            )
+            if (
+                rust_result.get("rows") != summary_rows
+                or rust_result.get("files") != len(batch_samples)
+                or summary_rows != source_used_range_rows
+            ):
+                raise AssertionError("real-sample used-range row/file counts differ")
+            batch_reports.append({
+                "source_sample_relative_paths": [
+                    sample.relative_to(PYTOOLS_SOURCE).as_posix()
+                    for sample in batch_samples
+                ],
+                "source_workbooks": len(batch_samples),
+                "source_used_range_rows": source_used_range_rows,
+                "summary_rows": summary_rows,
+                "pycode_dimensions": python_dimensions,
+                "rust_dimensions": rust_dimensions,
+                "python_elapsed_ms": python_elapsed_ms,
+                "rust_cli_wall_elapsed_ms": rust_cli_wall_elapsed_ms,
+                "rust_execution": rust_result.get("execution"),
+            })
+
+        after = source_fingerprints(samples)
         if before != after:
             raise AssertionError("the original PyTools source workbook changed")
-
         report_day = dt.date.today().strftime("%Y%m%d")
+        source_sheet_count = sum(item["sheet_count"] for item in source_summaries)
+        source_max_used_rows = max(item["max_used_rows"] for item in source_summaries)
+        source_max_used_columns = max(item["max_used_columns"] for item in source_summaries)
+        source_used_range_rows = sum(item["used_range_rows"] for item in source_summaries)
+        summary_rows = sum(batch["summary_rows"] for batch in batch_reports)
+        python_elapsed_ms = sum(batch["python_elapsed_ms"] for batch in batch_reports)
+        rust_cli_wall_elapsed_ms = sum(
+            batch["rust_cli_wall_elapsed_ms"] for batch in batch_reports
+        )
         report = {
             "schema_version": 1,
             "suite": "pytools.summary_used_range_real_sample_parity",
             "date": dt.date.today().isoformat(),
             "status": "passed_real_sample_cli_parity",
-            "data_origin": "read-only workbook asset in the original PyTools project",
-            "source_sample_relative_path": "xlsx/2.报表不分口径.xlsx",
+            "data_origin": "read-only workbook assets in the original PyTools project",
+            "source_samples": source_summaries,
             "input_format": "xlsx",
-            "source_workbooks": 1,
+            "source_workbooks": len(samples),
             "source_sha256_before_after_equal": True,
             "source_sheet_count": source_sheet_count,
+            "source_used_range_rows": source_used_range_rows,
             "source_max_used_rows": source_max_used_rows,
             "source_max_used_columns": source_max_used_columns,
             "summary_rows": summary_rows,
-            "pycode_dimensions": python_dimensions,
-            "rust_dimensions": rust_dimensions,
+            "batches": batch_reports,
+            "verified_edge_cases": [
+                {
+                    "kind": "worksheet_dimension_elements_missing",
+                    "sample": "xlsx/2.报表校验关系.xlsx",
+                    "worksheets_missing_dimension": next(
+                        item["worksheet_dimensions_missing"]
+                        for item in source_summaries
+                        if item["relative_path"] == "xlsx/2.报表校验关系.xlsx"
+                    ),
+                    "source_used_range_rows": next(
+                        item["used_range_rows"]
+                        for item in source_summaries
+                        if item["relative_path"] == "xlsx/2.报表校验关系.xlsx"
+                    ),
+                    "max_used_rows": next(
+                        item["max_used_rows"]
+                        for item in source_summaries
+                        if item["relative_path"] == "xlsx/2.报表校验关系.xlsx"
+                    ),
+                    "max_used_columns": next(
+                        item["max_used_columns"]
+                        for item in source_summaries
+                        if item["relative_path"] == "xlsx/2.报表校验关系.xlsx"
+                    ),
+                    "comparison": "exact in PyCode/Rust batch output",
+                },
+                {
+                    "kind": "merged_non_anchor_cell",
+                    "sample": "xlsx/1.报表分口径.xlsx",
+                    "source_cell": "B1",
+                    "merged_range": "A1:AG1",
+                    "python_output_semantics": "empty",
+                    "rust_output_semantics": "empty",
+                    "comparison": "exact after filtering non-anchor merged values",
+                },
+            ],
             "comparison": {
                 "cell_values_and_types": "exact",
                 "populated_cell_styles": "exact",
@@ -299,10 +411,9 @@ def compare_real_used_range_sample() -> dict[str, object]:
                 "rust_cli_host": "WSL Linux",
                 "rust_cli_wall_includes_cargo_run": True,
             },
-            "timing_note": "Single execution for diagnostics; not a performance comparison.",
-            "rust_execution": rust_result.get("execution"),
+            "timing_note": "Single execution per batch for diagnostics; not a performance comparison.",
             "limitations": [
-                "One original-project XLSX asset only; no production default or broad format acceptance inferred.",
+                "Four original-project XLSX assets only; no production default or broad format acceptance inferred.",
                 "VBA-bearing XLSM, XLS/XLSB, Windows-native Rust and target Linux/deb remain unvalidated.",
                 "Report contains no source cell values or output workbook; both outputs were temporary.",
             ],
@@ -320,14 +431,45 @@ def compare_real_used_range_sample() -> dict[str, object]:
             "status": report["status"],
             "source_workbooks": report["source_workbooks"],
             "source_sheet_count": report["source_sheet_count"],
+            "source_used_range_rows": report["source_used_range_rows"],
+            "source_max_used_columns": report["source_max_used_columns"],
             "summary_rows": report["summary_rows"],
             "source_sha256_before_after_equal": report["source_sha256_before_after_equal"],
             "python_elapsed_ms": python_elapsed_ms,
             "rust_cli_wall_elapsed_ms": rust_cli_wall_elapsed_ms,
             "execution_environment": report["execution_environment"],
-            "rust_execution": report["rust_execution"],
+            "batch_count": len(batch_reports),
+            "rust_execution": [batch["rust_execution"] for batch in batch_reports],
             "report": str(report_path),
         }
+
+
+def missing_worksheet_dimension_count(path: Path) -> int:
+    main_ns = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+    office_rel_ns = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+    package_rel_ns = "http://schemas.openxmlformats.org/package/2006/relationships"
+    with ZipFile(path) as archive:
+        workbook = ET.fromstring(archive.read("xl/workbook.xml"))
+        relationships = ET.fromstring(archive.read("xl/_rels/workbook.xml.rels"))
+        targets = {
+            relation.get("Id"): relation.get("Target")
+            for relation in relationships.findall(f"{{{package_rel_ns}}}Relationship")
+        }
+        missing = 0
+        for sheet in workbook.findall(f".//{{{main_ns}}}sheet"):
+            relationship_id = sheet.get(f"{{{office_rel_ns}}}id")
+            target = targets.get(relationship_id)
+            if target is None:
+                raise AssertionError("worksheet relationship target is missing")
+            part = (
+                target.lstrip("/")
+                if target.startswith("/")
+                else posixpath.normpath(posixpath.join("xl", target))
+            )
+            worksheet = ET.fromstring(archive.read(part))
+            if worksheet.find(f"{{{main_ns}}}dimension") is None:
+                missing += 1
+        return missing
 
 
 def python_comments_only(template: Path, sources: list[Path], output: Path) -> Path | None:
@@ -480,11 +622,11 @@ def assert_equivalent(
     actual: Path | None,
     label: str,
     compare_page_settings: bool = True,
-) -> None:
+) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
     if expected is None or actual is None:
         if expected is not actual:
             raise AssertionError(f"{label}: saved status differs Python={expected}, Rust={actual}")
-        return
+        return [], []
     expected_sheets, expected_dimensions = workbook_projection(expected)
     actual_sheets, actual_dimensions = workbook_projection(actual)
     if not compare_page_settings:
@@ -534,6 +676,7 @@ def assert_equivalent(
             "python_dimensions": expected_dimensions,
             "rust_dimensions": actual_dimensions,
         }, ensure_ascii=False, default=str, indent=2))
+    return expected_dimensions, actual_dimensions
 
 
 def source_fingerprints(paths: list[Path]) -> dict[str, str]:
@@ -794,7 +937,7 @@ def main() -> int:
                 "format_difference": "This probe covers xlsx and macro-free xlsm. VBA-bearing xlsm and NoComPyTools-only xls/xlsb remain outside the validated Rust/PyCode set.",
             },
             "limitations": [
-                "Synthetic XLSX and macro-free XLSM fixtures only; no authorized real summary workbook was present.",
+                "This report covers synthetic XLSX and macro-free XLSM fixtures; real-project XLSX parity is recorded separately in summary_used_range_real_parity_<date>.json.",
                 "XLSM was tested only as a macro-free synthetic package; VBA-bearing XLSM, XLS, XLSB, Kylin/UOS, glibc 2.28 and deb packaging were not validated.",
                 "NoComPyTools and PyCode input-format scopes differ; no production scope was inferred from the NoCom-only formats.",
                 "Output is a new data workbook; source workbook styles, formulas and unrelated OOXML parts are not copied by contract.",
