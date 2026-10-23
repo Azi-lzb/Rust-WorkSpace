@@ -9,15 +9,18 @@ import datetime as dt
 import json
 import math
 import sys
+import tempfile
 from collections import Counter
 from decimal import Decimal
 from pathlib import Path
 
 
 SOURCE_CORE = Path(r"C:\Users\AZI\Desktop\VibeCode\3.open-data-audit\core")
+sys.dont_write_bytecode = True
 sys.path.insert(0, str(SOURCE_CORE / "src"))
 
 from base_audit.conditional_evaluators import ConditionalFormatService  # noqa: E402
+from base_audit.discovery import recommend_template  # noqa: E402
 from base_audit.name_config import (  # noqa: E402
     CONDITIONAL_FORMAT_EXTRACT_FUNCTION,
     STRUCTURE_COMPARE_FUNCTION,
@@ -95,6 +98,7 @@ def main() -> int:
     parser.add_argument("--rust-report", required=True, type=Path)
     parser.add_argument("--source-file", type=Path)
     parser.add_argument("--template-workbook", type=Path)
+    parser.add_argument("--template-dir", type=Path)
     parser.add_argument("--mapping-config", type=Path)
     parser.add_argument("--rust-progress", type=Path)
     parser.add_argument("--period", required=True)
@@ -111,6 +115,24 @@ def main() -> int:
         args.template_workbook.resolve(strict=True) if args.template_workbook else None,
         args.mapping_config.resolve(strict=True) if args.mapping_config else None,
     )
+    python_template_recommendation = None
+    template_recommendation_matches_python = None
+    if args.template_dir:
+        with tempfile.TemporaryDirectory(prefix="audit-template-recommendation-compare-") as temp:
+            suggestion = recommend_template(
+                args.template_dir.resolve(strict=True),
+                workbook.parent,
+                Path(temp) / "template-index.json",
+            )
+        python_template_recommendation = {
+            "template": (
+                suggestion.template_path.name if suggestion.template_path is not None else None
+            ),
+            "confidence": suggestion.confidence,
+            "matched": suggestion.matched,
+            "details": suggestion.details,
+            "alternatives": [list(item) for item in suggestion.alternatives],
+        }
     service = ConditionalFormatService(mode="PYTHON")
     python_issues, python_stats = service.extract_issues(
         workbook_path=workbook,
@@ -127,6 +149,8 @@ def main() -> int:
     rust_report = json.loads(args.rust_report.read_text(encoding="utf-8"))
     rust_area_mapping = None
     rust_source_discovery = None
+    rust_template_recommendation = None
+    template_selection_matches_expected = None
     if args.rust_progress:
         progress_events = [
             json.loads(line)
@@ -173,10 +197,48 @@ def main() -> int:
                 "selected_files_requested": discovery_event.get("selected_files_requested", 0),
                 "selection_applied": discovery_event.get("selection_applied", False),
                 "files_total": discovery_event.get("files_total", 0),
-                "period": discovery_event.get("period", ""),
+                "period_provided": bool(discovery_event.get("period", "")),
                 "period_source": discovery_event.get("period_source", ""),
                 "elapsed_ms": discovery_event.get("elapsed_ms", 0),
             }
+        template_event = next(
+            (
+                event
+                for event in progress_events
+                if event.get("step") == "template_recommendation"
+                and event.get("status") == "completed"
+            ),
+            None,
+        )
+        if template_event is not None:
+            selected_template = template_event.get("selected_template", "")
+            template_selection_matches_expected = (
+                selected_template == args.template_workbook.name
+                if args.template_workbook
+                else None
+            )
+            rust_template_recommendation = {
+                "engine": template_event.get("engine", ""),
+                "source_workbooks": template_event.get("source_workbooks", 0),
+                "matched": template_event.get("matched", False),
+                "confidence": template_event.get("confidence", 0.0),
+                "selected_template": selected_template,
+                "details": template_event.get("details", ""),
+                "alternatives": template_event.get("alternatives", []),
+                "elapsed_ms": template_event.get("elapsed_ms", 0),
+                "matches_expected_template": template_selection_matches_expected,
+            }
+            if python_template_recommendation is not None:
+                rust_recommendation_result = {
+                    "template": selected_template,
+                    "confidence": rust_template_recommendation["confidence"],
+                    "matched": rust_template_recommendation["matched"],
+                    "details": rust_template_recommendation["details"],
+                    "alternatives": rust_template_recommendation["alternatives"],
+                }
+                template_recommendation_matches_python = (
+                    rust_recommendation_result == python_template_recommendation
+                )
     python_rows = [normalize_issue(issue) for issue in python_issues]
     rust_rows = [normalize_issue(issue) for issue in rust_report.get("issues", [])]
     python_by_id = {row["issue_id"]: row for row in python_rows}
@@ -221,11 +283,43 @@ def main() -> int:
         "issue_build_time_ms",
         sum(item.get("issue_build_time_ms", 0) for item in rust_directory_files),
     )
+    python_template_recommendation_summary = None
+    if python_template_recommendation is not None:
+        python_template_recommendation_summary = {
+            "matched": python_template_recommendation["matched"],
+            "confidence": python_template_recommendation["confidence"],
+            "selected_template": (
+                "redacted" if python_template_recommendation["template"] else None
+            ),
+            "alternative_count": len(python_template_recommendation["alternatives"]),
+        }
+    rust_template_recommendation_summary = None
+    if rust_template_recommendation is not None:
+        rust_template_recommendation_summary = {
+            "engine": rust_template_recommendation["engine"],
+            "source_workbooks": rust_template_recommendation["source_workbooks"],
+            "matched": rust_template_recommendation["matched"],
+            "confidence": rust_template_recommendation["confidence"],
+            "selected_template": (
+                "redacted" if rust_template_recommendation["selected_template"] else None
+            ),
+            "alternative_count": len(rust_template_recommendation["alternatives"]),
+            "elapsed_ms": rust_template_recommendation["elapsed_ms"],
+            "matches_expected_template": rust_template_recommendation[
+                "matches_expected_template"
+            ],
+        }
     summary = {
         "schema_version": 1,
         "suite": "audit.s1_conditional_issue_extraction",
         "baseline": "Open-Data-Audit ConditionalFormatService(PYTHON)",
-        "status": "passed" if mismatch_count == 0 else "failed",
+        "status": (
+            "passed"
+            if mismatch_count == 0
+            and template_selection_matches_expected is not False
+            and template_recommendation_matches_python is not False
+            else "failed"
+        ),
         "python_issue_count": len(python_rows),
         "rust_issue_count": len(rust_rows),
         "missing_in_rust": missing_in_rust,
@@ -241,6 +335,10 @@ def main() -> int:
         "python_structure_areas": len(structure_ranges),
         "rust_area_mapping": rust_area_mapping,
         "rust_source_discovery": rust_source_discovery,
+        "rust_template_recommendation": rust_template_recommendation_summary,
+        "python_template_recommendation": python_template_recommendation_summary,
+        "template_recommendation_matches_python": template_recommendation_matches_python,
+        "template_selection_matches_expected": template_selection_matches_expected,
         "python_unsupported_cells": python_stats.get("unsupported_cells", 0),
         "rust_diagnostics": rust_evaluation.get(
             "_diagnostics_count", len(rust_evaluation.get("diagnostics", []))
@@ -276,7 +374,12 @@ def main() -> int:
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(encoded, encoding="utf-8")
     print(encoded, end="")
-    return 0 if mismatch_count == 0 else 1
+    return (
+        0
+        if mismatch_count == 0 and template_selection_matches_expected is not False
+        and template_recommendation_matches_python is not False
+        else 1
+    )
 
 
 if __name__ == "__main__":

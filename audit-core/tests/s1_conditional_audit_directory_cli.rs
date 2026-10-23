@@ -47,6 +47,7 @@ fn run_cli(
         None,
         None,
         None,
+        None,
     )
 }
 
@@ -56,6 +57,7 @@ fn run_cli_with_mapping(
     recursive: bool,
     developer_view: bool,
     template_workbook: Option<&Path>,
+    template_dir: Option<&Path>,
     mapping_config: Option<&Path>,
     scan_area: Option<&str>,
     selected_file: Option<&Path>,
@@ -77,6 +79,9 @@ fn run_cli_with_mapping(
     }
     if let Some(template_workbook) = template_workbook {
         command.arg("--template-workbook").arg(template_workbook);
+    }
+    if let Some(template_dir) = template_dir {
+        command.arg("--template-dir").arg(template_dir);
     }
     if let Some(mapping_config) = mapping_config {
         command.arg("--mapping-config").arg(mapping_config);
@@ -191,6 +196,15 @@ fn mapping_config(path: &Path) {
         .expect("save synthetic mapping configuration");
 }
 
+fn workbook_with_sheet_name(path: &Path, name: &str) {
+    let mut workbook = Workbook::new();
+    workbook
+        .add_worksheet()
+        .set_name(name)
+        .expect("set synthetic workbook sheet name");
+    workbook.save(path).expect("save synthetic workbook");
+}
+
 #[test]
 fn directory_cli_reads_template_defined_names_and_applies_configured_areas() {
     let directory = temporary_directory("s1_named_area_mapping");
@@ -206,6 +220,7 @@ fn directory_cli_reads_template_defined_names_and_applies_configured_areas() {
         false,
         true,
         Some(&template),
+        None,
         Some(&config),
         None,
         None,
@@ -252,6 +267,7 @@ fn directory_cli_reads_template_defined_names_and_applies_configured_areas() {
         false,
         false,
         Some(&template),
+        None,
         Some(&config),
         Some("S1Conditional!C5:C5"),
         None,
@@ -265,6 +281,202 @@ fn directory_cli_reads_template_defined_names_and_applies_configured_areas() {
         serde_json::from_slice(&override_output.stdout).expect("valid override batch JSON");
     assert_eq!(override_report["issues"].as_array().unwrap().len(), 1);
     assert_eq!(override_report["issues"][0]["target_cell"], "C5");
+
+    fs::remove_dir_all(directory).expect("remove temporary input directory");
+}
+
+#[test]
+fn directory_cli_recommends_template_for_selected_sources_and_excludes_template_files() {
+    let directory = temporary_directory("s1_directory_template_recommendation");
+    let input_dir = directory.join("input");
+    let template_dir = input_dir.join("templates");
+    fs::create_dir_all(&input_dir).expect("create source input directory");
+    fs::create_dir_all(&template_dir).expect("create template directory inside source tree");
+    copy_fixture(&input_dir, "9144_甲银行_2026-07-31.xlsx");
+    let template = template_dir.join("单位模板.xlsx");
+    fs::copy(named_template_fixture(), &template).expect("copy synthetic named template");
+    let config = directory.join("mapping-config.xlsx");
+    mapping_config(&config);
+
+    let user = run_cli_with_mapping(
+        &input_dir,
+        None,
+        true,
+        false,
+        None,
+        Some(&template_dir),
+        Some(&config),
+        None,
+        None,
+    );
+    assert!(
+        user.status.success(),
+        "{}",
+        String::from_utf8_lossy(&user.stderr)
+    );
+    let user_report: Value = serde_json::from_slice(&user.stdout).expect("valid audit JSON");
+    assert_eq!(user_report["files"].as_array().unwrap().len(), 1);
+    assert_eq!(user_report["issues"].as_array().unwrap().len(), 1);
+    assert_eq!(user_report["issues"][0]["target_cell"], "B2");
+    assert!(String::from_utf8_lossy(&user.stderr).contains("模板推荐完成"));
+    assert!(String::from_utf8_lossy(&user.stderr).contains("namespace-aware OOXML"));
+
+    let developer = run_cli_with_mapping(
+        &input_dir,
+        None,
+        true,
+        true,
+        None,
+        Some(&template_dir),
+        Some(&config),
+        None,
+        None,
+    );
+    assert!(
+        developer.status.success(),
+        "{}",
+        String::from_utf8_lossy(&developer.stderr)
+    );
+    let events = String::from_utf8_lossy(&developer.stderr)
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).expect("JSON progress line"))
+        .collect::<Vec<_>>();
+    let discovery = events
+        .iter()
+        .find(|event| {
+            event["step"] == "source_workbook_discovery" && event["status"] == "completed"
+        })
+        .expect("source discovery completion event");
+    assert_eq!(discovery["available_source_files"], 1);
+    let recommendation = events
+        .iter()
+        .find(|event| event["step"] == "template_recommendation" && event["status"] == "completed")
+        .expect("template recommendation completion event");
+    assert_eq!(
+        recommendation["engine"],
+        "namespace_aware_ooxml_sheet_directory"
+    );
+    assert_eq!(recommendation["source_workbooks"], 1);
+    assert_eq!(recommendation["selected_template"], "单位模板.xlsx");
+    assert_eq!(recommendation["confidence"], 1.0);
+    assert!(recommendation["elapsed_ms"].as_u64().is_some());
+
+    fs::remove_dir_all(directory).expect("remove temporary input directory");
+}
+
+#[test]
+fn directory_cli_stops_when_template_recommendation_is_ambiguous() {
+    let directory = temporary_directory("s1_directory_template_ambiguity");
+    let input_dir = directory.join("input");
+    let template_dir = directory.join("templates");
+    fs::create_dir_all(&input_dir).expect("create source input directory");
+    fs::create_dir_all(&template_dir).expect("create template directory");
+    copy_fixture(&input_dir, "9144_甲银行_2026-07-31.xlsx");
+    fs::copy(named_template_fixture(), template_dir.join("候选甲.xlsx"))
+        .expect("copy first synthetic template");
+    fs::copy(named_template_fixture(), template_dir.join("候选乙.xlsx"))
+        .expect("copy second synthetic template");
+
+    let output = run_cli_with_mapping(
+        &input_dir,
+        None,
+        false,
+        true,
+        None,
+        Some(&template_dir),
+        None,
+        None,
+        None,
+    );
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("模板自动推荐未能唯一确定模板"), "{stderr}");
+    assert!(
+        stderr.contains("请显式指定 --template-workbook"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("候选甲.xlsx"), "{stderr}");
+    assert!(stderr.contains("候选乙.xlsx"), "{stderr}");
+    let failed_event = stderr
+        .lines()
+        .filter(|line| line.trim_start().starts_with('{'))
+        .map(|line| serde_json::from_str::<Value>(line).expect("JSON progress line"))
+        .find(|event| event["step"] == "template_recommendation" && event["status"] == "failed")
+        .expect("template ambiguity failure event");
+    assert_eq!(
+        failed_event["engine"],
+        "namespace_aware_ooxml_sheet_directory"
+    );
+    assert_eq!(failed_event["matched"], false);
+    assert_eq!(failed_event["alternatives"].as_array().unwrap().len(), 2);
+
+    fs::remove_dir_all(directory).expect("remove temporary input directory");
+}
+
+#[test]
+fn directory_cli_template_recommendation_respects_selected_files_for_mixed_types() {
+    let directory = temporary_directory("s1_directory_template_mixed_types");
+    let input_dir = directory.join("input");
+    let template_dir = directory.join("templates");
+    fs::create_dir_all(&input_dir).expect("create source input directory");
+    fs::create_dir_all(&template_dir).expect("create template directory");
+    copy_fixture(&input_dir, "9144_甲银行_2026-07-31.xlsx");
+    workbook_with_sheet_name(&input_dir.join("9145_乙银行_2026-07-31.xlsx"), "其他报表");
+    fs::copy(named_template_fixture(), template_dir.join("单位模板.xlsx"))
+        .expect("copy unit template");
+    workbook_with_sheet_name(&template_dir.join("其他模板.xlsx"), "其他报表");
+    let config = directory.join("mapping-config.xlsx");
+    mapping_config(&config);
+
+    let mixed = run_cli_with_mapping(
+        &input_dir,
+        None,
+        false,
+        true,
+        None,
+        Some(&template_dir),
+        Some(&config),
+        None,
+        None,
+    );
+    assert!(!mixed.status.success());
+    let mixed_stderr = String::from_utf8_lossy(&mixed.stderr);
+    assert!(
+        mixed_stderr.contains("源数据目录可能包含多种报表"),
+        "{mixed_stderr}"
+    );
+
+    let selected = run_cli_with_mapping(
+        &input_dir,
+        None,
+        false,
+        true,
+        None,
+        Some(&template_dir),
+        Some(&config),
+        None,
+        Some(Path::new("9144_甲银行_2026-07-31.xlsx")),
+    );
+    assert!(
+        selected.status.success(),
+        "{}",
+        String::from_utf8_lossy(&selected.stderr)
+    );
+    let report: Value =
+        serde_json::from_slice(&selected.stdout).expect("valid selected audit JSON");
+    assert_eq!(report["files"].as_array().unwrap().len(), 1);
+    assert_eq!(report["issues"].as_array().unwrap().len(), 1);
+    let events = String::from_utf8_lossy(&selected.stderr)
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).expect("JSON progress line"))
+        .collect::<Vec<_>>();
+    let recommendation = events
+        .iter()
+        .find(|event| event["step"] == "template_recommendation" && event["status"] == "completed")
+        .expect("selected-source recommendation event");
+    assert_eq!(recommendation["source_workbooks"], 1);
+    assert_eq!(recommendation["selected_template"], "单位模板.xlsx");
 
     fs::remove_dir_all(directory).expect("remove temporary input directory");
 }
@@ -285,6 +497,7 @@ fn directory_cli_limits_period_detection_to_selected_files() {
         false,
         true,
         Some(&template),
+        None,
         Some(&config),
         None,
         Some(Path::new("9145_乙银行_2026-07-31.xlsx")),
@@ -322,6 +535,7 @@ fn directory_cli_limits_period_detection_to_selected_files() {
         false,
         false,
         Some(&template),
+        None,
         Some(&config),
         None,
         Some(Path::new("../outside.xlsx")),

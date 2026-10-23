@@ -40,10 +40,43 @@ pub fn recommend_template(
     depth: ScanDepth,
 ) -> Result<TemplateSuggestion> {
     let source_files = source_workbooks(input_dir, depth)?;
+    recommend_template_for_workbooks(template_dir, &source_files)
+}
+
+/// Recommend a template for a source workbook list that has already been
+/// discovered and filtered by the caller. Directory audits use this to keep
+/// explicit file selection and source exclusions consistent between template
+/// choice and the subsequent audit.
+pub fn recommend_template_for_workbooks(
+    template_dir: &Path,
+    source_files: &[PathBuf],
+) -> Result<TemplateSuggestion> {
     if source_files.is_empty() {
         return Ok(unmatched("源数据目录中没有可识别的 .xlsx 文件"));
     }
 
+    let templates = template_workbook_paths(template_dir)?
+        .into_iter()
+        .map(|path| TemplateProfile {
+            sheet_names: read_xlsx_sheet_names_ooxml(&path).unwrap_or_default(),
+            path,
+        })
+        .collect::<Vec<_>>();
+    if templates.is_empty() {
+        return Ok(unmatched("模板文件目录中没有正式模板"));
+    }
+
+    let source_sheets = source_files
+        .iter()
+        .map(|path| read_xlsx_sheet_names_ooxml(path).unwrap_or_default())
+        .collect::<Vec<_>>();
+    Ok(recommend_from_sheet_sets(&templates, &source_sheets))
+}
+
+/// List the direct `.xlsx` templates considered by recommendation. Keeping
+/// this list shared lets a caller exclude those files if its source and
+/// template directories overlap.
+pub fn template_workbook_paths(template_dir: &Path) -> Result<Vec<PathBuf>> {
     let mut template_paths = if template_dir.is_dir() {
         fs::read_dir(template_dir)?
             .filter_map(std::result::Result::ok)
@@ -62,23 +95,7 @@ pub fn recommend_template(
         Vec::new()
     };
     template_paths.sort();
-
-    let templates = template_paths
-        .into_iter()
-        .map(|path| TemplateProfile {
-            sheet_names: read_xlsx_sheet_names_ooxml(&path).unwrap_or_default(),
-            path,
-        })
-        .collect::<Vec<_>>();
-    if templates.is_empty() {
-        return Ok(unmatched("模板文件目录中没有正式模板"));
-    }
-
-    let source_sheets = source_files
-        .iter()
-        .map(|path| read_xlsx_sheet_names_ooxml(path).unwrap_or_default())
-        .collect::<Vec<_>>();
-    Ok(recommend_from_sheet_sets(&templates, &source_sheets))
+    Ok(template_paths)
 }
 
 /// Pure worksheet-set recommendation logic, suitable for parity probes.

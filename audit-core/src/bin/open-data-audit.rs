@@ -14,7 +14,7 @@ use audit_core::{
         extract_conditional_issues, extract_conditional_issues_batch, S1ConditionalBatchInput,
         S1ConditionalBatchProgress, S1ConditionalMetadata,
     },
-    s1_template::recommend_template,
+    s1_template::{recommend_template, recommend_template_for_workbooks, template_workbook_paths},
     s2_service::{run_s2_audit, S2ProgressEvent, S2RunRequest},
     s2_summary::S2AuditSummary,
     web_bridge::serve_web_ui,
@@ -193,8 +193,12 @@ struct ConditionalAuditDirectoryArgs {
     structure_areas: Vec<String>,
 
     /// Template workbook whose configured defined names select condition and structure areas.
-    #[arg(long)]
+    #[arg(long, conflicts_with = "template_dir")]
     template_workbook: Option<PathBuf>,
+
+    /// Directory of templates used to recommend a workbook for this source directory.
+    #[arg(long)]
+    template_dir: Option<PathBuf>,
 
     /// Optional Audit config workbook containing the “模块化功能” mappings.
     #[arg(long)]
@@ -487,7 +491,8 @@ fn run_conditional_audit_batch(arguments: ConditionalAuditBatchArgs) -> Result<(
     let excluded_workbooks = excluded_s1_input_workbooks(
         arguments.template_workbook.as_deref(),
         arguments.mapping_config.as_deref(),
-    );
+        None,
+    )?;
     let inputs = inputs
         .into_iter()
         .filter(|input| {
@@ -509,13 +514,6 @@ fn run_conditional_audit_batch(arguments: ConditionalAuditBatchArgs) -> Result<(
 }
 
 fn run_conditional_audit_directory(arguments: ConditionalAuditDirectoryArgs) -> Result<()> {
-    let (scan_areas, structure_ranges) = resolve_s1_conditional_cli_areas(
-        arguments.template_workbook.as_deref(),
-        arguments.mapping_config.as_deref(),
-        &arguments.scan_areas,
-        &arguments.structure_areas,
-        arguments.developer_view,
-    )?;
     let discovery_started = Instant::now();
     let discovery_started_at = chrono::Local::now().to_rfc3339();
     if arguments.developer_view {
@@ -546,7 +544,8 @@ fn run_conditional_audit_directory(arguments: ConditionalAuditDirectoryArgs) -> 
         let excluded_workbooks = excluded_s1_input_workbooks(
             arguments.template_workbook.as_deref(),
             arguments.mapping_config.as_deref(),
-        );
+            arguments.template_dir.as_deref(),
+        )?;
         let source_files = source_workbooks(&arguments.input_dir, depth)?
             .into_iter()
             .filter(|path| {
@@ -579,25 +578,8 @@ fn run_conditional_audit_directory(arguments: ConditionalAuditDirectoryArgs) -> 
         } else {
             (detection.period.clone(), detection.source.clone())
         };
-        let inputs = source_files
-            .into_iter()
-            .map(|path| {
-                let (org_code, org_name) = organisation_from_name(&path);
-                S1ConditionalBatchInput {
-                    workbook_path: path.clone(),
-                    source_file: path,
-                    metadata: S1ConditionalMetadata {
-                        period: period.clone(),
-                        batch_id: arguments.batch_id.clone(),
-                        audit_time: arguments.audit_time.clone(),
-                        org_code,
-                        org_name,
-                    },
-                }
-            })
-            .collect::<Vec<_>>();
         Ok((
-            inputs,
+            source_files,
             period,
             period_source,
             detection.details,
@@ -605,7 +587,7 @@ fn run_conditional_audit_directory(arguments: ConditionalAuditDirectoryArgs) -> 
         ))
     })();
 
-    let (inputs, period, period_source, detection_details, available_source_files) =
+    let (source_files, period, period_source, detection_details, available_source_files) =
         match discovery_result {
             Ok(result) => result,
             Err(error) => {
@@ -644,7 +626,7 @@ fn run_conditional_audit_directory(arguments: ConditionalAuditDirectoryArgs) -> 
                 "status": "completed",
                 "input_dir": arguments.input_dir,
                 "available_source_files": available_source_files,
-                "files_total": inputs.len(),
+                "files_total": source_files.len(),
                 "selected_files_requested": arguments.selected_files.len(),
                 "selection_applied": !arguments.selected_files.is_empty(),
                 "period": period,
@@ -659,7 +641,7 @@ fn run_conditional_audit_directory(arguments: ConditionalAuditDirectoryArgs) -> 
         if arguments.selected_files.is_empty() {
             eprintln!(
                 "源目录发现 {} 个 XLSX；数据期 {}（{}）；筛选耗时 {} ms。",
-                inputs.len(),
+                source_files.len(),
                 period,
                 period_source,
                 discovery_started.elapsed().as_millis()
@@ -668,13 +650,47 @@ fn run_conditional_audit_directory(arguments: ConditionalAuditDirectoryArgs) -> 
             eprintln!(
                 "源目录有 {} 个可审核 XLSX，按所选文件筛出 {} 个；数据期 {}（{}）；筛选耗时 {} ms。",
                 available_source_files,
-                inputs.len(),
+                source_files.len(),
                 period,
                 period_source,
                 discovery_started.elapsed().as_millis()
             );
         }
     }
+
+    let template_workbook = if let Some(template_dir) = arguments.template_dir.as_deref() {
+        Some(recommend_s1_directory_template(
+            template_dir,
+            &source_files,
+            arguments.developer_view,
+        )?)
+    } else {
+        arguments.template_workbook.clone()
+    };
+    let (scan_areas, structure_ranges) = resolve_s1_conditional_cli_areas(
+        template_workbook.as_deref(),
+        arguments.mapping_config.as_deref(),
+        &arguments.scan_areas,
+        &arguments.structure_areas,
+        arguments.developer_view,
+    )?;
+    let inputs = source_files
+        .into_iter()
+        .map(|path| {
+            let (org_code, org_name) = organisation_from_name(&path);
+            S1ConditionalBatchInput {
+                workbook_path: path.clone(),
+                source_file: path,
+                metadata: S1ConditionalMetadata {
+                    period: period.clone(),
+                    batch_id: arguments.batch_id.clone(),
+                    audit_time: arguments.audit_time.clone(),
+                    org_code,
+                    org_name,
+                },
+            }
+        })
+        .collect::<Vec<_>>();
 
     run_conditional_audit_inputs(
         inputs,
@@ -815,6 +831,130 @@ fn run_conditional_audit_inputs(
     }
     println!("{}", serde_json::to_string_pretty(&report)?);
     Ok(())
+}
+
+fn recommend_s1_directory_template(
+    template_dir: &Path,
+    source_files: &[PathBuf],
+    developer_view: bool,
+) -> Result<PathBuf> {
+    let started = Instant::now();
+    let started_at = chrono::Local::now().to_rfc3339();
+    if developer_view {
+        eprintln!(
+            "{}",
+            serde_json::to_string(&serde_json::json!({
+                "type": "progress",
+                "product": "open-data-audit",
+                "feature": "S1-F01",
+                "step": "template_recommendation",
+                "status": "started",
+                "engine": "namespace_aware_ooxml_sheet_directory",
+                "source_workbooks": source_files.len(),
+                "started_at": started_at
+            }))?
+        );
+    } else {
+        eprintln!("正在按所选源工作簿推荐 S1-F01 模板…");
+    }
+
+    let suggestion = match recommend_template_for_workbooks(template_dir, source_files) {
+        Ok(suggestion) => suggestion,
+        Err(error) => {
+            if developer_view {
+                eprintln!(
+                    "{}",
+                    serde_json::to_string(&serde_json::json!({
+                        "type": "progress",
+                        "product": "open-data-audit",
+                        "feature": "S1-F01",
+                        "step": "template_recommendation",
+                        "status": "failed",
+                        "engine": "namespace_aware_ooxml_sheet_directory",
+                        "source_workbooks": source_files.len(),
+                        "started_at": started_at,
+                        "finished_at": chrono::Local::now().to_rfc3339(),
+                        "elapsed_ms": started.elapsed().as_millis(),
+                        "error": format!("{error:#}")
+                    }))?
+                );
+            } else {
+                eprintln!("S1-F01 模板推荐失败：{error:#}");
+            }
+            return Err(error.context("S1-F01 模板推荐失败"));
+        }
+    };
+
+    let Some(template_path) = suggestion
+        .template_path
+        .as_ref()
+        .filter(|_| suggestion.matched)
+        .cloned()
+    else {
+        let error = anyhow::anyhow!(
+            "模板自动推荐未能唯一确定模板：{}；请显式指定 --template-workbook",
+            suggestion.details
+        );
+        if developer_view {
+            eprintln!(
+                "{}",
+                serde_json::to_string(&serde_json::json!({
+                    "type": "progress",
+                    "product": "open-data-audit",
+                    "feature": "S1-F01",
+                    "step": "template_recommendation",
+                    "status": "failed",
+                    "engine": "namespace_aware_ooxml_sheet_directory",
+                    "source_workbooks": source_files.len(),
+                    "matched": suggestion.matched,
+                    "confidence": suggestion.confidence,
+                    "details": suggestion.details,
+                    "alternatives": suggestion.alternatives,
+                    "started_at": started_at,
+                    "finished_at": chrono::Local::now().to_rfc3339(),
+                    "elapsed_ms": started.elapsed().as_millis(),
+                    "error": format!("{error:#}")
+                }))?
+            );
+        } else {
+            eprintln!("S1-F01 模板推荐未能确定唯一模板：{}", suggestion.details);
+            eprintln!("请检查候选模板，或显式指定 --template-workbook。");
+        }
+        return Err(error);
+    };
+
+    if developer_view {
+        eprintln!(
+            "{}",
+            serde_json::to_string(&serde_json::json!({
+                "type": "progress",
+                "product": "open-data-audit",
+                "feature": "S1-F01",
+                "step": "template_recommendation",
+                "status": "completed",
+                "engine": "namespace_aware_ooxml_sheet_directory",
+                "source_workbooks": source_files.len(),
+                "matched": suggestion.matched,
+                "confidence": suggestion.confidence,
+                "details": suggestion.details,
+                "selected_template": template_path
+                    .file_name()
+                    .map(|name| name.to_string_lossy().into_owned()),
+                "alternatives": suggestion.alternatives,
+                "started_at": started_at,
+                "finished_at": chrono::Local::now().to_rfc3339(),
+                "elapsed_ms": started.elapsed().as_millis()
+            }))?
+        );
+    } else {
+        eprintln!(
+            "S1-F01 模板推荐完成：{}；可信度 {:.0}%；引擎 namespace-aware OOXML 工作表目录读取，耗时 {} ms。",
+            suggestion.details,
+            suggestion.confidence * 100.0,
+            started.elapsed().as_millis()
+        );
+    }
+    Ok(template_path)
 }
 
 fn resolve_s1_conditional_cli_areas(
@@ -1025,12 +1165,17 @@ fn effective_s1_mapping_config_path(mapping_config: Option<&Path>) -> Option<Pat
 fn excluded_s1_input_workbooks(
     template_workbook: Option<&Path>,
     mapping_config: Option<&Path>,
-) -> Vec<PathBuf> {
-    template_workbook
+    template_dir: Option<&Path>,
+) -> Result<Vec<PathBuf>> {
+    let mut excluded = template_workbook
         .map(Path::to_path_buf)
         .into_iter()
-        .chain(effective_s1_mapping_config_path(mapping_config))
-        .collect()
+        .collect::<Vec<_>>();
+    if let Some(template_dir) = template_dir {
+        excluded.extend(template_workbook_paths(template_dir)?);
+    }
+    excluded.extend(effective_s1_mapping_config_path(mapping_config));
+    Ok(excluded)
 }
 
 fn select_s1_source_workbooks(

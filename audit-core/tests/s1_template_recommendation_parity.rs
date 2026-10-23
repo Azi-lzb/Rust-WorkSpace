@@ -65,6 +65,7 @@ fn s1_template_recommendation_matches_read_only_python_baseline() {
         "source_functions": ["base_audit.discovery.recommend_template"],
         "rust_functions": [
             "audit_core::s1_template::recommend_template",
+            "audit_core::s1_template::recommend_template_for_workbooks",
             "audit_core::s1_template::recommend_from_sheet_sets"
         ],
         "source_baseline": "probe/reports/template_recommendation_python_baseline.json",
@@ -75,6 +76,10 @@ fn s1_template_recommendation_matches_read_only_python_baseline() {
             {"item": "mixed report types stop automatic selection", "status": "保留"},
             {"item": "near-tied candidates require manual selection", "status": "保留"},
             {
+                "item": "directory audit recommends from its discovered and selected source workbooks",
+                "status": "合成 CLI 集成通过；歧义时停止自动审核"
+            },
+            {
                 "item": "config-real plus 2026-07-31 source-tree smoke (68 source workbooks, 8 templates)",
                 "status": "保留"
             },
@@ -83,7 +88,7 @@ fn s1_template_recommendation_matches_read_only_python_baseline() {
             {"item": "performance and target Linux", "status": "未测量"}
         ],
         "verification": {
-            "rust": "compares all synthetic fixture cases with the read-only Python baseline",
+            "rust": "compares all synthetic fixture cases with the read-only Python baseline; directory CLI consumes the same selected source list",
             "real_smoke": "probe/reports/template_recommendation_real_smoke.json"
         }
     });

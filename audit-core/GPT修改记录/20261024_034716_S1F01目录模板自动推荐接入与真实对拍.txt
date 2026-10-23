@@ -1,0 +1,48 @@
+# S1-F01 目录模板自动推荐接入与真实对拍
+
+- 时间：2026-10-24 03:47（Asia/Shanghai）
+- 执行者：Codex
+- 分支：`audit-dev`
+- Worktree：Audit 专用 `audit-dev` Worktree。
+- 修改前 commit：`bf60bf4`；开始时工作区干净，无既有未提交 WIP。
+- 修改后 commit：本轮功能提交（以 Git 历史为准）。
+- 【组件版本】不升级；未修改 workspace crate 版本或 `Cargo.lock`。
+
+## 目的与改动
+
+将已有按工作表集合推荐模板能力接入 `conditional-audit-directory`。新增 `--template-dir`，与 `--template-workbook` 互斥。入口先按递归范围、映射/模板排除规则和重复 `--selected-file` 完成源工作簿发现与筛选，再只对这批工作簿推荐模板；模板目录内的 `.xlsx` 候选也从审核输入和数据期推断中排除。推荐唯一可信模板后，现有 Defined Names 映射及条件格式 Issue 计算继续运行；候选接近、混合报表类型或无可信模板时失败关闭，提示用户显式指定模板。
+
+Rust 的 `recommend_template` 复用新增的 `recommend_template_for_workbooks` 与共享模板路径枚举。普通/开发者日志分别记录推荐结果、实际 OOXML sheet-directory reader、输入数量和耗时。Python/Rust 对拍辅助程序记录去除模板名的推荐汇总，并比较完整推荐结果；真实报告不包含工作簿内容或 Issue 值。
+
+修改文件：
+
+- `audit-core/src/bin/open-data-audit.rs`
+- `audit-core/src/s1_template.rs`
+- `audit-core/tests/s1_conditional_audit_directory_cli.rs`
+- `audit-core/tests/s1_template_recommendation_parity.rs`
+- `audit-core/tests/compare/compare_s1_conditional_audit.py`
+- `audit-core/probe/reports/template_recommendation_parity.json`
+- `audit-core/probe/reports/s1_template_directory_audit_real.json`（汇总报告）
+- `audit-core/MIGRATION_INVENTORY.md`
+- 本记录
+
+未修改 `DEVELOPMENT_GOAL.md`、workspace/子项目 `AGENTS.md`、`pytools-core/**`、共享 `crates/**`、根 Cargo 文件、`Cargo.lock` 或只读 Python 源项目。未加入真实工作簿、配置文件、Issue 内容或凭据。
+
+## 验证
+
+- WSL Ubuntu：`cargo fmt --all -- --check` 通过。
+- WSL Ubuntu：`cargo test -p audit-core --locked` 全部测试目标通过；其中目录 CLI 集成测试 8/8，模板推荐 Python 基线对拍 1/1。
+- WSL Ubuntu：`cargo test -p excel-reader --locked` 通过，10/10。
+- WSL Ubuntu：`cargo build -p audit-core --bin open-data-audit --locked` 通过。
+- 合成 CLI 场景验证嵌套模板排除、用户/开发者双视图、重复候选歧义停止、混合报表类型停止，以及 `--selected-file` 将模板推荐与审核都限定到所选源文件。
+- 只读真实样本使用 21 个模板候选和 1 个源工作簿执行目录审核。Python 与 Rust 的模板推荐字段一致，唯一匹配可信度 1；Issue 对拍为 2 条、4 条规则、602 个评估单元格，缺失项 0、全字段差异 0。映射 4 个条件区域及 8 个结构区域，未解析名称 0；读取引擎为 `calamine+namespace_aware_ooxml`，推荐引擎为 `namespace_aware_ooxml_sheet_directory`，无诊断，未执行公式重算。汇总见 `audit-core/probe/reports/s1_template_directory_audit_real.json`，运行时长仅为单次样本记录，不作性能基准。
+- Windows 原生没有安装 `cargo`/`rustc`，因此 Rust 格式、构建和测试均在 WSL Ubuntu 运行。Windows 原生 Rust、麒麟 V10/UOS V20、glibc 2.28、deb 与离线安装验收未执行。
+
+## 未完成范围与已知问题
+
+本轮只验证了一个真实源工作簿和所用真实模板目录；不能据此宣称全部模板、期间或完整 S1-F01 已验收。完整配置校验、普通审核规则、结果写回、历史和重复运行一致性仍待迁移。真实样本的原始 Rust 输出和进度日志保留在本机临时目录；清理命令被环境策略拒绝，文件未加入 Git。
+
+## 删除与回滚
+
+- 删除清单：无。
+- 回滚代码、测试和 CLI 接线：`git revert <本轮功能提交>`；本机临时文件需单独清理。

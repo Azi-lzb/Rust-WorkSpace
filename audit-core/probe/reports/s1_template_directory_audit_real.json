@@ -1,0 +1,81 @@
+{
+  "schema_version": 1,
+  "suite": "audit.s1_conditional_issue_extraction",
+  "baseline": "Open-Data-Audit ConditionalFormatService(PYTHON)",
+  "status": "passed",
+  "python_issue_count": 2,
+  "rust_issue_count": 2,
+  "missing_in_rust": 0,
+  "missing_in_python": 0,
+  "field_difference_counts": {},
+  "mismatch_count": 0,
+  "python_evaluated_cells": 602,
+  "rust_evaluated_cells": 602,
+  "python_rules_total": 4,
+  "rust_rules_total": 4,
+  "area_source": "template_defined_names",
+  "python_scan_areas": 4,
+  "python_structure_areas": 8,
+  "rust_area_mapping": {
+    "engine": "calamine+namespace_aware_ooxml",
+    "area_source": "template_defined_names",
+    "mappings_loaded": 2,
+    "defined_names_total": 17,
+    "mapped_named_areas": 12,
+    "unresolved_matching_names": 0,
+    "scan_areas": 4,
+    "structure_areas": 8,
+    "elapsed_ms": 135
+  },
+  "rust_source_discovery": {
+    "available_source_files": 1,
+    "selected_files_requested": 0,
+    "selection_applied": false,
+    "files_total": 1,
+    "period_provided": true,
+    "period_source": "用户指定",
+    "elapsed_ms": 188
+  },
+  "rust_template_recommendation": {
+    "engine": "namespace_aware_ooxml_sheet_directory",
+    "source_workbooks": 1,
+    "matched": true,
+    "confidence": 1.0,
+    "selected_template": "redacted",
+    "alternative_count": 1,
+    "elapsed_ms": 418,
+    "matches_expected_template": true
+  },
+  "python_template_recommendation": {
+    "matched": true,
+    "confidence": 1.0,
+    "selected_template": "redacted",
+    "alternative_count": 1
+  },
+  "template_recommendation_matches_python": true,
+  "template_selection_matches_expected": true,
+  "python_unsupported_cells": 0,
+  "rust_diagnostics": 0,
+  "execution": {
+    "python_engine": "PythonConditionalRuleEvaluator + Direct OOXML reader",
+    "python_rule_read_time_s": 0.015999999988707714,
+    "python_rule_normalize_time_s": 0.014999999999417923,
+    "python_evaluation_time_s": 0.01600000000325963,
+    "python_issue_build_time_s": 0.23399999999674037,
+    "python_total_time_s": 0.28099999998812564,
+    "rust_engine": "calamine+namespace_aware_ooxml",
+    "rust_read_time_ms": 364,
+    "rust_evaluation_time_ms": 14,
+    "rust_issue_build_time_ms": 1,
+    "rust_total_time_ms": 391,
+    "scope": "single real-workbook run; not a performance benchmark"
+  },
+  "verification": {
+    "source_workbook": "read-only",
+    "template_workbook": "read-only",
+    "mapping_config": "built-in defaults",
+    "formula_recalculation": "not performed",
+    "issue_order": "ignored; issue records are matched by issue_id",
+    "source_paths": "compared by basename; not included in output"
+  }
+}

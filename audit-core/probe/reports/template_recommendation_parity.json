@@ -13,6 +13,10 @@
       "status": "保留"
     },
     {
+      "item": "directory audit recommends from its discovered and selected source workbooks",
+      "status": "合成 CLI 集成通过；歧义时停止自动审核"
+    },
+    {
       "item": "config-real plus 2026-07-31 source-tree smoke (68 source workbooks, 8 templates)",
       "status": "保留"
     },
@@ -36,6 +40,7 @@
   },
   "rust_functions": [
     "audit_core::s1_template::recommend_template",
+    "audit_core::s1_template::recommend_template_for_workbooks",
     "audit_core::s1_template::recommend_from_sheet_sets"
   ],
   "schema_version": 1,
@@ -48,6 +53,6 @@
   "suite": "audit.s1_template_recommendation",
   "verification": {
     "real_smoke": "probe/reports/template_recommendation_real_smoke.json",
-    "rust": "compares all synthetic fixture cases with the read-only Python baseline"
+    "rust": "compares all synthetic fixture cases with the read-only Python baseline; directory CLI consumes the same selected source list"
   }
 }
