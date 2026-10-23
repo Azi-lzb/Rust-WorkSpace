@@ -20,6 +20,7 @@ use audit_core::{
         process_s1_history, read_s1_history_workbook, S1HistoryRequest,
         S1HistoryWorkbookReadSummary,
     },
+    s1_issue_chain::{merge_s1_issue_sources, S1IssueFilePair},
     s1_structure_compare::{
         compare_s1_source_structure, read_s1_structure_template_with_required_sheets,
     },
@@ -67,6 +68,8 @@ enum Command {
     S1TemplateRules(S1TemplateRulesArgs),
     /// Extract standard S1 Issues from formula values already stored in an audit copy.
     S1FormulaAudit(S1FormulaAuditArgs),
+    /// Run S1 formula and conditional issue extraction, merge per file, then classify against history.
+    S1AuditDirectory(S1AuditDirectoryArgs),
     /// Classify S1 Issues against prior history and carry forward manual notes.
     S1HistoryClassify(S1HistoryClassifyArgs),
     /// Serve the bundled Audit frontend through the Rust API bridge on localhost.
@@ -289,6 +292,57 @@ struct S1FormulaAuditArgs {
 }
 
 #[derive(Debug, Args)]
+struct S1AuditDirectoryArgs {
+    /// Directory containing the source .xlsx workbooks.
+    #[arg(long)]
+    input_dir: PathBuf,
+
+    /// Manifest mapping each structurally accepted source file to its saved formula-result audit copy.
+    #[arg(long)]
+    formula_manifest: PathBuf,
+
+    /// S1 template workbook containing formula rules and conditional-area mappings.
+    #[arg(long)]
+    template_workbook: PathBuf,
+
+    /// Reporting period; when omitted, detect one from source filenames/directories.
+    #[arg(long)]
+    period: Option<String>,
+
+    /// S1 run/batch identifier recorded on generated Audit issues.
+    #[arg(long)]
+    batch_id: String,
+
+    /// Audit timestamp recorded on generated Audit issues. Defaults to local time.
+    #[arg(long)]
+    audit_time: Option<String>,
+
+    /// Recurse through all child directories when discovering source workbooks.
+    #[arg(long, default_value_t = false)]
+    recursive: bool,
+
+    /// Restrict discovery to selected source files; repeat the flag as needed.
+    #[arg(long = "selected-file")]
+    selected_files: Vec<PathBuf>,
+
+    /// Optional Audit config workbook containing the “模块化功能” mappings.
+    #[arg(long)]
+    mapping_config: Option<PathBuf>,
+
+    /// Optional XLSX/XLSM history workbook used for classification and note inheritance.
+    #[arg(long)]
+    history_workbook: Option<PathBuf>,
+
+    /// Optional preferred history sheet, falling back to standard and legacy names.
+    #[arg(long, requires = "history_workbook")]
+    history_sheet: Option<String>,
+
+    /// Emit developer-view JSON progress events with actual engines and timings.
+    #[arg(long, default_value_t = false)]
+    developer_view: bool,
+}
+
+#[derive(Debug, Args)]
 struct S1HistoryClassifyArgs {
     /// JSON document with period and current_issues; history may also be embedded.
     #[arg(long)]
@@ -305,6 +359,17 @@ struct S1HistoryClassifyArgs {
     /// Emit developer-view JSON progress events with stage timing details.
     #[arg(long, default_value_t = false)]
     developer_view: bool,
+}
+
+#[derive(Debug, Deserialize)]
+struct S1AuditCopyManifest {
+    files: Vec<S1AuditCopyManifestFile>,
+}
+
+#[derive(Debug, Deserialize)]
+struct S1AuditCopyManifestFile {
+    source_file: PathBuf,
+    audit_workbook: PathBuf,
 }
 
 #[derive(Debug, Deserialize)]
@@ -591,6 +656,9 @@ fn run() -> Result<()> {
         Command::S1FormulaAudit(arguments) => {
             run_s1_formula_audit(arguments)?;
         }
+        Command::S1AuditDirectory(arguments) => {
+            run_s1_audit_directory(arguments)?;
+        }
         Command::S1HistoryClassify(arguments) => {
             run_s1_history_classify(arguments)?;
         }
@@ -824,6 +892,600 @@ fn run_s1_formula_audit(arguments: S1FormulaAuditArgs) -> Result<()> {
     });
     println!("{}", serde_json::to_string_pretty(&output)?);
     Ok(())
+}
+
+fn run_s1_audit_directory(arguments: S1AuditDirectoryArgs) -> Result<()> {
+    let run_started = Instant::now();
+    let started_at = chrono::Local::now().to_rfc3339();
+    let input_dir = fs::canonicalize(&arguments.input_dir)
+        .with_context(|| format!("读取 S1 输入目录 {}", arguments.input_dir.display()))?;
+    anyhow::ensure!(
+        input_dir.is_dir(),
+        "S1 输入路径不是目录：{}",
+        input_dir.display()
+    );
+    let template_workbook = fs::canonicalize(&arguments.template_workbook)
+        .with_context(|| format!("读取 S1 模板 {}", arguments.template_workbook.display()))?;
+    let manifest_path = fs::canonicalize(&arguments.formula_manifest).with_context(|| {
+        format!(
+            "读取公式审核副本清单 {}",
+            arguments.formula_manifest.display()
+        )
+    })?;
+    let mapping_config = arguments.mapping_config.as_deref();
+
+    let discovery_started = Instant::now();
+    let depth = if arguments.recursive {
+        ScanDepth::Full
+    } else {
+        ScanDepth::RootOnly
+    };
+    let excluded = excluded_s1_input_workbooks(Some(&template_workbook), mapping_config, None)?;
+    let source_files = source_workbooks(&input_dir, depth)?
+        .into_iter()
+        .filter(|path| {
+            !excluded
+                .iter()
+                .any(|candidate| same_file_path(path, candidate))
+        })
+        .collect::<Vec<_>>();
+    let available_source_count = source_files.len();
+    let source_files =
+        select_s1_source_workbooks(&input_dir, &source_files, &arguments.selected_files)?;
+    anyhow::ensure!(
+        !source_files.is_empty(),
+        "源数据目录中没有可审核的 .xlsx 文件（模板和映射配置不会作为源文件）"
+    );
+    let detection = detect_period_from_workbooks(&input_dir, &source_files);
+    let explicit_period = arguments
+        .period
+        .as_deref()
+        .map(str::trim)
+        .filter(|period| !period.is_empty());
+    let (period, period_source) = if let Some(period) = explicit_period {
+        (period.to_owned(), "用户指定".to_owned())
+    } else if detection.conflict {
+        anyhow::bail!("{}；请显式指定 --period", detection.details);
+    } else if detection.period.is_empty() {
+        anyhow::bail!("{}；请使用 --period 指定数据期", detection.details);
+    } else {
+        (detection.period.clone(), detection.source.clone())
+    };
+    let audit_time = arguments
+        .audit_time
+        .clone()
+        .unwrap_or_else(|| chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string());
+    if arguments.developer_view {
+        eprintln!(
+            "{}",
+            serde_json::to_string(&serde_json::json!({
+                "type": "progress",
+                "product": "open-data-audit",
+                "feature": "S1-F01",
+                "step": "source_workbook_discovery",
+                "status": "completed",
+                "started_at": started_at,
+                "finished_at": chrono::Local::now().to_rfc3339(),
+                "files_discovered": available_source_count,
+                "files_selected": source_files.len(),
+                "selection_applied": !arguments.selected_files.is_empty(),
+                "period": period,
+                "period_source": period_source,
+                "elapsed_ms": discovery_started.elapsed().as_millis()
+            }))?
+        );
+    } else {
+        eprintln!(
+            "S1-F01 输入发现完成：可审核 XLSX {} 个，纳入本次审核 {} 个，数据期 {}（{}），耗时 {} ms。",
+            available_source_count,
+            source_files.len(),
+            period,
+            period_source,
+            discovery_started.elapsed().as_millis()
+        );
+    }
+
+    let template_started = Instant::now();
+    let template_plan = load_s1_template_rule_plan(&template_workbook, mapping_config)
+        .context("读取 S1 模板公式规则")?;
+    anyhow::ensure!(
+        template_plan.summary.rules_enabled > 0,
+        "模板没有启用的 S1 公式规则；为避免遗漏公式审核后误判历史状态，已停止审核"
+    );
+    let (scan_areas, structure_ranges) = resolve_s1_conditional_cli_areas(
+        Some(&template_workbook),
+        mapping_config,
+        &[],
+        &[],
+        arguments.developer_view,
+    )?;
+    if arguments.developer_view {
+        eprintln!(
+            "{}",
+            serde_json::to_string(&serde_json::json!({
+                "type": "progress",
+                "product": "open-data-audit",
+                "feature": "S1-F01",
+                "step": "template_rule_and_area_load",
+                "status": "completed",
+                "template_reader": template_plan.summary.engine,
+                "formula_rules_enabled": template_plan.summary.rules_enabled,
+                "formula_rules_selected": template_plan.summary.rules_enabled,
+                "conditional_scan_areas": scan_areas.len(),
+                "structure_ranges": structure_ranges.len(),
+                "elapsed_ms": template_started.elapsed().as_millis()
+            }))?
+        );
+    } else {
+        eprintln!(
+            "S1 模板规则准备完成：启用公式规则 {} 条，条件扫描区域 {} 个，结构区域 {} 个；耗时 {} ms。",
+            template_plan.summary.rules_enabled,
+            scan_areas.len(),
+            structure_ranges.len(),
+            template_started.elapsed().as_millis()
+        );
+    }
+
+    let all_inputs = source_files
+        .iter()
+        .map(|path| S1ConditionalBatchInput {
+            workbook_path: path.clone(),
+            source_file: path.clone(),
+            metadata: S1ConditionalMetadata {
+                period: period.clone(),
+                batch_id: arguments.batch_id.clone(),
+                audit_time: audit_time.clone(),
+                org_code: String::new(),
+                org_name: String::new(),
+            },
+        })
+        .collect::<Vec<_>>();
+    let (accepted_inputs, structure_preflight) = prepare_s1_structure_inputs(
+        all_inputs,
+        Some(&template_workbook),
+        &scan_areas,
+        &structure_ranges,
+        arguments.developer_view,
+    )?;
+    anyhow::ensure!(
+        !accepted_inputs.is_empty(),
+        "没有通过模板表结构预检的源文件；未运行公式或条件格式审核"
+    );
+
+    let formula_pairs = read_s1_audit_copy_manifest(&manifest_path, &input_dir, &accepted_inputs)?;
+    let pair_by_source = formula_pairs
+        .iter()
+        .map(|pair| {
+            (
+                s1_path_identity(&pair.source_file),
+                pair.audit_workbook.clone(),
+            )
+        })
+        .collect::<std::collections::HashMap<_, _>>();
+
+    let conditional_started = Instant::now();
+    if arguments.developer_view {
+        eprintln!(
+            "{}",
+            serde_json::to_string(&serde_json::json!({
+                "type": "progress",
+                "product": "open-data-audit",
+                "feature": "S1-F01",
+                "step": "conditional_format_issue_extraction",
+                "status": "started",
+                "engine": "calamine+namespace_aware_ooxml",
+                "files_total": accepted_inputs.len(),
+                "started_at": chrono::Local::now().to_rfc3339()
+            }))?
+        );
+    } else {
+        eprintln!("正在对通过结构预检的源文件执行条件格式审核…");
+    }
+    let conditional_report = extract_conditional_issues_batch(
+        &accepted_inputs,
+        &scan_areas,
+        &structure_ranges,
+        |progress: &S1ConditionalBatchProgress| {
+            if arguments.developer_view {
+                if let Ok(event) = serde_json::to_string(&serde_json::json!({
+                    "type": "progress",
+                    "product": "open-data-audit",
+                    "feature": "S1-F01",
+                    "step": "conditional_format_issue_extraction",
+                    "batch_id": arguments.batch_id,
+                    "event": progress
+                })) {
+                    eprintln!("{event}");
+                }
+            } else {
+                match progress.status {
+                    "started" => eprintln!(
+                        "正在检查条件格式：{}（{}/{}）",
+                        progress.source_file, progress.file_index, progress.files_total
+                    ),
+                    "completed" => eprintln!(
+                        "{}：规则 {}/{}，扫描 {} 格，形成 {} 条审核项；读取 {} ms、计算 {} ms、总计 {} ms。",
+                        progress.source_file,
+                        progress.rules_supported.unwrap_or_default(),
+                        progress.rules_total.unwrap_or_default(),
+                        progress.scanned_cells.unwrap_or_default(),
+                        progress.issue_count.unwrap_or_default(),
+                        progress.read_time_ms.unwrap_or_default(),
+                        progress.evaluation_time_ms.unwrap_or_default(),
+                        progress.elapsed_ms.unwrap_or_default()
+                    ),
+                    "failed" => eprintln!(
+                        "{}：条件格式检查失败（{} ms）：{}",
+                        progress.source_file,
+                        progress.elapsed_ms.unwrap_or_default(),
+                        progress.error.as_deref().unwrap_or("未知错误")
+                    ),
+                    _ => {}
+                }
+            }
+        },
+    )
+    .context("执行 S1 条件格式审核")?;
+    anyhow::ensure!(
+        conditional_report.status == "completed",
+        "条件格式审核包含未支持规则或未确认的业务上下文，已停止历史归类（{} 个文件诊断）",
+        conditional_report
+            .files
+            .iter()
+            .map(|file| file.diagnostics.len() + file.unresolved_indicator_count)
+            .sum::<usize>()
+    );
+    if arguments.developer_view {
+        eprintln!(
+            "{}",
+            serde_json::to_string(&serde_json::json!({
+                "type": "progress",
+                "product": "open-data-audit",
+                "feature": "S1-F01",
+                "step": "conditional_format_issue_extraction",
+                "status": "completed",
+                "engine": "calamine+namespace_aware_ooxml",
+                "files": conditional_report.files.len(),
+                "issues": conditional_report.issues.len(),
+                "elapsed_ms": conditional_started.elapsed().as_millis()
+            }))?
+        );
+    } else {
+        eprintln!(
+            "条件格式审核完成：{} 个工作簿，{} 条审核项；耗时 {} ms。",
+            conditional_report.files.len(),
+            conditional_report.issues.len(),
+            conditional_started.elapsed().as_millis()
+        );
+    }
+
+    let formula_started = Instant::now();
+    let formula_results = accepted_inputs
+        .par_iter()
+        .map(|input| {
+            let source_key = s1_path_identity(&input.source_file);
+            let audit_workbook = pair_by_source
+                .get(&source_key)
+                .context("公式审核副本清单与结构预检结果不一致")?;
+            let (org_code, org_name) = organisation_from_name(&input.source_file);
+            let result = extract_s1_formula_issues(
+                &template_plan.definition,
+                audit_workbook,
+                Some(&input.source_file),
+                &S1FormulaMetadata {
+                    period: period.clone(),
+                    batch_id: arguments.batch_id.clone(),
+                    audit_time: audit_time.clone(),
+                    org_code,
+                    org_name,
+                },
+            )
+            .with_context(|| {
+                format!(
+                    "提取公式审核项失败：{}",
+                    input
+                        .source_file
+                        .file_name()
+                        .unwrap_or_default()
+                        .to_string_lossy()
+                )
+            })?;
+            Ok((result.issues, result.summary))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let formula_issues = formula_results
+        .iter()
+        .flat_map(|(issues, _)| issues.iter().cloned())
+        .collect::<Vec<_>>();
+    let formula_issue_count = formula_issues.len();
+    let formula_nonempty_results = formula_results
+        .iter()
+        .map(|(_, summary)| summary.formula_result_values_nonempty)
+        .sum::<usize>();
+    if arguments.developer_view {
+        let per_file = accepted_inputs
+            .iter()
+            .zip(formula_results.iter())
+            .map(|(input, (_, summary))| {
+                serde_json::json!({
+                    "source_file": input.source_file.file_name().map(|name| name.to_string_lossy()),
+                    "reader": summary.reader,
+                    "rules_selected": summary.rules_selected,
+                    "formula_result_values_nonempty": summary.formula_result_values_nonempty,
+                    "issues": summary.issue_count,
+                    "read_time_ms": summary.read_time_ms,
+                    "issue_build_time_ms": summary.issue_build_time_ms,
+                    "total_time_ms": summary.total_time_ms
+                })
+            })
+            .collect::<Vec<_>>();
+        eprintln!(
+            "{}",
+            serde_json::to_string(&serde_json::json!({
+                "type": "progress",
+                "product": "open-data-audit",
+                "feature": "S1-F01",
+                "step": "formula_result_issue_extraction",
+                "status": "completed",
+                "engine": "calamine",
+                "files": formula_results.len(),
+                "rules_enabled_per_file": template_plan.summary.rules_enabled,
+                "formula_result_values_nonempty": formula_nonempty_results,
+                "issues": formula_issue_count,
+                "per_file": per_file,
+                "elapsed_ms": formula_started.elapsed().as_millis(),
+                "formula_recalculation": "not performed; saved values only"
+            }))?
+        );
+    } else {
+        eprintln!(
+            "公式结果审核完成：{} 个工作簿，规则 {} 条/份，非空结果值 {} 格，形成 {} 条审核项；读取与组装耗时 {} ms。未执行公式重算。",
+            formula_results.len(),
+            template_plan.summary.rules_enabled,
+            formula_nonempty_results,
+            formula_issue_count,
+            formula_started.elapsed().as_millis()
+        );
+    }
+
+    let merge_started = Instant::now();
+    let merged_issues =
+        merge_s1_issue_sources(&formula_pairs, &formula_issues, &conditional_report.issues)
+            .context("按源文件顺序合流公式与条件格式审核项")?;
+
+    let history_started = Instant::now();
+    let history_read = if let Some(history_path) = arguments.history_workbook.as_deref() {
+        Some(
+            read_s1_history_workbook(history_path, arguments.history_sheet.as_deref())
+                .with_context(|| format!("读取 S1 历史工作簿 {}", history_path.display()))?,
+        )
+    } else {
+        None
+    };
+    if let Some(loaded) = history_read.as_ref() {
+        if arguments.developer_view {
+            eprintln!(
+                "{}",
+                serde_json::to_string(&serde_json::json!({
+                    "type": "progress",
+                    "product": "open-data-audit",
+                    "feature": "S1-F01",
+                    "step": "history_workbook_read",
+                    "status": loaded.summary.status,
+                    "engine": loaded.summary.reader,
+                    "sheet_name": loaded.summary.sheet_name,
+                    "rows_total": loaded.summary.rows_total,
+                    "rows_read": loaded.summary.rows_read,
+                    "rows_skipped": loaded.summary.rows_skipped,
+                    "elapsed_ms": loaded.summary.elapsed_ms
+                }))?
+            );
+        } else {
+            eprintln!(
+                "S1 历史工作簿读取完成：状态 {}，工作表 {}，读取 {}/{} 行、跳过 {} 行；耗时 {} ms。",
+                loaded.summary.status,
+                loaded.summary.sheet_name.as_deref().unwrap_or("未选择"),
+                loaded.summary.rows_read,
+                loaded.summary.rows_total,
+                loaded.summary.rows_skipped,
+                loaded.summary.elapsed_ms
+            );
+        }
+    }
+    let history_rows = history_read
+        .as_ref()
+        .map(|loaded| loaded.issues.clone())
+        .unwrap_or_default();
+    let history_read_summary = history_read.map(|loaded| loaded.summary);
+    let mut history_result = process_s1_history(S1HistoryRequest {
+        period: period.clone(),
+        batch_id: arguments.batch_id.clone(),
+        audit_time: audit_time.clone(),
+        audited_org_codes: None,
+        current_issues: merged_issues,
+        history: history_rows,
+    });
+    history_result.summary.elapsed_ms = history_started.elapsed().as_millis();
+
+    if arguments.developer_view {
+        eprintln!(
+            "{}",
+            serde_json::to_string(&serde_json::json!({
+                "type": "progress",
+                "product": "open-data-audit",
+                "feature": "S1-F01",
+                "step": "issue_merge_and_history_classification",
+                "status": "completed",
+                "engine": "rust_s1_issue_chain+rust_s1_history",
+                "files": accepted_inputs.len(),
+                "formula_issues": formula_issue_count,
+                "conditional_issues": conditional_report.issues.len(),
+                "current_issues": history_result.summary.current_issues,
+                "resolved_issues": history_result.summary.resolved_issues,
+                "history_rows": history_result.summary.history_rows,
+                "merged_history_rows": history_result.summary.merged_history_rows,
+                "elapsed_ms": merge_started.elapsed().as_millis()
+            }))?
+        );
+    } else {
+        eprintln!(
+            "S1 Issue 合流与历史归类完成：公式 {} 条、条件格式 {} 条，本期 {} 条（新增 {}、连续 {}、再次出现 {}），已整改 {} 条；耗时 {} ms。",
+            formula_issue_count,
+            conditional_report.issues.len(),
+            history_result.summary.current_issues,
+            history_result.summary.new_issues,
+            history_result.summary.continuous_issues,
+            history_result.summary.recurring_issues,
+            history_result.summary.resolved_issues,
+            merge_started.elapsed().as_millis()
+        );
+    }
+
+    let status = if structure_preflight
+        .as_ref()
+        .is_some_and(|summary| summary.files_rejected > 0)
+    {
+        "completed_with_diagnostics"
+    } else {
+        "completed"
+    };
+    let mut output = serde_json::json!({
+        "status": status,
+        "period": period,
+        "batch_id": arguments.batch_id,
+        "template_summary": template_plan.summary,
+        "formula_summary": {
+            "reader": "calamine",
+            "files": formula_results.len(),
+            "rules_enabled_per_file": template_plan.summary.rules_enabled,
+            "formula_result_values_nonempty": formula_nonempty_results,
+            "issues": formula_issue_count,
+            "elapsed_ms": formula_started.elapsed().as_millis()
+        },
+        "conditional_summary": {
+            "status": conditional_report.status,
+            "files": conditional_report.files,
+            "issues": conditional_report.issues.len(),
+            "elapsed_ms": conditional_started.elapsed().as_millis()
+        },
+        "history_workbook_summary": history_read_summary,
+        "summary": history_result.summary,
+        "issues": history_result.current_issues,
+        "resolved_issues": history_result.resolved_issues,
+        "merged_history": history_result.merged_history,
+        "elapsed_ms": run_started.elapsed().as_millis()
+    });
+    if let Some(preflight) = structure_preflight {
+        output["structure_preflight"] = serde_json::to_value(preflight)?;
+    }
+    println!("{}", serde_json::to_string_pretty(&output)?);
+    Ok(())
+}
+
+fn read_s1_audit_copy_manifest(
+    manifest_path: &Path,
+    input_dir: &Path,
+    accepted_inputs: &[S1ConditionalBatchInput],
+) -> Result<Vec<S1IssueFilePair>> {
+    let manifest_text = fs::read_to_string(manifest_path)
+        .with_context(|| format!("读取公式审核副本清单 {}", manifest_path.display()))?;
+    let manifest: S1AuditCopyManifest = serde_json::from_str(&manifest_text)
+        .with_context(|| format!("解析公式审核副本清单 {}", manifest_path.display()))?;
+    anyhow::ensure!(
+        !manifest.files.is_empty(),
+        "公式审核副本清单中没有工作簿映射"
+    );
+    let manifest_dir = manifest_path.parent().unwrap_or_else(|| Path::new("."));
+    let accepted_by_source = accepted_inputs
+        .iter()
+        .map(|input| {
+            (
+                s1_path_identity(&input.source_file),
+                input.source_file.clone(),
+            )
+        })
+        .collect::<std::collections::HashMap<_, _>>();
+    let mut sources = std::collections::HashSet::new();
+    let mut audits = std::collections::HashSet::new();
+    let mut pairs = Vec::with_capacity(manifest.files.len());
+    for entry in manifest.files {
+        let source_path = resolve_manifest_path(input_dir, entry.source_file);
+        let source_file = fs::canonicalize(&source_path)
+            .with_context(|| format!("公式审核副本清单源文件不存在：{}", source_path.display()))?;
+        let audit_path = resolve_manifest_path(manifest_dir, entry.audit_workbook);
+        let audit_workbook = fs::canonicalize(&audit_path)
+            .with_context(|| format!("公式审核副本不存在：{}", audit_path.display()))?;
+        anyhow::ensure!(
+            accepted_by_source.contains_key(&s1_path_identity(&source_file)),
+            "公式审核副本清单包含未通过结构预检或未纳入本次审核的源文件：{}",
+            source_file
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+        );
+        anyhow::ensure!(
+            sources.insert(s1_path_identity(&source_file)),
+            "公式审核副本清单中存在重复源文件：{}",
+            source_file
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+        );
+        anyhow::ensure!(
+            audits.insert(s1_path_identity(&audit_workbook)),
+            "多个源文件不能共用同一个公式审核副本：{}",
+            audit_workbook
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+        );
+        anyhow::ensure!(
+            audit_workbook
+                .extension()
+                .and_then(|extension| extension.to_str())
+                .is_some_and(|extension| {
+                    extension.eq_ignore_ascii_case("xlsx") || extension.eq_ignore_ascii_case("xlsm")
+                }),
+            "公式审核副本必须是 .xlsx 或 .xlsm：{}",
+            audit_workbook
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+        );
+        pairs.push(S1IssueFilePair {
+            source_file,
+            audit_workbook,
+        });
+    }
+    anyhow::ensure!(
+        pairs.len() == accepted_inputs.len()
+            && accepted_by_source
+                .keys()
+                .all(|source| sources.contains(source)),
+        "公式审核副本清单必须且只能覆盖所有通过结构预检的源文件（通过预检 {} 个，清单映射 {} 个）",
+        accepted_inputs.len(),
+        pairs.len()
+    );
+    pairs.sort_by_key(|pair| {
+        accepted_inputs
+            .iter()
+            .position(|input| same_file_path(&input.source_file, &pair.source_file))
+            .unwrap_or(usize::MAX)
+    });
+    Ok(pairs)
+}
+
+fn s1_path_identity(path: &Path) -> String {
+    let canonical = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    let value = canonical.to_string_lossy().replace('\\', "/");
+    #[cfg(windows)]
+    {
+        value.to_lowercase()
+    }
+    #[cfg(not(windows))]
+    {
+        value
+    }
 }
 
 fn run_s1_history_classify(arguments: S1HistoryClassifyArgs) -> Result<()> {
@@ -1675,10 +2337,9 @@ fn prepare_s1_structure_inputs(
         );
     } else {
         eprintln!(
-            "表结构预检完成：通过 {} 个，跳过 {} 个；读取引擎 {}，模板读取 {} ms，预检 {} ms。",
+            "表结构预检完成：通过 {} 个，跳过 {} 个；模板读取 {} ms，预检 {} ms。",
             summary.files_accepted,
             summary.files_rejected,
-            summary.engine,
             summary.template_read_time_ms,
             summary.elapsed_ms
         );
@@ -1967,7 +2628,7 @@ fn resolve_s1_conditional_cli_areas(
                 );
             } else {
                 eprintln!(
-                    "模板命名区域映射完成：引擎 calamine+namespace_aware_ooxml，条件范围 {} 个，结构范围 {} 个，匹配但未解析的名称 {} 个，耗时 {} ms。",
+                    "模板命名区域映射完成：条件范围 {} 个，结构范围 {} 个，匹配但未解析的名称 {} 个，耗时 {} ms。",
                     scan_areas.len(),
                     structure_ranges.len(),
                     unresolved,

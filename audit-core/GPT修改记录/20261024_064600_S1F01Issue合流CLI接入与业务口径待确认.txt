@@ -1,0 +1,59 @@
+# S1-F01 公式与条件格式 Issue 合流 CLI 接入
+
+- 时间：2026-10-24 06:46（Asia/Shanghai）
+- 执行者：Codex
+- 分支：`audit-dev`
+- Worktree：`C:\Users\AZI\Desktop\VibeCode\audit-dev`
+- 修改前 commit：`5e43c0c`（此前已按用户要求同步本地 main 的 reader 定义名称支持）
+- 修改后 commit：未提交；UOS native 与 Windows/general Python handler 的机构字段语义冲突待确认。
+- 修改前 WIP：无；本轮新增/修改的 Audit 文件见下文。
+- 【组件版本】不升级；`audit-core` 仍为 `0.1.0`。未改 workspace crate、Cargo.toml 或 Cargo.lock。
+
+## 目的与实现
+
+将已迁移的条件格式审核、公式结果提取和历史归类接入单一 Rust CLI 链路：
+
+- 新增 `open-data-audit s1-audit-directory`。它发现或筛选源 XLSX，加载模板规则和命名区域，先做表结构预检，再从显式清单读取已保存公式结果副本；清单必须精确覆盖所有通过预检的源文件。
+- 公式 Issue 与条件格式 Issue 按源文件合流，每个文件先公式、后条件格式；条件格式 Issue 的 `audit_file` 指向对应公式审核副本；随后调用现有 Rust 历史分类。
+- 普通视图与开发者视图记录执行步骤、实际引擎和耗时。该入口不复制公式、不重算公式、不修改或输出审核工作簿。
+- 新增真实样本 Python/Rust 对拍工具和合成 CLI 夹具/测试。真实对拍不保存路径或 Issue 内容；因真实源文件名超出 Linux 路径组件限制，本次临时副本以 ASCII 文件名运行，机构身份解析不覆盖原始长文件名。
+
+## Python 业务口径差异
+
+真实样本共有 146 条公式 Issue、2 条条件格式 Issue、602 个条件格式评估单元格。与 Python `workflow.adapters.audit_handlers.handle_conditional_issue_extract` 的 Windows/general 路径比较时，148 条当前 Issue 和合并历史的全部字段差异均为 0；源文件、审核副本和模板均未变化。汇总见 `audit-core/probe/reports/s1_issue_chain_real.json`。
+
+源 Python UOS/native 路径使用 `workflow.adapters.native_audit_handlers.handle_conditional_issue_extract`，该处理器没有传入 `org_code` / `org_name`；Windows/general 处理器传入源文件机构信息。Rust 当前沿用机构信息，因而与 UOS/native 路径在两条条件格式 Issue 的机构字段上不同。迁移目标为 Linux，按 `audit-core/AGENTS.md` 的业务语义冲突要求，先记录并等待用户指定基线；S1-F01 总体仍为“未验证”。
+
+## 修改文件
+
+- `audit-core/src/s1_issue_chain.rs`：新增逐文件 Issue 合流和路径配对验证。
+- `audit-core/src/lib.rs`：导出合流模块。
+- `audit-core/src/bin/open-data-audit.rs`：新增 S1 目录审核 CLI 及双视图进度日志。
+- `audit-core/tests/s1_audit_directory_cli.rs`：合成端到端和不完整清单拒绝测试。
+- `audit-core/tests/fixtures/s1_issue_chain_source.xlsx`：合成条件格式源工作簿。
+- `audit-core/tests/compare/make_s1_issue_chain_fixture.py`：生成合成 fixture 的测试辅助脚本。
+- `audit-core/tests/compare/compare_s1_audit_directory.py`：Windows/general Python handler 基线与 Rust 对拍工具。
+- `audit-core/probe/reports/s1_issue_chain_real.json`：脱敏计数、差异、引擎和耗时报告。
+- `audit-core/MIGRATION_INVENTORY.md`：登记入口、证据和机构字段基线待确认状态。
+- 本修改记录。
+
+未修改 `DEVELOPMENT_GOAL.md`、任何 `AGENTS.md`、`pytools-core/**`、共享 `crates/**`、源 Python 项目、用户配置或真实工作簿。
+
+## 验证
+
+- `cargo test -p audit-core --locked --quiet`：通过，71 个库单元测试及所有 Audit 集成测试通过。
+- `cargo test -p audit-core --locked --test s1_audit_directory_cli`：通过，2 个新 CLI 集成测试通过。
+- `cargo fmt --package audit-core -- --check`：通过。
+- Windows 原生环境未提供 Cargo；Rust 命令在 WSL Ubuntu 执行。构建输出包含共享 `excel-editor` 既有 `umya-spreadsheet` 弃用警告，本轮没有修改公共 crate。
+- 真实 Python/Rust 对拍仅对 Windows/general handler 口径通过；UOS/native handler 的机构字段差异未验收。
+
+## 未执行项与已知限制
+
+- 未迁移公式复制/外部表添加/公式重算、审核结果 workbook 写回、非空真实历史库、完整 GUI 流程或重复运行一致性。
+- 未在 Windows 原生 Rust、麒麟 V10、统信 V20、glibc 2.28 或 deb 上验收。
+- 未裁定 UOS/native 条件格式 Issue 的机构字段是否应保持空值，或统一补齐机构信息。
+
+## 删除与回滚
+
+- 删除清单：无。
+- 当前未提交。基线确认并提交后，按对应功能提交执行 `git revert <commit>` 回滚。

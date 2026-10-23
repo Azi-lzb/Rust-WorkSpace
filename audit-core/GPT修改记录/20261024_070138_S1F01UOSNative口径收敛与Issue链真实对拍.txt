@@ -1,0 +1,49 @@
+# S1-F01 UOS/native 口径收敛与 Issue 链真实对拍
+
+- 时间：2026-10-24 07:01（Asia/Shanghai）
+- 执行者：Codex
+- 分支：`audit-dev`
+- Worktree：`C:\Users\AZI\Desktop\VibeCode\audit-dev`
+- 修改前 commit：`5e43c0c`；本功能修改基于该提交之后的 S1 Issue 链 WIP，先检查并保留了现有未提交改动。本记录随本功能提交；提交号可通过该记录的 Git 历史追溯。
+- 【组件版本】不升级；`audit-core` 仍为 `0.1.0`。未修改公共 crate、Cargo.toml 或 Cargo.lock。
+
+## 目的和实现
+
+将 `s1-audit-directory` 接入的公式 Issue、静态条件格式 Issue、Issue 合流与历史分类，按目标平台的 Open-Data-Audit UOS/native DAG handler 语义完成真实样本对拍。核对只读源代码后确认 `workflow/runner.py` 的 `native` registry 注册 `AUDIT_NATIVE_HANDLERS`；native 条件格式 handler 不传机构字段，`ConditionalFormatService` 默认留空，因此 Rust 目录链路的条件格式 Issue 也留空 `org_code`、`org_name`。Windows/general handler 的字段口径不同，不作为目标 Linux 路径基线。
+
+入口先对源工作簿做模板结构预检，并要求保存的公式审核副本清单精确覆盖通过预检的文件；每个文件按公式结果提取、条件格式求值的顺序生成 Issue，再合流并执行历史分类。已有可选历史工作簿读取会在分类前运行。普通视图展示业务步骤、数量与耗时；开发者视图记录实际读取/计算引擎和阶段耗时。公式阶段只读已保存的审核值，不执行重算。
+
+## 修改文件
+
+- `audit-core/src/bin/open-data-audit.rs`：将 Issue 链接入 `open-data-audit s1-audit-directory`，明确 native 条件格式机构字段为空，并记录真实步骤和引擎耗时。
+- `audit-core/src/s1_issue_chain.rs`、`audit-core/src/lib.rs`：增加公式与条件格式 Issue 的按源文件合流和路径重绑能力。
+- `audit-core/tests/s1_audit_directory_cli.rs`：覆盖公式/条件格式两路结果、顺序、审核副本清单失败关闭、空/非空历史分类、意见继承及双视图日志。
+- `audit-core/tests/s1_conditional_audit_directory_cli.rs`：更新共享结构预检普通视图日志断言，确认普通提示只展示业务状态与耗时。
+- `audit-core/tests/fixtures/s1_issue_chain_source.xlsx`：新增仅供集成测试的合成工作簿。
+- `audit-core/tests/compare/compare_s1_audit_directory.py`、`audit-core/tests/compare/make_s1_issue_chain_fixture.py`：新增 Python/Rust 比较和合成样本辅助脚本；比较器逐工作簿计算 SHA-256，只保留不变性布尔结论，不写入原始 Issue 值或文件路径。
+- `audit-core/probe/reports/s1_issue_chain_real.json`：记录真实样本汇总对拍。
+- `audit-core/MIGRATION_INVENTORY.md`：记录 S1-F01 局部链路、UOS/native 语义和未迁移项。
+- 本记录。
+
+## 验证
+
+- Windows 未发现原生 `cargo`/`rustc`；使用已安装的 WSL Ubuntu Rust 工具链执行测试，源文件和工作目录仍位于 Windows `audit-dev` Worktree。
+- `cargo test -p audit-core --locked --test s1_audit_directory_cli -- --nocapture`：3 个 CLI 集成测试通过。
+- `cargo test -p audit-core --locked --quiet`：71 个库单元测试及所有 Audit 集成测试目标通过。
+- `cargo fmt --package audit-core -- --check`：通过；执行格式化后重新检查通过。
+- Windows Python 3.12 AST 语法检查：比较脚本和合成 fixture 脚本通过。
+- Windows Python 驱动现有 Rust CLI，对 1 个只读真实源/审核副本组合和 1 个真实模板执行 native handler 基线对拍：模板 1,072 条公式规则，源工作簿 4 条条件格式规则，审核副本 1,081 个公式单元格并有 889 个非空规则结果；Python/Rust 分别得到 146 条公式 Issue、2 条条件格式 Issue、148 条合流 Issue。当前/已合流历史结果均逐字段差异 0；条件格式实际评估 602 格。对原始源、审核副本和模板计算的 SHA-256 前后相同。Linux 路径组件限制下使用临时短别名，别名未写入报告。
+- 首次对拍使用的是之前构建的旧 Rust 可执行文件，发现两条条件 Issue 的机构字段差异；重建当前代码后复测通过，最终报告只保留通过结果。
+- 测试编译出现未修改共享 `excel-editor` 的既有 `umya-spreadsheet` 弃用警告；本轮未更改共享 crate。
+
+## 未执行项与已知限制
+
+- 本轮没有在麒麟 V10/UOS V20、目标 glibc 或 deb 上验证；未运行完整 GUI。
+- 真实样本通过短文件名别名运行，原始长文件名的机构身份解析仍未验证。
+- 非空历史工作簿覆盖为合成集成样本；真实历史库、结果工作簿写回、公式复制/重算、重复运行仍未迁移/验收。S1-F01 整体继续标记为未验证。
+- 真实样本比较只使用已保存公式结果，不代表公式重算结果。
+
+## 删除和回滚
+
+- 删除清单：无；真实源文件只读，比较过程的别名副本在系统临时目录内完成后清理。
+- 回滚：本功能提交后可使用对应提交号执行 `git revert <commit>`；不覆盖或删除现有迁移成果。

@@ -1,0 +1,427 @@
+use excel_writer::Workbook;
+use serde_json::{json, Value};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+    process::{Command, Output},
+    time::{SystemTime, UNIX_EPOCH},
+};
+
+const HISTORY_HEADERS: [&str; 15] = [
+    "工作簿名",
+    "工作表名",
+    "定位单元格",
+    "错误类型",
+    "校验类型",
+    "校验指标",
+    "描述",
+    "当前值",
+    "对比值",
+    "差值",
+    "规则编号",
+    "历史校验说明",
+    "审核意见",
+    "扩展列",
+    "数据期",
+];
+
+fn temporary_directory(label: &str) -> PathBuf {
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system clock after Unix epoch")
+        .as_nanos();
+    let path = std::env::temp_dir().join(format!(
+        "audit_s1_issue_chain_{label}_{}_{}",
+        std::process::id(),
+        nonce
+    ));
+    fs::create_dir_all(&path).expect("create temporary directory");
+    path
+}
+
+fn formula_template(path: &Path) {
+    let mut workbook = Workbook::new();
+    let worksheet = workbook.add_worksheet();
+    worksheet.set_name("检查表").expect("name formula sheet");
+    for (row, formula) in [
+        "=IF(TRUE,\"错误|复核|存款|低于要求|100|200|100\",\"\")",
+        "=IF(TRUE,\"通过\",\"错误\")",
+        "=IF(TRUE,\"\",\"\")",
+        "=IF(TRUE,\"\",\"\")",
+        "=IF(TRUE,\"错误|字段|指标|描述\",\"通过\")",
+    ]
+    .iter()
+    .enumerate()
+    {
+        worksheet
+            .write_formula(row as u32, 0, *formula)
+            .expect("write formula rule");
+    }
+    workbook
+        .define_name("校验区域", "='检查表'!$A$1:$A$5")
+        .expect("define formula rules");
+    let structure_sheet = workbook.add_worksheet();
+    structure_sheet
+        .set_name("S1Conditional")
+        .expect("name structure sheet");
+    structure_sheet
+        .write_string(1, 0, "资产总额")
+        .expect("write structure label");
+    workbook
+        .define_name("表结构区域_集成样例", "='S1Conditional'!$A$2:$A$2")
+        .expect("define structure area");
+    workbook.save(path).expect("save formula template");
+}
+
+fn audit_copy(path: &Path) {
+    let mut workbook = Workbook::new();
+    let worksheet = workbook.add_worksheet();
+    worksheet.set_name("检查表").expect("name result sheet");
+    for (row, value) in [
+        "错误|复核|存款|低于要求|100|200|100",
+        "通过",
+        "#REF!",
+        "通过",
+        "通过",
+    ]
+    .iter()
+    .enumerate()
+    {
+        worksheet
+            .write_string(row as u32, 0, *value)
+            .expect("write stored formula result");
+    }
+    workbook.save(path).expect("save calculated audit copy");
+}
+
+fn history_workbook(path: &Path, continuing_issue_id: &str) {
+    let mut workbook = Workbook::new();
+    let sheet = workbook.add_worksheet();
+    sheet
+        .set_name("核查表校验结果")
+        .expect("name S1 history sheet");
+    for (column, header) in HISTORY_HEADERS.iter().enumerate() {
+        sheet
+            .write_string(0, column as u16, *header)
+            .expect("write S1 history header");
+    }
+    for (row, issue_id, period, feedback, opinion) in [
+        (
+            1,
+            continuing_issue_id,
+            "2026-06",
+            "历史机构反馈",
+            "历史审核意见",
+        ),
+        (
+            2,
+            "history-only-issue",
+            "2026-06",
+            "已整改项反馈",
+            "已整改项意见",
+        ),
+    ] {
+        for (column, value) in [
+            (0, "1001_机构甲_2026-07.xlsx"),
+            (1, "检查表"),
+            (2, "A1"),
+            (3, "错误"),
+            (4, "数值"),
+            (5, "存款余额"),
+            (6, "历史问题"),
+            (10, issue_id),
+            (11, feedback),
+            (12, opinion),
+            (14, period),
+        ] {
+            sheet
+                .write_string(row, column as u16, value)
+                .expect("write S1 history row");
+        }
+        sheet
+            .write_number(row, 7, 123.0)
+            .expect("write history current value");
+        sheet
+            .write_number(row, 8, 100.0)
+            .expect("write history comparison value");
+        sheet
+            .write_number(row, 9, 23.0)
+            .expect("write history difference value");
+    }
+    workbook.save(path).expect("save S1 history workbook");
+}
+
+fn run_cli(input: &Path, template: &Path, manifest: &Path, developer_view: bool) -> Output {
+    run_cli_with_history(input, template, manifest, None, developer_view)
+}
+
+fn run_cli_with_history(
+    input: &Path,
+    template: &Path,
+    manifest: &Path,
+    history: Option<&Path>,
+    developer_view: bool,
+) -> Output {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_open-data-audit"));
+    command
+        .arg("s1-audit-directory")
+        .arg("--input-dir")
+        .arg(input)
+        .arg("--template-workbook")
+        .arg(template)
+        .arg("--formula-manifest")
+        .arg(manifest)
+        .arg("--period")
+        .arg("2026-07")
+        .arg("--batch-id")
+        .arg("issue-chain-test")
+        .arg("--audit-time")
+        .arg("2026-10-24 12:00:00");
+    if let Some(history) = history {
+        command.arg("--history-workbook").arg(history);
+    }
+    if developer_view {
+        command.arg("--developer-view");
+    }
+    command.output().expect("run S1 audit issue-chain CLI")
+}
+
+#[test]
+fn cli_runs_both_issue_sources_merges_then_classifies_and_logs_actual_engines() {
+    let directory = temporary_directory("complete");
+    let input = directory.join("input");
+    fs::create_dir_all(&input).expect("create source input directory");
+    let source = input.join("1001_机构甲_2026-07.xlsx");
+    fs::copy(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests")
+            .join("fixtures")
+            .join("s1_issue_chain_source.xlsx"),
+        &source,
+    )
+    .expect("copy conditional-format source fixture");
+    let template = directory.join("template.xlsx");
+    formula_template(&template);
+    let audit = directory.join("audit-copy.xlsx");
+    audit_copy(&audit);
+    let manifest = directory.join("formula-copies.json");
+    fs::write(
+        &manifest,
+        serde_json::to_vec(&json!({
+            "files": [{
+                "source_file": source.file_name().unwrap().to_string_lossy(),
+                "audit_workbook": audit.file_name().unwrap().to_string_lossy()
+            }]
+        }))
+        .unwrap(),
+    )
+    .expect("write formula copy manifest");
+
+    let ordinary = run_cli(&input, &template, &manifest, false);
+    assert!(
+        ordinary.status.success(),
+        "{}",
+        String::from_utf8_lossy(&ordinary.stderr)
+    );
+    let developer = run_cli(&input, &template, &manifest, true);
+    assert!(
+        developer.status.success(),
+        "{}",
+        String::from_utf8_lossy(&developer.stderr)
+    );
+
+    let report: Value = serde_json::from_slice(&ordinary.stdout).expect("parse issue-chain output");
+    assert_eq!(report["status"], "completed");
+    assert_eq!(report["formula_summary"]["files"], 1);
+    assert_eq!(report["formula_summary"]["issues"], 2);
+    assert_eq!(report["issues"][0]["org_code"], "1001");
+    assert_eq!(report["issues"][0]["org_name"], "机构甲");
+    assert_eq!(
+        report["conditional_summary"]["files"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(report["conditional_summary"]["issues"], 1);
+    assert_eq!(report["issues"].as_array().unwrap().len(), 3);
+    assert_eq!(report["issues"][2]["org_code"], "");
+    assert_eq!(report["issues"][2]["org_name"], "");
+    assert_eq!(
+        report["issues"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|issue| issue["formula_cell"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        ["A1", "A3", "B2"]
+    );
+    assert_eq!(
+        report["issues"][2]["audit_file"],
+        audit.canonicalize().unwrap().to_string_lossy().as_ref()
+    );
+    assert_eq!(report["summary"]["new_issues"], 3);
+    assert_eq!(report["resolved_issues"].as_array().unwrap().len(), 0);
+
+    let user_log = String::from_utf8_lossy(&ordinary.stderr);
+    assert!(user_log.contains("条件格式审核完成"));
+    assert!(user_log.contains("公式结果审核完成"));
+    assert!(!user_log.contains("calamine"), "{user_log}");
+    assert!(!user_log.contains("namespace_aware_ooxml"), "{user_log}");
+    assert!(!user_log.contains("读取器"), "{user_log}");
+    assert!(user_log.contains("未执行公式重算"));
+
+    let developer_report: Value =
+        serde_json::from_slice(&developer.stdout).expect("parse developer issue-chain output");
+    assert_eq!(developer_report["issues"], report["issues"]);
+    let events = String::from_utf8_lossy(&developer.stderr)
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).expect("parse developer event"))
+        .collect::<Vec<_>>();
+    assert!(events.iter().any(|event| {
+        event["step"] == "formula_result_issue_extraction"
+            && event["engine"] == "calamine"
+            && event["issues"] == 2
+    }));
+    assert!(events.iter().any(|event| {
+        event["step"] == "conditional_format_issue_extraction"
+            && event["status"] == "completed"
+            && event["engine"] == "calamine+namespace_aware_ooxml"
+    }));
+    assert!(events.iter().any(|event| {
+        event["step"] == "issue_merge_and_history_classification"
+            && event["current_issues"] == 3
+            && event["elapsed_ms"].is_number()
+    }));
+
+    fs::remove_dir_all(directory).expect("remove temporary issue-chain workbooks");
+}
+
+#[test]
+fn cli_rejects_incomplete_formula_copy_coverage_before_history_classification() {
+    let directory = temporary_directory("missing_formula");
+    let input = directory.join("input");
+    fs::create_dir_all(&input).expect("create source input directory");
+    fs::copy(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests")
+            .join("fixtures")
+            .join("s1_issue_chain_source.xlsx"),
+        input.join("1001_机构甲_2026-07.xlsx"),
+    )
+    .expect("copy conditional-format source fixture");
+    let template = directory.join("template.xlsx");
+    formula_template(&template);
+    let manifest = directory.join("formula-copies.json");
+    fs::write(&manifest, r#"{"files":[]}"#).expect("write incomplete manifest");
+
+    let output = run_cli(&input, &template, &manifest, false);
+    assert!(!output.status.success());
+    let error = String::from_utf8_lossy(&output.stderr);
+    assert!(error.contains("公式审核副本清单中没有工作簿映射"));
+
+    fs::remove_dir_all(directory).expect("remove temporary incomplete manifest fixture");
+}
+
+#[test]
+fn cli_reads_nonempty_history_before_classification_and_reports_reader_and_timing() {
+    let directory = temporary_directory("history");
+    let input = directory.join("input");
+    fs::create_dir_all(&input).expect("create source input directory");
+    let source = input.join("1001_机构甲_2026-07.xlsx");
+    fs::copy(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests")
+            .join("fixtures")
+            .join("s1_issue_chain_source.xlsx"),
+        &source,
+    )
+    .expect("copy conditional-format source fixture");
+    let template = directory.join("template.xlsx");
+    formula_template(&template);
+    let audit = directory.join("audit-copy.xlsx");
+    audit_copy(&audit);
+    let manifest = directory.join("formula-copies.json");
+    fs::write(
+        &manifest,
+        serde_json::to_vec(&json!({
+            "files": [{
+                "source_file": source.file_name().unwrap().to_string_lossy(),
+                "audit_workbook": audit.file_name().unwrap().to_string_lossy()
+            }]
+        }))
+        .unwrap(),
+    )
+    .expect("write formula copy manifest");
+
+    let without_history = run_cli(&input, &template, &manifest, false);
+    assert!(
+        without_history.status.success(),
+        "{}",
+        String::from_utf8_lossy(&without_history.stderr)
+    );
+    let baseline: Value =
+        serde_json::from_slice(&without_history.stdout).expect("parse baseline issue-chain JSON");
+    let continuing_id = baseline["issues"][0]["issue_id"]
+        .as_str()
+        .expect("formula issue identity");
+    let history = directory.join("history.xlsx");
+    history_workbook(&history, continuing_id);
+
+    let ordinary = run_cli_with_history(&input, &template, &manifest, Some(&history), false);
+    assert!(
+        ordinary.status.success(),
+        "{}",
+        String::from_utf8_lossy(&ordinary.stderr)
+    );
+    let report: Value = serde_json::from_slice(&ordinary.stdout).expect("parse history report");
+    assert_eq!(report["history_workbook_summary"]["status"], "loaded");
+    assert_eq!(report["history_workbook_summary"]["reader"], "calamine");
+    assert_eq!(report["history_workbook_summary"]["rows_read"], 2);
+    assert_eq!(report["summary"]["history_rows"], 2);
+    assert_eq!(report["summary"]["continuous_issues"], 1);
+    assert_eq!(report["summary"]["resolved_issues"], 1);
+    let continuing = report["issues"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|issue| issue["issue_id"] == continuing_id)
+        .expect("current issue matching history");
+    assert_eq!(continuing["status"], "连续出现");
+    assert_eq!(continuing["institution_feedback"], "历史机构反馈");
+    assert_eq!(continuing["auditor_opinion"], "历史审核意见");
+    assert_eq!(
+        report["resolved_issues"][0]["issue_id"],
+        "history-only-issue"
+    );
+    assert_eq!(report["resolved_issues"][0]["status"], "已整改");
+
+    let user_log = String::from_utf8_lossy(&ordinary.stderr);
+    assert!(user_log.contains("S1 历史工作簿读取完成"));
+    assert!(!user_log.contains("calamine"), "{user_log}");
+    assert!(!user_log.contains("读取器"), "{user_log}");
+    assert!(user_log.contains("读取 2/2 行"));
+
+    let developer = run_cli_with_history(&input, &template, &manifest, Some(&history), true);
+    assert!(
+        developer.status.success(),
+        "{}",
+        String::from_utf8_lossy(&developer.stderr)
+    );
+    let developer_report: Value =
+        serde_json::from_slice(&developer.stdout).expect("parse developer history report");
+    assert_eq!(developer_report["issues"], report["issues"]);
+    let events = String::from_utf8_lossy(&developer.stderr)
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).expect("parse developer progress event"))
+        .collect::<Vec<_>>();
+    assert!(events.iter().any(|event| {
+        event["step"] == "history_workbook_read"
+            && event["status"] == "loaded"
+            && event["engine"] == "calamine"
+            && event["rows_read"] == 2
+            && event["elapsed_ms"].is_number()
+    }));
+
+    fs::remove_dir_all(directory).expect("remove synthetic S1 history workbooks");
+}

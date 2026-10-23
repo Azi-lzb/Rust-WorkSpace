@@ -1,0 +1,37 @@
+# S1-F01 非空历史工作簿端到端接入补充
+
+- 时间：2026-10-24 06:49（Asia/Shanghai）
+- 执行者：Codex
+- 分支：`audit-dev`
+- Worktree：`C:\Users\AZI\Desktop\VibeCode\audit-dev`
+- 修改前 commit：`5e43c0c`；该 commit 后的 S1 Issue 合流 WIP 仍未提交，上一份记录见 `20261024_064600_S1F01Issue合流CLI接入与业务口径待确认.txt`。
+- 【组件版本】不升级；`audit-core` 仍为 `0.1.0`。未修改公共 crate、Cargo.toml 或 Cargo.lock。
+
+## 目的与实现
+
+补齐 `s1-audit-directory` 对非空历史工作簿的端到端回归覆盖。Rust 读取已有 S1 历史工作簿后，对当前公式/条件格式 Issue 做连续/已整改分类，并继承历史人工反馈和审核意见。提供历史工作簿时，普通视图和开发者视图现在单独记录读取状态、Calamine reader、工作表、行数和读取耗时。
+
+## 修改文件
+
+- `audit-core/src/bin/open-data-audit.rs`：新增 `history_workbook_read` 运行日志事件和普通视图读取摘要。
+- `audit-core/tests/s1_audit_directory_cli.rs`：生成合成非空历史工作簿并验证完整 CLI 的历史读取、连续/已整改归类、人工意见继承和双视图日志。
+- `audit-core/MIGRATION_INVENTORY.md`：更新 S1 Issue 链路的集成测试范围。
+- 本补充记录。
+
+## 验证
+
+- `cargo test -p audit-core --locked --test s1_audit_directory_cli -- --nocapture`：3 个 S1 目录审核 CLI 集成测试通过。
+- `cargo test -p audit-core --locked --quiet`：71 个库单元测试和全部 Audit 集成测试通过。
+- `cargo fmt --package audit-core -- --check`：通过。
+- Windows 原生 Cargo 不可用，上述 Rust 命令在 WSL Ubuntu 执行；构建仍显示共享 `excel-editor` 的既有 `umya-spreadsheet` 弃用警告，本轮没有修改该 crate。
+
+## 未执行项与已知限制
+
+- 非空历史工作簿使用合成样本；真实历史库仍未验证。
+- UOS/native 与 Windows/general Python handler 的条件格式 Issue 机构字段差异仍待用户裁定；本补充没有更改该口径或前一份真实样本报告。
+- 公式复制/重算、审核工作簿写回、完整 GUI、目标 Linux/glibc 2.28/deb 和重复运行仍未验收。
+
+## 删除与回滚
+
+- 删除清单：无。
+- 当前 S1 工作仍未提交；提交后可按相应功能提交号 `git revert <commit>` 回滚。
