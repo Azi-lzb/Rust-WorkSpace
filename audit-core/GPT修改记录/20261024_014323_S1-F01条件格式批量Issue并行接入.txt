@@ -1,0 +1,45 @@
+# S1-F01 条件格式批量 Issue 并行接入
+
+- 时间：2026-10-24 01:43:23（Asia/Shanghai）
+- 执行者：Codex
+- 分支：`audit-dev`
+- Worktree：`C:\Users\AZI\Desktop\VibeCode\audit-dev`
+- 修改前 commit：`ff870fb`（功能修改开始前工作区干净）
+- 功能 commit：`569f373ebd5d23ed98eb6e6b54815d92404a1169`
+- 修改记录提交：本记录随后独立提交
+- 【组件版本】不升级；workspace crate 版本未变。
+
+## 目的与改动
+
+将 Python `handle_conditional_issue_extract` 的选中文件批处理行为继续接入 Rust S1 条件格式 Issue 阶段：按文件并行求值、保留清单顺序与每文件机构信息，全部输入成功后才返回合并 Issue。`conditional-audit-batch` CLI 接受 JSON manifest，输出 Issue JSON，并为普通用户和开发者视图记录实际 reader、文件状态与阶段耗时。单文件 CLI 普通日志也补充 reader 和读/判定/组装耗时。
+
+批处理失败时命令以错误退出，不输出部分 Issue 汇总；公式仍读取工作簿已有缓存，不重算或写回输入文件。此变更只覆盖条件格式 Issue 提取，不代表完整 S1-F01。
+
+修改/新增文件：
+
+- `Cargo.lock`、`audit-core/Cargo.toml`：Audit crate 登记已由 workspace 声明的 Rayon 依赖；锁文件仅增加 `audit-core` 的 Rayon 依赖项。该需求已向 main 报告并完成依赖边界核对，不修改共享 crate。
+- `audit-core/src/s1_conditional_audit.rs`：增加批处理输入、逐文件进度/摘要和 Rayon 文件级并行 API。
+- `audit-core/src/bin/open-data-audit.rs`：增加 `conditional-audit-batch` manifest CLI 与双视图日志。
+- `audit-core/tests/s1_conditional_audit_batch_cli.rs`：覆盖两文件合并、机构元数据/顺序、reader/计时日志和错误时不输出部分结果。
+- `audit-core/tests/s1_conditional_audit_cli.rs`：断言单文件普通日志包含引擎与读取阶段。
+- `audit-core/README.md`、`audit-core/MIGRATION_INVENTORY.md`：记录入口、并行和当前未迁移范围。
+
+未修改 `DEVELOPMENT_GOAL.md`、`pytools-core`、共享 crates、Python 源项目、配置及真实工作簿；无删除或 VBA 变更。
+
+## 验证结果
+
+- WSL Ubuntu：`cargo fmt --all -- --check` 通过。
+- WSL Ubuntu：`cargo test -p audit-core --locked` 通过，0 失败；新增批处理 CLI 两个集成测试通过。
+- `git diff --cached --check` 通过。
+- 既有 `probe/reports/s1_conditional_audit_real.json` 记录一个只读真实工作簿的 Python/Rust 对拍：348 条 Issue、0 字段差异。本轮未新增真实多工作簿对拍；两文件批次的顺序、元数据、并行事件及失败语义由合成 fixture 覆盖。
+
+## 未执行项、已知范围
+
+- Windows 原生 Cargo 构建/测试、麒麟 V10、统信 V20、目标平台构建和 deb 验收未执行；当前 Windows 环境无原生 Rust 工具链，本轮使用 WSL Ubuntu。
+- S1 配置/模板选择与自动命名区域解析、普通业务规则、公式重算、结果工作簿写回、历史、重复运行、GUI/API 串接仍未迁移；调用者需为本批次提供 `--scan-area` 和 `--structure-area`。
+- 真实样本对拍仍使用临时 ASCII basename，真实原文件名生成的 Issue identity 未核验；完整 S1-F01 保持“未验证”。
+
+## 回滚
+
+- 功能代码回滚：`git revert 569f373ebd5d23ed98eb6e6b54815d92404a1169`。
+- 本记录为历史留痕，不随功能回滚自动删除；本轮无删除清单。
