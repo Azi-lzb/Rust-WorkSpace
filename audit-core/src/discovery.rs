@@ -33,6 +33,26 @@ pub struct PeriodDetection {
     pub details: String,
 }
 
+/// Infer the institution identity from an input workbook's filename using the
+/// source Audit service convention: the first two non-empty underscore parts,
+/// or the stem for both fields when fewer than two parts are present.
+pub fn organisation_from_name(path: &Path) -> (String, String) {
+    let stem = path
+        .file_stem()
+        .map(|value| value.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let parts = stem
+        .split('_')
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>();
+    if parts.len() >= 2 {
+        (parts[0].to_owned(), parts[1].to_owned())
+    } else {
+        (stem.clone(), stem)
+    }
+}
+
 /// Enumerate source xlsx paths with the same filters and recursion depth as the
 /// original `base_audit.discovery.source_workbooks` helper.
 pub fn source_workbooks(input_dir: &Path, depth: ScanDepth) -> Result<Vec<PathBuf>> {
@@ -309,7 +329,9 @@ pub(crate) fn decimal_digit(character: char) -> Option<u32> {
 
 #[cfg(test)]
 mod tests {
-    use super::{detect_period, periods_in_text, source_workbooks, ScanDepth};
+    use super::{
+        detect_period, organisation_from_name, periods_in_text, source_workbooks, ScanDepth,
+    };
     use serde::Deserialize;
     use serde_json::{json, Value};
     use std::{
@@ -327,6 +349,22 @@ mod tests {
     struct PythonCase {
         input: String,
         periods: Vec<String>,
+    }
+
+    #[test]
+    fn organisation_from_name_matches_source_service_split_rule() {
+        assert_eq!(
+            organisation_from_name(Path::new("9144_甲银行_20260731.xlsx")),
+            ("9144".to_owned(), "甲银行".to_owned())
+        );
+        assert_eq!(
+            organisation_from_name(Path::new("__机构甲___20260731.xlsx")),
+            ("机构甲".to_owned(), "20260731".to_owned())
+        );
+        assert_eq!(
+            organisation_from_name(Path::new("未分隔文件.xlsx")),
+            ("未分隔文件".to_owned(), "未分隔文件".to_owned())
+        );
     }
 
     #[test]

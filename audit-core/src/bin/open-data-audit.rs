@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use audit_core::{
     conditional_format::evaluate_xlsx_workbook,
-    discovery::ScanDepth,
+    discovery::{detect_period, organisation_from_name, source_workbooks, ScanDepth},
     models::CopyRange,
     s1_conditional_audit::{
         extract_conditional_issues, extract_conditional_issues_batch, S1ConditionalBatchInput,
@@ -43,6 +43,8 @@ enum Command {
     ConditionalAudit(ConditionalAuditArgs),
     /// Run conditional-format issue extraction for a selected S1 workbook batch.
     ConditionalAuditBatch(ConditionalAuditBatchArgs),
+    /// Discover an S1 input directory and run conditional-format issue extraction.
+    ConditionalAuditDirectory(ConditionalAuditDirectoryArgs),
     /// Serve the bundled Audit frontend through the Rust API bridge on localhost.
     Serve(ServeArgs),
 }
@@ -118,6 +120,41 @@ struct ConditionalAuditBatchArgs {
     /// Audit timestamp recorded on the generated Audit issues.
     #[arg(long)]
     audit_time: String,
+
+    /// Optional evaluation area in Sheet!A1:B20 form. Repeat for multiple areas.
+    #[arg(long = "scan-area")]
+    scan_areas: Vec<String>,
+
+    /// Optional template structure area used to resolve check_field. Repeat as needed.
+    #[arg(long = "structure-area")]
+    structure_areas: Vec<String>,
+
+    /// Emit developer-view JSON progress events with actual engine and timings.
+    #[arg(long, default_value_t = false)]
+    developer_view: bool,
+}
+
+#[derive(Debug, Args)]
+struct ConditionalAuditDirectoryArgs {
+    /// Directory containing source .xlsx workbooks.
+    #[arg(long)]
+    input_dir: PathBuf,
+
+    /// Reporting period; when omitted, detect one from the source filenames/directories.
+    #[arg(long)]
+    period: Option<String>,
+
+    /// S1 run/batch identifier recorded on generated Audit issues.
+    #[arg(long)]
+    batch_id: String,
+
+    /// Audit timestamp recorded on generated Audit issues.
+    #[arg(long)]
+    audit_time: String,
+
+    /// Recurse through all child directories when discovering source workbooks.
+    #[arg(long, default_value_t = false)]
+    recursive: bool,
 
     /// Optional evaluation area in Sheet!A1:B20 form. Repeat for multiple areas.
     #[arg(long = "scan-area")]
@@ -359,6 +396,9 @@ fn run() -> Result<()> {
         Command::ConditionalAuditBatch(arguments) => {
             run_conditional_audit_batch(arguments)?;
         }
+        Command::ConditionalAuditDirectory(arguments) => {
+            run_conditional_audit_directory(arguments)?;
+        }
     }
     Ok(())
 }
@@ -399,14 +439,159 @@ fn run_conditional_audit_batch(arguments: ConditionalAuditBatchArgs) -> Result<(
             }
         })
         .collect::<Vec<_>>();
-    let structure_ranges = arguments
-        .structure_areas
+    run_conditional_audit_inputs(
+        inputs,
+        &arguments.scan_areas,
+        &arguments.structure_areas,
+        &arguments.batch_id,
+        arguments.developer_view,
+    )
+}
+
+fn run_conditional_audit_directory(arguments: ConditionalAuditDirectoryArgs) -> Result<()> {
+    let discovery_started = Instant::now();
+    let discovery_started_at = chrono::Local::now().to_rfc3339();
+    if arguments.developer_view {
+        eprintln!(
+            "{}",
+            serde_json::to_string(&serde_json::json!({
+                "type": "progress",
+                "product": "open-data-audit",
+                "feature": "S1-F01",
+                "step": "source_workbook_discovery",
+                "status": "started",
+                "input_dir": arguments.input_dir,
+                "recursive": arguments.recursive,
+                "started_at": discovery_started_at
+            }))?
+        );
+    } else {
+        eprintln!("正在扫描 S1-F01 源目录中的 XLSX 工作簿…");
+    }
+
+    let discovery_result = (|| -> Result<_> {
+        let depth = if arguments.recursive {
+            ScanDepth::Full
+        } else {
+            ScanDepth::RootOnly
+        };
+        let source_files = source_workbooks(&arguments.input_dir, depth)?;
+        if source_files.is_empty() {
+            anyhow::bail!("源数据目录中没有可审核的 .xlsx 文件");
+        }
+        let detection = detect_period(&arguments.input_dir, depth)?;
+        let explicit_period = arguments
+            .period
+            .as_deref()
+            .map(str::trim)
+            .filter(|period| !period.is_empty());
+        let (period, period_source) = if let Some(period) = explicit_period {
+            (period.to_owned(), "用户指定".to_owned())
+        } else if detection.conflict {
+            anyhow::bail!("{}；请显式指定 --period", detection.details);
+        } else if detection.period.is_empty() {
+            anyhow::bail!("{}；请使用 --period 指定数据期", detection.details);
+        } else {
+            (detection.period.clone(), detection.source.clone())
+        };
+        let inputs = source_files
+            .into_iter()
+            .map(|path| {
+                let (org_code, org_name) = organisation_from_name(&path);
+                S1ConditionalBatchInput {
+                    workbook_path: path.clone(),
+                    source_file: path,
+                    metadata: S1ConditionalMetadata {
+                        period: period.clone(),
+                        batch_id: arguments.batch_id.clone(),
+                        audit_time: arguments.audit_time.clone(),
+                        org_code,
+                        org_name,
+                    },
+                }
+            })
+            .collect::<Vec<_>>();
+        Ok((inputs, period, period_source, detection.details))
+    })();
+
+    let (inputs, period, period_source, detection_details) = match discovery_result {
+        Ok(result) => result,
+        Err(error) => {
+            if arguments.developer_view {
+                eprintln!(
+                    "{}",
+                    serde_json::to_string(&serde_json::json!({
+                        "type": "progress",
+                        "product": "open-data-audit",
+                        "feature": "S1-F01",
+                        "step": "source_workbook_discovery",
+                        "status": "failed",
+                        "input_dir": arguments.input_dir,
+                        "started_at": discovery_started_at,
+                        "finished_at": chrono::Local::now().to_rfc3339(),
+                        "elapsed_ms": discovery_started.elapsed().as_millis(),
+                        "error": format!("{error:#}")
+                    }))?
+                );
+            } else {
+                eprintln!("S1-F01 源目录扫描失败：{error:#}");
+            }
+            return Err(error);
+        }
+    };
+
+    if arguments.developer_view {
+        eprintln!(
+            "{}",
+            serde_json::to_string(&serde_json::json!({
+                "type": "progress",
+                "product": "open-data-audit",
+                "feature": "S1-F01",
+                "step": "source_workbook_discovery",
+                "status": "completed",
+                "input_dir": arguments.input_dir,
+                "files_total": inputs.len(),
+                "period": period,
+                "period_source": period_source,
+                "detection_details": detection_details,
+                "started_at": discovery_started_at,
+                "finished_at": chrono::Local::now().to_rfc3339(),
+                "elapsed_ms": discovery_started.elapsed().as_millis()
+            }))?
+        );
+    } else {
+        eprintln!(
+            "源目录发现 {} 个 XLSX；数据期 {}（{}）；筛选耗时 {} ms。",
+            inputs.len(),
+            period,
+            period_source,
+            discovery_started.elapsed().as_millis()
+        );
+    }
+
+    run_conditional_audit_inputs(
+        inputs,
+        &arguments.scan_areas,
+        &arguments.structure_areas,
+        &arguments.batch_id,
+        arguments.developer_view,
+    )
+}
+
+fn run_conditional_audit_inputs(
+    inputs: Vec<S1ConditionalBatchInput>,
+    scan_areas: &[String],
+    structure_areas: &[String],
+    batch_id: &str,
+    developer_view: bool,
+) -> Result<()> {
+    let structure_ranges = structure_areas
         .iter()
         .map(|area| parse_copy_range(area))
         .collect::<Result<Vec<_>>>()?;
     let batch_started = Instant::now();
     let started_at = chrono::Local::now().to_rfc3339();
-    if arguments.developer_view {
+    if developer_view {
         eprintln!(
             "{}",
             serde_json::to_string(&serde_json::json!({
@@ -415,7 +600,7 @@ fn run_conditional_audit_batch(arguments: ConditionalAuditBatchArgs) -> Result<(
                 "feature": "S1-F01",
                 "step": "conditional_format_issue_extraction",
                 "status": "started",
-                "batch_id": arguments.batch_id.as_str(),
+                "batch_id": batch_id,
                 "files_total": inputs.len(),
                 "started_at": started_at.as_str()
             }))?
@@ -426,16 +611,16 @@ fn run_conditional_audit_batch(arguments: ConditionalAuditBatchArgs) -> Result<(
 
     let report = extract_conditional_issues_batch(
         &inputs,
-        &arguments.scan_areas,
+        scan_areas,
         &structure_ranges,
         |progress: &S1ConditionalBatchProgress| {
-            if arguments.developer_view {
+            if developer_view {
                 if let Ok(event) = serde_json::to_string(&serde_json::json!({
                     "type": "progress",
                     "product": "open-data-audit",
                     "feature": "S1-F01",
                     "step": "conditional_format_issue_extraction",
-                    "batch_id": arguments.batch_id.as_str(),
+                    "batch_id": batch_id,
                     "event": progress
                 })) {
                     eprintln!("{event}");
@@ -475,7 +660,7 @@ fn run_conditional_audit_batch(arguments: ConditionalAuditBatchArgs) -> Result<(
     let report = match report {
         Ok(report) => report,
         Err(error) => {
-            if arguments.developer_view {
+            if developer_view {
                 eprintln!(
                     "{}",
                     serde_json::to_string(&serde_json::json!({
@@ -484,7 +669,7 @@ fn run_conditional_audit_batch(arguments: ConditionalAuditBatchArgs) -> Result<(
                         "feature": "S1-F01",
                         "step": "conditional_format_issue_extraction",
                         "status": "failed",
-                        "batch_id": arguments.batch_id.as_str(),
+                        "batch_id": batch_id,
                         "started_at": started_at.as_str(),
                         "finished_at": chrono::Local::now().to_rfc3339(),
                         "elapsed_ms": batch_started.elapsed().as_millis(),
@@ -498,7 +683,7 @@ fn run_conditional_audit_batch(arguments: ConditionalAuditBatchArgs) -> Result<(
         }
     };
 
-    if arguments.developer_view {
+    if developer_view {
         eprintln!(
             "{}",
             serde_json::to_string(&serde_json::json!({
@@ -507,7 +692,7 @@ fn run_conditional_audit_batch(arguments: ConditionalAuditBatchArgs) -> Result<(
                 "feature": "S1-F01",
                 "step": "conditional_format_issue_extraction",
                 "status": "completed",
-                "batch_id": arguments.batch_id.as_str(),
+                "batch_id": batch_id,
                 "started_at": started_at.as_str(),
                 "finished_at": chrono::Local::now().to_rfc3339(),
                 "elapsed_ms": batch_started.elapsed().as_millis(),
