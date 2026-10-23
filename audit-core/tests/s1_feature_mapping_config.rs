@@ -1,4 +1,8 @@
-use audit_core::name_config::load_s1_conditional_mappings;
+use audit_core::{
+    conditional_format::evaluate_xlsx_workbook,
+    models::CopyRange,
+    name_config::{load_s1_conditional_mappings, resolve_s1_conditional_area_plan, NamedRangeArea},
+};
 use excel_writer::Workbook;
 use std::{
     fs,
@@ -184,4 +188,81 @@ fn mapping_sheet_missing_required_column_fails_explicitly() {
 
     let error = result.expect_err("configuration schema errors must be explicit");
     assert!(format!("{error:#}").contains("缺少列：备注"));
+}
+
+#[test]
+fn configured_names_build_per_workbook_scan_and_structure_areas() {
+    let mappings = load_s1_conditional_mappings(None, Path::new("template.xlsx"))
+        .expect("load default S1 mappings");
+    let areas = vec![
+        NamedRangeArea {
+            name: "条件格式区域".to_owned(),
+            sheet_name: "O'Brien Data".to_owned(),
+            address: "$C$4:$D$6".to_owned(),
+        },
+        NamedRangeArea {
+            name: "条件格式区域_2026".to_owned(),
+            sheet_name: "O'Brien Data".to_owned(),
+            address: "$C$4:$D$6".to_owned(),
+        },
+        NamedRangeArea {
+            name: "条件格式区域_第二块".to_owned(),
+            sheet_name: "O'Brien Data".to_owned(),
+            address: "$F$4:$F$6".to_owned(),
+        },
+        NamedRangeArea {
+            name: "表结构区域".to_owned(),
+            sheet_name: "O'Brien Data".to_owned(),
+            address: "$A$1:$B$2".to_owned(),
+        },
+    ];
+    let sheets = vec!["O'Brien Data".to_owned()];
+
+    let plan = resolve_s1_conditional_area_plan(&mappings, None, &areas, &sheets)
+        .expect("resolve mapped condition and structure areas");
+    assert_eq!(
+        plan.scan_areas,
+        vec![
+            "'O''Brien Data'!C4:D6".to_owned(),
+            "'O''Brien Data'!F4:F6".to_owned()
+        ]
+    );
+    assert_eq!(
+        plan.structure_ranges,
+        vec![CopyRange {
+            sheet_name: "O'Brien Data".to_owned(),
+            address: "A1:B2".to_owned(),
+        }]
+    );
+
+    let workbook_path = temporary_workbook_path("s1_area_plan");
+    let mut workbook = Workbook::new();
+    {
+        let worksheet = workbook.add_worksheet();
+        worksheet
+            .set_name("O'Brien Data")
+            .expect("set synthetic workbook sheet name");
+        worksheet
+            .write_string(3, 2, "sample")
+            .expect("write synthetic workbook value");
+    }
+    workbook
+        .save(&workbook_path)
+        .expect("save synthetic workbook");
+    let evaluation = evaluate_xlsx_workbook(&workbook_path, &plan.scan_areas)
+        .expect("evaluate using mapped scan-area syntax");
+    fs::remove_file(workbook_path).expect("remove synthetic workbook");
+    assert_eq!(evaluation.rules_total, 0);
+
+    // No matched configured name deliberately retains the evaluator's
+    // source-compatible AppliesTo fallback.
+    let fallback = resolve_s1_conditional_area_plan(&mappings, None, &[], &sheets)
+        .expect("empty mapped names select AppliesTo fallback");
+    assert!(fallback.scan_areas.is_empty());
+    assert!(fallback.structure_ranges.is_empty());
+
+    let missing_mapping =
+        resolve_s1_conditional_area_plan(&mappings, Some("missing-feature"), &areas, &sheets)
+            .expect_err("an unknown workflow feature must fail explicitly");
+    assert!(format!("{missing_mapping:#}").contains("missing-feature"));
 }

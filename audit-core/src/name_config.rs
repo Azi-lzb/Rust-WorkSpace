@@ -17,6 +17,7 @@ const MAPPING_SHEET: &str = "模块化功能";
 const MAPPING_HEADERS: [&str; 6] = ["功能名", "执行模块", "命名区域名", "输入", "输出", "备注"];
 const CONDITIONAL_FORMAT_EXTRACT_FUNCTION: &str = "汇总_条件格式结果提取";
 const STRUCTURE_COMPARE_FUNCTION: &str = "核对_表结构比对";
+const DEFAULT_CONDITIONAL_FEATURE_NAME: &str = "条件格式结果提取";
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FeatureMapping {
@@ -41,6 +42,16 @@ pub struct NamedRangeArea {
     pub name: String,
     pub sheet_name: String,
     pub address: String,
+}
+
+/// Per-workbook Audit ranges for condition-format issue extraction.
+///
+/// An empty `scan_areas` deliberately preserves the Python service behavior:
+/// the evaluator falls back to the conditional-format rules' AppliesTo ranges.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct S1ConditionalAreaPlan {
+    pub scan_areas: Vec<String>,
+    pub structure_ranges: Vec<CopyRange>,
 }
 
 /// Split a delimited named-range cell using the source project's separators.
@@ -128,6 +139,56 @@ pub fn resolve_named_ranges_for_mappings(
     }
 
     resolved
+}
+
+/// Resolve the configured conditional-format scan and structure areas for one
+/// input workbook, after the shared reader has parsed the template's names.
+pub fn resolve_s1_conditional_area_plan(
+    mappings: &[FeatureMapping],
+    feature_name: Option<&str>,
+    areas: &[NamedRangeArea],
+    workbook_sheets: &[String],
+) -> Result<S1ConditionalAreaPlan> {
+    let feature_name = feature_name
+        .filter(|name| !name.trim().is_empty())
+        .unwrap_or(DEFAULT_CONDITIONAL_FEATURE_NAME);
+    let conditional_mappings = mappings
+        .iter()
+        .filter(|mapping| {
+            mapping.name == feature_name
+                && mapping.feature_type == CONDITIONAL_FORMAT_EXTRACT_FUNCTION
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    if conditional_mappings.is_empty() {
+        bail!("模块化功能中不存在条件格式提取模块：{feature_name}");
+    }
+
+    let scan_areas =
+        resolve_named_ranges_for_mappings(&conditional_mappings, areas, workbook_sheets)
+            .into_iter()
+            .map(format_scan_area)
+            .collect();
+    let structure_mappings = mappings
+        .iter()
+        .filter(|mapping| mapping.feature_type == STRUCTURE_COMPARE_FUNCTION)
+        .cloned()
+        .collect::<Vec<_>>();
+    let structure_ranges =
+        resolve_named_ranges_for_mappings(&structure_mappings, areas, workbook_sheets);
+
+    Ok(S1ConditionalAreaPlan {
+        scan_areas,
+        structure_ranges,
+    })
+}
+
+fn format_scan_area(range: CopyRange) -> String {
+    format!(
+        "'{}'!{}",
+        range.sheet_name.replace('\'', "''"),
+        range.address
+    )
 }
 
 /// Load the S1 conditional-format and structure mappings from the configured
