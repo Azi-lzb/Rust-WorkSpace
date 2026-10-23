@@ -454,7 +454,7 @@ fn decode_sheet_token(token: &str) -> Option<String> {
         token[1..token.len() - 1].replace("''", "'")
     } else if token
         .chars()
-        .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '.')
+        .all(|ch| ch.is_alphanumeric() || ch == '_' || ch == '.')
     {
         token.to_owned()
     } else {
@@ -1376,10 +1376,10 @@ mod tests {
             r#"<Relationships xmlns="{PACKAGE_REL_NS}"><Relationship Id="rId0" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="custom/book.xml"/></Relationships>"#
         );
         let workbook = format!(
-            r#"<s:workbook xmlns:s="{SPREADSHEET_MAIN_NS}" xmlns:r="{OFFICE_REL_NS}"><s:sheets><s:sheet name="Data Set" sheetId="1" r:id="rId1"/><s:sheet name="Chart" sheetId="2" r:id="rId2"/></s:sheets><s:definedNames><s:definedName name="GlobalRange">'Data Set'!$A$1:$B$8</s:definedName><s:definedName name="LocalUnion" localSheetId="0">'Data Set'!A1:B2,'Data Set'!D4</s:definedName><s:definedName name="Formula">SUM('Data Set'!A:A)</s:definedName><s:definedName name="Broken" localSheetId="9">'Missing'!A1</s:definedName></s:definedNames></s:workbook>"#
+            r#"<s:workbook xmlns:s="{SPREADSHEET_MAIN_NS}" xmlns:r="{OFFICE_REL_NS}"><s:sheets><s:sheet name="Data Set" sheetId="1" r:id="rId1"/><s:sheet name="Chart" sheetId="2" r:id="rId2"/><s:sheet name="存量单位贷款信息" sheetId="3" r:id="rId3"/></s:sheets><s:definedNames><s:definedName name="GlobalRange">'Data Set'!$A$1:$B$8</s:definedName><s:definedName name="LocalUnion" localSheetId="0">'Data Set'!A1:B2,'Data Set'!D4</s:definedName><s:definedName name="Formula">SUM('Data Set'!A:A)</s:definedName><s:definedName name="UnicodeRange">存量单位贷款信息!$A$4:$B$90</s:definedName><s:definedName name="UnicodeLocal" localSheetId="2">存量单位贷款信息!A1:B2</s:definedName><s:definedName name="Broken" localSheetId="9">'Missing'!A1</s:definedName></s:definedNames></s:workbook>"#
         );
         let workbook_rels = format!(
-            r#"<Relationships xmlns="{PACKAGE_REL_NS}"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/s1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/chartsheet" Target="chartsheets/c1.xml"/></Relationships>"#
+            r#"<Relationships xmlns="{PACKAGE_REL_NS}"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/s1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/chartsheet" Target="chartsheets/c1.xml"/><Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/s3.xml"/></Relationships>"#
         );
         let mut archive = ZipWriter::new(fs::File::create(&path)?);
         for (name, xml) in [
@@ -1479,7 +1479,7 @@ mod tests {
         let names = read_defined_names(&fixture)?;
         fs::remove_file(fixture)?;
 
-        assert_eq!(names.len(), 4);
+        assert_eq!(names.len(), 6);
         assert_eq!(names[0].name, "GlobalRange");
         assert_eq!(names[0].scope, DefinedNameScope::Workbook);
         assert_eq!(names[0].raw_reference, "'Data Set'!$A$1:$B$8");
@@ -1507,14 +1507,35 @@ mod tests {
             DefinedNameParseStatus::NonAreaExpression
         );
         assert_eq!(names[2].raw_reference, "SUM('Data Set'!A:A)");
+        assert_eq!(names[3].name, "UnicodeRange");
+        assert_eq!(names[3].parse_status, DefinedNameParseStatus::Areas);
         assert_eq!(
-            names[3].scope,
+            names[3].areas,
+            vec![DefinedNameArea {
+                sheet_name: "存量单位贷款信息".to_owned(),
+                sheet_kind: "worksheet".to_owned(),
+                reference: "$A$4:$B$90".to_owned(),
+            }]
+        );
+        assert_eq!(
+            names[4].scope,
+            DefinedNameScope::Worksheet {
+                local_sheet_id: 2,
+                sheet_name: Some("存量单位贷款信息".to_owned()),
+                sheet_kind: Some("worksheet".to_owned()),
+            }
+        );
+        assert_eq!(
+            names[5].scope,
             DefinedNameScope::UnresolvedWorksheet { local_sheet_id: 9 }
         );
         assert_eq!(
-            names[3].parse_status,
+            names[5].parse_status,
             DefinedNameParseStatus::InvalidAreaExpression
         );
+        assert!(decode_sheet_token("存量单位贷款信息").is_some());
+        assert!(decode_sheet_token("[Other.xlsx]Data").is_none());
+        assert!(decode_sheet_token("Data:Sheet").is_none());
         Ok(())
     }
 

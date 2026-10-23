@@ -1,0 +1,32 @@
+# GPT 修改记录：Defined Names 支持未加引号的 Unicode sheet 名
+
+- 时间：2026-10-24（Asia/Shanghai）
+- 执行者：Codex
+- 基线：main commit 8906759；本次只修改共享 `excel-reader` 与本记录。
+- WIP：main 上 Audit 业务文件有未提交修改，未触碰、暂存或提交；pytools-dev 有独立未提交修改，未触碰。共享 reader 上次 API 已提交，本次只增量修正名称 token 解析。
+- 【组件版本】：不升级；不改依赖和读取路由。
+
+## 修改目的
+
+修复真实 Audit 工作簿中未加引号的中文 worksheet 名被错误拒绝的问题。审计报告显示 17 个名称中有 12 个中文工作表引用无法解析。
+
+## 修改文件与行为
+
+- `crates/excel-reader/src/lib.rs`：unquoted sheet token 接受 Unicode 字母和数字，同时保留 `_`、`.`；加入未加引号 Unicode 区域引用回归测试，并明确验证外部工作簿限定符和 3D sheet token 仍被拒绝。现有无效目标工作表测试继续覆盖错误引用。
+- `GPT修改记录/20261024_excel-reader-unquoted-unicode-sheet-names.txt`：本记录。
+
+## 测试
+
+- `cargo fmt --all`：通过。
+- `cargo test -p excel-reader defined_name_reader -- --nocapture`：通过，1/1。
+- `cargo test -p excel-reader`：通过，10/10；doc tests 无失败。
+- 测试在本机 WSL Rust 工具链执行；未运行真实 Audit CLI 对拍或目标 Linux 验收。
+
+## 状态与限制
+
+- 本修复只增加有效 Unicode sheet token 的支持；外部 workbook、3D 引用、无效或不支持的表达式仍显式拒绝解析并保留原文。
+- 需要 Audit 在其工作树同步此提交后重跑真实样本，确认 12 个名称均能解析并复核 S1 规则结果；此提交本身不构成 Audit 对拍验收。
+
+## 回滚
+
+不含删除项。若需回滚，仅回退本记录所述解析器与测试改动并移除本记录；保留同期 Audit/PyTools 未提交工作。
