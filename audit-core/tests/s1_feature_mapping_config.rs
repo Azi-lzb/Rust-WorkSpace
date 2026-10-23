@@ -1,7 +1,10 @@
 use audit_core::{
     conditional_format::evaluate_xlsx_workbook,
     models::CopyRange,
-    name_config::{load_s1_conditional_mappings, resolve_s1_conditional_area_plan, NamedRangeArea},
+    name_config::{
+        load_s1_conditional_mappings, load_s1_formula_mappings, resolve_s1_conditional_area_plan,
+        NamedRangeArea,
+    },
 };
 use excel_writer::Workbook;
 use std::{
@@ -144,6 +147,48 @@ fn loads_conditional_and_structure_mappings_with_template_priority() {
 }
 
 #[test]
+fn loads_formula_copy_and_issue_extraction_mappings() {
+    let mut rows = feature_rows();
+    rows.push(vec![
+        "公式校验复制",
+        "修改_公式校验复制",
+        "校验区域、附加校验区域",
+        "模板文件",
+        "审核副本",
+        "复制公式",
+        "否",
+        "",
+    ]);
+    rows.push(vec![
+        "校验结果提取",
+        "汇总_公式校验结果提取",
+        "校验区域",
+        "审核副本",
+        "审核结果",
+        "读取计算结果",
+        "否",
+        "",
+    ]);
+    let config = write_mapping_config(&rows, "模块化功能");
+
+    let mappings = load_s1_formula_mappings(Some(&config), Path::new("机构模板甲_20260731.xlsx"))
+        .expect("load formula mappings from Rust reader");
+    fs::remove_file(config).expect("remove temporary configuration");
+
+    assert_eq!(mappings.len(), 2);
+    assert_eq!(mappings[0].name, "公式校验复制");
+    assert_eq!(mappings[0].feature_type, "修改_公式校验复制");
+    assert_eq!(
+        mappings[0].range_names,
+        vec!["校验区域".to_owned(), "附加校验区域".to_owned()]
+    );
+    assert_eq!(mappings[1].name, "校验结果提取");
+    assert_eq!(mappings[1].feature_type, "汇总_公式校验结果提取");
+    assert!(mappings[0].input_note.is_empty());
+    assert!(mappings[0].output.is_empty());
+}
+
+#[test]
 fn missing_or_empty_mapping_sheet_uses_s1_defaults() {
     let template = Path::new("default-template.xlsx");
     let absent = load_s1_conditional_mappings(None, template).expect("load default mappings");
@@ -168,6 +213,9 @@ fn missing_or_empty_mapping_sheet_uses_s1_defaults() {
     let empty_applicable_config = write_mapping_config(&rows, "模块化功能");
     let empty_applicable = load_s1_conditional_mappings(Some(&empty_applicable_config), template)
         .expect("empty applicable mapping table falls back to defaults");
+    let empty_formula_applicable =
+        load_s1_formula_mappings(Some(&empty_applicable_config), template)
+            .expect("empty applicable formula mapping table falls back to defaults");
     fs::remove_file(empty_applicable_config).expect("remove temporary configuration");
     assert_eq!(
         empty_applicable[0].range_names,
@@ -176,6 +224,10 @@ fn missing_or_empty_mapping_sheet_uses_s1_defaults() {
     assert_eq!(
         empty_applicable[1].range_names,
         vec!["表结构区域".to_owned()]
+    );
+    assert_eq!(
+        empty_formula_applicable[0].range_names,
+        vec!["校验区域".to_owned()]
     );
 }
 

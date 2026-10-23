@@ -17,8 +17,24 @@ use std::{
 
 const MAPPING_SHEET: &str = "模块化功能";
 const MAPPING_HEADERS: [&str; 6] = ["功能名", "执行模块", "命名区域名", "输入", "输出", "备注"];
+const AUDIT_FEATURE_TYPES: [&str; 12] = [
+    "修改_外部文件添加",
+    FORMULA_COPY_FUNCTION,
+    FORMULA_ISSUE_EXTRACT_FUNCTION,
+    CONDITIONAL_FORMAT_EXTRACT_FUNCTION,
+    "汇总_审核结果输出",
+    STRUCTURE_COMPARE_FUNCTION,
+    "汇总_任意行汇总",
+    "汇总_固定行汇总",
+    "汇总_汇总表合并",
+    "检查_命名区域存在性",
+    "修改_组合联合核查表",
+    "修改_组合工作表",
+];
 pub const CONDITIONAL_FORMAT_EXTRACT_FUNCTION: &str = "汇总_条件格式结果提取";
 pub const STRUCTURE_COMPARE_FUNCTION: &str = "核对_表结构比对";
+pub const FORMULA_COPY_FUNCTION: &str = "修改_公式校验复制";
+pub const FORMULA_ISSUE_EXTRACT_FUNCTION: &str = "汇总_公式校验结果提取";
 pub const DEFAULT_CONDITIONAL_FEATURE_NAME: &str = "条件格式结果提取";
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -270,11 +286,99 @@ fn parse_s1_conditional_mappings(
     rows: &[Vec<String>],
     template_name: &str,
 ) -> Result<Vec<FeatureMapping>> {
+    let fallback_when_empty = !has_applicable_audit_mapping(rows, template_name);
+    parse_s1_mappings(
+        rows,
+        template_name,
+        &[
+            CONDITIONAL_FORMAT_EXTRACT_FUNCTION,
+            STRUCTURE_COMPARE_FUNCTION,
+        ],
+        fallback_when_empty,
+        default_s1_conditional_mappings(),
+    )
+}
+
+/// Load formula-copy and formula-result mappings using the source project's
+/// built-in feature table when no usable configuration workbook is supplied.
+pub fn load_s1_formula_mappings(
+    config_path: Option<&Path>,
+    template_path: &Path,
+) -> Result<Vec<FeatureMapping>> {
+    let Some(config_path) = config_path.filter(|path| path.is_file()) else {
+        return Ok(default_s1_formula_mappings());
+    };
+
+    let workbook = excel_reader::read_workbook(config_path)
+        .with_context(|| format!("读取 Audit 功能映射配置 {}", config_path.display()))?;
+    let Some(sheet) = workbook
+        .sheets
+        .iter()
+        .find(|sheet| sheet.name == MAPPING_SHEET)
+    else {
+        return Ok(default_s1_formula_mappings());
+    };
+
+    let rows = mapping_sheet_rows(sheet)?;
+    let template_name = template_path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    parse_s1_mappings(
+        &rows,
+        &template_name,
+        &[FORMULA_COPY_FUNCTION, FORMULA_ISSUE_EXTRACT_FUNCTION],
+        !has_applicable_audit_mapping(&rows, &template_name),
+        default_s1_formula_mappings(),
+    )
+}
+
+fn has_applicable_audit_mapping(rows: &[Vec<String>], template_name: &str) -> bool {
     let Some(headers) = rows.first() else {
-        return Ok(default_s1_conditional_mappings());
+        return false;
+    };
+    let Some(name_column) = headers.iter().position(|value| value == "功能名") else {
+        return false;
+    };
+    let Some(type_column) = headers.iter().position(|value| value == "执行模块") else {
+        return false;
+    };
+    let limited_column = headers.iter().position(|value| value == "是否限定工作簿");
+    let keyword_column = headers.iter().position(|value| value == "工作簿关键字");
+    let template_name = template_name.to_lowercase();
+
+    rows.iter().skip(1).any(|row| {
+        let name = row.get(name_column).map(String::as_str).unwrap_or_default();
+        let feature_type = row.get(type_column).map(String::as_str).unwrap_or_default();
+        if name.is_empty() || !AUDIT_FEATURE_TYPES.contains(&feature_type) {
+            return false;
+        }
+        let limited = limited_column
+            .and_then(|column| row.get(column))
+            .is_some_and(|value| is_limited(value));
+        if !limited {
+            return true;
+        }
+        let keyword = keyword_column
+            .and_then(|column| row.get(column))
+            .map(String::as_str)
+            .unwrap_or_default();
+        !keyword.is_empty() && template_name.contains(&keyword.to_lowercase())
+    })
+}
+
+fn parse_s1_mappings(
+    rows: &[Vec<String>],
+    template_name: &str,
+    accepted_feature_types: &[&str],
+    fallback_when_empty: bool,
+    fallback: Vec<FeatureMapping>,
+) -> Result<Vec<FeatureMapping>> {
+    let Some(headers) = rows.first() else {
+        return Ok(fallback);
     };
     if headers.iter().all(String::is_empty) {
-        return Ok(default_s1_conditional_mappings());
+        return Ok(fallback);
     }
 
     let mut positions = BTreeMap::new();
@@ -303,12 +407,7 @@ fn parse_s1_conditional_mappings(
 
         let name = value("功能名");
         let feature_type = value("执行模块");
-        if name.is_empty()
-            || !matches!(
-                feature_type.as_str(),
-                CONDITIONAL_FORMAT_EXTRACT_FUNCTION | STRUCTURE_COMPARE_FUNCTION
-            )
-        {
+        if name.is_empty() || !accepted_feature_types.contains(&feature_type.as_str()) {
             continue;
         }
 
@@ -346,8 +445,8 @@ fn parse_s1_conditional_mappings(
         }
     }
 
-    if selected.is_empty() {
-        Ok(default_s1_conditional_mappings())
+    if selected.is_empty() && fallback_when_empty {
+        Ok(fallback)
     } else {
         Ok(selected.into_iter().map(|(_, mapping)| mapping).collect())
     }
@@ -443,6 +542,31 @@ fn default_s1_conditional_mappings() -> Vec<FeatureMapping> {
             remark: "逐格精确核对固定表结构".to_owned(),
             output: "运行日志".to_owned(),
             input_note: "源数据目录、模板表结构区域".to_owned(),
+        },
+    ]
+}
+
+fn default_s1_formula_mappings() -> Vec<FeatureMapping> {
+    vec![
+        FeatureMapping {
+            name: "公式校验复制".to_owned(),
+            feature_type: FORMULA_COPY_FUNCTION.to_owned(),
+            range_names: vec!["校验区域".to_owned()],
+            workbook_limited: false,
+            workbook_keyword: String::new(),
+            remark: "复制模板公式并用于计算和人工复核".to_owned(),
+            output: "已复制公式的审核副本".to_owned(),
+            input_note: "模板文件、源文件或已添加外部表的审核副本".to_owned(),
+        },
+        FeatureMapping {
+            name: "校验结果提取".to_owned(),
+            feature_type: FORMULA_ISSUE_EXTRACT_FUNCTION.to_owned(),
+            range_names: vec!["校验区域".to_owned()],
+            workbook_limited: false,
+            workbook_keyword: String::new(),
+            remark: "重算后提取错误、核实、提示等结果".to_owned(),
+            output: "审核结果集".to_owned(),
+            input_note: "已计算的审核副本".to_owned(),
         },
     ]
 }

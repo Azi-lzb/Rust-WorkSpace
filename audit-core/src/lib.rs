@@ -14,6 +14,7 @@ pub mod report_source;
 pub mod s1_conditional_audit;
 pub mod s1_structure_compare;
 pub mod s1_template;
+pub mod s1_template_rules;
 pub mod s2_analysis;
 pub mod s2_config;
 pub mod s2_config_check;

@@ -19,6 +19,7 @@ use audit_core::{
         compare_s1_source_structure, read_s1_structure_template_with_required_sheets,
     },
     s1_template::{recommend_template, recommend_template_for_workbooks, template_workbook_paths},
+    s1_template_rules::load_s1_template_rule_plan,
     s2_service::{run_s2_audit, S2ProgressEvent, S2RunRequest},
     s2_summary::S2AuditSummary,
     web_bridge::serve_web_ui,
@@ -57,6 +58,8 @@ enum Command {
     ConditionalAuditBatch(ConditionalAuditBatchArgs),
     /// Discover an S1 input directory and run conditional-format issue extraction.
     ConditionalAuditDirectory(ConditionalAuditDirectoryArgs),
+    /// Discover and validate an S1 template's formula rules without recalculation.
+    S1TemplateRules(S1TemplateRulesArgs),
     /// Serve the bundled Audit frontend through the Rust API bridge on localhost.
     Serve(ServeArgs),
 }
@@ -210,6 +213,25 @@ struct ConditionalAuditDirectoryArgs {
     mapping_config: Option<PathBuf>,
 
     /// Emit developer-view JSON progress events with actual engine and timings.
+    #[arg(long, default_value_t = false)]
+    developer_view: bool,
+}
+
+#[derive(Debug, Args)]
+struct S1TemplateRulesArgs {
+    /// S1 template workbook containing named formula ranges or an “审核规则” sheet.
+    #[arg(long)]
+    template_workbook: PathBuf,
+
+    /// Optional Audit config workbook containing the “模块化功能” mappings.
+    #[arg(long)]
+    mapping_config: Option<PathBuf>,
+
+    /// Include the complete rule definition in stdout for an in-process workflow consumer.
+    #[arg(long, default_value_t = false)]
+    include_rule_definitions: bool,
+
+    /// Emit developer-view JSON progress events with reader and timing details.
     #[arg(long, default_value_t = false)]
     developer_view: bool,
 }
@@ -492,7 +514,98 @@ fn run() -> Result<()> {
         Command::ConditionalAuditDirectory(arguments) => {
             run_conditional_audit_directory(arguments)?;
         }
+        Command::S1TemplateRules(arguments) => {
+            run_s1_template_rules(arguments)?;
+        }
     }
+    Ok(())
+}
+
+fn run_s1_template_rules(arguments: S1TemplateRulesArgs) -> Result<()> {
+    let started = Instant::now();
+    let started_at = chrono::Local::now().to_rfc3339();
+    if arguments.developer_view {
+        eprintln!(
+            "{}",
+            serde_json::to_string(&serde_json::json!({
+                "type": "progress",
+                "product": "open-data-audit",
+                "feature": "S1-F01",
+                "step": "template_formula_rule_discovery",
+                "status": "started",
+                "engine": "calamine+namespace_aware_ooxml",
+                "started_at": started_at
+            }))?
+        );
+    } else {
+        eprintln!("正在读取并检查 S1 模板公式规则…");
+    }
+
+    let plan = match load_s1_template_rule_plan(
+        &arguments.template_workbook,
+        arguments.mapping_config.as_deref(),
+    ) {
+        Ok(plan) => plan,
+        Err(error) => {
+            if arguments.developer_view {
+                eprintln!(
+                    "{}",
+                    serde_json::to_string(&serde_json::json!({
+                        "type": "progress",
+                        "product": "open-data-audit",
+                        "feature": "S1-F01",
+                        "step": "template_formula_rule_discovery",
+                        "status": "failed",
+                        "engine": "calamine+namespace_aware_ooxml",
+                        "finished_at": chrono::Local::now().to_rfc3339(),
+                        "elapsed_ms": started.elapsed().as_millis(),
+                        "error": format!("{error:#}")
+                    }))?
+                );
+            } else {
+                eprintln!("S1 模板公式规则检查失败：{error:#}");
+            }
+            return Err(error);
+        }
+    };
+
+    if arguments.developer_view {
+        eprintln!(
+            "{}",
+            serde_json::to_string(&serde_json::json!({
+                "type": "progress",
+                "product": "open-data-audit",
+                "feature": "S1-F01",
+                "step": "template_formula_rule_discovery",
+                "status": "completed",
+                "started_at": started_at,
+                "finished_at": chrono::Local::now().to_rfc3339(),
+                "elapsed_ms": plan.summary.elapsed_ms,
+                "summary": plan.summary
+            }))?
+        );
+    } else {
+        eprintln!(
+            "S1 模板规则检查完成：模式 {}，规则 {} 条（启用 {} 条），公式范围 {} 个，结构范围 {} 个，读取引擎 {}，读取 {} ms，合计 {} ms。",
+            plan.summary.template_mode,
+            plan.summary.rules_total,
+            plan.summary.rules_enabled,
+            plan.summary.formula_named_ranges,
+            plan.summary.structure_ranges,
+            plan.summary.engine,
+            plan.summary.read_time_ms,
+            plan.summary.elapsed_ms
+        );
+    }
+
+    let mut output = serde_json::json!({
+        "status": "completed",
+        "summary": plan.summary
+    });
+    if arguments.include_rule_definitions {
+        output["definition"] = serde_json::to_value(plan.definition)?;
+    }
+    println!("{}", serde_json::to_string_pretty(&output)?);
     Ok(())
 }
 
