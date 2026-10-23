@@ -680,7 +680,21 @@
         "history_matches_event_stream": true,
         "source_metadata_unchanged": true,
         "output_workbook_elapsed_ms": 1406,
-        "target_os_acceptance": "not_claimed"
+        "target_os_acceptance": "not_claimed",
+        "unknown_error_fail_closed": {
+          "status": "passed_fail_closed_boundary",
+          "fixture": "tests/fixtures/summary_used_range/getting_data_error.xlsx",
+          "exit_code": 2,
+          "expected_error_reported": true,
+          "run_log_status": "failed",
+          "failure_stage": "value_read",
+          "failure_error_type": "value_read_error",
+          "developer_terminal_event": "failed",
+          "partial_summary_created": false,
+          "run_log_exposes_cell_token": false,
+          "source_metadata_unchanged": true,
+          "python_rust_output_parity": "not_applicable_unknown_token_is_fail_closed_by_current_workspace_reader_boundary"
+        }
       }
     }
   }

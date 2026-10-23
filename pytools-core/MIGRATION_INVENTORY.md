@@ -373,3 +373,5 @@ timeline_ops::keyword_match 改为复用共享 Python 语义匹配器，修复�
 使用 Zig 0.17.0 与 cargo-zigbuild，在 WSL Ubuntu 离线构建 `x86_64-unknown-linux-gnu.2.28` release `pytools`。ELF 为动态链接 PIE，`ldd` 成功解析系统运行库；`objdump -T` 观测到的最高 GLIBC 符号为 `GLIBC_2.28`。直接运行 release 二进制的 `summary-used-range` 处理原 PyTools 最大备份 XLSX（3,800,854 字节），39,171 行完整工作簿投影与只读 PyCode 一致；实际组件为 Calamine、`excel-reader::read_xlsx_worksheet_extents` 和 `rust_xlsxwriter`。developer 视图 18 条事件与保存历史一致，输出工作簿阶段记录 1,406 ms，输入大小和修改时间未变。
 
 机器结果见 `probe/reports/summary_used_range_real_parity_20261024.json` 的 `additional_project_assets_20261024.platform_validation.linux_glibc_2_28_release_largest_backup`。此证据只覆盖 WSL 上的 glibc 2.28 ABI 构建检查和真实 CLI 对拍，不是麒麟 V10/UOS V20 实机或 deb 验收；PT-6-1 未知 `#DATA!` token、目标系统、deb 及最终验收仍未完成。
+
+同一 glibc 2.28 release CLI 在合成 `getting_data_error.xlsx` 边界夹具上以退出码 2 失败关闭；运行记录为 `failed`，stage 为 `value_read`、error type 为 `value_read_error`，未生成部分汇总且运行日志不包含单元格 token。此项验证当前 workspace reader 边界，不属于未知 token 的 Python/Rust 输出对拍；保持未支持状态。
