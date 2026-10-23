@@ -1,6 +1,6 @@
 时间：2026-10-24 02:23（Asia/Shanghai）
 执行者：Codex（pytools-dev）
-修改前 commit：031796d（与 origin/pytools-dev 同步）；修改后 commit：待本轮提交。
+修改前 commit：031796d（与 origin/pytools-dev 同步）；修改后 commit：b56d896。
 WIP 状态：恢复上轮 PT-6-1 真实样本对拍 WIP，未覆盖已有修改；本轮开始时有 `pytools-core/MIGRATION_INVENTORY.md`、`pytools-core/probe/compare_summary_tools.py` 修改及真实样本 JSON 报告。已 fetch origin/main，main 仍为当前分支祖先，没有新的公共 crate、规则或目标文件变化。本轮只改 pytools-core/**；`DEVELOPMENT_GOAL.md`、AGENTS、Rules、Audit、共享 crates、根 Cargo 配置及 Cargo.lock 未改。原 Python 项目和样本保持只读。
 
 目的：将 PT-6-1 `summary-used-range` 的原项目真实 XLSX 对拍纳入可重复 probe，验证已实现 Rust 业务入口在实际 PyCode 工作簿上的输出语义。
