@@ -1,0 +1,50 @@
+# S1-F01 普通公式模板规则发现接入与真实对拍
+
+- 时间：2026-10-24 04:54（Asia/Shanghai）
+- 执行者：Codex
+- 分支：audit-dev
+- Worktree：Audit 专用 audit-dev worktree；修改前工作区干净，分支与 origin/audit-dev 同步。
+- 修改前 commit：1032026。
+- 修改后功能 commit：94ebb34（Rust 规则发现、CLI、合成测试与 Python 对拍器）；本记录、迁移清单和真实样本汇总报告由后续文档 commit 纳入。
+- 【组件版本】不升级；audit-core 保持 0.1.0。未改 workspace crate、Cargo.toml、Cargo.lock 或公共 Excel crates。
+
+## 目的与改动
+
+将 Python base_audit.native.openpyxl_workbook.read_template 的 S1 公式规则发现和校验接入 Rust。新增 audit_core::s1_template_rules::load_s1_template_rule_plan 与 CLI open-data-audit s1-template-rules，覆盖命名区域公式规则和“审核规则”结构表两种形式。Rust 用共享 Calamine reader 读取值/公式文本，并用 namespace-aware OOXML 补充批注与 defined names；处理公式范围匹配、行列顺序、默认/批注规则编号、注释清理、规则重复、结果模式分类、结构区域与 Issue 提取范围。结构规则表校验必需表头、规则行和启用规则所引用的公式单元格。
+
+CLI 默认返回不含规则内容的摘要；--include-rule-definitions 供工作流调用方选择接收完整内存定义。普通用户视图和开发者 JSON 视图均记录实际 reader、规则/范围数量与耗时。模板只读；不复制或修改工作簿、不执行公式重算。
+
+另将 S1 映射默认回退条件对齐 Python：配置表存在其他有效 Audit 模块时不凭空生成未配置的公式/条件模块；没有可用 Audit 功能行时采用内置 S1 默认映射。
+
+## 修改文件
+
+- audit-core/src/s1_template_rules.rs
+- audit-core/src/name_config.rs
+- audit-core/src/lib.rs
+- audit-core/src/bin/open-data-audit.rs
+- audit-core/tests/s1_feature_mapping_config.rs
+- audit-core/tests/s1_template_rules_cli.rs
+- audit-core/tests/compare/compare_s1_template_rule_discovery.py
+- audit-core/probe/reports/s1_template_rule_discovery_real.json
+- audit-core/MIGRATION_INVENTORY.md
+- 本记录
+
+未修改 DEVELOPMENT_GOAL.md、workspace/子项目 AGENTS.md、pytools-core/**、源 Python 项目、共享 crates、根 Cargo 配置或 Cargo.lock。无 VBA 迁移影响。报告仅保存汇总计数和差异数量，不保存真实文件路径、规则定义、公式文本、单元格内容或凭据。
+
+## 验证
+
+- WSL Ubuntu：cargo fmt --all -- --check 通过。
+- WSL Ubuntu：cargo test -p audit-core --locked 通过；62 个库单元测试及所有 Audit 集成/对拍目标通过，包含命名区域发现、结构规则表公式校验、映射配置、CLI 双日志视图。
+- WSL Ubuntu：cargo test -p excel-reader --locked 通过，10/10。
+- WSL Ubuntu：cargo build -p audit-core --bin open-data-audit --locked 通过。
+- Windows Python 3.12 虚拟环境使用只读源基线，对只读真实模板与 Rust CLI 完整 TemplateDefinition 逐字段比较：1,072 条规则、4 个公式命名区域、8 个结构区域、4 个结果提取区域；380 条 keyword、692 条 error_only，规则/范围字段差异 0。模板前后内容摘要相同，未重算公式。脱敏结果见 audit-core/probe/reports/s1_template_rule_discovery_real.json。
+- Windows 未安装原生 cargo/rustc，Rust 编译和测试使用 WSL Ubuntu。麒麟 V10/UOS V20、glibc 2.28 交叉构建、deb 和离线安装验收未执行。
+
+## 未完成范围与已知问题
+
+本轮仅迁移模板公式规则发现和校验，不代表普通公式审核计算完成。公式副本写入/外部表加入、显式重算旁路、缓存结果读取、普通规则 Issue 生成、结果写回、历史和重复运行一致性仍未迁移。结构化规则表路径已做 Rust 合成覆盖，本轮真实样本采用命名区域规则。S1-F01 整体状态保持“未验证”。
+
+## 删除与回滚
+
+- 删除清单：无。
+- 回滚功能代码、CLI 和合成测试：git revert 94ebb34；迁移清单、脱敏报告和本记录可单独回滚。
