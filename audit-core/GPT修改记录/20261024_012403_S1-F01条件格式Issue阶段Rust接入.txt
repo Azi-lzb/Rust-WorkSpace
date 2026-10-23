@@ -1,0 +1,36 @@
+# S1-F01 条件格式审核结果 Rust 接入
+
+- 时间：2026-10-24 01:24:03（Asia/Shanghai）
+- 执行者：Codex
+- 分支：audit-dev
+- 修改前 commit：473c75a（与 main 同步；修改前工作树干净）
+- 功能 commit：0a30b0ff0c5b41a460f1f5b0189b1b739a5d7606
+- 【组件版本】不升级；workspace crate 版本未变。
+
+## 目的与改动
+
+将已有静态条件格式计算结果接入 Audit 的 Issue 生成链路，并提供可运行的 `open-data-audit conditional-audit` CLI。Rust 通过共享 reader 单次读取工作簿，生成包含源 Issue 字段、条件格式提示、目标值及可选 `check_field` 的 `Issue` 记录；用户视图输出摘要，`--developer-view` 输出实际 reader、阶段耗时和事件。公式读取已存缓存，不重算或写回工作簿。
+
+新增公式提示中的相对/绝对引用偏移；新增条件格式触发到 Audit Issue 的映射。配置/模板选择、普通规则、结果工作簿写回、历史与重复运行仍待迁移，完整 S1-F01 保持“未验证”。
+
+修改/新增文件：
+
+- `src/conditional_format.rs`、`src/s1_conditional_audit.rs`、`src/bin/open-data-audit.rs`、`src/lib.rs`
+- `tests/s1_conditional_eval.rs`、`tests/s1_conditional_audit.rs`、`tests/s1_conditional_audit_cli.rs`、`tests/compare/compare_s1_conditional_audit.py`
+- `probe/reports/s1_conditional_rust_synthetic.json`、`probe/reports/s1_conditional_audit_real.json`
+- `README.md`、`MIGRATION_INVENTORY.md`
+
+Python helper 只调用只读源项目的 `ConditionalFormatService(PYTHON)` 作为测试基线，不进入产品路径。源工作簿只读，临时 ASCII 副本在对拍后删除。未修改 `pytools-core`、共享 crates、根 Cargo 配置或 Python 源项目；无删除文件、VBA、配置或产品版本变更。
+
+## 验证结果
+
+- `cargo test -p audit-core --locked`（WSL Ubuntu）：通过；50 个库单测、S1 Issue 映射/CLI、条件格式 evaluator、模板推荐与其余 Audit 集成对拍均通过，0 失败。
+- `cargo fmt --all -- --check`（WSL Ubuntu）：通过。
+- 真实工作簿对拍：4 条规则、366 个评估单元格；Rust 与 Python 各生成 348 条 Issue，按 `issue_id` 对齐后所有字段 0 差异，双方均 0 个缺项/多项。单次运行观察为 Python 0.375 秒、Rust 618 毫秒；不是性能基准。
+- 因两侧都使用临时 ASCII basename，原始文件名对应的 Issue identity 未核验。Windows 原生构建/测试、麒麟 V10、统信 V20、deb 均未执行。Rust 工具链在 Windows 开发环境缺失，因此本轮编译/测试使用 WSL Ubuntu；构建时出现的共享 `excel-editor` 弃用 API 警告与本次改动无关。
+
+## 已知范围与回滚
+
+当前只覆盖已实现的静态条件格式规则；公式缓存不刷新。`check_field` 需调用者提供 `--structure-area`。真实对拍只覆盖一个工作簿，不能据此认定整个 S1-F01 或目标平台验收通过。
+
+回滚功能提交：`git revert 0a30b0ff0c5b41a460f1f5b0189b1b739a5d7606`。本记录由后续独立文档提交保存。
