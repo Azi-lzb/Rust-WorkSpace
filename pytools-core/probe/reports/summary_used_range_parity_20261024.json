@@ -38,9 +38,9 @@
   "rust_execution": {
     "reader_engine": "calamine",
     "writer_engine": "rust_xlsxwriter",
-    "read_elapsed_ms": 147,
-    "write_elapsed_ms": 228,
-    "total_elapsed_ms": 412,
+    "read_elapsed_ms": 152,
+    "write_elapsed_ms": 210,
+    "total_elapsed_ms": 397,
     "ooxml_error_cells_patched": 7
   },
   "unknown_cell_error_probe": {
@@ -56,6 +56,38 @@
       "reader_engine": "calamine"
     },
     "note": "Calamine 0.37 does not parse this worksheet error token; PyTools does not use an OOXML value fallback."
+  },
+  "comment_summary_probe": {
+    "baseline_rows": 6,
+    "duplicate_row_region_marker": {
+      "scenario": "duplicate 行区域1 starts at A2 and A3; duplicate 行区域#1 ends at A4 and A5",
+      "python": {
+        "saved": true,
+        "rows": 6,
+        "source_row_numbers": [
+          3,
+          4,
+          5,
+          3,
+          4,
+          5
+        ]
+      },
+      "rust_cli": {
+        "saved": true,
+        "rows": 6,
+        "source_row_numbers": [
+          3,
+          4,
+          5,
+          3,
+          4,
+          5
+        ]
+      },
+      "comparison": "exact",
+      "rule": "last matching start/end marker in row-major order, matching PyCode overwrite behavior"
+    }
   },
   "python_variant_scope": {
     "nocom_pytools_output_matches_rust_for_this_xlsx_sample": false,

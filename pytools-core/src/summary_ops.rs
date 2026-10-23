@@ -785,8 +785,11 @@ fn parse_comment_ranges(
     comments: &BTreeMap<String, String>,
     keyword: &str,
 ) -> Vec<(usize, usize, usize, usize)> {
+    let ordered = ordered_comments(comments);
+    // PyCode scans comments in row-major order and overwrites each boundary,
+    // so the last matching cell wins when a marker is duplicated.
     let mut ids = BTreeSet::new();
-    for (_, text) in ordered_comments(comments) {
+    for (_, text) in &ordered {
         if text.contains(keyword) {
             if let Some(id) = first_number(text) {
                 ids.insert(id);
@@ -795,9 +798,9 @@ fn parse_comment_ranges(
     }
     let mut out = Vec::new();
     for id in ids {
-        let ordered = ordered_comments(comments);
         let start = ordered
             .iter()
+            .rev()
             .find(|(_, text)| {
                 text.replace(' ', "").contains(&format!("{keyword}{id}"))
                     && !text.replace(' ', "").contains(&format!("{keyword}#{id}"))
@@ -805,6 +808,7 @@ fn parse_comment_ranges(
             .map(|(a, _)| *a);
         let end = ordered
             .iter()
+            .rev()
             .find(|(_, text)| text.replace(' ', "").contains(&format!("{keyword}#{id}")))
             .map(|(a, _)| *a);
         if let (Some(a), Some(b)) = (start, end) {
@@ -1019,5 +1023,25 @@ mod patch_error_cells_tests {
         assert!(result.is_err());
         assert_eq!(output_bytes?, b"existing output");
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod comment_region_tests {
+    use super::*;
+
+    #[test]
+    fn duplicate_region_markers_use_last_row_major_boundary() {
+        let comments = BTreeMap::from([
+            ("A2".to_owned(), "行区域1".to_owned()),
+            ("A3".to_owned(), "行区域1".to_owned()),
+            ("A4".to_owned(), "行区域#1".to_owned()),
+            ("A5".to_owned(), "行区域#1".to_owned()),
+        ]);
+
+        assert_eq!(
+            parse_comment_ranges(&comments, "行区域"),
+            vec![(3, 5, 1, 1)]
+        );
     }
 }

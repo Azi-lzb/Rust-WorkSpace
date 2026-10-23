@@ -160,7 +160,7 @@ def mark_macro_enabled(path: Path) -> None:
             archive.writestr(info, payload)
 
 
-def make_comment_template(path: Path) -> None:
+def make_comment_template(path: Path, duplicate_row_boundaries: bool = False) -> None:
     wb = Workbook()
     ws = wb.active
     ws.title = "模板"
@@ -168,7 +168,11 @@ def make_comment_template(path: Path) -> None:
     ws["A2"] = "区域起"
     ws["A4"] = "区域止"
     ws["A2"].comment = Comment("行区域1", "probe")
+    if duplicate_row_boundaries:
+        ws["A3"].comment = Comment("行区域1", "probe")
     ws["A4"].comment = Comment("行区域#1", "probe")
+    if duplicate_row_boundaries:
+        ws["A5"].comment = Comment("行区域#1", "probe")
     ws["B1"] = "余额"
     ws["C1"] = "余额"
     ws["B1"].comment = Comment("列区域1", "probe")
@@ -204,6 +208,19 @@ def python_used_range_only(sources: list[Path], output: Path) -> Path | None:
     output.mkdir(parents=True, exist_ok=True)
     with contextlib.redirect_stdout(None):
         result = run_summary_by_usedrange(sources, output / "used", output / "logs")
+    logging.shutdown()
+    return Path(result["path"]) if result.get("saved") else None
+
+
+def python_comments_only(template: Path, sources: list[Path], output: Path) -> Path | None:
+    sys.path.insert(0, str(PYTOOLS_SOURCE / "PyCode"))
+    from core.summary_321_322 import run_summary_by_comment
+
+    output.mkdir(parents=True, exist_ok=True)
+    with contextlib.redirect_stdout(None):
+        result = run_summary_by_comment(
+            template, sources, output / "comments", output / "logs"
+        )
     logging.shutdown()
     return Path(result["path"]) if result.get("saved") else None
 
@@ -467,13 +484,17 @@ def main() -> int:
         source = root / "sample_2026-06-30.xlsx"
         second_source = root / "sample_2026-07-31.xlsm"
         template = root / "comment_template.xlsx"
+        duplicate_marker_template = root / "comment_template_duplicate_marker.xlsx"
         unsupported_error_source = WORKSPACE / "pytools-core/tests/fixtures/summary_used_range/getting_data_error.xlsx"
         make_source(source)
         patch_formula_cache(source, "E8", "2")
         make_second_source(second_source)
         make_comment_template(template)
+        make_comment_template(duplicate_marker_template, duplicate_row_boundaries=True)
         sources = [source, second_source]
-        fingerprints_before = source_fingerprints([*sources, template, unsupported_error_source])
+        fingerprints_before = source_fingerprints(
+            [*sources, template, duplicate_marker_template, unsupported_error_source]
+        )
         python_used, python_comments = python_baselines(sources, source, template, root)
         nocom_used = python_nocom_used_range(sources, root)
         rust_used, used_report = run_rust("summary-used-range", sources, root / "rust_used")
@@ -485,6 +506,29 @@ def main() -> int:
             "6-2 comment summary",
             compare_page_settings=False,
         )
+        python_duplicate_comments = python_comments_only(
+            duplicate_marker_template, [source], root / "python_duplicate_comments"
+        )
+        rust_duplicate_comments, duplicate_comments_report = run_rust_comments(
+            duplicate_marker_template, source, root / "rust_duplicate_comments"
+        )
+        if python_duplicate_comments is None:
+            raise AssertionError("PyCode did not save the duplicate-marker comment summary")
+        assert_equivalent(
+            python_duplicate_comments,
+            rust_duplicate_comments,
+            "6-2 duplicate row-region marker behavior",
+            compare_page_settings=False,
+        )
+        duplicate_sheets, _ = workbook_projection(rust_duplicate_comments)
+        duplicate_source_rows = [
+            duplicate_sheets[0]["values"].get(f"F{row}") for row in range(2, 8)
+        ]
+        if duplicate_comments_report.get("rows") != 6 or duplicate_source_rows != [3, 4, 5, 3, 4, 5]:
+            raise AssertionError(
+                "duplicate row-region markers should select the final start marker: "
+                f"rows={duplicate_comments_report.get('rows')}, values={duplicate_source_rows}"
+            )
         python_unknown_error = python_used_range_only(
             [unsupported_error_source], root / "python_unknown_error"
         )
@@ -515,7 +559,9 @@ def main() -> int:
                 )
         else:
             raise AssertionError("Rust CLI unexpectedly accepted the unknown XLSX error")
-        fingerprints_after = source_fingerprints([*sources, template, unsupported_error_source])
+        fingerprints_after = source_fingerprints(
+            [*sources, template, duplicate_marker_template, unsupported_error_source]
+        )
         if fingerprints_before != fingerprints_after:
             raise AssertionError("a source workbook or template was modified")
 
@@ -574,6 +620,24 @@ def main() -> int:
                 },
                 "note": "Calamine 0.37 does not parse this worksheet error token; PyTools does not use an OOXML value fallback.",
             },
+            "comment_summary_probe": {
+                "baseline_rows": comments_report.get("rows"),
+                "duplicate_row_region_marker": {
+                    "scenario": "duplicate 行区域1 starts at A2 and A3; duplicate 行区域#1 ends at A4 and A5",
+                    "python": {
+                        "saved": True,
+                        "rows": 6,
+                        "source_row_numbers": [3, 4, 5, 3, 4, 5],
+                    },
+                    "rust_cli": {
+                        "saved": duplicate_comments_report.get("saved"),
+                        "rows": duplicate_comments_report.get("rows"),
+                        "source_row_numbers": duplicate_source_rows,
+                    },
+                    "comparison": "exact",
+                    "rule": "last matching start/end marker in row-major order, matching PyCode overwrite behavior",
+                },
+            },
             "python_variant_scope": {
                 "nocom_pytools_output_matches_rust_for_this_xlsx_sample": nocom_matches_rust,
                 "nocom_pytools_difference_fields": nocom_difference_fields,
@@ -603,6 +667,7 @@ def main() -> int:
             "error_cells_patched": (used_report.get("execution") or {}).get("ooxml_error_cells_patched"),
             "nocom_pytools_matches_rust": nocom_matches_rust,
             "comment_summary_rows_rust": comments_report.get("rows"),
+            "comment_duplicate_marker_rows_rust": duplicate_comments_report.get("rows"),
             "report": str(report_path),
         }, ensure_ascii=False))
     return 0
