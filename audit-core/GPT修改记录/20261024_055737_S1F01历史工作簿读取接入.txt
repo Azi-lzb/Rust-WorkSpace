@@ -1,0 +1,37 @@
+时间：2026-10-24 05:57（Asia/Shanghai）
+执行者：Codex
+分支/Worktree：audit-dev / C:\Users\AZI\Desktop\VibeCode\audit-dev
+修改前 commit：c647cbd；开始时保留已有未提交 WIP（CLI 和 s1_history.rs 两处）。
+功能代码 commit：7090e72 feat(audit): read S1 history workbooks in Rust
+本记录、迁移清单和脱敏对拍报告另行提交，最终提交号以 Git 历史为准。
+
+修改目的：延续 S1-F01 的历史处理迁移，让现有历史分类 CLI 能通过 Rust/Calamine 读取旧审核工作簿，并把工作簿记录送入 Rust 历史分类，保留手工意见继承和已整改分类。
+
+变更文件：
+- audit-core/src/s1_history.rs：使用 workspace 共享 Calamine reader 读取“核查表校验结果”，兼容指定工作表及旧名“历史审核结果”；将列值映射为 Audit Issue，报告读取行数、引擎和耗时。
+- audit-core/src/bin/open-data-audit.rs：为 `s1-history-classify` 增加 `--history-workbook` 与 `--history-sheet`，读取工作簿后替换 JSON 内嵌的 history；普通用户日志与开发者进度事件记录真实读取引擎、状态和耗时。
+- audit-core/tests/s1_history_workbook_cli.rs：使用 Rust XLSX writer 生成合成工作簿，覆盖标准/指定/旧版表名、指定表失效时回退、缺失文件/工作表、超出初始读取列、空身份行、历史意见继承和已整改归类。
+- audit-core/tests/compare/compare_s1_history_workbook.py：使用只读 Python `read_history_xlsx`、`classify_current_issues` 与 Rust CLI 对拍工作簿读取及分类输出；支持只读真实配置工作簿 smoke。
+- audit-core/probe/reports/s1_history_workbook_parity.json：保存合成样本和只读配置样本的脱敏汇总。
+- audit-core/MIGRATION_INVENTORY.md：更新 S1 历史局部迁移状态和验证范围。
+- 本记录文件。
+
+业务与配置影响：
+- `s1-history-classify --history-workbook <path>` 现在可用 Calamine 读取 `.xlsx`/`.xlsm` 历史工作簿；`--history-sheet` 只在指定表存在时选用，否则按 Python 原行为回退到标准表名和旧表名。缺失文件或未找到历史表时按空历史处理；不写回或修改工作簿。
+- 保持 Issue 历史分类和人工意见继承在 Rust。历史工作簿写回、完整 S1-F01 业务编排和前端入口尚未迁移；不能把仅含条件格式 Issue 的批量路径直接作为完整历史分类输入，以免把未运行的其他规则误判为已整改。
+- 对拍使用合成历史数据；只读源项目自带配置工作簿的历史表为空，真实非空历史库仍待样本。Python/Rust 对拍报告只保存行数、工作表类别和差异计数，不含业务行。
+- 没有修改源 Python 项目、DEVELOPMENT_GOAL.md、pytools-core、共享 crates、Cargo.toml 或 Cargo.lock；没有凭据或真实业务数据进入提交。
+- 【组件版本】不升级；workspace crate 版本未变，旧产品 Sx-Fxx 版本编号制度不适用。
+
+验证结果：
+- `wsl.exe -d Ubuntu -- bash -lc 'cd /mnt/c/Users/AZI/Desktop/VibeCode/audit-dev && cargo fmt --all -- --check'`：通过。
+- `wsl.exe -d Ubuntu -- bash -lc 'cd /mnt/c/Users/AZI/Desktop/VibeCode/audit-dev && cargo test -p audit-core --locked --quiet'`：69 个单元测试、44 个集成测试通过，0 失败；文档测试 0 项。
+- Windows Python 3.12 运行 `compare_s1_history_workbook.py`，驱动 WSL Ubuntu Rust CLI：标准/指定/旧版工作表和分类结果字段差异 0；只读源项目配置样本为空表，Python/Rust 均读取 0 条、差异 0；普通/开发者日志均确认 Calamine 与耗时。
+- 对拍报告：`audit-core/probe/reports/s1_history_workbook_parity.json`。
+- `git diff --check`：通过；提交候选限定为 Audit Rust 代码、Audit 测试和 Python 对拍脚本。WSL Ubuntu 通过不代表 Windows 原生 Rust、麒麟 V10、统信 UOS V20 或 deb 已验收。
+- 构建输出中的 deprecated `umya-spreadsheet` API 警告来自未修改的 `crates/excel-editor`。
+
+未执行项与已知限制：Windows 原生 Rust 工具链不可用，本轮 Rust 编译/测试使用 WSL Ubuntu；没有非空真实历史库样本、历史表写回、完整 S1-F01 入口、麒麟/UOS 目标系统或 deb 验证。S1-F01 总体仍为未验证。
+
+删除清单：无。
+回滚方式：功能代码使用 `git revert 7090e72`；本记录、迁移清单和报告随独立证据提交，撤销时再单独 revert 该证据提交。
