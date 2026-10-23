@@ -2232,12 +2232,7 @@ fn text_at(matrix: &[Vec<Option<WorkbookCell>>], row: usize, col: usize) -> Stri
         .to_owned()
 }
 fn keyword_match(text: &str, keywords: &str) -> bool {
-    let parts = keywords
-        .split([';', '；'])
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .collect::<Vec<_>>();
-    parts.iter().all(|part| text.contains(part))
+    crate::path_map::match_all_keywords(text, keywords)
 }
 fn file_name(path: &Path) -> String {
     path.file_name()
@@ -2396,6 +2391,7 @@ fn unique_output(dir: &Path, stem: &str, extension: &str) -> Result<PathBuf> {
     }
     bail!("cannot allocate unique output file in {}", dir.display())
 }
+
 fn write_string_table(
     workbook: &mut Workbook,
     name: &str,
@@ -2438,4 +2434,17 @@ fn write_compare_summary_table(workbook: &mut Workbook, rows: &[Vec<String>]) ->
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod keyword_match_tests {
+    use super::keyword_match;
+
+    #[test]
+    fn sheet_keywords_match_python_case_and_delimiter_semantics() {
+        assert!(keyword_match("REPORT Data", "report,data"));
+        assert!(keyword_match("REPORT Data", "report\u{ff0c}data"));
+        assert!(keyword_match("REPORT Data", "report\u{ff1b}data"));
+        assert!(!keyword_match("REPORT Data", "report,missing"));
+    }
 }

@@ -352,3 +352,12 @@ PT-6-2 原项目真实批注区域模板仍未找到，当前业务及日志对�
 使用 WSL Ubuntu 上已构建的 x86_64-unknown-linux-musl release static PIE pytools CLI，单独处理原 PyTools 最大备份 XLSX（3,800,854 字节），并与 Windows 原 PyCode 的只读基线完整投影对拍。39,171 行输出完全一致；实际读取/写入引擎为 Calamine/rust_xlsxwriter；developer 18 条事件与保存历史逐条一致。源文件大小和修改时间未变，输出及日志位于临时目录并已清理。此项仅证明 WSL musl 阶段行为，不等于麒麟 V10/UOS V20 实机、deb 或 glibc 2.28 验收。
 
 机器结果见 probe/reports/summary_used_range_real_parity_20261024.json 的 additional_project_assets_20261024.platform_validation.linux_musl_release_largest_backup。
+
+
+### 2026-10-24 PT-1-1 关键字筛选与 CLI 语义对拍
+
+timeline_ops::keyword_match 改为复用共享 Python 语义匹配器，修复工作表关键字大小写敏感及 ASCII/中文逗号分隔差异。真实 Rust CLI 与只读 PyCode run_compare 基线在大小写变化、逗号关键字、未命中源和模板同路径过滤场景下，输出值、单元格类型、工作表维度/顺序、合并、冻结窗格、页面设置和定义名称一致。
+
+真实配置的输入目录在当前开发机不存在；原项目 xlsx/ 中 70 份 XLSX 没有文件名和工作表同时命中时序规则，因此没有可运行的真实业务样本。本轮合成 CLI 对拍不构成 PT-1-1 完整验收。
+
+对拍另发现输出样式差异：Python/Pandas 两张结果表的 17 个标题单元格为粗体、水平居中、顶部对齐并带细边框；Rust 标题目前为默认样式。excel_writer 尚未导出 FormatBorder，按协作边界暂未修改共享 crate；需要 main 协调共享 writer API 后补齐样式并重新完成完整对拍。PT-1-1 仍未完成最终验收。
