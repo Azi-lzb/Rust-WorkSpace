@@ -46,6 +46,7 @@ fn run_cli(
         None,
         None,
         None,
+        None,
     )
 }
 
@@ -57,6 +58,7 @@ fn run_cli_with_mapping(
     template_workbook: Option<&Path>,
     mapping_config: Option<&Path>,
     scan_area: Option<&str>,
+    selected_file: Option<&Path>,
 ) -> Output {
     let mut command = Command::new(env!("CARGO_BIN_EXE_open-data-audit"));
     command
@@ -81,6 +83,9 @@ fn run_cli_with_mapping(
     }
     if let Some(scan_area) = scan_area {
         command.arg("--scan-area").arg(scan_area);
+    }
+    if let Some(selected_file) = selected_file {
+        command.arg("--selected-file").arg(selected_file);
     }
     if developer_view {
         command.arg("--developer-view");
@@ -203,6 +208,7 @@ fn directory_cli_reads_template_defined_names_and_applies_configured_areas() {
         Some(&template),
         Some(&config),
         None,
+        None,
     );
     assert!(
         output.status.success(),
@@ -248,6 +254,7 @@ fn directory_cli_reads_template_defined_names_and_applies_configured_areas() {
         Some(&template),
         Some(&config),
         Some("S1Conditional!C5:C5"),
+        None,
     );
     assert!(
         override_output.status.success(),
@@ -258,6 +265,74 @@ fn directory_cli_reads_template_defined_names_and_applies_configured_areas() {
         serde_json::from_slice(&override_output.stdout).expect("valid override batch JSON");
     assert_eq!(override_report["issues"].as_array().unwrap().len(), 1);
     assert_eq!(override_report["issues"][0]["target_cell"], "C5");
+
+    fs::remove_dir_all(directory).expect("remove temporary input directory");
+}
+
+#[test]
+fn directory_cli_limits_period_detection_to_selected_files() {
+    let directory = temporary_directory("s1_selected_source");
+    copy_fixture(&directory, "9144_甲银行_2026-06-30.xlsx");
+    copy_fixture(&directory, "9145_乙银行_2026-07-31.xlsx");
+    let template = directory.join("template_2026-09.xlsx");
+    fs::copy(named_template_fixture(), &template).expect("copy synthetic named template");
+    let config = directory.join("mapping-config_2026-08.xlsx");
+    mapping_config(&config);
+
+    let selected = run_cli_with_mapping(
+        &directory,
+        None,
+        false,
+        true,
+        Some(&template),
+        Some(&config),
+        None,
+        Some(Path::new("9145_乙银行_2026-07-31.xlsx")),
+    );
+    assert!(
+        selected.status.success(),
+        "{}",
+        String::from_utf8_lossy(&selected.stderr)
+    );
+    let report: Value =
+        serde_json::from_slice(&selected.stdout).expect("valid selected batch JSON");
+    assert_eq!(report["files"].as_array().unwrap().len(), 1);
+    assert_eq!(report["issues"].as_array().unwrap().len(), 1);
+    assert_eq!(report["issues"][0]["period"], "2026-07");
+
+    let events = String::from_utf8_lossy(&selected.stderr)
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).expect("JSON progress line"))
+        .collect::<Vec<_>>();
+    let discovery = events
+        .iter()
+        .find(|event| {
+            event["step"] == "source_workbook_discovery" && event["status"] == "completed"
+        })
+        .expect("source discovery completion event");
+    assert_eq!(discovery["available_source_files"], 2);
+    assert_eq!(discovery["files_total"], 1);
+    assert_eq!(discovery["selected_files_requested"], 1);
+    assert_eq!(discovery["selection_applied"], true);
+    assert_eq!(discovery["period"], "2026-07");
+
+    let rejected = run_cli_with_mapping(
+        &directory,
+        None,
+        false,
+        false,
+        Some(&template),
+        Some(&config),
+        None,
+        Some(Path::new("../outside.xlsx")),
+    );
+    assert!(!rejected.status.success());
+    assert!(
+        String::from_utf8_lossy(&rejected.stderr)
+            .contains("选择的待审核文件不在源数据目录或当前扫描范围内"),
+        "{}",
+        String::from_utf8_lossy(&rejected.stderr)
+    );
 
     fs::remove_dir_all(directory).expect("remove temporary input directory");
 }

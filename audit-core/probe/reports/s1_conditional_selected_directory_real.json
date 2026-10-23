@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "suite": "audit.s1_conditional_issue_extraction",
+  "baseline": "Open-Data-Audit ConditionalFormatService(PYTHON)",
+  "status": "passed",
+  "python_issue_count": 2,
+  "rust_issue_count": 2,
+  "missing_in_rust": 0,
+  "missing_in_python": 0,
+  "field_difference_counts": {},
+  "mismatch_count": 0,
+  "python_evaluated_cells": 602,
+  "rust_evaluated_cells": 602,
+  "python_rules_total": 4,
+  "rust_rules_total": 4,
+  "area_source": "template_defined_names",
+  "python_scan_areas": 4,
+  "python_structure_areas": 8,
+  "rust_area_mapping": {
+    "engine": "calamine+namespace_aware_ooxml",
+    "area_source": "template_defined_names",
+    "mappings_loaded": 2,
+    "defined_names_total": 17,
+    "mapped_named_areas": 12,
+    "unresolved_matching_names": 0,
+    "scan_areas": 4,
+    "structure_areas": 8,
+    "elapsed_ms": 291
+  },
+  "rust_source_discovery": {
+    "available_source_files": 2,
+    "selected_files_requested": 1,
+    "selection_applied": true,
+    "files_total": 1,
+    "period": "2026-07",
+    "period_source": "源文件名",
+    "elapsed_ms": 42
+  },
+  "python_unsupported_cells": 0,
+  "rust_diagnostics": 0,
+  "execution": {
+    "python_engine": "PythonConditionalRuleEvaluator + Direct OOXML reader",
+    "python_rule_read_time_s": 0.0,
+    "python_rule_normalize_time_s": 0.015999999988707714,
+    "python_evaluation_time_s": 0.014999999999417923,
+    "python_issue_build_time_s": 0.23500000000058208,
+    "python_total_time_s": 0.2659999999887077,
+    "rust_engine": "calamine+namespace_aware_ooxml",
+    "rust_read_time_ms": 435,
+    "rust_evaluation_time_ms": 17,
+    "rust_issue_build_time_ms": 2,
+    "rust_total_time_ms": 467,
+    "scope": "single real-workbook run; not a performance benchmark"
+  },
+  "verification": {
+    "source_workbook": "read-only",
+    "template_workbook": "read-only",
+    "mapping_config": "built-in defaults",
+    "formula_recalculation": "not performed",
+    "issue_order": "ignored; issue records are matched by issue_id",
+    "source_paths": "compared by basename; not included in output"
+  }
+}

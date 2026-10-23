@@ -179,6 +179,11 @@ struct ConditionalAuditDirectoryArgs {
     #[arg(long, default_value_t = false)]
     recursive: bool,
 
+    /// Restrict discovery to the selected source files; repeat the flag as needed.
+    /// Relative paths are resolved from --input-dir.
+    #[arg(long = "selected-file")]
+    selected_files: Vec<PathBuf>,
+
     /// Optional evaluation area in Sheet!A1:B20 form. Repeat for multiple areas.
     #[arg(long = "scan-area")]
     scan_areas: Vec<String>,
@@ -524,6 +529,7 @@ fn run_conditional_audit_directory(arguments: ConditionalAuditDirectoryArgs) -> 
                 "status": "started",
                 "input_dir": arguments.input_dir,
                 "recursive": arguments.recursive,
+                "selected_files_requested": arguments.selected_files.len(),
                 "started_at": discovery_started_at
             }))?
         );
@@ -549,6 +555,12 @@ fn run_conditional_audit_directory(arguments: ConditionalAuditDirectoryArgs) -> 
                     .any(|excluded| same_file_path(path, excluded))
             })
             .collect::<Vec<_>>();
+        let available_source_files = source_files.len();
+        let source_files = select_s1_source_workbooks(
+            &arguments.input_dir,
+            &source_files,
+            &arguments.selected_files,
+        )?;
         if source_files.is_empty() {
             anyhow::bail!("源数据目录中没有可审核的 .xlsx 文件（模板和映射配置不会作为源文件）");
         }
@@ -584,34 +596,42 @@ fn run_conditional_audit_directory(arguments: ConditionalAuditDirectoryArgs) -> 
                 }
             })
             .collect::<Vec<_>>();
-        Ok((inputs, period, period_source, detection.details))
+        Ok((
+            inputs,
+            period,
+            period_source,
+            detection.details,
+            available_source_files,
+        ))
     })();
 
-    let (inputs, period, period_source, detection_details) = match discovery_result {
-        Ok(result) => result,
-        Err(error) => {
-            if arguments.developer_view {
-                eprintln!(
-                    "{}",
-                    serde_json::to_string(&serde_json::json!({
-                        "type": "progress",
-                        "product": "open-data-audit",
-                        "feature": "S1-F01",
-                        "step": "source_workbook_discovery",
-                        "status": "failed",
-                        "input_dir": arguments.input_dir,
-                        "started_at": discovery_started_at,
-                        "finished_at": chrono::Local::now().to_rfc3339(),
-                        "elapsed_ms": discovery_started.elapsed().as_millis(),
-                        "error": format!("{error:#}")
-                    }))?
-                );
-            } else {
-                eprintln!("S1-F01 源目录扫描失败：{error:#}");
+    let (inputs, period, period_source, detection_details, available_source_files) =
+        match discovery_result {
+            Ok(result) => result,
+            Err(error) => {
+                if arguments.developer_view {
+                    eprintln!(
+                        "{}",
+                        serde_json::to_string(&serde_json::json!({
+                            "type": "progress",
+                            "product": "open-data-audit",
+                            "feature": "S1-F01",
+                            "step": "source_workbook_discovery",
+                            "status": "failed",
+                            "input_dir": arguments.input_dir,
+                            "selected_files_requested": arguments.selected_files.len(),
+                            "started_at": discovery_started_at,
+                            "finished_at": chrono::Local::now().to_rfc3339(),
+                            "elapsed_ms": discovery_started.elapsed().as_millis(),
+                            "error": format!("{error:#}")
+                        }))?
+                    );
+                } else {
+                    eprintln!("S1-F01 源目录扫描失败：{error:#}");
+                }
+                return Err(error);
             }
-            return Err(error);
-        }
-    };
+        };
 
     if arguments.developer_view {
         eprintln!(
@@ -623,7 +643,10 @@ fn run_conditional_audit_directory(arguments: ConditionalAuditDirectoryArgs) -> 
                 "step": "source_workbook_discovery",
                 "status": "completed",
                 "input_dir": arguments.input_dir,
+                "available_source_files": available_source_files,
                 "files_total": inputs.len(),
+                "selected_files_requested": arguments.selected_files.len(),
+                "selection_applied": !arguments.selected_files.is_empty(),
                 "period": period,
                 "period_source": period_source,
                 "detection_details": detection_details,
@@ -633,13 +656,24 @@ fn run_conditional_audit_directory(arguments: ConditionalAuditDirectoryArgs) -> 
             }))?
         );
     } else {
-        eprintln!(
-            "源目录发现 {} 个 XLSX；数据期 {}（{}）；筛选耗时 {} ms。",
-            inputs.len(),
-            period,
-            period_source,
-            discovery_started.elapsed().as_millis()
-        );
+        if arguments.selected_files.is_empty() {
+            eprintln!(
+                "源目录发现 {} 个 XLSX；数据期 {}（{}）；筛选耗时 {} ms。",
+                inputs.len(),
+                period,
+                period_source,
+                discovery_started.elapsed().as_millis()
+            );
+        } else {
+            eprintln!(
+                "源目录有 {} 个可审核 XLSX，按所选文件筛出 {} 个；数据期 {}（{}）；筛选耗时 {} ms。",
+                available_source_files,
+                inputs.len(),
+                period,
+                period_source,
+                discovery_started.elapsed().as_millis()
+            );
+        }
     }
 
     run_conditional_audit_inputs(
@@ -997,6 +1031,47 @@ fn excluded_s1_input_workbooks(
         .into_iter()
         .chain(effective_s1_mapping_config_path(mapping_config))
         .collect()
+}
+
+fn select_s1_source_workbooks(
+    input_dir: &Path,
+    available_files: &[PathBuf],
+    selected_files: &[PathBuf],
+) -> Result<Vec<PathBuf>> {
+    if selected_files.is_empty() {
+        return Ok(available_files.to_vec());
+    }
+
+    let selected_paths = selected_files
+        .iter()
+        .map(|path| {
+            if path.is_absolute() {
+                path.clone()
+            } else {
+                input_dir.join(path)
+            }
+        })
+        .collect::<Vec<_>>();
+    if let Some(invalid) = selected_paths.iter().find(|selected| {
+        !available_files
+            .iter()
+            .any(|available| same_file_path(available, selected))
+    }) {
+        anyhow::bail!(
+            "选择的待审核文件不在源数据目录或当前扫描范围内：{}",
+            invalid.display()
+        );
+    }
+
+    Ok(available_files
+        .iter()
+        .filter(|available| {
+            selected_paths
+                .iter()
+                .any(|selected| same_file_path(available, selected))
+        })
+        .cloned()
+        .collect())
 }
 
 fn same_file_path(left: &Path, right: &Path) -> bool {

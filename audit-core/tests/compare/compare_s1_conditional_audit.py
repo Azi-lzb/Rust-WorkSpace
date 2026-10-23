@@ -56,6 +56,12 @@ def normalize_issue(issue):
     return row
 
 
+def count_records(value):
+    if isinstance(value, (list, dict)):
+        return len(value)
+    return int(value or 0)
+
+
 def template_area_plan(template_path: Path | None, config_path: Path | None):
     if template_path is None:
         return None, [], []
@@ -120,6 +126,7 @@ def main() -> int:
     )
     rust_report = json.loads(args.rust_report.read_text(encoding="utf-8"))
     rust_area_mapping = None
+    rust_source_discovery = None
     if args.rust_progress:
         progress_events = [
             json.loads(line)
@@ -151,6 +158,25 @@ def main() -> int:
                 "structure_areas": mapping_event.get("structure_areas", 0),
                 "elapsed_ms": mapping_event.get("elapsed_ms", 0),
             }
+        discovery_event = next(
+            (
+                event
+                for event in progress_events
+                if event.get("step") == "source_workbook_discovery"
+                and event.get("status") == "completed"
+            ),
+            None,
+        )
+        if discovery_event is not None:
+            rust_source_discovery = {
+                "available_source_files": discovery_event.get("available_source_files", 0),
+                "selected_files_requested": discovery_event.get("selected_files_requested", 0),
+                "selection_applied": discovery_event.get("selection_applied", False),
+                "files_total": discovery_event.get("files_total", 0),
+                "period": discovery_event.get("period", ""),
+                "period_source": discovery_event.get("period_source", ""),
+                "elapsed_ms": discovery_event.get("elapsed_ms", 0),
+            }
     python_rows = [normalize_issue(issue) for issue in python_issues]
     rust_rows = [normalize_issue(issue) for issue in rust_report.get("issues", [])]
     python_by_id = {row["issue_id"]: row for row in python_rows}
@@ -173,6 +199,28 @@ def main() -> int:
 
     mismatch_count = missing_in_rust + missing_in_python + sum(field_differences.values())
     rust_evaluation = rust_report.get("evaluation", {})
+    rust_directory_files = rust_report.get("files", [])
+    if not rust_evaluation and rust_directory_files:
+        rust_evaluation = {
+            "reader": rust_directory_files[0].get("reader", ""),
+            "read_time_ms": sum(item.get("read_time_ms", 0) for item in rust_directory_files),
+            "evaluation_time_ms": sum(
+                item.get("evaluation_time_ms", 0) for item in rust_directory_files
+            ),
+            "total_time_ms": sum(item.get("total_time_ms", 0) for item in rust_directory_files),
+            "scanned_cells": sum(item.get("scanned_cells", 0) for item in rust_directory_files),
+            "rules_total": sum(item.get("rules_total", 0) for item in rust_directory_files),
+            "rules_supported": sum(
+                item.get("rules_supported", 0) for item in rust_directory_files
+            ),
+            "_diagnostics_count": sum(
+                count_records(item.get("diagnostics", 0)) for item in rust_directory_files
+            ),
+        }
+    rust_issue_build_time_ms = rust_report.get(
+        "issue_build_time_ms",
+        sum(item.get("issue_build_time_ms", 0) for item in rust_directory_files),
+    )
     summary = {
         "schema_version": 1,
         "suite": "audit.s1_conditional_issue_extraction",
@@ -192,8 +240,11 @@ def main() -> int:
         "python_scan_areas": len(ranges),
         "python_structure_areas": len(structure_ranges),
         "rust_area_mapping": rust_area_mapping,
+        "rust_source_discovery": rust_source_discovery,
         "python_unsupported_cells": python_stats.get("unsupported_cells", 0),
-        "rust_diagnostics": len(rust_evaluation.get("diagnostics", [])),
+        "rust_diagnostics": rust_evaluation.get(
+            "_diagnostics_count", len(rust_evaluation.get("diagnostics", []))
+        ),
         "execution": {
             "python_engine": "PythonConditionalRuleEvaluator + Direct OOXML reader",
             "python_rule_read_time_s": python_stats.get("rule_read_time", 0.0),
@@ -204,9 +255,11 @@ def main() -> int:
             "rust_engine": rust_evaluation.get("reader", ""),
             "rust_read_time_ms": rust_evaluation.get("read_time_ms", 0),
             "rust_evaluation_time_ms": rust_evaluation.get("evaluation_time_ms", 0),
-            "rust_issue_build_time_ms": rust_report.get("issue_build_time_ms", 0),
-            "rust_total_time_ms": rust_evaluation.get("total_time_ms", 0)
-            + rust_report.get("issue_build_time_ms", 0),
+            "rust_issue_build_time_ms": rust_issue_build_time_ms,
+            "rust_total_time_ms": rust_report.get(
+                "total_elapsed_ms",
+                rust_evaluation.get("total_time_ms", 0) + rust_issue_build_time_ms,
+            ),
             "scope": "single real-workbook run; not a performance benchmark",
         },
         "verification": {

@@ -1,0 +1,45 @@
+# S1-F01 目录审核支持用户筛选源文件
+
+- 时间：2026-10-24 03:31（Asia/Shanghai）
+- 执行者：Codex
+- 分支：`audit-dev`
+- Worktree：`C:\Users\AZI\Desktop\VibeCode\audit-dev`
+- 修改前 commit：`fabd80b`；工作区从上一功能提交后为干净状态。
+- 修改后 commit：本轮功能提交（以 Git 历史为准）。
+- 【组件版本】不升级；workspace crate 版本和 `Cargo.lock` 未变。
+
+## 目的与改动
+
+把原 Python `base_audit.service._source_files` 的用户选中文件筛选接入 Rust `conditional-audit-directory` CLI。新增可重复 `--selected-file`，可以给绝对路径或相对 `--input-dir` 的路径；每项都必须属于当前递归深度和 XLSX 过滤规则发现的源文件，模板/映射配置不参与候选集。无效、越界或当前扫描模式未发现的路径明确失败。筛选在期间检测前执行，因此期间冲突只由实际选中的源文件决定。
+
+开发者视图记录候选数、请求选择数、最终审核文件数、选择是否生效、期间来源和阶段耗时；普通视图区分目录候选数与用户筛选后的数量。对拍脚本现在可读取目录 CLI 的逐文件汇总和 Rust 进度事件，输出命名映射及发现/筛选摘要。
+
+修改文件：
+
+- `audit-core/src/bin/open-data-audit.rs`
+- `audit-core/tests/s1_conditional_audit_directory_cli.rs`
+- `audit-core/tests/compare/compare_s1_conditional_audit.py`
+- `audit-core/probe/reports/s1_conditional_selected_directory_real.json`
+- `audit-core/MIGRATION_INVENTORY.md`
+- 本记录
+
+未修改 `DEVELOPMENT_GOAL.md`、`AGENTS.md`、`pytools-core/**`、公共 `crates/**`、根 Cargo 文件、`Cargo.lock` 或只读 Python 源项目。本次提交不含真实工作簿、配置或逐条 Issue 数据；对拍报告只保存汇总字段。
+
+## 验证
+
+- WSL Ubuntu：`cargo fmt --all -- --check` 通过。
+- WSL Ubuntu：`cargo test -p audit-core --locked` 通过；与 `excel-reader` 套件合计 96 个测试通过。
+- WSL Ubuntu：`cargo test -p excel-reader --locked` 通过，10/10。
+- WSL Ubuntu：`cargo build -p audit-core --bin open-data-audit --locked` 通过。
+- 定向目录 CLI 集成测试 5/5 通过；新场景包含两个期间冲突的候选文件，仅选择一个后按该文件期间审核；并验证目录外文件被拒绝。既有模板/配置排除和命名区域测试继续通过。
+- 真实目录样本：候选 2 个，其中 1 个文件是不同期间的未选项；Rust 按相对 `--selected-file` 仅处理选中文件，并从文件名识别 `2026-07`。Rust/Python 均按 4 条规则评估 602 格、生成 2 条 Issue；按 `issue_id` 对齐后全字段差异 0。真实模板命名区域仍自动得到 4 个条件区和 8 个结构区，未解析匹配名称 0。汇总见 `audit-core/probe/reports/s1_conditional_selected_directory_real.json`；单次耗时不是性能基准。
+- Rust 编译/测试仍由 WSL Ubuntu 执行；Windows 原生 Rust、麒麟 V10/UOS V20、glibc 2.28、deb 安装与离线验收未执行。
+
+## 未完成范围与已知限制
+
+S1-F01 仍未完成：完整配置校验和模板自动选择、普通审核规则、公式重算旁路、结果写回、历史记录及重复运行一致性未迁移。用户选择的范围只针对当前目录扫描结果；不会越过递归深度、XLSX 扩展名过滤或模板/配置排除规则。真实对拍仅覆盖列明的样本和模板。
+
+## 删除与回滚
+
+- 删除清单：无；真实样本副本和运行日志在系统临时目录，不入 Git。
+- 回滚代码、测试及入口：`git revert <本轮功能提交>`。
