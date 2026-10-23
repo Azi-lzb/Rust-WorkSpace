@@ -1,0 +1,35 @@
+# GPT 修改记录：excel-reader Defined Names 元数据读取 API
+
+- 时间：2026-10-24（Asia/Shanghai）
+- 执行者：Codex
+- Git 基线：473c75a4c93cd4875e37f31c53e567120cb9d040；完成后单独提交共享 API。
+- WIP：修改前 main 干净；开发过程中检测到 Audit 业务文件在 main 有并行未提交修改，未触碰、暂存或提交。audit-dev 在 4fdadfbe 干净；pytools-dev 在 4cec59c 有未提交的 PyTools 修改，未触碰。
+- 【组件版本】：不升级；未修改依赖、生产默认路由或业务行为。
+
+## 修改目的
+
+为 Audit 的 S1 名称范围映射提供通用 OOXML Defined Names 读取能力，保持共享 crate 不包含 Audit 业务概念。
+
+## 修改文件与行为
+
+- `crates/excel-reader/src/lib.rs`：新增 `read_defined_names`，读取 XLSX/XLSM 的 workbook definedNames；通过 package/workbook relationships 解析 workbook 部件和 sheet identity，按 workbook `<sheets>` 零基索引解析 `localSheetId`（包括非 worksheet tab）。返回名称、作用域、原始引用、解析状态及可解析 A1 区域的目标 sheet identity。公式/常量、未支持引用、无效区域和未解析 scope 均显式分类，不静默丢弃。
+- `GPT修改记录/20261024_excel-reader-defined-names-api.txt`：本记录。
+
+## 对拍和测试
+
+- `wsl.exe ... cargo fmt --all`：通过。
+- `cargo test -p excel-reader defined_name_reader -- --nocapture`：通过，1/1。
+- `cargo check -p excel-reader`：通过。
+- `cargo test -p excel-reader`：通过，10/10 单元测试，doc tests 无失败。
+- 测试覆盖非标准 workbook part 路径、namespace-aware sheets/relationships、worksheet 与 workbook scope、逗号 union A1 区域、公式表达式保留、无效 localSheetId 和无法解析目标工作表。
+- Windows 原生 Cargo 不在 PATH；以上命令通过本机 WSL 工具链在同一 workspace 文件上执行。未运行全 workspace 测试或真实 Audit 模板对拍。
+
+## 状态与限制
+
+- 这是只读 OOXML 元数据 API，不改变普通值读取路由。
+- A1 单元格/矩形区域和 union 支持 sheet identity。外部工作簿、3D、整行/整列、动态数组和其他公式语法保留原文本并报告 unsupported/non-area；Audit 业务层需按解析状态决定是否可映射。
+- 未在真实 Audit 模板或目标 Linux/glibc 2.28 环境验收；不构成 Audit 功能验收或生产路由能力登记。
+
+## 回滚
+
+不含删除项。撤销时仅回退本记录中的 `crates/excel-reader/src/lib.rs` 变更并移除此记录；不得使用整仓 reset/clean，需保留同期 Audit/PyTools 未提交工作。
