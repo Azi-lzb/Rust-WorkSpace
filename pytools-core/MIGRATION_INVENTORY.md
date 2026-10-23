@@ -340,3 +340,9 @@ PT-6-2 原项目真实批注区域模板仍未找到，当前业务及日志对�
 在原 PyTools 只读目录的 xlsx/历史测试数据/ 选取 4 份工作簿，并从 xlsx/备份/ 选取最小的 1 份工作簿；通过 Windows PowerShell 实际运行 Windows GNU 目标 pytools summary-used-range，与只读 PyCode run_summary_by_usedrange 输出对拍。5 份工作簿共 791 行：历史测试簿 448 行、备份簿 343 行。普通用户、开发者、off 三种日志视图生成的完整工作簿投影均与 PyCode 一致，值/类型、样式及工作簿输出属性无差异。开发者视图分别产生 26/11 条事件，均与保存的历史事件流一致；实际读取/写入引擎字段为 Calamine/rust_xlsxwriter。5 份源文件的大小及修改时间未变，输出仅写入临时目录，没有将源工作簿复制进仓库。
 
 机器结果见 probe/reports/summary_used_range_real_parity_20261024.json 的 additional_project_assets_20261024；报告只记录来源目录类别、计数和对拍结果，不包含源工作簿名称或单元格内容。此次仅补充 PT-6-1 证据，不改变其未完成最终验收的状态。
+
+### 2026-10-24 PT-6-1 最大备份簿真实负载对拍
+
+从原 PyTools 只读目录 xlsx/备份/ 单独选取最大 XLSX（3,800,854 字节）；Windows PowerShell 运行 Windows GNU 目标 pytools summary-used-range，按 user/developer/off 三种日志视图逐次生成输出，并与只读 PyCode run_summary_by_usedrange 的完整工作簿投影比较。输出 39,171 行，三视图均与 PyCode 精确一致；实际读取/写入引擎为 Calamine/rust_xlsxwriter。developer 视图 18 条事件与保存历史逐条一致；user 历史状态成功；off 未创建运行记录。源簿大小和修改时间未变，临时输出已清理。本结果只作为该真实样本的保真证据，不作性能结论或其他格式推断。
+
+机器结果见 probe/reports/summary_used_range_real_parity_20261024.json 的 additional_project_assets_20261024.largest_backup_workbook；只记录文件大小、来源目录和汇总结果，不记录工作簿名称或单元格内容。PT-6-1 整体仍未完成最终验收。

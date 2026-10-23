@@ -545,7 +545,7 @@
   ],
   "additional_project_assets_20261024": {
     "status": "passed",
-    "scope": "4 workbooks from xlsx/历史测试数据 and the smallest workbook from xlsx/备份; Windows-target CLI and read-only PyCode; source files unchanged by size/mtime",
+    "scope": "4 historical workbooks plus the smallest and largest workbook from xlsx/备份; Windows-target CLI and read-only PyCode; source files unchanged by size/mtime",
     "results": {
       "historical_workbooks": {
         "input_count": 4,
@@ -604,9 +604,43 @@
           "calamine",
           "rust_xlsxwriter"
         ]
+      },
+      "largest_backup_workbook": {
+        "input_count": 1,
+        "source_scope": "xlsx/备份/（最大工作簿，3,800,854 bytes）",
+        "source_size_bytes": 3800854,
+        "python_rust_full_projection": "exact_in_user_developer_and_off_views",
+        "actual_engines": [
+          "calamine",
+          "rust_xlsxwriter"
+        ],
+        "views": {
+          "user": {
+            "rows": 39171,
+            "files": 1,
+            "event_count": 0,
+            "history_status": "succeeded",
+            "history_matches_event_stream": null
+          },
+          "developer": {
+            "rows": 39171,
+            "files": 1,
+            "event_count": 18,
+            "history_status": "succeeded",
+            "history_matches_event_stream": true
+          },
+          "off": {
+            "rows": 39171,
+            "files": 1,
+            "event_count": 0,
+            "history_status": "not_created",
+            "history_matches_event_stream": null
+          }
+        }
       }
     },
     "source_assets_unchanged": true,
-    "total_output_rows": 791
+    "total_output_rows": 39962,
+    "validated_workbook_runs": 6
   }
 }
