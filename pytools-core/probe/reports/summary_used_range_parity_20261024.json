@@ -105,6 +105,34 @@
       },
       "comparison": "exact",
       "rule": "last matching start/end marker in row-major order, matching PyCode overwrite behavior"
+    },
+    "page_settings": {
+      "status": "passed_exact_python_projection_parity",
+      "comparison": "full workbook projection including page setup and margins",
+      "pycode_default_margins": {
+        "left": 0.75,
+        "right": 0.75,
+        "top": 1.0,
+        "bottom": 1.0,
+        "header": 0.5,
+        "footer": 0.5
+      },
+      "rust_margins": "set to PyCode openpyxl workbook defaults",
+      "windows_target_cli_cases": [
+        {
+          "template": "standard_markers",
+          "sources": 2,
+          "rows": 21,
+          "comparison": "exact"
+        },
+        {
+          "template": "duplicate_row_region_markers",
+          "sources": 2,
+          "rows": 21,
+          "comparison": "exact"
+        }
+      ],
+      "original_source_marker_template": "not found; 72 xlsx/xlsm workbooks scanned, comment-bearing config workbooks contained no PT-6-2 row/column/set markers"
     }
   },
   "python_variant_scope": {

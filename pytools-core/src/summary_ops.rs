@@ -815,6 +815,7 @@ pub fn summarize_by_comments(
         let sheet_name = crate::sheet_extract::sanitize_sheet_name(&name);
         let ws = workbook.add_worksheet();
         ws.set_name(&sheet_name)?;
+        ws.set_margins(0.75, 0.75, 1.0, 1.0, 0.5, 0.5);
         for (col, header) in headers_by_sheet[name].iter().enumerate() {
             ws.write_string_with_format(0, col as u16, header, &header_format)?;
         }

@@ -322,3 +322,7 @@ WSL Ubuntu（host glibc 2.39）上离线构建 `pytools` CLI 到 `x86_64-unknown
 ### 2026-10-24 PT-6-1 Windows 目标运行阶段验证
 
 Windows 主机未安装 Rust/Cargo。复用 WSL Ubuntu 中已安装的 MinGW 与 `x86_64-pc-windows-gnu` target，离线构建 `pytools.exe` 成功，并从 Windows PowerShell 进程直接运行 `summary-used-range`。固定 VBA 启用 XLSM 样本与只读 PyCode 的工作簿投影完全一致（1 行），使用 Calamine/rust_xlsxwriter；源文件未改变，输出 `.xlsx` 不含 VBA，11 条开发者事件与保存历史一致，`output_workbook` 阶段为 14 ms。随后 Windows 目标 CLI 对原 PyTools 只读 `xlsx/` 下 13 份 XLSX 分四批运行，203,580 行的完整工作簿投影逐批与 PyCode 一致；各批 26/14/27/63 条事件均与保存历史一致，源文件大小和修改时间未变。各批 `output_workbook` 阶段观测值为 472/6,665/1,438/55,095 ms，仅记录本次运行，不作性能比较。该证据覆盖交叉构建后的 Windows 目标二进制运行，不等于 Windows 原生 Rust 构建；麒麟/UOS 实机、deb 与 glibc 2.28 仍未验证。
+
+### 2026-10-24 PT-6-2 页边距契约补齐
+
+真实 `summary-comments` CLI 对拍发现新工作簿页边距和 PyCode 的 openpyxl 默认值不同；旧 probe 曾关闭页面设置比较。Rust 现对输出工作表显式写入 PyCode 默认左/右 0.75、上/下 1.0、页眉/页脚 0.5，并恢复完整页面设置对拍。Windows PowerShell 实际运行 Windows GNU 目标 CLI，对标准标记和重复行标记两类合成模板、各含 2 个源工作簿，输出均为 21 行，完整值/类型、样式、工作表维度、冻结窗格和页面设置投影与 PyCode 完全一致。扫描原项目中的 72 份 XLSX/XLSM 未发现含 PT-6-2 行/列/set 标记的真实模板；含批注的两个配置工作簿没有该汇总标记。

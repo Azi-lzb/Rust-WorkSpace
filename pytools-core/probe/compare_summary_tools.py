@@ -986,7 +986,6 @@ def main() -> int:
             python_comments,
             rust_comments,
             "6-2 comment summary",
-            compare_page_settings=False,
         )
         python_duplicate_comments = python_comments_only(
             duplicate_marker_template, [source], root / "python_duplicate_comments"
@@ -1000,7 +999,6 @@ def main() -> int:
             python_duplicate_comments,
             rust_duplicate_comments,
             "6-2 duplicate row-region marker behavior",
-            compare_page_settings=False,
         )
         duplicate_sheets, _ = workbook_projection(rust_duplicate_comments)
         duplicate_source_rows = [
