@@ -53,7 +53,8 @@ def make_source(path: Path) -> None:
     ws["A4"] = "丙"
     ws["B4"] = "text"
     ws["C4"] = 0
-    ws["E4"] = "#DIV/0!"
+    for column, error in enumerate(("#DIV/0!", "#N/A", "#NAME?", "#NULL!", "#NUM!", "#REF!", "#VALUE!"), start=5):
+        ws.cell(row=4, column=column).value = error
     ws["F6"] = "merged value"
     ws.merge_cells("F6:G6")
     ws["E8"] = "=1+1"
@@ -451,6 +452,8 @@ def main() -> int:
 
         if used_report.get("rows") != 13 or used_report.get("files") != 2:
             raise AssertionError(f"unexpected used-range summary report: {used_report}")
+        if used_report.get("execution", {}).get("ooxml_error_cells_patched") != 7:
+            raise AssertionError(f"expected seven preserved Excel error values: {used_report}")
         report = {
             "schema_version": 1,
             "suite": "pytools.summary_used_range_python_rust_parity",
@@ -472,7 +475,7 @@ def main() -> int:
                     "merged range used as an extent",
                     "cached formula values and missing formula-cache semantics",
                     "date, boolean, numeric, text and blank semantics",
-                    "Excel error value preserved as an error-typed cell",
+                    "seven common Excel error values preserved as error-typed cells",
                 ],
             },
             "comparison": {

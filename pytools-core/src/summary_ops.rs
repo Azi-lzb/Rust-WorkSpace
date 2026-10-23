@@ -10,7 +10,7 @@ use std::{
     fs::{self, OpenOptions},
     io::{Read, Write},
     path::{Path, PathBuf},
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use zip::{write::SimpleFileOptions, ZipArchive, ZipWriter};
 
@@ -53,7 +53,7 @@ pub fn summarize_used_ranges(sources: &[PathBuf], output_dir: &Path) -> Result<S
     let mut max_col = 0usize;
     let mut rows_written = 0usize;
     let mut files = 0usize;
-    let mut read_elapsed_ms = 0u128;
+    let mut read_elapsed = Duration::ZERO;
     for path in sources {
         if !supported(path) {
             continue;
@@ -62,31 +62,21 @@ pub fn summarize_used_ranges(sources: &[PathBuf], output_dir: &Path) -> Result<S
             continue;
         }
         let read_started = std::time::Instant::now();
-        let dump = read_workbook(path)
-            .with_context(|| format!("read used-range summary source {}", path.display()))?;
-        let extents = if is_xlsx_or_xlsm(path) {
-            read_xlsx_worksheet_extents(path)?
-        } else {
-            Vec::new()
-        };
-        let bounds_by_sheet = dump
-            .sheets
+        let extents = read_xlsx_worksheet_extents(path)
+            .with_context(|| format!("read used-range summary extents {}", path.display()))?;
+        let bounds_by_sheet = extents
             .iter()
-            .map(|sheet| {
-                let extent = extents.iter().find(|extent| extent.name == sheet.name);
-                (sheet.name.clone(), summary_bounds(sheet, extent))
-            })
+            .map(|extent| (extent.name.clone(), summary_bounds(extent)))
             .collect::<BTreeMap<_, _>>();
-        read_elapsed_ms += read_started.elapsed().as_millis();
+        read_elapsed += read_started.elapsed();
         files += 1;
-        for sheet in &dump.sheets {
-            let (min_row, _min_col, max_row, max_col_sheet) = bounds_by_sheet[&sheet.name];
-            max_col = max_col.max(max_col_sheet);
-            if min_row > 0 {
-                rows_written += max_row - min_row + 1;
+        for (min_row, _min_col, max_row, max_col_sheet) in bounds_by_sheet.values() {
+            max_col = max_col.max(*max_col_sheet);
+            if *min_row > 0 {
+                rows_written += max_row.saturating_sub(*min_row) + 1;
             }
         }
-        workbooks.push((path.clone(), dump, bounds_by_sheet));
+        workbooks.push((path.clone(), bounds_by_sheet));
     }
     if files == 0 || rows_written == 0 || max_col == 0 {
         return Ok(SummaryResult {
@@ -95,9 +85,9 @@ pub fn summarize_used_ranges(sources: &[PathBuf], output_dir: &Path) -> Result<S
             files,
             path: None,
             execution: Some(SummaryExecution {
-                reader_engine: (files > 0).then_some("calamine"),
+                reader_engine: None,
                 writer_engine: None,
-                read_elapsed_ms,
+                read_elapsed_ms: read_elapsed.as_millis(),
                 write_elapsed_ms: 0,
                 total_elapsed_ms: started.elapsed().as_millis(),
                 ooxml_error_cells_patched: 0,
@@ -127,13 +117,23 @@ pub fn summarize_used_ranges(sources: &[PathBuf], output_dir: &Path) -> Result<S
     sheet.set_margins(0.75, 0.75, 1.0, 1.0, 0.5, 0.5);
     let mut out_row = 1u32;
     let mut error_cells = Vec::new();
-    for (path, dump, bounds_by_sheet) in workbooks {
+    let mut read_elapsed_during_write = Duration::ZERO;
+    for (path, bounds_by_sheet) in workbooks {
+        let read_started = std::time::Instant::now();
+        let dump = read_workbook(&path)
+            .with_context(|| format!("read used-range summary source {}", path.display()))?;
+        read_elapsed_during_write += read_started.elapsed();
         let base = path
             .file_stem()
             .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_default();
+        let mut seen_sheets = BTreeSet::new();
         for ws in &dump.sheets {
-            let (min_row, min_col, max_row, max_col) = bounds_by_sheet[&ws.name];
+            let (min_row, min_col, max_row, max_col) =
+                *bounds_by_sheet.get(&ws.name).with_context(|| {
+                    format!("worksheet {:?} is missing from the extent scan", ws.name)
+                })?;
+            seen_sheets.insert(ws.name.clone());
             if min_row == 0 || max_row < min_row || max_col < min_col {
                 continue;
             }
@@ -168,6 +168,11 @@ pub fn summarize_used_ranges(sources: &[PathBuf], output_dir: &Path) -> Result<S
                 out_row += 1;
             }
         }
+        anyhow::ensure!(
+            seen_sheets.len() == bounds_by_sheet.len(),
+            "worksheet set changed between extent scan and value read for {}",
+            path.display()
+        );
     }
     if error_cells.is_empty() {
         workbook
@@ -187,7 +192,11 @@ pub fn summarize_used_ranges(sources: &[PathBuf], output_dir: &Path) -> Result<S
             format!("preserve Excel error values in summary {}", path.display())
         })?;
     }
-    let write_elapsed_ms = write_started.elapsed().as_millis();
+    let read_elapsed_ms = (read_elapsed + read_elapsed_during_write).as_millis();
+    let write_elapsed_ms = write_started
+        .elapsed()
+        .saturating_sub(read_elapsed_during_write)
+        .as_millis();
     Ok(SummaryResult {
         saved: true,
         rows: out_row.saturating_sub(1) as usize,
@@ -203,7 +212,6 @@ pub fn summarize_used_ranges(sources: &[PathBuf], output_dir: &Path) -> Result<S
         }),
     })
 }
-
 #[derive(Default)]
 struct TemplateSpec {
     row_ranges: Vec<(usize, usize, usize, usize)>,
@@ -662,47 +670,16 @@ fn xml_local_name(prefix: Option<&str>, name: &str) -> String {
         None => name.to_owned(),
     }
 }
-fn bounds(sheet: &SheetDump) -> (usize, usize, usize, usize) {
-    let mut min_row = usize::MAX;
-    let mut min_col = usize::MAX;
-    let mut max_row = 0;
-    let mut max_col = 0;
-    for address in sheet.values.keys() {
-        if let Some((row, col)) = parse_a1(address) {
-            min_row = min_row.min(row);
-            min_col = min_col.min(col);
-            max_row = max_row.max(row);
-            max_col = max_col.max(col);
-        }
+fn summary_bounds(extent: &WorksheetExtent) -> (usize, usize, usize, usize) {
+    if extent.max_row == 0 || extent.max_column == 0 {
+        return (1, 1, 1, 1);
     }
-    if max_row == 0 {
-        (0, 0, 0, 0)
-    } else {
-        (min_row, min_col, max_row, max_col)
-    }
-}
-
-fn summary_bounds(
-    sheet: &SheetDump,
-    extent: Option<&WorksheetExtent>,
-) -> (usize, usize, usize, usize) {
-    if let Some(extent) = extent {
-        if extent.max_row == 0 || extent.max_column == 0 {
-            return (1, 1, 1, 1);
-        }
-        return (
-            extent.min_row.max(1),
-            extent.min_column.max(1),
-            extent.max_row,
-            extent.max_column,
-        );
-    }
-    let value_bounds = bounds(sheet);
-    if value_bounds.0 == 0 {
-        (1, 1, 1, 1)
-    } else {
-        value_bounds
-    }
+    (
+        extent.min_row.max(1),
+        extent.min_column.max(1),
+        extent.max_row,
+        extent.max_column,
+    )
 }
 fn parse_a1(address: &str) -> Option<(usize, usize)> {
     let index = address.find(|c: char| c.is_ascii_digit())?;

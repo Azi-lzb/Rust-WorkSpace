@@ -17,7 +17,7 @@
 | 打印 | 按批注保留源格式；按批注快速复制；按配置准备打印文件；按配置预校验 | 只写页面设置并准备 xlsx；PDF 菜单不迁移 | 3-1/3-2 计划语义及 3-4 预校验通过合成对拍；3-3 模式 1/2/3 已通过合成端到端候选对拍，并按用户合同拒绝已有目标；生产能力、真实模板与目标平台仍未验证 |
 | 转换与文件命名 | 批量重命名；Excel 格式转换；Word 格式转换；批量修改 Sheet 名；按内容加前缀重命名；取消内容前缀；局部映射重命名；提交缺失检查；文件排序前缀；取消排序前缀 | 保留文件操作与同类格式转换；首批 sidecar 为 .et→.xlsx、.xls→.xlsx、.doc→.docx；不迁移 Python 模式切换 | 未验证 |
 | 配置 | 初始化/修复配置表；查看配置并从磁盘重新读取 | 盘点配置模板、默认值、修复行为、字段映射与错误提示 | 5-1 新建、5-2 查看通过合成及真实只读对拍；5-1 修复已在合成及真实配置临时副本上通过 openpyxl worker 候选执行与语义对拍；生产 capability、完整文件保真与目标平台仍未验收 |
-| 汇总 | 按使用区域汇总；按批注汇总 | 逐项确认坐标、模板/源文件关系、行顺序和输出格式 | PT-6-1 已接入真实 summary-used-range CLI；合成 XLSX 对拍（2 个工作簿、13 行）值/类型、样式、维度、冻结窗格、公式/合并/名称/页面属性通过，Excel 错误单元格类型保留。真实业务样本、XLSM、NoComPyTools 独有格式和目标平台仍未验收；PT-6-2 仍仅有合成对拍，整体未验证 |
+| 汇总 | 按使用区域汇总；按批注汇总 | 逐项确认坐标、模板/源文件关系、行顺序和输出格式 | PT-6-1 已接入真实 summary-used-range CLI；合成 XLSX 对拍（2 个工作簿、13 行）值/类型、样式、维度、冻结窗格、公式/合并/名称/页面属性通过，7 种常见 Excel 错误值均保留为 error 类型；预扫描仅保存范围映射，写出阶段逐工作簿读取值（内存未测量）。真实业务样本、XLSM、NoComPyTools 独有格式和目标平台仍未验收；PT-6-2 仍仅有合成对拍，整体未验证 |
 | 一二批处理 | 拆分村镇银行数据；机构名称标准化；删除分机构表外资行；外汇页眉修改；地区总分校验；工作表数据提取；涉农贷款比上月修正；季度涉农贷款比上月修正及分地区核对 | 仅工作表提取普通无批注版；对 COM 路由的业务行为与普通实现差异做盘点 | 7-1/7-3/7-7/7-8 计划语义合成对拍通过；7-7/7-8 精度与失败地区回归分支已补测；7-2/7-4/7-5/7-6 有各自候选证据；既有簿执行和整组验收仍未完成 |
 | 归档 | 按日期预览；按类型预览；执行归档计划；按日期直接复制；按类型直接复制 | 保留预览、冲突检查、复制结果和归档规则 | Rust CLI 候选；5 类工作流通过合成 Python 对拍，真实业务目录/配置与目标平台未验证 |
 | 快捷工具 | 打开配置文件；打开 output 最新文件；打开 output 文件夹 | 迁移到目标平台可用的文件打开/定位体验，系统集成细节待确认 | Rust 三入口通过 WSL 假 `xdg-open` 合成集成验证；旧版 Windows `os.startfile`、Windows 桌面和目标平台尚未实测 |
@@ -301,9 +301,9 @@ Python/openpyxl 合成端到端对拍报告 `probe/reports/PT-7-3_execution_pari
 
 ### 2026-10-24 PT-6-1 错误单元格保留与 CLI 属性对拍
 
-扩展 probe/compare_summary_tools.py，通过真实 pytools summary-used-range CLI 对照只读 PyCode 基线；合成夹具覆盖两个工作簿、多个工作表、格式定义 used-range 尾部、合并范围、日期/布尔/数值/文本/空白、有缓存及缺缓存公式和 #DIV/0!。13 行的值/类型、已填充单元格样式、工作表维度、冻结窗格、表头、公式/合并/定义名称/打印区和页面设置一致。机器报告 probe/reports/summary_used_range_parity_20261024.json 记录实际 calamine 读取、rust_xlsxwriter 新建、阶段耗时及 1 个 OOXML 错误类型补丁；write_elapsed 覆盖工作簿构建、逐格写入、序列化和补丁。
+扩展 probe/compare_summary_tools.py，通过真实 pytools summary-used-range CLI 对照只读 PyCode 基线；合成夹具覆盖两个工作簿、多个工作表、格式定义 used-range 尾部、合并范围、日期/布尔/数值/文本/空白、有缓存及缺缓存公式和 7 种常见 Excel 错误值。13 行的值/类型、已填充单元格样式、工作表维度、冻结窗格、表头、公式/合并/定义名称/打印区和页面设置一致。机器报告 probe/reports/summary_used_range_parity_20261024.json 记录实际 calamine 读取、rust_xlsxwriter 新建、阶段耗时及 7 个 OOXML 错误类型补丁；write_elapsed 覆盖工作簿构建、逐格写入、序列化和补丁。Rust 预扫描通过 extent-only 元数据建立范围映射，写出时每轮只保留当前输入 WorkbookDump；这是结构性内存占用变化，未测量 RSS。
 
-Rust 在新建报表时保留受支持的 Excel 错误类型；使用 namespace-aware XML 解析器定位报表工作表关系与单元格，写入后由 Calamine 重新读取校验。未知错误值会失败关闭。同步对齐 PyCode 的日期格式及页面边距。NoComPyTools 与 PyCode 的相同合成 XLSX 输出维度均为 14 行×11 列；NoCom 将 汇总!H5 的 #DIV/0! 输出为空值（PyCode 保留 error 类型），并将 汇总!E4 日期样式写为 yyyy-mm-dd（PyCode 为 yyyy-mm-dd h:mm:ss）。详细单元格差异见机器报告的 nocom_pytools_vs_pycode。NoComPyTools 支持的 .xls/.xlsb 与 PyCode 的 .xlsx/.xlsm 范围差异仍待确认，不将 NoCom 差异或其独有格式登记为生产范围。
+Rust 在新建报表时保留受支持的 Excel 错误类型；使用 namespace-aware XML 解析器定位报表工作表关系与单元格，写入后由 Calamine 重新读取校验。未知错误值会失败关闭。同步对齐 PyCode 的日期格式及页面边距。NoComPyTools 与 PyCode 的当前合成 XLSX 输出维度均为 14 行×14 列；NoCom 将 汇总!H5:N5 的 7 种错误值输出为空值（PyCode 保留 error 类型），并将 汇总!E4 日期样式写为 yyyy-mm-dd（PyCode 为 yyyy-mm-dd h:mm:ss）。详细单元格差异见机器报告的 nocom_pytools_vs_pycode。NoComPyTools 支持的 .xls/.xlsb 与 PyCode 的 .xlsx/.xlsm 范围差异仍待确认，不将 NoCom 差异或其独有格式登记为生产范围。
 
 验证：cargo fmt -p pytools-core -- --check 通过；patch_error_cells 输出所有权回归单测和 summary_used_range_error CLI 集成测试各 1/1 通过；python pytools-core/probe/compare_summary_tools.py 合成 CLI 对拍通过；git diff --check 通过。cargo test -p pytools-core --lib --offline --locked -q 的 26 个库测试中 25 个通过，workbook_extraction_matches_original_python_helper 因当前 checkout 缺少且 Git 未跟踪 tests/fixtures/季度报表_县区报表_2024-12-31.xlsx 失败；本轮未创建替代夹具。Cargo.lock 未变。
 
