@@ -1,0 +1,60 @@
+{
+  "schema_version": 1,
+  "suite": "audit.s1_formula_issue_extraction",
+  "baseline": "Open-Data-Audit base_audit.native.openpyxl_workbook.extract_issues",
+  "status": "passed",
+  "sample": {
+    "template_workbook": "read-only real S1 template",
+    "audit_workbook": "read-only saved formula-result workbook",
+    "issue_identity_input": "audit workbook default",
+    "mapping_config": "source defaults"
+  },
+  "python": {
+    "rules_total": 1072,
+    "rules_enabled": 1072,
+    "rules_selected": 1072,
+    "formula_result_values_nonempty": 911,
+    "issue_count": 297,
+    "severity_counts": {
+      "错误": 297
+    },
+    "elapsed_ms": 553
+  },
+  "rust": {
+    "reader": "calamine",
+    "rules_total": 1072,
+    "rules_enabled": 1072,
+    "rules_selected": 1072,
+    "formula_result_values_nonempty": 911,
+    "issue_count": 297,
+    "read_time_ms": 141,
+    "issue_build_time_ms": 41,
+    "total_time_ms": 191,
+    "cli_elapsed_ms": 1017
+  },
+  "comparison": {
+    "python_issue_count": 297,
+    "rust_issue_count": 297,
+    "missing_in_rust": 0,
+    "missing_in_python": 0,
+    "field_difference_counts": {},
+    "mismatch_count": 0
+  },
+  "verification": {
+    "input_workbooks_unchanged": true,
+    "raw_issue_values_or_source_paths_persisted": false,
+    "formula_recalculation": "not performed",
+    "scope": "one real template/result workbook and one synthetic OOXML error-cell case; full Issue objects compared in memory"
+  },
+  "synthetic_regression": {
+    "input": "synthetic stored results with OOXML error cells; no recalculation",
+    "stored_error_cells": 2,
+    "formula_error_issues": 2,
+    "python_issue_count": 3,
+    "rust_issue_count": 3,
+    "missing_in_rust": 0,
+    "missing_in_python": 0,
+    "field_difference_counts": {},
+    "mismatch_count": 0
+  }
+}

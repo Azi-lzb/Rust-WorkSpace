@@ -1,0 +1,46 @@
+# S1-F01 公式缓存结果读取与 Issue 组装接入
+
+- 时间：2026-10-24 05:23（Asia/Shanghai）
+- 执行者：Codex
+- 分支：audit-dev
+- Worktree：`C:\Users\AZI\Desktop\VibeCode\audit-dev`；已确认专用 `audit-dev` 分支，未在当前会话 detached main 快照中修改。
+- 修改前 commit：555a0a9；工作区干净，与 `origin/audit-dev` 同步；`origin/main` 的 473c75a 已包含在分支历史中。
+- 功能代码 commit：8f3cff2（`feat(audit): extract S1 formula result issues`）。本记录、脱敏真实对拍报告和迁移清单由随后的文档提交纳入。
+- 【组件版本】不升级；`audit-core` 保持 0.1.0。未改 workspace crates、Cargo.toml、Cargo.lock 或公共 Excel crates。
+
+## 目的与实现
+
+继续迁移 Python `base_audit.native.openpyxl_workbook.extract_issues`。新增 `audit_core::s1_formula_audit::extract_s1_formula_issues`，从审核副本已保存的公式结果值构造标准 `Issue`，按模板 `extraction_ranges`、`keyword` 和 `error_only` 规则筛选，解析公式结果字段，并将 Excel 公式错误转换为错误级 Issue。结果值由共享 Calamine reader 读取；该阶段不重算公式、不修改工作簿。
+
+新增 `open-data-audit s1-formula-audit` CLI，接收模板、审核副本、期间、批次及机构信息，并返回 Issue JSON。`--source-file` 可提供原始报送文件身份，省略时按 Python 默认使用审核副本。普通视图和开发者视图都记录步骤、实际 reader 和阶段耗时。
+
+## 修改文件
+
+- `audit-core/src/s1_formula_audit.rs`：公式结果读取、Python 过滤语义和 Issue 组装。
+- `audit-core/src/lib.rs`、`audit-core/src/bin/open-data-audit.rs`：模块导出及 CLI 接线。
+- `audit-core/tests/s1_formula_audit_cli.rs`：公式命中、错误值、日志和 CLI JSON 回归。
+- `audit-core/tests/compare/compare_s1_formula_issue_extraction.py`：只读 Python 基线与 Rust Issue 全字段对拍工具。
+- `audit-core/probe/reports/s1_formula_issue_extraction_real.json`：仅保留汇总计数、差异数及运行时长，不保留路径、Issue 内容或工作簿数据。
+- `audit-core/MIGRATION_INVENTORY.md`：登记本地迁移范围和证据。
+- 本记录。
+
+未修改 `DEVELOPMENT_GOAL.md`、workspace/子项目 AGENTS.md、`pytools-core/**`、源 Python 项目、共享 crates、Cargo.toml 或 Cargo.lock。未删除文件，无 VBA 迁移影响。
+
+## 验证
+
+- Windows 原生环境未安装 Cargo/Rust，因此使用 WSL Ubuntu。
+- `cargo fmt --all -- --check` 通过。
+- `cargo test -p audit-core --locked` 通过：65 个库单元测试及全部 Audit 集成测试通过，包含新公式提取单测和 CLI 双视图测试。
+- `cargo build -p audit-core --bin open-data-audit --locked` 通过。
+- 真实只读样本：1 个 S1 模板、1 个带已保存公式结果值的审核副本；1,072/1,072 条规则、911 个非空且非 falsey 公式结果、297 条 Issue。Python/Rust Issue 全字段差异 0；模板和审核副本前后 SHA-256 一致；未执行公式重算。由于配对样本未提供原始报送文件路径，本次 Issue identity 按 CLI/Python 的审核副本默认路径生成；完整流程应显式传入 `--source-file`。
+- 合成 OOXML 错误值回归：2 个错误单元格生成 2 条公式错误 Issue，另 1 条普通命中 Issue；共 3 条 Issue 与 Python 基线全字段差异 0。
+- 脱敏汇总见 `audit-core/probe/reports/s1_formula_issue_extraction_real.json`。单次阶段耗时只作本次运行记录，不作为性能路由结论。
+
+## 未完成范围与已知限制
+
+本轮只完成保存结果读取和 Issue 组装。公式复制、外部表加入、显式 sidecar 重算、Issue 写回、历史库和重复运行一致性仍未迁移；S1-F01 整体状态保持“未验证”。Windows 原生 Rust 工具链、麒麟 V10/UOS V20、glibc 2.28、deb 和离线安装验收未执行。
+
+## 回滚
+
+- 删除清单：无。
+- 回滚功能代码：`git revert 8f3cff2`；随后的迁移清单、报告和本记录由文档提交单独回滚。
