@@ -143,15 +143,44 @@
           "columns": 260
         }
       ],
-      "python_elapsed_ms": 3997,
-      "rust_cli_wall_elapsed_ms": 19211,
+      "python_elapsed_ms": 3614,
+      "rust_cli_wall_elapsed_ms": 14786,
       "rust_execution": {
         "ooxml_error_cells_patched": 0,
-        "read_elapsed_ms": 1799,
+        "read_elapsed_ms": 1785,
         "reader_engine": "calamine",
-        "total_elapsed_ms": 2457,
-        "write_elapsed_ms": 603,
+        "total_elapsed_ms": 2435,
+        "write_elapsed_ms": 599,
         "writer_engine": "rust_xlsxwriter"
+      },
+      "progress_log": {
+        "view": "developer",
+        "status": "succeeded",
+        "event_stream_matches_saved_history": true,
+        "event_count": 26,
+        "phases": [
+          "extent_scan",
+          "output_save",
+          "output_workbook",
+          "row_write",
+          "run",
+          "value_read"
+        ],
+        "actual_engines": [
+          "calamine",
+          "excel-reader::read_xlsx_worksheet_extents",
+          "rust_xlsxwriter"
+        ],
+        "completed_stage_elapsed_ms": {
+          "extent_scan": 65,
+          "value_read": 242,
+          "row_write": 31,
+          "output_save": 470,
+          "output_workbook": 599,
+          "run": 2435
+        },
+        "skipped_input_names": [],
+        "input_filter_events_have_no_engine": true
       }
     },
     {
@@ -175,15 +204,47 @@
           "columns": 213
         }
       ],
-      "python_elapsed_ms": 10729,
-      "rust_cli_wall_elapsed_ms": 26243,
+      "python_elapsed_ms": 11012,
+      "rust_cli_wall_elapsed_ms": 25274,
       "rust_execution": {
         "ooxml_error_cells_patched": 1212,
-        "read_elapsed_ms": 6652,
+        "read_elapsed_ms": 6632,
         "reader_engine": "calamine",
-        "total_elapsed_ms": 13689,
-        "write_elapsed_ms": 6996,
+        "total_elapsed_ms": 13907,
+        "write_elapsed_ms": 7237,
         "writer_engine": "rust_xlsxwriter"
+      },
+      "progress_log": {
+        "view": "developer",
+        "status": "succeeded",
+        "event_stream_matches_saved_history": true,
+        "event_count": 14,
+        "phases": [
+          "extent_scan",
+          "ooxml_error_patch",
+          "output_save",
+          "output_workbook",
+          "row_write",
+          "run",
+          "value_read"
+        ],
+        "actual_engines": [
+          "OOXML Patch",
+          "calamine",
+          "excel-reader::read_xlsx_worksheet_extents",
+          "rust_xlsxwriter"
+        ],
+        "completed_stage_elapsed_ms": {
+          "extent_scan": 1651,
+          "value_read": 4982,
+          "row_write": 340,
+          "output_save": 685,
+          "ooxml_error_patch": 6170,
+          "output_workbook": 7237,
+          "run": 13907
+        },
+        "skipped_input_names": [],
+        "input_filter_events_have_no_engine": true
       }
     },
     {
@@ -210,15 +271,44 @@
           "columns": 17
         }
       ],
-      "python_elapsed_ms": 3702,
-      "rust_cli_wall_elapsed_ms": 17602,
+      "python_elapsed_ms": 3778,
+      "rust_cli_wall_elapsed_ms": 17677,
       "rust_execution": {
         "ooxml_error_cells_patched": 0,
-        "read_elapsed_ms": 4311,
+        "read_elapsed_ms": 4536,
         "reader_engine": "calamine",
-        "total_elapsed_ms": 6025,
-        "write_elapsed_ms": 1662,
+        "total_elapsed_ms": 6214,
+        "write_elapsed_ms": 1618,
         "writer_engine": "rust_xlsxwriter"
+      },
+      "progress_log": {
+        "view": "developer",
+        "status": "succeeded",
+        "event_stream_matches_saved_history": true,
+        "event_count": 27,
+        "phases": [
+          "extent_scan",
+          "output_save",
+          "output_workbook",
+          "row_write",
+          "run",
+          "value_read"
+        ],
+        "actual_engines": [
+          "calamine",
+          "excel-reader::read_xlsx_worksheet_extents",
+          "rust_xlsxwriter"
+        ],
+        "completed_stage_elapsed_ms": {
+          "extent_scan": 583,
+          "value_read": 1988,
+          "row_write": 69,
+          "output_save": 1326,
+          "output_workbook": 1618,
+          "run": 6214
+        },
+        "skipped_input_names": [],
+        "input_filter_events_have_no_engine": true
       }
     },
     {
@@ -245,18 +335,174 @@
           "columns": 22
         }
       ],
-      "python_elapsed_ms": 145429,
-      "rust_cli_wall_elapsed_ms": 274002,
+      "python_elapsed_ms": 151500,
+      "rust_cli_wall_elapsed_ms": 269429,
       "rust_execution": {
         "ooxml_error_cells_patched": 0,
-        "read_elapsed_ms": 208880,
+        "read_elapsed_ms": 208639,
         "reader_engine": "calamine",
-        "total_elapsed_ms": 264496,
-        "write_elapsed_ms": 55563,
+        "total_elapsed_ms": 264119,
+        "write_elapsed_ms": 55415,
         "writer_engine": "rust_xlsxwriter"
+      },
+      "progress_log": {
+        "view": "developer",
+        "status": "succeeded",
+        "event_stream_matches_saved_history": true,
+        "event_count": 63,
+        "phases": [
+          "extent_scan",
+          "output_save",
+          "output_workbook",
+          "row_write",
+          "run",
+          "value_read"
+        ],
+        "actual_engines": [
+          "calamine",
+          "excel-reader::read_xlsx_worksheet_extents",
+          "rust_xlsxwriter"
+        ],
+        "completed_stage_elapsed_ms": {
+          "extent_scan": 5803,
+          "value_read": 19980,
+          "row_write": 2239,
+          "output_save": 42694,
+          "output_workbook": 55415,
+          "run": 264119
+        },
+        "skipped_input_names": [],
+        "input_filter_events_have_no_engine": true
       }
     }
   ],
+  "progress_logging": {
+    "view": "developer",
+    "status": "validated",
+    "batch_count": 4,
+    "event_stream_matches_saved_history": true,
+    "batches": [
+      {
+        "view": "developer",
+        "status": "succeeded",
+        "event_stream_matches_saved_history": true,
+        "event_count": 26,
+        "phases": [
+          "extent_scan",
+          "output_save",
+          "output_workbook",
+          "row_write",
+          "run",
+          "value_read"
+        ],
+        "actual_engines": [
+          "calamine",
+          "excel-reader::read_xlsx_worksheet_extents",
+          "rust_xlsxwriter"
+        ],
+        "completed_stage_elapsed_ms": {
+          "extent_scan": 65,
+          "value_read": 242,
+          "row_write": 31,
+          "output_save": 470,
+          "output_workbook": 599,
+          "run": 2435
+        },
+        "skipped_input_names": [],
+        "input_filter_events_have_no_engine": true
+      },
+      {
+        "view": "developer",
+        "status": "succeeded",
+        "event_stream_matches_saved_history": true,
+        "event_count": 14,
+        "phases": [
+          "extent_scan",
+          "ooxml_error_patch",
+          "output_save",
+          "output_workbook",
+          "row_write",
+          "run",
+          "value_read"
+        ],
+        "actual_engines": [
+          "OOXML Patch",
+          "calamine",
+          "excel-reader::read_xlsx_worksheet_extents",
+          "rust_xlsxwriter"
+        ],
+        "completed_stage_elapsed_ms": {
+          "extent_scan": 1651,
+          "value_read": 4982,
+          "row_write": 340,
+          "output_save": 685,
+          "ooxml_error_patch": 6170,
+          "output_workbook": 7237,
+          "run": 13907
+        },
+        "skipped_input_names": [],
+        "input_filter_events_have_no_engine": true
+      },
+      {
+        "view": "developer",
+        "status": "succeeded",
+        "event_stream_matches_saved_history": true,
+        "event_count": 27,
+        "phases": [
+          "extent_scan",
+          "output_save",
+          "output_workbook",
+          "row_write",
+          "run",
+          "value_read"
+        ],
+        "actual_engines": [
+          "calamine",
+          "excel-reader::read_xlsx_worksheet_extents",
+          "rust_xlsxwriter"
+        ],
+        "completed_stage_elapsed_ms": {
+          "extent_scan": 583,
+          "value_read": 1988,
+          "row_write": 69,
+          "output_save": 1326,
+          "output_workbook": 1618,
+          "run": 6214
+        },
+        "skipped_input_names": [],
+        "input_filter_events_have_no_engine": true
+      },
+      {
+        "view": "developer",
+        "status": "succeeded",
+        "event_stream_matches_saved_history": true,
+        "event_count": 63,
+        "phases": [
+          "extent_scan",
+          "output_save",
+          "output_workbook",
+          "row_write",
+          "run",
+          "value_read"
+        ],
+        "actual_engines": [
+          "calamine",
+          "excel-reader::read_xlsx_worksheet_extents",
+          "rust_xlsxwriter"
+        ],
+        "completed_stage_elapsed_ms": {
+          "extent_scan": 5803,
+          "value_read": 19980,
+          "row_write": 2239,
+          "output_save": 42694,
+          "output_workbook": 55415,
+          "run": 264119
+        },
+        "skipped_input_names": [],
+        "input_filter_events_have_no_engine": true
+      }
+    ]
+  },
   "verified_edge_cases": [
     {
       "kind": "worksheet_dimension_elements_missing",
@@ -284,8 +530,8 @@
     "freeze_panes_and_header_bold": "exact",
     "formula_merge_name_and_page_properties": "exact"
   },
-  "python_elapsed_ms": 163857,
-  "rust_cli_wall_elapsed_ms": 337058,
+  "python_elapsed_ms": 169904,
+  "rust_cli_wall_elapsed_ms": 327166,
   "execution_environment": {
     "python_sys_platform": "win32",
     "rust_cli_host": "WSL Linux",
@@ -296,28 +542,5 @@
     "Original-project XLSX assets only; no production default or broad format acceptance inferred.",
     "VBA-bearing XLSM, XLS/XLSB, Windows-native Rust and target Linux/deb remain unvalidated.",
     "Report contains no source cell values or output workbook; both outputs were temporary."
-  ],
-  "progress_logging": {
-    "view": "developer",
-    "status": "validated",
-    "rust_batch_count": 4,
-    "event_sequences_contiguous": true,
-    "persisted_event_streams_match_cli": true,
-    "focused_real_patch_sample": {
-      "relative_path": "xlsx/1.报表分口径.xlsx",
-      "summary_rows": 7462,
-      "ooxml_error_cells_patched": 1212,
-      "python_rust_output": "exact",
-      "developer_event_count": 14,
-      "event_stream_matches_saved_history": true,
-      "actual_engines": [
-        "OOXML Patch",
-        "calamine",
-        "excel-reader::read_xlsx_worksheet_extents",
-        "rust_xlsxwriter"
-      ],
-      "write_stage_elapsed_ms": 7459,
-      "input_unchanged": true
-    }
-  }
+  ]
 }
