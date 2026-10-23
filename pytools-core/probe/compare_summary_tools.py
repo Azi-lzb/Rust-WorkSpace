@@ -127,6 +127,13 @@ def make_second_source(path: Path) -> None:
     ws["A2"] = "第二个工作簿"
     ws["C2"] = 42
     wb.create_sheet("Empty")
+    hidden = wb.create_sheet("Hidden")
+    hidden.sheet_state = "hidden"
+    hidden["A2"] = "隐藏工作表数据"
+    hidden["B3"] = 99
+    very_hidden = wb.create_sheet("VeryHidden")
+    very_hidden.sheet_state = "veryHidden"
+    very_hidden["A4"] = "深度隐藏工作表数据"
     wb.save(path)
     if path.suffix.lower() == ".xlsm":
         mark_macro_enabled(path)
@@ -571,7 +578,7 @@ def main() -> int:
             nocom_difference_fields = projection_difference_fields(nocom_used, rust_used)
             nocom_matches_rust = not nocom_difference_fields
 
-        if used_report.get("rows") != 14 or used_report.get("files") != 2:
+        if used_report.get("rows") != 17 or used_report.get("files") != 2:
             raise AssertionError(f"unexpected used-range summary report: {used_report}")
         if used_report.get("execution", {}).get("ooxml_error_cells_patched") != 7:
             raise AssertionError(f"expected seven preserved Excel error values: {used_report}")
@@ -594,6 +601,7 @@ def main() -> int:
                     "multiple workbooks and worksheets in selection order",
                     "macro-free XLSM source with macro-enabled workbook content type",
                     "empty worksheet produces the default-bound row seen in PyCode",
+                    "hidden and veryHidden worksheets are included in workbook order",
                     "format-only used-range tail",
                     "merged range used as an extent",
                     "cached formula values and missing formula-cache semantics",

@@ -14,12 +14,13 @@
     "source_workbooks": 2
   },
   "scenario": {
-    "rows": 14,
+    "rows": 17,
     "features": [
       "actual Rust summary-used-range CLI",
       "multiple workbooks and worksheets in selection order",
       "macro-free XLSM source with macro-enabled workbook content type",
       "empty worksheet produces the default-bound row seen in PyCode",
+      "hidden and veryHidden worksheets are included in workbook order",
       "format-only used-range tail",
       "merged range used as an extent",
       "cached formula values and missing formula-cache semantics",
@@ -38,9 +39,9 @@
   "rust_execution": {
     "reader_engine": "calamine",
     "writer_engine": "rust_xlsxwriter",
-    "read_elapsed_ms": 152,
-    "write_elapsed_ms": 210,
-    "total_elapsed_ms": 397,
+    "read_elapsed_ms": 185,
+    "write_elapsed_ms": 222,
+    "total_elapsed_ms": 448,
     "ooxml_error_cells_patched": 7
   },
   "unknown_cell_error_probe": {
@@ -108,117 +109,122 @@
       ],
       "cell_differences": {
         "汇总.values": {
-          "count": 10,
+          "count": 21,
           "coordinates_sample": [
-            "A15",
+            "A18",
             "B15",
+            "B17",
+            "B18",
             "C15",
-            "H5",
-            "I5",
-            "J5",
-            "K5",
-            "L5",
-            "M5",
-            "N5"
+            "C16",
+            "C17",
+            "C18",
+            "D15",
+            "D16",
+            "D17",
+            "D18"
           ],
           "examples": [
             {
-              "cell": "A15",
+              "cell": "A18",
               "pycode": "sample_2026-07-31",
               "nocom_pytools": null
             },
             {
               "cell": "B15",
               "pycode": "Empty",
+              "nocom_pytools": "Hidden"
+            },
+            {
+              "cell": "B17",
+              "pycode": "Hidden",
+              "nocom_pytools": "VeryHidden"
+            },
+            {
+              "cell": "B18",
+              "pycode": "VeryHidden",
               "nocom_pytools": null
             },
             {
               "cell": "C15",
               "pycode": 1,
-              "nocom_pytools": null
+              "nocom_pytools": 2
             },
             {
-              "cell": "H5",
-              "pycode": "#DIV/0!",
-              "nocom_pytools": null
-            },
-            {
-              "cell": "I5",
-              "pycode": "#N/A",
-              "nocom_pytools": null
-            },
-            {
-              "cell": "J5",
-              "pycode": "#NAME?",
-              "nocom_pytools": null
+              "cell": "C16",
+              "pycode": 2,
+              "nocom_pytools": 3
             }
           ]
         },
         "汇总.types": {
-          "count": 10,
+          "count": 16,
           "coordinates_sample": [
-            "A15",
-            "B15",
-            "C15",
+            "A18",
+            "B18",
+            "C18",
+            "D15",
+            "D16",
+            "D17",
+            "D18",
+            "E16",
+            "E17",
             "H5",
             "I5",
-            "J5",
-            "K5",
-            "L5",
-            "M5",
-            "N5"
+            "J5"
           ],
           "examples": [
             {
-              "cell": "A15",
+              "cell": "A18",
               "pycode": "s",
               "nocom_pytools": null
             },
             {
-              "cell": "B15",
+              "cell": "B18",
               "pycode": "s",
               "nocom_pytools": null
             },
             {
-              "cell": "C15",
+              "cell": "C18",
               "pycode": "n",
               "nocom_pytools": null
             },
             {
-              "cell": "H5",
-              "pycode": "e",
+              "cell": "D15",
+              "pycode": null,
+              "nocom_pytools": "s"
+            },
+            {
+              "cell": "D16",
+              "pycode": "s",
               "nocom_pytools": null
             },
             {
-              "cell": "I5",
-              "pycode": "e",
-              "nocom_pytools": null
-            },
-            {
-              "cell": "J5",
-              "pycode": "e",
-              "nocom_pytools": null
+              "cell": "D17",
+              "pycode": null,
+              "nocom_pytools": "s"
             }
           ]
         },
         "汇总.styles": {
-          "count": 11,
+          "count": 17,
           "coordinates_sample": [
-            "A15",
-            "B15",
-            "C15",
+            "A18",
+            "B18",
+            "C18",
+            "D15",
+            "D16",
+            "D17",
+            "D18",
+            "E16",
+            "E17",
             "E4",
             "H5",
-            "I5",
-            "J5",
-            "K5",
-            "L5",
-            "M5",
-            "N5"
+            "I5"
           ],
           "examples": [
             {
-              "cell": "A15",
+              "cell": "A18",
               "pycode": {
                 "number_format": "General",
                 "bold": false,
@@ -228,7 +234,7 @@
               "nocom_pytools": null
             },
             {
-              "cell": "B15",
+              "cell": "B18",
               "pycode": {
                 "number_format": "General",
                 "bold": false,
@@ -238,7 +244,7 @@
               "nocom_pytools": null
             },
             {
-              "cell": "C15",
+              "cell": "C18",
               "pycode": {
                 "number_format": "General",
                 "bold": false,
@@ -248,22 +254,17 @@
               "nocom_pytools": null
             },
             {
-              "cell": "E4",
-              "pycode": {
-                "number_format": "yyyy-mm-dd h:mm:ss",
-                "bold": false,
-                "fill_type": null,
-                "fill_color": "00000000"
-              },
+              "cell": "D15",
+              "pycode": null,
               "nocom_pytools": {
-                "number_format": "yyyy-mm-dd",
+                "number_format": "General",
                 "bold": false,
                 "fill_type": null,
                 "fill_color": "00000000"
               }
             },
             {
-              "cell": "H5",
+              "cell": "D16",
               "pycode": {
                 "number_format": "General",
                 "bold": false,
@@ -273,14 +274,14 @@
               "nocom_pytools": null
             },
             {
-              "cell": "I5",
-              "pycode": {
+              "cell": "D17",
+              "pycode": null,
+              "nocom_pytools": {
                 "number_format": "General",
                 "bold": false,
                 "fill_type": null,
                 "fill_color": "00000000"
-              },
-              "nocom_pytools": null
+              }
             }
           ]
         }
@@ -288,14 +289,14 @@
       "pycode_dimensions": [
         {
           "name": "汇总",
-          "rows": 15,
+          "rows": 18,
           "columns": 14
         }
       ],
       "nocom_pytools_dimensions": [
         {
           "name": "汇总",
-          "rows": 14,
+          "rows": 17,
           "columns": 14
         }
       ]
