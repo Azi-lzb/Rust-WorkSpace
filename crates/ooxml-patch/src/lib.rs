@@ -143,7 +143,7 @@ impl ExternalHyperlinkPatch {
     }
 }
 
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ExternalHyperlinkPatchReport {
     pub sheet_name: String,
     pub cell_reference: String,
@@ -233,7 +233,14 @@ fn sheet_parts(path: &Path) -> Result<BTreeMap<String, String>> {
 
 fn strict_sheet_parts(path: &Path) -> Result<Vec<(String, String)>> {
     let mut zip = ZipArchive::new(fs::File::open(path)?)?;
-    let root_rels_xml = read_zip_part(&mut zip, "_rels/.rels")?;
+    strict_sheet_parts_from_zip(&mut zip, path)
+}
+
+fn strict_sheet_parts_from_zip(
+    zip: &mut ZipArchive<fs::File>,
+    path: &Path,
+) -> Result<Vec<(String, String)>> {
+    let root_rels_xml = read_zip_part(zip, "_rels/.rels")?;
     let root_rels = Document::parse(std::str::from_utf8(&root_rels_xml)?)?;
     let workbook_target = root_rels
         .descendants()
@@ -257,8 +264,8 @@ fn strict_sheet_parts(path: &Path) -> Result<Vec<(String, String)>> {
         })
         .context("package relationships do not identify an internal officeDocument part")?;
     let workbook_part = normalize_part("", workbook_target);
-    let workbook_xml = read_zip_part(&mut zip, &workbook_part)?;
-    let rels_xml = read_zip_part(&mut zip, &relationships_part(&workbook_part))?;
+    let workbook_xml = read_zip_part(zip, &workbook_part)?;
+    let rels_xml = read_zip_part(zip, &relationships_part(&workbook_part))?;
     let workbook = Document::parse(std::str::from_utf8(&workbook_xml)?)?;
     let rels = Document::parse(std::str::from_utf8(&rels_xml)?)?;
     let workbook_parent = workbook_part
@@ -328,15 +335,34 @@ fn strict_sheet_parts(path: &Path) -> Result<Vec<(String, String)>> {
 /// Patch one existing worksheet hyperlink and its external relationship.
 /// Only the selected worksheet part and its `.rels` part are rewritten; every
 /// other package part is copied unchanged. The source is never modified and an
-/// existing output path is rejected.
+/// existing output path is rejected. This is a convenience wrapper over the
+/// batch API.
 pub fn patch_external_hyperlink(
     source: impl AsRef<Path>,
     output: impl AsRef<Path>,
     patch: &ExternalHyperlinkPatch,
 ) -> Result<ExternalHyperlinkPatchReport> {
+    patch_external_hyperlinks(source, output, std::slice::from_ref(patch))?
+        .into_iter()
+        .next()
+        .context("single hyperlink patch returned no report")
+}
+
+/// Patch multiple worksheet hyperlinks with one package output pass and one
+/// package-level read-back validation. All sheet/cell and relationship
+/// mappings are prepared before the output file is created, so any invalid or
+/// ambiguous request rejects the whole batch without leaving a candidate.
+pub fn patch_external_hyperlinks(
+    source: impl AsRef<Path>,
+    output: impl AsRef<Path>,
+    patches: &[ExternalHyperlinkPatch],
+) -> Result<Vec<ExternalHyperlinkPatchReport>> {
     let source = source.as_ref();
     let output = output.as_ref();
-    validate_absolute_file_uri(&patch.target_uri)?;
+    ensure!(
+        !patches.is_empty(),
+        "hyperlink patch batch must not be empty"
+    );
     let canonical_source = fs::canonicalize(source).context("resolve source workbook")?;
     ensure!(
         source != output
@@ -351,20 +377,56 @@ pub fn patch_external_hyperlink(
     );
     validate_header_package(source)?;
 
-    let worksheet_part = sheet_parts(source)?
-        .remove(&patch.sheet_name)
-        .with_context(|| format!("worksheet {:?} does not exist", patch.sheet_name))?;
-    let relationships_part = relationships_part(&worksheet_part);
     let mut input_zip = ZipArchive::new(fs::File::open(source)?)?;
     let package_parts = input_zip.len();
-    let worksheet_xml = read_zip_part(&mut input_zip, &worksheet_part)?;
-    let rels_xml = read_zip_part(&mut input_zip, &relationships_part)?;
-    let (patched_worksheet, patched_rels, relationship_id) =
-        prepare_external_hyperlink_parts(&worksheet_xml, &rels_xml, patch)?;
-    let replacements = BTreeMap::from([
-        (worksheet_part.clone(), patched_worksheet),
-        (relationships_part.clone(), patched_rels),
-    ]);
+    let worksheet_parts = strict_sheet_parts_from_zip(&mut input_zip, source)?
+        .into_iter()
+        .collect::<BTreeMap<_, _>>();
+    let mut grouped = BTreeMap::<String, Vec<(usize, &ExternalHyperlinkPatch)>>::new();
+    let mut requested_cells = BTreeSet::new();
+    let mut reports = vec![None; patches.len()];
+    for (index, patch) in patches.iter().enumerate() {
+        validate_absolute_file_uri(&patch.target_uri)?;
+        let cell_reference = normalize_a1_cell(&patch.cell_reference)?;
+        let worksheet_part = worksheet_parts
+            .get(&patch.sheet_name)
+            .with_context(|| format!("worksheet {:?} does not exist", patch.sheet_name))?;
+        ensure!(
+            requested_cells.insert((worksheet_part.clone(), cell_reference.clone())),
+            "hyperlink patch batch contains duplicate target {}!{}",
+            patch.sheet_name,
+            cell_reference
+        );
+        grouped
+            .entry(worksheet_part.clone())
+            .or_default()
+            .push((index, patch));
+    }
+
+    let mut replacements = BTreeMap::new();
+    for (worksheet_part, grouped_patches) in grouped {
+        let relationships_part = relationships_part(&worksheet_part);
+        let worksheet_xml = read_zip_part(&mut input_zip, &worksheet_part)?;
+        let rels_xml = read_zip_part(&mut input_zip, &relationships_part)?;
+        let patch_refs = grouped_patches
+            .iter()
+            .map(|(_, patch)| *patch)
+            .collect::<Vec<_>>();
+        let (patched_worksheet, patched_rels, relationship_ids) =
+            prepare_external_hyperlinks_parts(&worksheet_xml, &rels_xml, &patch_refs)?;
+        for ((index, patch), relationship_id) in grouped_patches.iter().zip(relationship_ids) {
+            reports[*index] = Some(ExternalHyperlinkPatchReport {
+                sheet_name: patch.sheet_name.clone(),
+                cell_reference: normalize_a1_cell(&patch.cell_reference)?,
+                worksheet_part: worksheet_part.clone(),
+                relationships_part: relationships_part.clone(),
+                relationship_id,
+                package_parts,
+            });
+        }
+        replacements.insert(worksheet_part, patched_worksheet);
+        replacements.insert(relationships_part, patched_rels);
+    }
 
     if let Some(parent) = output
         .parent()
@@ -392,10 +454,12 @@ pub fn patch_external_hyperlink(
                 writer.add_directory(name, options)?;
                 continue;
             }
-            let mut bytes = Vec::new();
-            entry.read_to_end(&mut bytes)?;
             writer.start_file(&name, options)?;
-            writer.write_all(replacements.get(&name).unwrap_or(&bytes))?;
+            if let Some(bytes) = replacements.get(&name) {
+                writer.write_all(bytes)?;
+            } else {
+                std::io::copy(&mut entry, &mut writer)?;
+            }
         }
         writer.finish()?;
         Ok(())
@@ -410,22 +474,21 @@ pub fn patch_external_hyperlink(
         let _ = fs::remove_file(output);
         return Err(error).context("validate external hyperlink patch output");
     }
-    Ok(ExternalHyperlinkPatchReport {
-        sheet_name: patch.sheet_name.clone(),
-        cell_reference: normalize_a1_cell(&patch.cell_reference)?,
-        worksheet_part,
-        relationships_part,
-        relationship_id,
-        package_parts,
-    })
+    reports
+        .into_iter()
+        .map(|report| report.context("hyperlink patch completed without a report"))
+        .collect()
 }
 
-fn prepare_external_hyperlink_parts(
+fn prepare_external_hyperlinks_parts(
     worksheet_xml: &[u8],
     rels_xml: &[u8],
-    patch: &ExternalHyperlinkPatch,
-) -> Result<(Vec<u8>, Vec<u8>, String)> {
-    let normalized_cell = normalize_a1_cell(&patch.cell_reference)?;
+    patches: &[&ExternalHyperlinkPatch],
+) -> Result<(Vec<u8>, Vec<u8>, Vec<String>)> {
+    ensure!(
+        !patches.is_empty(),
+        "worksheet hyperlink patch list must not be empty"
+    );
     let worksheet_text =
         std::str::from_utf8(worksheet_xml).context("worksheet XML must be UTF-8")?;
     let worksheet = Document::parse(worksheet_text).context("parse worksheet XML")?;
@@ -434,31 +497,77 @@ fn prepare_external_hyperlink_parts(
         root.tag_name().namespace() == Some(MAIN_NS) && root.tag_name().name() == "worksheet",
         "expected a SpreadsheetML worksheet root"
     );
-    let matching_links = root
+    let all_links = root
         .descendants()
         .filter(|node| {
             node.is_element()
                 && node.tag_name().namespace() == Some(MAIN_NS)
                 && node.tag_name().name() == "hyperlink"
-                && node
-                    .attribute("ref")
+        })
+        .collect::<Vec<_>>();
+    let mut worksheet_edits = Vec::new();
+    let mut requested_relationships = BTreeSet::new();
+    let mut relationship_updates = Vec::new();
+    let mut normalized_cells = Vec::new();
+    for patch in patches {
+        let normalized_cell = normalize_a1_cell(&patch.cell_reference)?;
+        let matching_links = all_links
+            .iter()
+            .filter(|link| {
+                link.attribute("ref")
                     .and_then(|reference| normalize_a1_cell(reference).ok())
                     .as_deref()
                     == Some(normalized_cell.as_str())
-        })
-        .collect::<Vec<_>>();
-    ensure!(
-        matching_links.len() == 1,
-        "expected exactly one hyperlink for {}!{}, found {}",
-        patch.sheet_name,
-        normalized_cell,
-        matching_links.len()
-    );
-    let hyperlink = matching_links[0];
-    let relationship_id = hyperlink
-        .attribute((REL_NS, "id"))
-        .context("target hyperlink has no relationship id")?
-        .to_owned();
+            })
+            .collect::<Vec<_>>();
+        ensure!(
+            matching_links.len() == 1,
+            "expected exactly one hyperlink for {}!{}, found {}",
+            patch.sheet_name,
+            normalized_cell,
+            matching_links.len()
+        );
+        let hyperlink = *matching_links[0];
+        let relationship_id = hyperlink
+            .attribute((REL_NS, "id"))
+            .with_context(|| {
+                format!(
+                    "hyperlink {}!{} has no relationship id",
+                    patch.sheet_name, normalized_cell
+                )
+            })?
+            .to_owned();
+        ensure!(
+            requested_relationships.insert(relationship_id.clone()),
+            "multiple hyperlink patches resolve to relationship {relationship_id:?}"
+        );
+        let references = all_links
+            .iter()
+            .filter(|link| link.attribute((REL_NS, "id")) == Some(relationship_id.as_str()))
+            .count();
+        ensure!(
+            references == 1,
+            "hyperlink relationship {relationship_id:?} is shared by {references} worksheet links"
+        );
+        if let Some(display) = patch.display.as_deref() {
+            worksheet_edits.push(attribute_update_escaped(
+                worksheet_xml,
+                hyperlink,
+                "display",
+                display,
+            )?);
+        }
+        if let Some(location) = patch.location.as_deref() {
+            worksheet_edits.push(attribute_update_escaped(
+                worksheet_xml,
+                hyperlink,
+                "location",
+                location,
+            )?);
+        }
+        normalized_cells.push(normalized_cell);
+        relationship_updates.push((relationship_id, patch.target_uri.as_str()));
+    }
 
     let rels_text =
         std::str::from_utf8(rels_xml).context("worksheet relationships XML must be UTF-8")?;
@@ -468,48 +577,46 @@ fn prepare_external_hyperlink_parts(
             && rels.root_element().tag_name().name() == "Relationships",
         "worksheet relationships part has an unexpected root element"
     );
-    let matches = rels
-        .descendants()
-        .filter(|node| {
-            node.is_element()
-                && node.tag_name().namespace() == Some(PACKAGE_REL_NS)
-                && node.tag_name().name() == "Relationship"
-                && node.attribute("Id") == Some(relationship_id.as_str())
-        })
-        .collect::<Vec<_>>();
-    ensure!(
-        matches.len() == 1,
-        "hyperlink relationship {relationship_id:?} is missing or ambiguous"
-    );
-    let relationship = matches[0];
-    ensure!(
-        relationship
-            .attribute("Type")
-            .is_some_and(|kind| kind.ends_with("/hyperlink")),
-        "relationship {relationship_id:?} is not a hyperlink"
-    );
-    ensure!(
-        relationship.attribute("Target").is_some(),
-        "hyperlink relationship {relationship_id:?} has no Target attribute"
-    );
-
-    // Omitted display/location are preserved exactly; do not create empty attributes.
-    let mut worksheet_edits = Vec::new();
-    if let Some(display) = patch.display.as_deref() {
-        worksheet_edits.push(attribute_update_escaped(
-            worksheet_xml,
-            hyperlink,
-            "display",
-            display,
+    let mut rel_edits = Vec::new();
+    for (relationship_id, target_uri) in &relationship_updates {
+        let matches = rels
+            .descendants()
+            .filter(|node| {
+                node.is_element()
+                    && node.tag_name().namespace() == Some(PACKAGE_REL_NS)
+                    && node.tag_name().name() == "Relationship"
+                    && node.attribute("Id") == Some(relationship_id.as_str())
+            })
+            .collect::<Vec<_>>();
+        ensure!(
+            matches.len() == 1,
+            "hyperlink relationship {relationship_id:?} is missing or ambiguous"
+        );
+        let relationship = matches[0];
+        ensure!(
+            relationship
+                .attribute("Type")
+                .is_some_and(|kind| kind.ends_with("/hyperlink")),
+            "relationship {relationship_id:?} is not a hyperlink"
+        );
+        ensure!(
+            relationship.attribute("Target").is_some(),
+            "hyperlink relationship {relationship_id:?} has no Target attribute"
+        );
+        rel_edits.push(attribute_update_escaped(
+            rels_xml,
+            relationship,
+            "Target",
+            target_uri,
         )?);
-    }
-    if let Some(location) = patch.location.as_deref() {
-        worksheet_edits.push(attribute_update_escaped(
-            worksheet_xml,
-            hyperlink,
-            "location",
-            location,
-        )?);
+        if relationship.attribute("TargetMode") != Some("External") {
+            rel_edits.push(attribute_update_escaped(
+                rels_xml,
+                relationship,
+                "TargetMode",
+                "External",
+            )?);
+        }
     }
     let patched_worksheet = if worksheet_edits.is_empty() {
         worksheet_xml.to_vec()
@@ -519,25 +626,17 @@ fn prepare_external_hyperlink_parts(
             .context("patched worksheet XML is invalid")?;
         patched
     };
-
-    let mut rel_edits = vec![attribute_update_escaped(
-        rels_xml,
-        relationship,
-        "Target",
-        &patch.target_uri,
-    )?];
-    if relationship.attribute("TargetMode") != Some("External") {
-        rel_edits.push(attribute_update_escaped(
-            rels_xml,
-            relationship,
-            "TargetMode",
-            "External",
-        )?);
-    }
     let patched_rels = apply_xml_edits(rels_xml, rel_edits)?;
     Document::parse(std::str::from_utf8(&patched_rels)?)
         .context("patched worksheet relationships XML is invalid")?;
-    Ok((patched_worksheet, patched_rels, relationship_id))
+    Ok((
+        patched_worksheet,
+        patched_rels,
+        relationship_updates
+            .into_iter()
+            .map(|(relationship_id, _)| relationship_id)
+            .collect(),
+    ))
 }
 
 fn validate_absolute_file_uri(target: &str) -> Result<()> {
@@ -554,7 +653,9 @@ fn validate_absolute_file_uri(target: &str) -> Result<()> {
                 || path_or_authority
                     .split_once('/')
                     .is_some_and(|(host, _)| !host.is_empty()))
-            && !target.chars().any(|ch| ch.is_control() || ch == '\\'),
+            && !target
+                .chars()
+                .any(|ch| ch.is_control() || ch.is_whitespace() || ch == '\\'),
         "hyperlink target must contain an absolute filesystem path"
     );
     Ok(())
@@ -2519,8 +2620,8 @@ mod outline_copy_tests {
 #[cfg(test)]
 mod external_hyperlink_tests {
     use super::{
-        patch_external_hyperlink, prepare_external_hyperlink_parts, ExternalHyperlinkPatch,
-        MAIN_NS, PACKAGE_REL_NS, REL_NS,
+        patch_external_hyperlink, patch_external_hyperlinks, prepare_external_hyperlinks_parts,
+        ExternalHyperlinkPatch, MAIN_NS, PACKAGE_REL_NS, REL_NS,
     };
     use anyhow::Result;
     use roxmltree::Document;
@@ -2577,12 +2678,18 @@ mod external_hyperlink_tests {
             ),
             (
                 "xl/worksheets/sheetB.xml".to_owned(),
-                format!(r#"<s:worksheet xmlns:s="{MAIN_NS}"><s:sheetData/></s:worksheet>"#)
-                    .into_bytes(),
+                format!(r#"<s:worksheet xmlns:s="{MAIN_NS}" xmlns:r="{REL_NS}"><s:sheetData/><s:hyperlinks><s:hyperlink ref="A1" r:id="h1"/></s:hyperlinks></s:worksheet>"#).into_bytes(),
             ),
             (
                 "xl/worksheets/_rels/sheetA.xml.rels".to_owned(),
                 sheet_a_rels.into_bytes(),
+            ),
+            (
+                "xl/worksheets/_rels/sheetB.xml.rels".to_owned(),
+                format!(
+                    r#"<Relationships xmlns="{PACKAGE_REL_NS}"><Relationship Id="h1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="mnt/c/old.xlsx"/></Relationships>"#
+                )
+                .into_bytes(),
             ),
             ("custom/opaque.bin".to_owned(), vec![0, 1, 2, 255]),
         ])
@@ -2720,26 +2827,109 @@ mod external_hyperlink_tests {
         let rels = format!(
             r#"<Relationships xmlns="{PACKAGE_REL_NS}"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="file:///tmp/old.xlsx" TargetMode="External"/></Relationships>"#
         );
-        assert!(
-            prepare_external_hyperlink_parts(duplicate.as_bytes(), rels.as_bytes(), &patch)
-                .unwrap_err()
-                .to_string()
-                .contains("exactly one hyperlink")
-        );
+        assert!(prepare_external_hyperlinks_parts(
+            duplicate.as_bytes(),
+            rels.as_bytes(),
+            &[&patch]
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("exactly one hyperlink"));
 
         let missing_relationship = format!(
             r#"<s:worksheet xmlns:s="{MAIN_NS}" xmlns:r="{REL_NS}"><s:hyperlinks><s:hyperlink ref="A1" r:id="missing"/></s:hyperlinks></s:worksheet>"#
         );
-        assert!(prepare_external_hyperlink_parts(
+        assert!(prepare_external_hyperlinks_parts(
             missing_relationship.as_bytes(),
             rels.as_bytes(),
-            &patch
+            &[&patch]
         )
         .unwrap_err()
         .to_string()
         .contains("missing or ambiguous"));
         assert!(ExternalHyperlinkPatch::new("审计", "A1", "relative/path.xlsx").is_err());
         assert!(ExternalHyperlinkPatch::new("审计", "A1", "file://server").is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn batch_patches_multiple_links_once_and_rejects_a_missing_member_before_output() -> Result<()>
+    {
+        let source = temp_path("batch-source.xlsx");
+        let output = temp_path("batch-output.xlsx");
+        let original = fixture_entries();
+        write_entries(&source, &original)?;
+
+        let valid = ExternalHyperlinkPatch::new("审计", "A1", "file:///mnt/c/a.xlsx")?;
+        let missing = ExternalHyperlinkPatch::new("审计", "C9", "file:///mnt/c/missing.xlsx")?;
+        assert!(patch_external_hyperlinks(&source, &output, &[valid.clone(), missing]).is_err());
+        assert!(!output.exists(), "failed batch must not create a candidate");
+        assert_eq!(
+            read_entries(&source)?,
+            original,
+            "source must remain unchanged"
+        );
+
+        let mut second = ExternalHyperlinkPatch::new("审计", "B1", "file:///mnt/c/b.xlsx")?;
+        second.display = Some("第二个链接".to_owned());
+        second.location = Some("结果!B1".to_owned());
+        let third = ExternalHyperlinkPatch::new("其他", "A1", "file:///mnt/c/c.xlsx")?;
+        let reports = patch_external_hyperlinks(&source, &output, &[valid, second, third])?;
+        assert_eq!(reports.len(), 3);
+        assert_eq!(reports[0].relationship_id, "rId1");
+        assert_eq!(reports[1].relationship_id, "rId2");
+        assert_eq!(reports[2].relationship_id, "h1");
+
+        let actual = read_entries(&output)?;
+        for (name, bytes) in &original {
+            if name != "xl/worksheets/sheetA.xml"
+                && name != "xl/worksheets/_rels/sheetA.xml.rels"
+                && name != "xl/worksheets/sheetB.xml"
+                && name != "xl/worksheets/_rels/sheetB.xml.rels"
+            {
+                assert_eq!(actual[name], *bytes, "unexpected package change: {name}");
+            }
+        }
+        let worksheet = Document::parse(std::str::from_utf8(&actual["xl/worksheets/sheetA.xml"])?)?;
+        let link_a1 = worksheet
+            .descendants()
+            .find(|node| node.is_element() && node.attribute("ref") == Some("A1"))
+            .unwrap();
+        let link_b1 = worksheet
+            .descendants()
+            .find(|node| node.is_element() && node.attribute("ref") == Some("B1"))
+            .unwrap();
+        assert_eq!(link_a1.attribute("display"), Some("旧显示"));
+        assert_eq!(link_b1.attribute("display"), Some("第二个链接"));
+        assert_eq!(link_b1.attribute("location"), Some("结果!B1"));
+
+        let rels = Document::parse(std::str::from_utf8(
+            &actual["xl/worksheets/_rels/sheetA.xml.rels"],
+        )?)?;
+        let target_a = rels
+            .descendants()
+            .find(|node| node.is_element() && node.attribute("Id") == Some("rId1"))
+            .unwrap();
+        let target_b = rels
+            .descendants()
+            .find(|node| node.is_element() && node.attribute("Id") == Some("rId2"))
+            .unwrap();
+        assert_eq!(target_a.attribute("Target"), Some("file:///mnt/c/a.xlsx"));
+        assert_eq!(target_a.attribute("TargetMode"), Some("External"));
+        assert_eq!(target_b.attribute("Target"), Some("file:///mnt/c/b.xlsx"));
+        assert_eq!(target_b.attribute("TargetMode"), Some("External"));
+        let rels_b = Document::parse(std::str::from_utf8(
+            &actual["xl/worksheets/_rels/sheetB.xml.rels"],
+        )?)?;
+        let target_c = rels_b
+            .descendants()
+            .find(|node| node.is_element() && node.attribute("Id") == Some("h1"))
+            .unwrap();
+        assert_eq!(target_c.attribute("Target"), Some("file:///mnt/c/c.xlsx"));
+        assert_eq!(target_c.attribute("TargetMode"), Some("External"));
+
+        fs::remove_file(source)?;
+        fs::remove_file(output)?;
         Ok(())
     }
 }

@@ -1,0 +1,33 @@
+# GPT 修改记录：OOXML 外部文件超链接批量修复
+
+- 时间：2026-10-24（Asia/Shanghai）
+- 执行者：Codex
+- Git 基线：main `a56500c`；Audit 已将上一单条超链接原语提交 cherry-pick 到 audit-dev。
+- WIP：main 上三个 Audit 文件有未提交修改，未触碰、暂存或提交；pytools-dev 的修改未触碰。
+- 【组件版本】：不升级；不改依赖、默认路由或产品业务代码。
+
+## 修改目的
+
+避免按 Audit Issue 逐条调用单条 OOXML 超链接补丁导致整本 XLSX 重复读写；为工作簿提供一次提交多条超链接的批量 API。
+
+## 修改文件与行为
+
+- `crates/ooxml-patch/src/lib.rs`：新增 `patch_external_hyperlinks(source, candidate, &[ExternalHyperlinkPatch])`；单条 `patch_external_hyperlink` 保留为批量 API 包装。按 workbook relationship 一次解析 sheet identity，按 sheet 分组，每个目标 worksheet 和 rels 部件只读取/解析一次；整批预检所有单元格和关系映射后才创建输出。不同 hyperlink 不得共享 relationship id，避免修改一个 target 意外影响未选中的链接。所有条目通过后仅进行一次 ZIP 输出和一次包级回读验证。任何映射失败都不会创建候选文件。源文件不变，拒绝覆盖既有输出。
+- 增补合成测试：同一 sheet 多目标、跨 sheet 批量、TargetMode 与 display/location 读回、多部件保留、某项缺失时无候选输出、源文件不变；单条 API wrapper 与歧义映射测试继续通过。
+- `GPT修改记录/20261024_ooxml-external-hyperlink-batch-patch.txt`：本记录。
+
+## 测试
+
+- `rustfmt --edition 2021 crates/ooxml-patch/src/lib.rs`：通过。
+- `cargo test -p ooxml-patch external_hyperlink_tests`：通过，3/3。
+- `cargo test -p ooxml-patch`：通过，10/10；doc tests 无失败（全量测试在最后一处 whitespace 校验微调前执行；微调后定向 3/3 重跑）。
+- 在本机 WSL Rust 工具链执行；未跑真实 Audit CLI、148 条 Issue 性能测量、全 workspace 测试或目标 Linux 验收。
+
+## 状态与限制
+
+- 当前批量实现每个被修改的 worksheet/rels 部件只做一次准备解析，整个包一次输出、一次完整读回验证；安全签名/宏检查仍会扫描源包一次。
+- 该 API 尚未接入 Audit 生产入口，也没有性能结论。Audit 应以批量调用测量包含 Rust 写出、OOXML patch、验证的完整流程，并核对真实 XLSX 链接和 Python display 属性。
+
+## 回滚
+
+不含删除项。撤销时仅回退本记录所述批量 API、wrapper 调整和相关测试，再移除此记录；不回退既有单条 API 提交及同期 Audit/PyTools 工作。
