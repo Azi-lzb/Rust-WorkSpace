@@ -134,6 +134,9 @@ def make_second_source(path: Path) -> None:
     very_hidden = wb.create_sheet("VeryHidden")
     very_hidden.sheet_state = "veryHidden"
     very_hidden["A4"] = "深度隐藏工作表数据"
+    offset = wb.create_sheet("Offset")
+    offset["D5"] = "偏移区域起点"
+    offset["F6"] = 3.5
     wb.save(path)
     if path.suffix.lower() == ".xlsm":
         mark_macro_enabled(path)
@@ -507,6 +510,25 @@ def main() -> int:
         rust_used, used_report = run_rust("summary-used-range", sources, root / "rust_used")
         rust_comments, comments_report = run_rust_comments(template, source, root / "rust_comments")
         assert_equivalent(python_used, rust_used, "6-1 used-range summary")
+        used_sheets, _ = workbook_projection(rust_used)
+        offset_values = {
+            address: used_sheets[0]["values"].get(address)
+            for address in ("A19", "B19", "C19", "G19", "A20", "B20", "C20", "I20")
+        }
+        expected_offset_values = {
+            "A19": "sample_2026-07-31",
+            "B19": "Offset",
+            "C19": 5,
+            "G19": "偏移区域起点",
+            "A20": "sample_2026-07-31",
+            "B20": "Offset",
+            "C20": 6,
+            "I20": 3.5,
+        }
+        if offset_values != expected_offset_values:
+            raise AssertionError(
+                f"offset used-range coordinates changed: {offset_values}"
+            )
         assert_equivalent(
             python_comments,
             rust_comments,
@@ -578,7 +600,7 @@ def main() -> int:
             nocom_difference_fields = projection_difference_fields(nocom_used, rust_used)
             nocom_matches_rust = not nocom_difference_fields
 
-        if used_report.get("rows") != 17 or used_report.get("files") != 2:
+        if used_report.get("rows") != 19 or used_report.get("files") != 2:
             raise AssertionError(f"unexpected used-range summary report: {used_report}")
         if used_report.get("execution", {}).get("ooxml_error_cells_patched") != 7:
             raise AssertionError(f"expected seven preserved Excel error values: {used_report}")
@@ -602,6 +624,7 @@ def main() -> int:
                     "macro-free XLSM source with macro-enabled workbook content type",
                     "empty worksheet produces the default-bound row seen in PyCode",
                     "hidden and veryHidden worksheets are included in workbook order",
+                    "offset used range retains source row numbers and blank leading columns",
                     "format-only used-range tail",
                     "merged range used as an extent",
                     "cached formula values and missing formula-cache semantics",
@@ -618,6 +641,12 @@ def main() -> int:
                 "formulas_merges_defined_names_print_area_page_setup": "exact (default portrait normalized)",
             },
             "rust_execution": used_report.get("execution"),
+            "offset_used_range_probe": {
+                "source_sheet": "Offset",
+                "source_bounds": "D5:F6",
+                "projected_cells": offset_values,
+                "comparison": "exact with PyCode",
+            },
             "unknown_cell_error_probe": {
                 "input": "synthetic XLSX t=e cell with value #DATA!",
                 "pycode": {"saved": True, "output_value": "#DATA!", "output_type": "s"},

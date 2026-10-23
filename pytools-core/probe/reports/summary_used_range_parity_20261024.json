@@ -14,13 +14,14 @@
     "source_workbooks": 2
   },
   "scenario": {
-    "rows": 17,
+    "rows": 19,
     "features": [
       "actual Rust summary-used-range CLI",
       "multiple workbooks and worksheets in selection order",
       "macro-free XLSM source with macro-enabled workbook content type",
       "empty worksheet produces the default-bound row seen in PyCode",
       "hidden and veryHidden worksheets are included in workbook order",
+      "offset used range retains source row numbers and blank leading columns",
       "format-only used-range tail",
       "merged range used as an extent",
       "cached formula values and missing formula-cache semantics",
@@ -39,10 +40,25 @@
   "rust_execution": {
     "reader_engine": "calamine",
     "writer_engine": "rust_xlsxwriter",
-    "read_elapsed_ms": 185,
-    "write_elapsed_ms": 222,
-    "total_elapsed_ms": 448,
+    "read_elapsed_ms": 150,
+    "write_elapsed_ms": 193,
+    "total_elapsed_ms": 376,
     "ooxml_error_cells_patched": 7
+  },
+  "offset_used_range_probe": {
+    "source_sheet": "Offset",
+    "source_bounds": "D5:F6",
+    "projected_cells": {
+      "A19": "sample_2026-07-31",
+      "B19": "Offset",
+      "C19": 5,
+      "G19": "偏移区域起点",
+      "A20": "sample_2026-07-31",
+      "B20": "Offset",
+      "C20": 6,
+      "I20": 3.5
+    },
+    "comparison": "exact with PyCode"
   },
   "unknown_cell_error_probe": {
     "input": "synthetic XLSX t=e cell with value #DATA!",
@@ -109,24 +125,24 @@
       ],
       "cell_differences": {
         "汇总.values": {
-          "count": 21,
+          "count": 28,
           "coordinates_sample": [
-            "A18",
+            "A20",
             "B15",
             "B17",
             "B18",
+            "B20",
             "C15",
             "C16",
             "C17",
             "C18",
-            "D15",
-            "D16",
-            "D17",
-            "D18"
+            "C19",
+            "C20",
+            "D15"
           ],
           "examples": [
             {
-              "cell": "A18",
+              "cell": "A20",
               "pycode": "sample_2026-07-31",
               "nocom_pytools": null
             },
@@ -143,49 +159,49 @@
             {
               "cell": "B18",
               "pycode": "VeryHidden",
+              "nocom_pytools": "Offset"
+            },
+            {
+              "cell": "B20",
+              "pycode": "Offset",
               "nocom_pytools": null
             },
             {
               "cell": "C15",
               "pycode": 1,
               "nocom_pytools": 2
-            },
-            {
-              "cell": "C16",
-              "pycode": 2,
-              "nocom_pytools": 3
             }
           ]
         },
         "汇总.types": {
-          "count": 16,
+          "count": 20,
           "coordinates_sample": [
-            "A18",
-            "B18",
-            "C18",
+            "A20",
+            "B20",
+            "C20",
             "D15",
             "D16",
             "D17",
             "D18",
             "E16",
             "E17",
-            "H5",
-            "I5",
-            "J5"
+            "G18",
+            "G19",
+            "H5"
           ],
           "examples": [
             {
-              "cell": "A18",
+              "cell": "A20",
               "pycode": "s",
               "nocom_pytools": null
             },
             {
-              "cell": "B18",
+              "cell": "B20",
               "pycode": "s",
               "nocom_pytools": null
             },
             {
-              "cell": "C18",
+              "cell": "C20",
               "pycode": "n",
               "nocom_pytools": null
             },
@@ -207,11 +223,11 @@
           ]
         },
         "汇总.styles": {
-          "count": 17,
+          "count": 21,
           "coordinates_sample": [
-            "A18",
-            "B18",
-            "C18",
+            "A20",
+            "B20",
+            "C20",
             "D15",
             "D16",
             "D17",
@@ -219,12 +235,12 @@
             "E16",
             "E17",
             "E4",
-            "H5",
-            "I5"
+            "G18",
+            "G19"
           ],
           "examples": [
             {
-              "cell": "A18",
+              "cell": "A20",
               "pycode": {
                 "number_format": "General",
                 "bold": false,
@@ -234,7 +250,7 @@
               "nocom_pytools": null
             },
             {
-              "cell": "B18",
+              "cell": "B20",
               "pycode": {
                 "number_format": "General",
                 "bold": false,
@@ -244,7 +260,7 @@
               "nocom_pytools": null
             },
             {
-              "cell": "C18",
+              "cell": "C20",
               "pycode": {
                 "number_format": "General",
                 "bold": false,
@@ -289,14 +305,14 @@
       "pycode_dimensions": [
         {
           "name": "汇总",
-          "rows": 18,
+          "rows": 20,
           "columns": 14
         }
       ],
       "nocom_pytools_dimensions": [
         {
           "name": "汇总",
-          "rows": 17,
+          "rows": 19,
           "columns": 14
         }
       ]
