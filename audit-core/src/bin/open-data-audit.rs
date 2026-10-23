@@ -16,7 +16,10 @@ use audit_core::{
         S1ConditionalMetadata,
     },
     s1_formula_audit::{extract_s1_formula_issues, S1FormulaMetadata},
-    s1_history::{process_s1_history, S1HistoryRequest},
+    s1_history::{
+        process_s1_history, read_s1_history_workbook, S1HistoryRequest,
+        S1HistoryWorkbookReadSummary,
+    },
     s1_structure_compare::{
         compare_s1_source_structure, read_s1_structure_template_with_required_sheets,
     },
@@ -287,9 +290,17 @@ struct S1FormulaAuditArgs {
 
 #[derive(Debug, Args)]
 struct S1HistoryClassifyArgs {
-    /// JSON document with period, current_issues and prior history Issue arrays.
+    /// JSON document with period and current_issues; history may also be embedded.
     #[arg(long)]
     input: PathBuf,
+
+    /// Optional XLSX/XLSM history workbook; when supplied it replaces JSON history.
+    #[arg(long)]
+    history_workbook: Option<PathBuf>,
+
+    /// Optional preferred history sheet, falling back to the standard and legacy sheet names.
+    #[arg(long, requires = "history_workbook")]
+    history_sheet: Option<String>,
 
     /// Emit developer-view JSON progress events with stage timing details.
     #[arg(long, default_value_t = false)]
@@ -835,11 +846,116 @@ fn run_s1_history_classify(arguments: S1HistoryClassifyArgs) -> Result<()> {
         eprintln!("正在按历史审核记录归类 S1-F01 审核项…");
     }
 
-    let request: S1HistoryRequest = serde_json::from_str(
+    let mut request: S1HistoryRequest = serde_json::from_str(
         &fs::read_to_string(&arguments.input)
             .with_context(|| format!("读取 S1 历史审核数据 {}", arguments.input.display()))?,
     )
     .with_context(|| format!("解析 S1 历史审核数据 {}", arguments.input.display()))?;
+    let history_read_summary: Option<S1HistoryWorkbookReadSummary> = if let Some(history_path) =
+        arguments.history_workbook.as_deref()
+    {
+        let history_engine = if history_path.is_file()
+            && history_path
+                .extension()
+                .and_then(|extension| extension.to_str())
+                .is_some_and(|extension| {
+                    extension.eq_ignore_ascii_case("xlsx") || extension.eq_ignore_ascii_case("xlsm")
+                }) {
+            "calamine"
+        } else {
+            "none"
+        };
+        let history_started = Instant::now();
+        let history_started_at = chrono::Local::now().to_rfc3339();
+        if arguments.developer_view {
+            eprintln!(
+                "{}",
+                serde_json::to_string(&serde_json::json!({
+                    "type": "progress",
+                    "product": "open-data-audit",
+                    "feature": "S1-F01",
+                    "step": "history_workbook_read",
+                    "status": "started",
+                    "engine": history_engine,
+                    "started_at": history_started_at
+                }))?
+            );
+        } else {
+            eprintln!("正在读取 S1 历史工作簿…");
+        }
+        let loaded =
+            match read_s1_history_workbook(history_path, arguments.history_sheet.as_deref()) {
+                Ok(loaded) => loaded,
+                Err(error) => {
+                    if arguments.developer_view {
+                        eprintln!(
+                            "{}",
+                            serde_json::to_string(&serde_json::json!({
+                                "type": "progress",
+                                "product": "open-data-audit",
+                                "feature": "S1-F01",
+                                "step": "history_workbook_read",
+                                "status": "failed",
+                                "engine": history_engine,
+                                "elapsed_ms": history_started.elapsed().as_millis(),
+                                "error": format!("{error:#}")
+                            }))?
+                        );
+                    } else {
+                        eprintln!(
+                            "S1 历史工作簿读取失败；引擎 {}，耗时 {} ms：{error:#}",
+                            history_engine,
+                            history_started.elapsed().as_millis()
+                        );
+                    }
+                    return Err(error);
+                }
+            };
+        request.history = loaded.issues;
+        let summary = loaded.summary;
+        if arguments.developer_view {
+            eprintln!(
+                "{}",
+                serde_json::to_string(&serde_json::json!({
+                    "type": "progress",
+                    "product": "open-data-audit",
+                    "feature": "S1-F01",
+                    "step": "history_workbook_read",
+                    "status": "completed",
+                    "engine": summary.reader,
+                    "sheet_name": summary.sheet_name,
+                    "rows_total": summary.rows_total,
+                    "rows_read": summary.rows_read,
+                    "rows_skipped": summary.rows_skipped,
+                    "started_at": history_started_at,
+                    "finished_at": chrono::Local::now().to_rfc3339(),
+                    "elapsed_ms": summary.elapsed_ms
+                }))?
+            );
+        } else {
+            match summary.status {
+                    "missing_file" => eprintln!(
+                        "S1 历史工作簿不存在，按空历史处理；未调用 Excel 读取引擎，耗时 {} ms。",
+                        summary.elapsed_ms
+                    ),
+                    "sheet_missing" => eprintln!(
+                        "S1 历史工作簿未找到支持的历史工作表，按空历史处理；引擎 {}，耗时 {} ms。",
+                        summary.reader, summary.elapsed_ms
+                    ),
+                    _ => eprintln!(
+                        "S1 历史工作簿读取完成：引擎 {}，工作表 {}，读取 {} 条、跳过 {} 条；耗时 {} ms。",
+                        summary.reader,
+                        summary.sheet_name.as_deref().unwrap_or("未知"),
+                        summary.rows_read,
+                        summary.rows_skipped,
+                        summary.elapsed_ms
+                    ),
+                }
+        }
+        Some(summary)
+    } else {
+        None
+    };
     let history_rows = request.history.len();
     let batch_id = request.batch_id.clone();
     let mut result = process_s1_history(request);
@@ -882,7 +998,11 @@ fn run_s1_history_classify(arguments: S1HistoryClassifyArgs) -> Result<()> {
         );
     }
 
-    println!("{}", serde_json::to_string_pretty(&result)?);
+    let mut output = serde_json::to_value(&result)?;
+    if let Some(summary) = history_read_summary {
+        output["history_workbook_read"] = serde_json::to_value(summary)?;
+    }
+    println!("{}", serde_json::to_string_pretty(&output)?);
     Ok(())
 }
 

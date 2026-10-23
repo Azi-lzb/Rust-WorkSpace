@@ -1,8 +1,18 @@
 //! S1 issue history classification and manual feedback carry-over.
 
 use crate::models::Issue;
+use anyhow::{ensure, Context, Result};
+use excel_reader::{read_value_columns_with_iso_dates, CellValue, SheetValues};
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{BTreeMap, HashMap, HashSet},
+    path::Path,
+    time::Instant,
+};
+
+const HISTORY_AUDIT_SHEET: &str = "核查表校验结果";
+const LEGACY_HISTORY_SHEET: &str = "历史审核结果";
+const INITIAL_HISTORY_READ_COLUMNS: usize = 14;
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct S1HistoryRequest {
@@ -38,6 +48,316 @@ pub struct S1HistoryResult {
     pub resolved_issues: Vec<Issue>,
     pub merged_history: Vec<Issue>,
     pub summary: S1HistorySummary,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct S1HistoryWorkbookReadSummary {
+    pub status: &'static str,
+    pub reader: &'static str,
+    pub sheet_name: Option<String>,
+    pub rows_total: usize,
+    pub rows_read: usize,
+    pub rows_skipped: usize,
+    pub elapsed_ms: u128,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct S1HistoryWorkbookReadResult {
+    pub issues: Vec<Issue>,
+    pub summary: S1HistoryWorkbookReadSummary,
+}
+
+/// Read stored values from the Audit history sheet using the shared Calamine reader.
+///
+/// A missing file or supported history sheet matches the Python native adapter's
+/// empty-history behavior. Formula values come from stored caches; this stage does
+/// not recalculate or modify the workbook.
+pub fn read_s1_history_workbook(
+    path: impl AsRef<Path>,
+    requested_sheet: Option<&str>,
+) -> Result<S1HistoryWorkbookReadResult> {
+    let started = Instant::now();
+    let path = path.as_ref();
+    if !path.is_file() {
+        return Ok(S1HistoryWorkbookReadResult {
+            issues: Vec::new(),
+            summary: S1HistoryWorkbookReadSummary {
+                status: "missing_file",
+                reader: "none",
+                sheet_name: None,
+                rows_total: 0,
+                rows_read: 0,
+                rows_skipped: 0,
+                elapsed_ms: started.elapsed().as_millis(),
+            },
+        });
+    }
+    ensure!(
+        path.extension()
+            .and_then(|extension| extension.to_str())
+            .is_some_and(|extension| {
+                extension.eq_ignore_ascii_case("xlsx") || extension.eq_ignore_ascii_case("xlsm")
+            }),
+        "S1 历史工作簿读取目前支持 .xlsx 和 .xlsm"
+    );
+
+    let mut sheets = read_value_columns_with_iso_dates(path, INITIAL_HISTORY_READ_COLUMNS)
+        .with_context(|| format!("读取 S1 历史工作簿值：{}", path.display()))?;
+    let selected_name = select_history_sheet_name(&sheets, requested_sheet);
+    let Some(selected_name) = selected_name else {
+        return Ok(S1HistoryWorkbookReadResult {
+            issues: Vec::new(),
+            summary: S1HistoryWorkbookReadSummary {
+                status: "sheet_missing",
+                reader: "calamine",
+                sheet_name: None,
+                rows_total: 0,
+                rows_read: 0,
+                rows_skipped: 0,
+                elapsed_ms: started.elapsed().as_millis(),
+            },
+        });
+    };
+    let selected_extent = sheets
+        .iter()
+        .find(|sheet| sheet.name == selected_name)
+        .map(|sheet| sheet.max_column)
+        .unwrap_or(INITIAL_HISTORY_READ_COLUMNS);
+    if selected_extent > INITIAL_HISTORY_READ_COLUMNS {
+        sheets = read_value_columns_with_iso_dates(path, selected_extent)
+            .with_context(|| format!("读取 S1 历史工作簿完整表头：{}", path.display()))?;
+    }
+    let sheet = sheets
+        .iter()
+        .find(|sheet| sheet.name == selected_name)
+        .with_context(|| format!("Calamine 重读后缺少历史工作表：{selected_name}"))?;
+
+    let issues = parse_history_sheet(sheet);
+    let rows_total = sheet.max_row.saturating_sub(1);
+    let rows_read = issues.len();
+    let rows_skipped = rows_total.saturating_sub(rows_read);
+    Ok(S1HistoryWorkbookReadResult {
+        issues,
+        summary: S1HistoryWorkbookReadSummary {
+            status: if rows_total == 0 {
+                "empty_sheet"
+            } else {
+                "loaded"
+            },
+            reader: "calamine",
+            sheet_name: Some(selected_name),
+            rows_total,
+            rows_read,
+            rows_skipped,
+            elapsed_ms: started.elapsed().as_millis(),
+        },
+    })
+}
+
+fn select_history_sheet_name(sheets: &[SheetValues], requested: Option<&str>) -> Option<String> {
+    let exists = |name: &str| sheets.iter().any(|sheet| sheet.name == name);
+    requested
+        .filter(|name| exists(name))
+        .or_else(|| exists(HISTORY_AUDIT_SHEET).then_some(HISTORY_AUDIT_SHEET))
+        .or_else(|| exists(LEGACY_HISTORY_SHEET).then_some(LEGACY_HISTORY_SHEET))
+        .map(str::to_owned)
+}
+
+fn parse_history_sheet(sheet: &SheetValues) -> Vec<Issue> {
+    let mut rows = BTreeMap::<usize, BTreeMap<usize, CellValue>>::new();
+    for (address, value) in &sheet.values {
+        if let Some((row, column)) = parse_cell_address(address) {
+            rows.entry(row).or_default().insert(column, value.clone());
+        }
+    }
+    let Some(header_row) = rows.get(&1) else {
+        return Vec::new();
+    };
+    let mut headers = HashMap::<String, usize>::new();
+    for (column, value) in header_row {
+        let name = python_truthy_text(Some(value)).trim().to_owned();
+        if !name.is_empty() {
+            headers.insert(name, *column);
+        }
+    }
+
+    let mut issues = Vec::new();
+    for (_, row) in rows.range(2..) {
+        let source_file = history_text(row, &headers, "工作簿名");
+        let sheet_name = history_text(row, &headers, "工作表名");
+        let target_cell = history_text(row, &headers, "定位单元格");
+        let rule_id = history_text(row, &headers, "规则编号");
+        if ![&source_file, &sheet_name, &target_cell, &rule_id]
+            .iter()
+            .any(|value| !value.is_empty())
+        {
+            continue;
+        }
+        let indicator = history_text(row, &headers, "校验指标");
+        let identity = if rule_id.is_empty() {
+            let indicator = if indicator.is_empty() {
+                "校验指标未识别"
+            } else {
+                indicator.as_str()
+            };
+            format!("{source_file}｜{sheet_name}｜{target_cell}｜{indicator}")
+        } else {
+            rule_id
+        };
+        let description = history_text(row, &headers, "描述");
+        let severity = history_text(row, &headers, "错误类型");
+        issues.push(Issue {
+            issue_id: identity.clone(),
+            period: history_text(row, &headers, "数据期"),
+            batch_id: String::new(),
+            audit_time: String::new(),
+            triggered: true,
+            status: String::new(),
+            first_seen_period: String::new(),
+            previous_seen_period: String::new(),
+            consecutive_count: 1,
+            org_code: String::new(),
+            org_name: String::new(),
+            report_code: String::new(),
+            sheet_name,
+            rule_id: identity,
+            severity: if severity.is_empty() {
+                "错误".to_owned()
+            } else {
+                severity
+            },
+            formula_cell: target_cell.clone(),
+            target_cell,
+            target_value: history_value(row, &headers, "当前值"),
+            formula_result: serde_json::Value::String(String::new()),
+            message: description.clone(),
+            source_file,
+            audit_file: String::new(),
+            check_field: indicator,
+            check_type: history_text(row, &headers, "校验类型"),
+            comparison_value: history_value(row, &headers, "对比值"),
+            reference_value: serde_json::Value::String(String::new()),
+            difference_value: history_value(row, &headers, "差值"),
+            detail: description,
+            institution_feedback: history_text(row, &headers, "历史校验说明"),
+            auditor_opinion: history_text(row, &headers, "审核意见"),
+        });
+    }
+    issues
+}
+
+fn history_text(
+    row: &BTreeMap<usize, CellValue>,
+    headers: &HashMap<String, usize>,
+    header: &str,
+) -> String {
+    headers
+        .get(header)
+        .and_then(|column| row.get(column))
+        .map(|value| python_truthy_text(Some(value)))
+        .unwrap_or_default()
+}
+
+fn history_value(
+    row: &BTreeMap<usize, CellValue>,
+    headers: &HashMap<String, usize>,
+    header: &str,
+) -> serde_json::Value {
+    let Some(column) = headers.get(header) else {
+        return serde_json::Value::String(String::new());
+    };
+    row.get(column)
+        .map(cell_value_to_json)
+        .unwrap_or(serde_json::Value::Null)
+}
+
+fn python_truthy_text(value: Option<&CellValue>) -> String {
+    match value {
+        None | Some(CellValue::Empty) | Some(CellValue::Boolean(false)) => String::new(),
+        Some(CellValue::Integer(0)) => String::new(),
+        Some(CellValue::Number(value)) if *value == 0.0 => String::new(),
+        Some(CellValue::Text(value)) => value.clone(),
+        Some(CellValue::Number(value)) | Some(CellValue::DateTimeSerial(value)) => {
+            python_float_text(*value)
+        }
+        Some(CellValue::Integer(value)) => value.to_string(),
+        Some(CellValue::Boolean(value)) => if *value { "True" } else { "False" }.to_owned(),
+        Some(CellValue::DateTimeIso(value)) => python_datetime_text(value),
+        Some(CellValue::DurationIso(value)) | Some(CellValue::Error(value)) => value.clone(),
+    }
+}
+
+fn python_float_text(value: f64) -> String {
+    if value == 0.0 {
+        return if value.is_sign_negative() {
+            "-0.0".to_owned()
+        } else {
+            "0.0".to_owned()
+        };
+    }
+    let text = value.to_string();
+    if text.contains('.') || text.contains('e') || text.contains('E') {
+        text
+    } else {
+        format!("{text}.0")
+    }
+}
+
+fn python_datetime_text(value: &str) -> String {
+    let (date_time, fraction) = value.split_once('.').unwrap_or((value, ""));
+    let mut text = date_time.replace('T', " ");
+    let fraction = fraction.trim_end_matches('0');
+    if !fraction.is_empty() {
+        text.push('.');
+        text.push_str(&format!("{fraction:0<6}")[..6]);
+    }
+    text
+}
+
+fn cell_value_to_json(value: &CellValue) -> serde_json::Value {
+    match value {
+        CellValue::Empty => serde_json::Value::Null,
+        CellValue::Text(value) | CellValue::DurationIso(value) | CellValue::Error(value) => {
+            serde_json::Value::String(value.clone())
+        }
+        CellValue::DateTimeIso(value) => {
+            let (date_time, fraction) = value.split_once('.').unwrap_or((value, ""));
+            let fraction = fraction.trim_end_matches('0');
+            let mut iso = date_time.to_owned();
+            if !fraction.is_empty() {
+                iso.push('.');
+                iso.push_str(&format!("{fraction:0<6}")[..6]);
+            }
+            serde_json::Value::String(iso)
+        }
+        CellValue::Number(value) | CellValue::DateTimeSerial(value) => {
+            serde_json::Number::from_f64(*value)
+                .map(serde_json::Value::Number)
+                .unwrap_or(serde_json::Value::Null)
+        }
+        CellValue::Integer(value) => serde_json::Value::from(*value),
+        CellValue::Boolean(value) => serde_json::Value::Bool(*value),
+    }
+}
+
+fn parse_cell_address(address: &str) -> Option<(usize, usize)> {
+    let split = address.bytes().position(|byte| byte.is_ascii_digit())?;
+    let (letters, digits) = address.split_at(split);
+    if letters.is_empty() || !letters.bytes().all(|byte| byte.is_ascii_alphabetic()) {
+        return None;
+    }
+    let mut column = 0usize;
+    for letter in letters.bytes() {
+        let value = usize::from(
+            letter
+                .to_ascii_uppercase()
+                .checked_sub(b'A')?
+                .checked_add(1)?,
+        );
+        column = column.checked_mul(26)?.checked_add(value)?;
+    }
+    let row = digits.parse::<usize>().ok()?;
+    (row > 0 && column > 0).then_some((row, column))
 }
 
 /// Carry forward user-entered notes and merge the new rows into the history set.
