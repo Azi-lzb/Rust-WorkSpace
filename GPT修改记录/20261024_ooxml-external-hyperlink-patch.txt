@@ -1,0 +1,36 @@
+# GPT 修改记录：OOXML 外部文件超链接修复原语
+
+- 时间：2026-10-24（Asia/Shanghai）
+- 执行者：Codex
+- Git 基线：main `2122c11`；本次将共享 crate 与本记录单独提交。
+- WIP：Audit 业务文件在 main 有未提交修改，未触碰、暂存或提交；pytools-dev 检查时有独立修改，未触碰。
+- 【组件版本】：不升级；不修改 Cargo 依赖、生产默认路由或业务实现。
+
+## 修改目的
+
+为 Rust 生成 XLSX 后的绝对文件 hyperlink relationship 修复提供通用 `ooxml-patch` 原语，避免 Audit 直接维护 ZIP/XML 补丁。
+
+## 修改文件与行为
+
+- `crates/ooxml-patch/src/lib.rs`：新增 `ExternalHyperlinkPatch`、`ExternalHyperlinkPatchReport` 和 `patch_external_hyperlink(source, output, patch)`。根据 workbook sheet identity 定位 worksheet，再按规范化单元格坐标要求唯一 `<hyperlink>`；通过其 `r:id` 在该 worksheet 的 relationships part 中要求唯一 `/hyperlink` relationship。只更新对应 relationship 的 `Target` 与 `TargetMode="External"`，可选更新 worksheet hyperlink 的 `location`、`display`；未提供时保留原值。仅接受绝对 `file://` URI。
+- 写出使用独立新输出路径，拒绝覆盖现有输出；源文件不修改。namespace-aware 解析，修改前完成关系映射，写后比对 ZIP 项顺序、数量、压缩方式及每项内容，只有指定 worksheet 和对应 rels 内容可变化；失败时移除本次创建的候选输出。含宏或数字签名的包按现有安全检查拒绝。
+- 修正 A1 parser 以支持 `$A$1` 这类合法绝对单元格引用。
+- `GPT修改记录/20261024_ooxml-external-hyperlink-patch.txt`：本记录。
+
+## 测试
+
+- `rustfmt --edition 2021 crates/ooxml-patch/src/lib.rs`：通过。
+- `cargo test -p ooxml-patch external_hyperlink_tests -- --nocapture`：通过，2/2。
+- `cargo test -p ooxml-patch`：通过，9/9；doc tests 无失败。
+- 在本机 WSL Rust 工具链执行；未跑 Audit CLI 真实样本对拍、全 workspace 测试或 Linux 目标平台验收。
+- 合成测试覆盖绝对 file URI、TargetMode 写入、display/location 转义和读回、工作簿 sheet 到 part 的关系解析、只改目标两个 XML 部件、其他关系/部件保持、源文件不变、已存在输出拒绝、缺失/歧义映射拒绝及非绝对目标拒绝。
+
+## 状态与限制
+
+- API 需要调用方先输出源工作簿，再指定一个不存在的独立候选输出路径；它不对原文件或已有候选做原位修改。
+- 接受 URI 形式的绝对 `file://` target；路径中的空格、反斜杠和控制字符应由调用方先按 URI 规则编码或拒绝。
+- 未在 Audit 真实生成结果或 Windows/麒麟/UOS 目标环境验证；Audit 仍需 cherry-pick 后重跑 S1-F01 的真实结果与 Python 对拍，确认链接显示值和解析目标行为。
+
+## 回滚
+
+不含删除项。撤销时只回退本记录对应的 `ooxml-patch` API、测试与必要 A1 parser 改动并移除本记录；保留同期 Audit/PyTools 未提交修改。
