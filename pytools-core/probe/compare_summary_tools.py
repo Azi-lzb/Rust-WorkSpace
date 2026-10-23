@@ -230,8 +230,21 @@ def compare_real_used_range_sample() -> dict[str, object]:
             "2.报表不分口径.xlsx",
             "2.报表校验关系.xlsx",
             "2.报表校验关系(仅公式校验).xlsx",
+            "2.报表校验关系((仅公式校验1).xlsx",
         ],
         ["1.报表分口径.xlsx"],
+        [
+            "4.校验公式v1.xlsx",
+            "4.校验公式v2.xlsx",
+            "4.校验公式v3.xlsx",
+            "4.校验公式（仅公式校验-AI分析版）.xlsx",
+        ],
+        [
+            "4.校验公式（程序生成）.xlsx",
+            "4.校验公式（对比）.xlsx",
+            "4.校验公式（AI分析版）.xlsx",
+            "5.校验关系-规则定位索引.xlsx",
+        ],
     ]
     samples = [
         PYTOOLS_SOURCE / "xlsx" / name
@@ -413,7 +426,7 @@ def compare_real_used_range_sample() -> dict[str, object]:
             },
             "timing_note": "Single execution per batch for diagnostics; not a performance comparison.",
             "limitations": [
-                "Four original-project XLSX assets only; no production default or broad format acceptance inferred.",
+                "Original-project XLSX assets only; no production default or broad format acceptance inferred.",
                 "VBA-bearing XLSM, XLS/XLSB, Windows-native Rust and target Linux/deb remain unvalidated.",
                 "Report contains no source cell values or output workbook; both outputs were temporary.",
             ],
