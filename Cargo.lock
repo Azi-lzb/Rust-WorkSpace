@@ -137,6 +137,7 @@ dependencies = [
  "excel-reader",
  "excel-writer",
  "ooxml-patch",
+ "rayon",
  "serde",
  "serde_json",
  "sha1",

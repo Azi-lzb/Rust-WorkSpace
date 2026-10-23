@@ -3,15 +3,22 @@ use audit_core::{
     conditional_format::evaluate_xlsx_workbook,
     discovery::ScanDepth,
     models::CopyRange,
-    s1_conditional_audit::{extract_conditional_issues, S1ConditionalMetadata},
+    s1_conditional_audit::{
+        extract_conditional_issues, extract_conditional_issues_batch, S1ConditionalBatchInput,
+        S1ConditionalBatchProgress, S1ConditionalMetadata,
+    },
     s1_template::recommend_template,
     s2_service::{run_s2_audit, S2ProgressEvent, S2RunRequest},
     s2_summary::S2AuditSummary,
     web_bridge::serve_web_ui,
 };
 use clap::{Args, Parser, Subcommand};
-use serde::Serialize;
-use std::{path::PathBuf, time::Instant};
+use serde::{Deserialize, Serialize};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+    time::Instant,
+};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -34,6 +41,8 @@ enum Command {
     ConditionalEvaluate(ConditionalEvaluateArgs),
     /// Extract static conditional-format results into S1-F01 Audit issue records.
     ConditionalAudit(ConditionalAuditArgs),
+    /// Run conditional-format issue extraction for a selected S1 workbook batch.
+    ConditionalAuditBatch(ConditionalAuditBatchArgs),
     /// Serve the bundled Audit frontend through the Rust API bridge on localhost.
     Serve(ServeArgs),
 }
@@ -90,6 +99,53 @@ struct ConditionalAuditArgs {
     /// Emit developer-view JSON progress events with actual engine and timings.
     #[arg(long, default_value_t = false)]
     developer_view: bool,
+}
+
+#[derive(Debug, Args)]
+struct ConditionalAuditBatchArgs {
+    /// JSON manifest containing selected workbooks and per-file institution metadata.
+    #[arg(long)]
+    manifest: PathBuf,
+
+    /// Reporting period recorded on the generated Audit issues.
+    #[arg(long)]
+    period: String,
+
+    /// S1 run/batch identifier recorded on the generated Audit issues.
+    #[arg(long)]
+    batch_id: String,
+
+    /// Audit timestamp recorded on the generated Audit issues.
+    #[arg(long)]
+    audit_time: String,
+
+    /// Optional evaluation area in Sheet!A1:B20 form. Repeat for multiple areas.
+    #[arg(long = "scan-area")]
+    scan_areas: Vec<String>,
+
+    /// Optional template structure area used to resolve check_field. Repeat as needed.
+    #[arg(long = "structure-area")]
+    structure_areas: Vec<String>,
+
+    /// Emit developer-view JSON progress events with actual engine and timings.
+    #[arg(long, default_value_t = false)]
+    developer_view: bool,
+}
+
+#[derive(Debug, Deserialize)]
+struct ConditionalAuditManifest {
+    files: Vec<ConditionalAuditManifestFile>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ConditionalAuditManifestFile {
+    workbook: PathBuf,
+    #[serde(default)]
+    source_file: Option<PathBuf>,
+    #[serde(default)]
+    org_code: String,
+    #[serde(default)]
+    org_name: String,
 }
 
 #[derive(Debug, Args)]
@@ -289,15 +345,196 @@ fn run() -> Result<()> {
                 );
             } else {
                 eprintln!(
-                    "条件格式检查完成：形成 {} 条审核项，耗时 {} 毫秒。",
+                    "条件格式检查完成：引擎 {}，{} 条审核项；读取 {} ms、判定 {} ms、组装 {} ms，实际耗时 {} ms。",
+                    report.evaluation.reader,
                     report.issues.len(),
+                    report.evaluation.read_time_ms,
+                    report.evaluation.evaluation_time_ms,
+                    report.issue_build_time_ms,
                     run_started.elapsed().as_millis()
                 );
             }
             println!("{}", serde_json::to_string_pretty(&report)?);
         }
+        Command::ConditionalAuditBatch(arguments) => {
+            run_conditional_audit_batch(arguments)?;
+        }
     }
     Ok(())
+}
+
+fn run_conditional_audit_batch(arguments: ConditionalAuditBatchArgs) -> Result<()> {
+    let manifest: ConditionalAuditManifest = serde_json::from_str(
+        &fs::read_to_string(&arguments.manifest)
+            .with_context(|| format!("读取 S1 条件格式清单 {}", arguments.manifest.display()))?,
+    )
+    .with_context(|| format!("解析 S1 条件格式清单 {}", arguments.manifest.display()))?;
+    if manifest.files.is_empty() {
+        anyhow::bail!("S1 条件格式清单中没有工作簿");
+    }
+    let manifest_dir = arguments
+        .manifest
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let inputs = manifest
+        .files
+        .into_iter()
+        .map(|file| {
+            let workbook_path = resolve_manifest_path(manifest_dir, file.workbook);
+            let source_file = file
+                .source_file
+                .map(|path| resolve_manifest_path(manifest_dir, path))
+                .unwrap_or_else(|| workbook_path.clone());
+            S1ConditionalBatchInput {
+                workbook_path,
+                source_file,
+                metadata: S1ConditionalMetadata {
+                    period: arguments.period.clone(),
+                    batch_id: arguments.batch_id.clone(),
+                    audit_time: arguments.audit_time.clone(),
+                    org_code: file.org_code,
+                    org_name: file.org_name,
+                },
+            }
+        })
+        .collect::<Vec<_>>();
+    let structure_ranges = arguments
+        .structure_areas
+        .iter()
+        .map(|area| parse_copy_range(area))
+        .collect::<Result<Vec<_>>>()?;
+    let batch_started = Instant::now();
+    let started_at = chrono::Local::now().to_rfc3339();
+    if arguments.developer_view {
+        eprintln!(
+            "{}",
+            serde_json::to_string(&serde_json::json!({
+                "type": "progress",
+                "product": "open-data-audit",
+                "feature": "S1-F01",
+                "step": "conditional_format_issue_extraction",
+                "status": "started",
+                "batch_id": arguments.batch_id.as_str(),
+                "files_total": inputs.len(),
+                "started_at": started_at.as_str()
+            }))?
+        );
+    } else {
+        eprintln!("正在执行 S1-F01 条件格式检查：{} 个工作簿。", inputs.len());
+    }
+
+    let report = extract_conditional_issues_batch(
+        &inputs,
+        &arguments.scan_areas,
+        &structure_ranges,
+        |progress: &S1ConditionalBatchProgress| {
+            if arguments.developer_view {
+                if let Ok(event) = serde_json::to_string(&serde_json::json!({
+                    "type": "progress",
+                    "product": "open-data-audit",
+                    "feature": "S1-F01",
+                    "step": "conditional_format_issue_extraction",
+                    "batch_id": arguments.batch_id.as_str(),
+                    "event": progress
+                })) {
+                    eprintln!("{event}");
+                }
+            } else {
+                match progress.status {
+                    "started" => eprintln!(
+                        "正在检查条件格式：{}（{}/{}）",
+                        progress.source_file, progress.file_index, progress.files_total
+                    ),
+                    "completed" => eprintln!(
+                        "{}：引擎 {}，规则 {}/{}，扫描 {} 格，触发 {} 项，未确定 {} 项；读取 {} ms、判定 {} ms、组装 {} ms、单文件总计 {} ms。",
+                        progress.source_file,
+                        progress.reader.unwrap_or("未知"),
+                        progress.rules_supported.unwrap_or_default(),
+                        progress.rules_total.unwrap_or_default(),
+                        progress.scanned_cells.unwrap_or_default(),
+                        progress.issue_count.unwrap_or_default(),
+                        progress.diagnostics.unwrap_or_default(),
+                        progress.read_time_ms.unwrap_or_default(),
+                        progress.evaluation_time_ms.unwrap_or_default(),
+                        progress.issue_build_time_ms.unwrap_or_default(),
+                        progress.elapsed_ms.unwrap_or_default()
+                    ),
+                    "failed" => eprintln!(
+                        "{}：条件格式检查失败（{} ms）：{}",
+                        progress.source_file,
+                        progress.elapsed_ms.unwrap_or_default(),
+                        progress.error.as_deref().unwrap_or("未知错误")
+                    ),
+                    _ => {}
+                }
+            }
+        },
+    );
+
+    let report = match report {
+        Ok(report) => report,
+        Err(error) => {
+            if arguments.developer_view {
+                eprintln!(
+                    "{}",
+                    serde_json::to_string(&serde_json::json!({
+                        "type": "progress",
+                        "product": "open-data-audit",
+                        "feature": "S1-F01",
+                        "step": "conditional_format_issue_extraction",
+                        "status": "failed",
+                        "batch_id": arguments.batch_id.as_str(),
+                        "started_at": started_at.as_str(),
+                        "finished_at": chrono::Local::now().to_rfc3339(),
+                        "elapsed_ms": batch_started.elapsed().as_millis(),
+                        "error": format!("{error:#}")
+                    }))?
+                );
+            } else {
+                eprintln!("S1-F01 条件格式批量审核失败，未输出汇总结果。");
+            }
+            return Err(error);
+        }
+    };
+
+    if arguments.developer_view {
+        eprintln!(
+            "{}",
+            serde_json::to_string(&serde_json::json!({
+                "type": "progress",
+                "product": "open-data-audit",
+                "feature": "S1-F01",
+                "step": "conditional_format_issue_extraction",
+                "status": "completed",
+                "batch_id": arguments.batch_id.as_str(),
+                "started_at": started_at.as_str(),
+                "finished_at": chrono::Local::now().to_rfc3339(),
+                "elapsed_ms": batch_started.elapsed().as_millis(),
+                "files": report.files.len(),
+                "issues": report.issues.len(),
+                "result_status": report.status
+            }))?
+        );
+    } else {
+        eprintln!(
+            "条件格式批量检查完成：{} 个工作簿，形成 {} 条审核项，状态 {}，总耗时 {} ms。",
+            report.files.len(),
+            report.issues.len(),
+            report.status,
+            batch_started.elapsed().as_millis()
+        );
+    }
+    println!("{}", serde_json::to_string_pretty(&report)?);
+    Ok(())
+}
+
+fn resolve_manifest_path(base: &Path, path: PathBuf) -> PathBuf {
+    if path.is_absolute() {
+        path
+    } else {
+        base.join(path)
+    }
 }
 
 fn default_s2_config_path() -> PathBuf {

@@ -5,15 +5,22 @@
 //! workbook writeback remain separate migration work.
 
 use crate::{
-    conditional_format::{evaluate_xlsx_workbook_with_dump, ConditionalEvaluationReport},
+    conditional_format::{
+        evaluate_xlsx_workbook_with_dump, ConditionalDiagnostic, ConditionalEvaluationReport,
+    },
     models::{CopyRange, Issue},
     template::normalize_template_name,
 };
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use excel_reader::{CellValue, SheetDump};
+use rayon::prelude::*;
 use serde::Serialize;
 use serde_json::{json, Value};
-use std::{collections::BTreeSet, path::Path, time::Instant};
+use std::{
+    collections::BTreeSet,
+    path::{Path, PathBuf},
+    time::Instant,
+};
 
 #[derive(Clone, Debug, Default)]
 pub struct S1ConditionalMetadata {
@@ -37,6 +44,72 @@ pub struct S1ConditionalAuditResult {
     pub evaluation: ConditionalEvaluationReport,
     pub context: S1ConditionalContextSummary,
     pub issue_build_time_ms: u128,
+}
+
+#[derive(Clone, Debug)]
+pub struct S1ConditionalBatchInput {
+    pub workbook_path: PathBuf,
+    pub source_file: PathBuf,
+    pub metadata: S1ConditionalMetadata,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct S1ConditionalBatchFileSummary {
+    pub source_file: String,
+    pub status: &'static str,
+    pub issue_count: usize,
+    pub reader: &'static str,
+    pub rules_total: usize,
+    pub rules_supported: usize,
+    pub scanned_cells: usize,
+    pub diagnostics: Vec<ConditionalDiagnostic>,
+    pub unresolved_indicator_count: usize,
+    pub comments_unverified_sheet_count: usize,
+    pub read_time_ms: u128,
+    pub evaluation_time_ms: u128,
+    pub issue_build_time_ms: u128,
+    pub total_time_ms: u128,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct S1ConditionalBatchAuditResult {
+    pub status: &'static str,
+    pub issues: Vec<Issue>,
+    pub files: Vec<S1ConditionalBatchFileSummary>,
+    pub total_elapsed_ms: u128,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct S1ConditionalBatchProgress {
+    pub status: &'static str,
+    pub file_index: usize,
+    pub files_total: usize,
+    pub source_file: String,
+    pub started_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub finished_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub elapsed_ms: Option<u128>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reader: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rules_total: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rules_supported: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scanned_cells: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub issue_count: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub diagnostics: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub read_time_ms: Option<u128>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub evaluation_time_ms: Option<u128>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub issue_build_time_ms: Option<u128>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
 /// Run the static conditional-format evaluator and construct the S1-F01 issue
@@ -159,6 +232,154 @@ pub fn extract_conditional_issues(
         context,
         issue_build_time_ms,
     })
+}
+
+/// Run the same conditional-format issue stage for a selected set of reports,
+/// preserving input order and per-file institution metadata for the S1 batch.
+pub fn extract_conditional_issues_batch<F>(
+    inputs: &[S1ConditionalBatchInput],
+    scan_areas: &[String],
+    structure_ranges: &[CopyRange],
+    on_progress: F,
+) -> Result<S1ConditionalBatchAuditResult>
+where
+    F: Fn(&S1ConditionalBatchProgress) + Send + Sync,
+{
+    if inputs.is_empty() {
+        bail!("请至少指定一个待审核工作簿");
+    }
+
+    let batch_started = Instant::now();
+    let reports = inputs
+        .par_iter()
+        .enumerate()
+        .map(|(offset, input)| {
+            let file_index = offset + 1;
+            let source_name = path_basename(&input.source_file);
+            let started_at = chrono::Local::now().to_rfc3339();
+            let file_started = Instant::now();
+            on_progress(&S1ConditionalBatchProgress {
+                status: "started",
+                file_index,
+                files_total: inputs.len(),
+                source_file: source_name.clone(),
+                started_at: started_at.clone(),
+                finished_at: None,
+                elapsed_ms: None,
+                reader: None,
+                rules_total: None,
+                rules_supported: None,
+                scanned_cells: None,
+                issue_count: None,
+                diagnostics: None,
+                read_time_ms: None,
+                evaluation_time_ms: None,
+                issue_build_time_ms: None,
+                error: None,
+            });
+
+            let report = match extract_conditional_issues(
+                &input.workbook_path,
+                &input.source_file,
+                scan_areas,
+                structure_ranges,
+                &input.metadata,
+            ) {
+                Ok(report) => report,
+                Err(error) => {
+                    on_progress(&S1ConditionalBatchProgress {
+                        status: "failed",
+                        file_index,
+                        files_total: inputs.len(),
+                        source_file: source_name,
+                        started_at,
+                        finished_at: Some(chrono::Local::now().to_rfc3339()),
+                        elapsed_ms: Some(file_started.elapsed().as_millis()),
+                        reader: None,
+                        rules_total: None,
+                        rules_supported: None,
+                        scanned_cells: None,
+                        issue_count: None,
+                        diagnostics: None,
+                        read_time_ms: None,
+                        evaluation_time_ms: None,
+                        issue_build_time_ms: None,
+                        error: Some(format!("{error:#}")),
+                    });
+                    return Err(error).with_context(|| {
+                        format!("S1 条件格式审核失败：{}", input.workbook_path.display())
+                    });
+                }
+            };
+
+            let issue_count = report.issues.len();
+            let diagnostics_count = report.evaluation.diagnostics.len();
+            on_progress(&S1ConditionalBatchProgress {
+                status: "completed",
+                file_index,
+                files_total: inputs.len(),
+                source_file: source_name.clone(),
+                started_at,
+                finished_at: Some(chrono::Local::now().to_rfc3339()),
+                elapsed_ms: Some(file_started.elapsed().as_millis()),
+                reader: Some(report.evaluation.reader),
+                rules_total: Some(report.evaluation.rules_total),
+                rules_supported: Some(report.evaluation.rules_supported),
+                scanned_cells: Some(report.evaluation.scanned_cells),
+                issue_count: Some(issue_count),
+                diagnostics: Some(diagnostics_count),
+                read_time_ms: Some(report.evaluation.read_time_ms),
+                evaluation_time_ms: Some(report.evaluation.evaluation_time_ms),
+                issue_build_time_ms: Some(report.issue_build_time_ms),
+                error: None,
+            });
+            Ok((source_name, report))
+        })
+        .collect::<Result<Vec<_>>>()?;
+
+    let mut issues = Vec::new();
+    let mut files = Vec::with_capacity(reports.len());
+    let mut has_diagnostics = false;
+
+    for (source_name, report) in reports {
+        let total_time_ms = report.evaluation.total_time_ms + report.issue_build_time_ms;
+        has_diagnostics |= report.status == "completed_with_diagnostics";
+        let issue_count = report.issues.len();
+        files.push(S1ConditionalBatchFileSummary {
+            source_file: source_name,
+            status: report.status,
+            issue_count,
+            reader: report.evaluation.reader,
+            rules_total: report.evaluation.rules_total,
+            rules_supported: report.evaluation.rules_supported,
+            scanned_cells: report.evaluation.scanned_cells,
+            diagnostics: report.evaluation.diagnostics,
+            unresolved_indicator_count: report.context.unresolved_indicator_count,
+            comments_unverified_sheet_count: report.context.comments_unverified_sheet_count,
+            read_time_ms: report.evaluation.read_time_ms,
+            evaluation_time_ms: report.evaluation.evaluation_time_ms,
+            issue_build_time_ms: report.issue_build_time_ms,
+            total_time_ms,
+        });
+        issues.extend(report.issues);
+    }
+
+    Ok(S1ConditionalBatchAuditResult {
+        status: if has_diagnostics {
+            "completed_with_diagnostics"
+        } else {
+            "completed"
+        },
+        issues,
+        files,
+        total_elapsed_ms: batch_started.elapsed().as_millis(),
+    })
+}
+
+fn path_basename(path: &Path) -> String {
+    path.file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| path.display().to_string())
 }
 
 fn issue_value(raw: Option<&Value>) -> Result<Value> {
@@ -326,9 +547,20 @@ fn parse_cell_range(value: &str) -> Option<(i32, i32, i32, i32)> {
 
 #[cfg(test)]
 mod tests {
-    use super::{resolve_indicator, CopyRange};
+    use super::{
+        extract_conditional_issues_batch, resolve_indicator, CopyRange, S1ConditionalBatchInput,
+        S1ConditionalMetadata,
+    };
     use excel_reader::SheetDump;
     use serde_json::json;
+    use std::{path::PathBuf, sync::Mutex};
+
+    fn conditional_fixture() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests")
+            .join("fixtures")
+            .join("s1_conditional_eval.xlsx")
+    }
 
     #[test]
     fn resolves_indicators_using_structure_ranges_and_merged_anchors() {
@@ -390,5 +622,85 @@ mod tests {
         }];
 
         assert_eq!(resolve_indicator(&sheet, &structure_ranges, 2, 2), "余额");
+    }
+
+    #[test]
+    fn batch_keeps_per_file_issue_identity_and_reports_engine_timings() {
+        let fixture = conditional_fixture();
+        let inputs = [
+            S1ConditionalBatchInput {
+                workbook_path: fixture.clone(),
+                source_file: PathBuf::from("甲银行_20260731.xlsx"),
+                metadata: S1ConditionalMetadata {
+                    period: "2026-07-31".to_owned(),
+                    batch_id: "batch-1".to_owned(),
+                    audit_time: "2026-10-24 12:00:00".to_owned(),
+                    org_code: "9144".to_owned(),
+                    org_name: "甲银行".to_owned(),
+                },
+            },
+            S1ConditionalBatchInput {
+                workbook_path: fixture,
+                source_file: PathBuf::from("乙银行_20260731.xlsx"),
+                metadata: S1ConditionalMetadata {
+                    period: "2026-07-31".to_owned(),
+                    batch_id: "batch-1".to_owned(),
+                    audit_time: "2026-10-24 12:00:00".to_owned(),
+                    org_code: "9145".to_owned(),
+                    org_name: "乙银行".to_owned(),
+                },
+            },
+        ];
+        let events = Mutex::new(Vec::new());
+        let report = extract_conditional_issues_batch(&inputs, &[], &[], |event| {
+            events.lock().unwrap().push(event.clone());
+        })
+        .expect("extract the selected workbook batch");
+
+        assert_eq!(report.files.len(), 2);
+        assert_eq!(report.issues.len(), 8);
+        assert_eq!(report.files[0].source_file, "甲银行_20260731.xlsx");
+        assert_eq!(report.files[1].source_file, "乙银行_20260731.xlsx");
+        assert!(report
+            .files
+            .iter()
+            .all(|file| file.reader == "calamine+namespace_aware_ooxml"));
+        assert!(report
+            .files
+            .iter()
+            .all(|file| file.total_time_ms >= file.read_time_ms));
+        assert_eq!(report.issues[0].org_code, "9144");
+        assert_eq!(report.issues[4].org_code, "9145");
+        assert!(report.issues[0].issue_id.starts_with("甲银行｜"));
+        assert!(report.issues[4].issue_id.starts_with("乙银行｜"));
+
+        let events = events.into_inner().unwrap();
+        assert_eq!(events.len(), 4);
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| event.status == "started")
+                .count(),
+            2
+        );
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| event.status == "completed")
+                .count(),
+            2
+        );
+        let first_completed = events
+            .iter()
+            .find(|event| event.file_index == 1 && event.status == "completed")
+            .expect("first file completion event");
+        assert_eq!(first_completed.issue_count, Some(4));
+        assert_eq!(
+            first_completed.reader,
+            Some("calamine+namespace_aware_ooxml")
+        );
+        assert!(events
+            .iter()
+            .any(|event| event.file_index == 2 && event.source_file == "乙银行_20260731.xlsx"));
     }
 }

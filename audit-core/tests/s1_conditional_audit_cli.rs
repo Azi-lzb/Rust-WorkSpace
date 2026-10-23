@@ -37,7 +37,10 @@ fn conditional_audit_cli_returns_issues_and_both_log_views() {
     );
     let user_report: Value = serde_json::from_slice(&user.stdout).expect("valid CLI JSON");
     assert_eq!(user_report["issues"].as_array().unwrap().len(), 4);
-    assert!(String::from_utf8_lossy(&user.stderr).contains("条件格式检查完成"));
+    let user_log = String::from_utf8_lossy(&user.stderr);
+    assert!(user_log.contains("条件格式检查完成"));
+    assert!(user_log.contains("引擎 calamine+namespace_aware_ooxml"));
+    assert!(user_log.contains("读取"));
 
     let developer = run_cli(true);
     assert!(

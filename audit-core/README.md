@@ -77,10 +77,22 @@ areas use `Sheet!A1:B20` notation:
 open-data-audit conditional-audit --workbook <source.xlsx> --period <period> --batch-id <id> --audit-time <timestamp> [--source-file <original-path>] [--org-code <code>] [--org-name <name>] [--scan-area Sheet1!A1:Z200] [--structure-area Sheet1!A1:Z1] [--developer-view]
 ```
 
-The command prints issue records as JSON on stdout. `--developer-view` emits
-JSON progress events on stderr with the reader/evaluator engine and stage
-timings. Formula cells use stored caches; no recalculation or workbook write
-occurs. `--structure-area` lets the caller resolve `check_field`. This is only
+The single-workbook command prints issue records as JSON on stdout. For a
+selected multi-workbook S1 batch, pass a manifest with per-file identity:
+
+```text
+open-data-audit conditional-audit-batch --manifest <batch.json> --period <period> --batch-id <id> --audit-time <timestamp> [--scan-area Sheet1!A1:Z200] [--structure-area Sheet1!A1:Z1] [--developer-view]
+```
+
+The manifest has a `files` array; each entry supplies `workbook` and may supply
+`source_file`, `org_code`, and `org_name`. Relative paths resolve from the
+manifest directory. Workbooks are evaluated in parallel by file; returned
+summaries and issues retain manifest order and per-file metadata. Any file
+failure fails the whole batch without returning a partial issue summary. Both
+commands print actual engine and stage timings in ordinary logs;
+`--developer-view` also emits per-file JSON progress events on stderr. Formula
+cells use stored caches; no recalculation or workbook write occurs.
+`--structure-area` lets the caller resolve `check_field`. This is only
 the conditional-format issue-generation stage: S1 config/template selection,
 ordinary business rules, output workbook writeback, and history are not yet
 connected. The synthetic evaluator, issue mapping, and CLI tests pass; one

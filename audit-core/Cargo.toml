@@ -15,6 +15,7 @@ excel-editor = { path = "../crates/excel-editor" }
 excel-reader = { path = "../crates/excel-reader" }
 excel-writer = { path = "../crates/excel-writer" }
 ooxml-patch = { path = "../crates/ooxml-patch" }
+rayon.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha1.workspace = true
