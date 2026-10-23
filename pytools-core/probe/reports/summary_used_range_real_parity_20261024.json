@@ -542,5 +542,71 @@
     "Original-project XLSX assets only; no production default or broad format acceptance inferred.",
     "VBA-bearing XLSM, XLS/XLSB, Windows-native Rust and target Linux/deb remain unvalidated.",
     "Report contains no source cell values or output workbook; both outputs were temporary."
-  ]
+  ],
+  "additional_project_assets_20261024": {
+    "status": "passed",
+    "scope": "4 workbooks from xlsx/历史测试数据 and the smallest workbook from xlsx/备份; Windows-target CLI and read-only PyCode; source files unchanged by size/mtime",
+    "results": {
+      "historical_workbooks": {
+        "input_count": 4,
+        "python_rust_full_projection": "exact_in_user_developer_and_off_views",
+        "views": {
+          "user": {
+            "rows": 448,
+            "files": 4,
+            "event_count": 0,
+            "history_matches_event_stream": null
+          },
+          "developer": {
+            "rows": 448,
+            "files": 4,
+            "event_count": 26,
+            "history_matches_event_stream": true
+          },
+          "off": {
+            "rows": 448,
+            "files": 4,
+            "event_count": 0,
+            "history_matches_event_stream": null
+          }
+        },
+        "source_scope": "xlsx/历史测试数据/（4 份工作簿）",
+        "actual_engines": [
+          "calamine",
+          "rust_xlsxwriter"
+        ]
+      },
+      "smallest_backup_workbook": {
+        "input_count": 1,
+        "python_rust_full_projection": "exact_in_user_developer_and_off_views",
+        "views": {
+          "user": {
+            "rows": 343,
+            "files": 1,
+            "event_count": 0,
+            "history_matches_event_stream": null
+          },
+          "developer": {
+            "rows": 343,
+            "files": 1,
+            "event_count": 11,
+            "history_matches_event_stream": true
+          },
+          "off": {
+            "rows": 343,
+            "files": 1,
+            "event_count": 0,
+            "history_matches_event_stream": null
+          }
+        },
+        "source_scope": "xlsx/备份/（其中最小的 1 份工作簿）",
+        "actual_engines": [
+          "calamine",
+          "rust_xlsxwriter"
+        ]
+      }
+    },
+    "source_assets_unchanged": true,
+    "total_output_rows": 791
+  }
 }

@@ -334,3 +334,9 @@ Windows 主机未安装 Rust/Cargo。复用 WSL Ubuntu 中已安装的 MinGW 与
 新增 `tests/summary_comments_cli.rs`，验证普通用户/开发者/off 三种视图、事件流与历史 JSON 一致、模板格式失败阶段、实际引擎与耗时字段、跳过输入无引擎、日志不含原始单元格值，以及三种视图生成的工作簿一致；与 PT-6-1 的 `summary_used_range_error` 回归共 6 项通过。Windows PowerShell 直接运行 Windows GNU 目标 CLI，对原 Python `run_summary_by_comment` 的标准标记及重复行标记两场景（每场景 2 个合成源簿、21 行）做完整工作簿投影对拍，值、类型、样式、维度、冻结窗格、页面设置/页边距均精确一致；developer stderr 事件和历史 JSON 24 条逐项一致。10,000 行合成 XLSX 上 developer/off 各运行 3 次，三次结果投影均一致，中位墙钟耗时约 2,640/2,618ms，developer 中位数约慢 0.8%；差异在该小样本的运行间波动范围内，不能外推为其他平台或真实模板的性能保证。机器结果见 `probe/reports/summary_used_range_parity_20261024.json`。
 
 PT-6-2 原项目真实批注区域模板仍未找到，当前业务及日志对拍使用合成模板；本轮 Windows 实际入口通过交叉生成的 Windows GNU 二进制执行，当前 Windows 会话没有原生 Cargo。麒麟 V10/UOS V20、glibc 2.28 与 deb 仍待验收，不据此宣称 PT-6-2 整体完成。
+
+### 2026-10-24 PT-6-1 历史与备份真实工作簿扩展对拍
+
+在原 PyTools 只读目录的 xlsx/历史测试数据/ 选取 4 份工作簿，并从 xlsx/备份/ 选取最小的 1 份工作簿；通过 Windows PowerShell 实际运行 Windows GNU 目标 pytools summary-used-range，与只读 PyCode run_summary_by_usedrange 输出对拍。5 份工作簿共 791 行：历史测试簿 448 行、备份簿 343 行。普通用户、开发者、off 三种日志视图生成的完整工作簿投影均与 PyCode 一致，值/类型、样式及工作簿输出属性无差异。开发者视图分别产生 26/11 条事件，均与保存的历史事件流一致；实际读取/写入引擎字段为 Calamine/rust_xlsxwriter。5 份源文件的大小及修改时间未变，输出仅写入临时目录，没有将源工作簿复制进仓库。
+
+机器结果见 probe/reports/summary_used_range_real_parity_20261024.json 的 additional_project_assets_20261024；报告只记录来源目录类别、计数和对拍结果，不包含源工作簿名称或单元格内容。此次仅补充 PT-6-1 证据，不改变其未完成最终验收的状态。
