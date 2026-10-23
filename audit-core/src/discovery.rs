@@ -87,6 +87,12 @@ pub fn source_workbooks(input_dir: &Path, depth: ScanDepth) -> Result<Vec<PathBu
 /// conflict instead of selecting one arbitrarily.
 pub fn detect_period(input_dir: &Path, depth: ScanDepth) -> Result<PeriodDetection> {
     let files = source_workbooks(input_dir, depth)?;
+    Ok(detect_period_from_workbooks(input_dir, &files))
+}
+
+/// Detect a period using only the already-selected source workbooks, then fall
+/// back through the input directory and its ancestors.
+pub fn detect_period_from_workbooks(input_dir: &Path, files: &[PathBuf]) -> PeriodDetection {
     let filename_periods = files
         .iter()
         .filter_map(|path| path.file_stem().and_then(|stem| stem.to_str()))
@@ -95,15 +101,15 @@ pub fn detect_period(input_dir: &Path, depth: ScanDepth) -> Result<PeriodDetecti
 
     if filename_periods.len() == 1 {
         let period = filename_periods.iter().next().unwrap().clone();
-        return Ok(PeriodDetection {
+        return PeriodDetection {
             period: period.clone(),
             source: "源文件名".to_owned(),
             conflict: false,
             details: format!("从源文件名识别为 {period}"),
-        });
+        };
     }
     if filename_periods.len() > 1 {
-        return Ok(period_conflict("源文件名", &filename_periods));
+        return period_conflict("源文件名", &filename_periods);
     }
 
     for folder in input_dir.ancestors() {
@@ -114,24 +120,24 @@ pub fn detect_period(input_dir: &Path, depth: ScanDepth) -> Result<PeriodDetecti
         let periods = periods_in_text(folder_name);
         if periods.len() == 1 {
             let period = periods.iter().next().unwrap().clone();
-            return Ok(PeriodDetection {
+            return PeriodDetection {
                 period: period.clone(),
                 source: "文件夹名称".to_owned(),
                 conflict: false,
                 details: format!("从文件夹名称识别为 {period}"),
-            });
+            };
         }
         if periods.len() > 1 {
-            return Ok(period_conflict("文件夹名称", &periods));
+            return period_conflict("文件夹名称", &periods);
         }
     }
 
-    Ok(PeriodDetection {
+    PeriodDetection {
         period: String::new(),
         source: String::new(),
         conflict: false,
         details: "未识别到数据期，请手动填写".to_owned(),
-    })
+    }
 }
 
 fn collect_paths(

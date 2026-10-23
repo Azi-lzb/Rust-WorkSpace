@@ -1,3 +1,4 @@
+use excel_writer::Workbook;
 use serde_json::Value;
 use std::{
     fs,
@@ -37,6 +38,26 @@ fn run_cli(
     recursive: bool,
     developer_view: bool,
 ) -> Output {
+    run_cli_with_mapping(
+        directory,
+        period,
+        recursive,
+        developer_view,
+        None,
+        None,
+        None,
+    )
+}
+
+fn run_cli_with_mapping(
+    directory: &Path,
+    period: Option<&str>,
+    recursive: bool,
+    developer_view: bool,
+    template_workbook: Option<&Path>,
+    mapping_config: Option<&Path>,
+    scan_area: Option<&str>,
+) -> Output {
     let mut command = Command::new(env!("CARGO_BIN_EXE_open-data-audit"));
     command
         .arg("conditional-audit-directory")
@@ -51,6 +72,15 @@ fn run_cli(
     }
     if recursive {
         command.arg("--recursive");
+    }
+    if let Some(template_workbook) = template_workbook {
+        command.arg("--template-workbook").arg(template_workbook);
+    }
+    if let Some(mapping_config) = mapping_config {
+        command.arg("--mapping-config").arg(mapping_config);
+    }
+    if let Some(scan_area) = scan_area {
+        command.arg("--scan-area").arg(scan_area);
     }
     if developer_view {
         command.arg("--developer-view");
@@ -104,6 +134,130 @@ fn directory_cli_discovers_period_derives_organization_and_logs_both_views() {
     assert!(events.iter().any(|event| {
         event["step"] == "conditional_format_issue_extraction" && event["status"] == "completed"
     }));
+
+    fs::remove_dir_all(directory).expect("remove temporary input directory");
+}
+
+fn named_template_fixture() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures")
+        .join("s1_conditional_named_template.xlsx")
+}
+
+fn mapping_config(path: &Path) {
+    let mut workbook = Workbook::new();
+    {
+        let worksheet = workbook.add_worksheet();
+        worksheet
+            .set_name("模块化功能")
+            .expect("set mapping configuration sheet name");
+        let rows = [
+            vec!["功能名", "执行模块", "命名区域名", "输入", "输出", "备注"],
+            vec![
+                "条件格式结果提取",
+                "汇总_条件格式结果提取",
+                "条件格式区域_集成样例",
+                "",
+                "",
+                "",
+            ],
+            vec![
+                "表结构比对",
+                "核对_表结构比对",
+                "表结构区域_集成样例",
+                "",
+                "",
+                "",
+            ],
+        ];
+        for (row_index, row) in rows.iter().enumerate() {
+            for (column_index, value) in row.iter().enumerate() {
+                if !value.is_empty() {
+                    worksheet
+                        .write_string(row_index as u32, column_index as u16, *value)
+                        .expect("write mapping configuration value");
+                }
+            }
+        }
+    }
+    workbook
+        .save(path)
+        .expect("save synthetic mapping configuration");
+}
+
+#[test]
+fn directory_cli_reads_template_defined_names_and_applies_configured_areas() {
+    let directory = temporary_directory("s1_named_area_mapping");
+    copy_fixture(&directory, "9144_甲银行_2026-07-31.xlsx");
+    let template = directory.join("template_2026-09.xlsx");
+    fs::copy(named_template_fixture(), &template).expect("copy synthetic named template");
+    let config = directory.join("mapping-config_2026-08.xlsx");
+    mapping_config(&config);
+
+    let output = run_cli_with_mapping(
+        &directory,
+        None,
+        false,
+        true,
+        Some(&template),
+        Some(&config),
+        None,
+    );
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: Value =
+        serde_json::from_slice(&output.stdout).expect("valid named-range batch JSON");
+    assert_eq!(report["files"].as_array().unwrap().len(), 1);
+    assert_eq!(report["files"][0]["scanned_cells"], 1);
+    assert_eq!(report["files"][0]["issue_count"], 1);
+    assert_eq!(report["issues"].as_array().unwrap().len(), 1);
+    assert_eq!(report["issues"][0]["target_cell"], "B2");
+
+    let events = String::from_utf8_lossy(&output.stderr)
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).expect("JSON progress line"))
+        .collect::<Vec<_>>();
+    let mapping = events
+        .iter()
+        .find(|event| event["step"] == "conditional_area_mapping" && event["status"] == "completed")
+        .expect("template mapping completion event");
+    let discovery = events
+        .iter()
+        .find(|event| {
+            event["step"] == "source_workbook_discovery" && event["status"] == "completed"
+        })
+        .expect("source discovery completion event");
+    assert_eq!(discovery["period"], "2026-07");
+    assert_eq!(discovery["period_source"], "源文件名");
+    assert_eq!(mapping["engine"], "calamine+namespace_aware_ooxml");
+    assert_eq!(mapping["area_source"], "template_defined_names");
+    assert_eq!(mapping["mapped_named_areas"], 2);
+    assert_eq!(mapping["scan_areas"], 1);
+    assert_eq!(mapping["structure_areas"], 1);
+    assert!(mapping["elapsed_ms"].as_u64().is_some());
+
+    let override_output = run_cli_with_mapping(
+        &directory,
+        Some("2026-07"),
+        false,
+        false,
+        Some(&template),
+        Some(&config),
+        Some("S1Conditional!C5:C5"),
+    );
+    assert!(
+        override_output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&override_output.stderr)
+    );
+    let override_report: Value =
+        serde_json::from_slice(&override_output.stdout).expect("valid override batch JSON");
+    assert_eq!(override_report["issues"].as_array().unwrap().len(), 1);
+    assert_eq!(override_report["issues"][0]["target_cell"], "C5");
 
     fs::remove_dir_all(directory).expect("remove temporary input directory");
 }

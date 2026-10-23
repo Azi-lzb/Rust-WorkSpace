@@ -1,0 +1,49 @@
+# S1-F01 模板命名区域接入条件格式审核 CLI
+
+- 时间：2026-10-24 03:19（Asia/Shanghai）
+- 执行者：Codex
+- 分支：`audit-dev`
+- Worktree：`C:\Users\AZI\Desktop\VibeCode\audit-dev`
+- 修改前 commit：`0d1330b`；开始时保留 6 个 S1-F01 代码/测试 WIP 文件，本轮在其基础上继续。
+- 修改后 commit：本轮功能提交（以 Git 历史为准）。
+- 【组件版本】不升级；workspace crate 版本和 `Cargo.lock` 未变。
+
+## 目的与改动
+
+把已有的条件格式 Issue 计算、模板功能映射和模板 Defined Names 计划接到真实 Audit CLI。`conditional-audit`、`conditional-audit-batch`、`conditional-audit-directory` 接受 `--template-workbook` 与可选 `--mapping-config`；未给配置时沿用源项目内置映射，模板指定后可使用 `OPEN_DATA_AUDIT_CONFIG` 作为环境配置来源。显式 `--scan-area` / `--structure-area` 继续覆盖模板计划。目录批量时排除模板/映射配置工作簿，并只从源工作簿推断期间。使用映射模板时，若匹配的条件格式 Defined Name 无法由共享 reader 解析，则停止并说明原因，避免意外扩大到规则 `AppliesTo` 范围。
+
+Rust 通过共享 `excel_reader::read_defined_names` / `read_sheet_names` 读取命名区域，并以 `calamine+namespace_aware_ooxml` 完成值/元数据读取。对齐 Python 统计语义：没有条件格式规则的命名区域工作表不计入 Rust `scanned_cells`。普通和开发者日志记录映射来源、区域数量、reader、步骤状态及耗时；Python/Rust 对拍报告可选接收 Rust 进度事件并保留汇总。
+
+本轮文件：
+
+- `audit-core/src/bin/open-data-audit.rs`
+- `audit-core/src/conditional_format.rs`
+- `audit-core/src/discovery.rs`
+- `audit-core/src/name_config.rs`
+- `audit-core/tests/compare/compare_s1_conditional_audit.py`
+- `audit-core/tests/s1_conditional_audit_directory_cli.rs`
+- `audit-core/tests/fixtures/s1_conditional_named_template.xlsx`（合成模板）
+- `audit-core/probe/reports/s1_conditional_named_area_real.json`（仅汇总、无业务单元格值或文件路径）
+- `audit-core/MIGRATION_INVENTORY.md`
+- 本记录
+
+未修改 `DEVELOPMENT_GOAL.md`、`AGENTS.md`、`pytools-core/**`、公共 `crates/**`、根 Cargo 文件、`Cargo.lock` 或只读 Python 源项目。本次提交不包含真实工作簿、真实配置、Issue 业务值或临时运行结果。
+
+## 验证
+
+- WSL Ubuntu：`cargo fmt --all -- --check` 通过。
+- WSL Ubuntu：`cargo test -p audit-core --locked` 通过，全部测试目标成功。
+- WSL Ubuntu：`cargo test -p excel-reader --locked` 通过，10/10。
+- WSL Ubuntu：`cargo build -p audit-core --bin open-data-audit --locked` 通过。
+- 定向 Rust 回归 `mapped_ranges_without_conditional_rules_are_not_counted_as_scanned` 通过；目录 CLI 合成集成测试覆盖自定义条件/结构映射、模板与配置从输入目录和期间推断中排除，以及显式扫描范围覆盖。
+- 真实 S1 样本：只读源工作簿的临时副本与真实模板经 `conditional-audit --template-workbook` 自动映射。模板共 17 个 Defined Names；按映射取得 4 个条件格式区域、8 个结构区域（12 个匹配区域），未解析匹配名称 0。Rust/Python 都按 4 条规则评估 602 格并生成 2 条 Issue；以 `issue_id` 对齐后全字段差异 0。Rust 引擎为 `calamine+namespace_aware_ooxml`，无诊断，未执行公式重算。完整汇总见 `audit-core/probe/reports/s1_conditional_named_area_real.json`。报告时长来自单次运行，只作运行日志，不作为性能基准。
+- 本地 Windows 没有可用 `cargo` 命令，Rust 格式、编译和测试通过 WSL Ubuntu 运行；Windows 原生 Rust、麒麟 V10/UOS V20、glibc 2.28、deb 安装与离线验收未执行。
+
+## 未完成范围与已知限制
+
+S1-F01 仍未完成：完整配置校验和模板自动选择、普通审核规则、公式重算旁路、结果写回、历史记录及重复运行一致性未迁移。当前真实对拍只证明所列真实模板/样本的命名区域与静态条件格式 Issue 路径；不代表模板全集或目标平台通过。Rust 按坐标去重统计扫描格，Python 当前按区域迭代计数；本次真实区域没有重叠，其他重叠范围的统计口径未对拍。
+
+## 删除与回滚
+
+- 删除清单：无；测试输入和中间结果保留在系统临时目录，不加入 Git。
+- 回滚代码、测试及入口：`git revert <本轮功能提交>`。

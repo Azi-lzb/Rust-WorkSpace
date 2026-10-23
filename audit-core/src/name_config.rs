@@ -6,7 +6,9 @@
 
 use crate::models::CopyRange;
 use anyhow::{bail, Context, Result};
-use excel_reader::{CellValue, SheetDump};
+use excel_reader::{
+    CellValue, DefinedNameParseStatus, DefinedNameRecord, DefinedNameScope, SheetDump,
+};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -15,9 +17,9 @@ use std::{
 
 const MAPPING_SHEET: &str = "模块化功能";
 const MAPPING_HEADERS: [&str; 6] = ["功能名", "执行模块", "命名区域名", "输入", "输出", "备注"];
-const CONDITIONAL_FORMAT_EXTRACT_FUNCTION: &str = "汇总_条件格式结果提取";
-const STRUCTURE_COMPARE_FUNCTION: &str = "核对_表结构比对";
-const DEFAULT_CONDITIONAL_FEATURE_NAME: &str = "条件格式结果提取";
+pub const CONDITIONAL_FORMAT_EXTRACT_FUNCTION: &str = "汇总_条件格式结果提取";
+pub const STRUCTURE_COMPARE_FUNCTION: &str = "核对_表结构比对";
+pub const DEFAULT_CONDITIONAL_FEATURE_NAME: &str = "条件格式结果提取";
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FeatureMapping {
@@ -42,6 +44,36 @@ pub struct NamedRangeArea {
     pub name: String,
     pub sheet_name: String,
     pub address: String,
+}
+
+/// Convert supported shared-reader defined names into Audit mapping inputs.
+///
+/// Worksheet-local scope is retained only when the reader resolved its sheet
+/// identity, and destinations must target a worksheet (not a chart sheet).
+pub fn named_areas_from_defined_names(records: &[DefinedNameRecord]) -> Vec<NamedRangeArea> {
+    records
+        .iter()
+        .filter(|record| matches!(&record.parse_status, DefinedNameParseStatus::Areas))
+        .filter(|record| match &record.scope {
+            DefinedNameScope::Workbook => true,
+            DefinedNameScope::Worksheet { sheet_kind, .. } => {
+                sheet_kind.as_deref() == Some("worksheet")
+            }
+            DefinedNameScope::UnresolvedWorksheet { .. }
+            | DefinedNameScope::InvalidWorksheetScope { .. } => false,
+        })
+        .flat_map(|record| {
+            record
+                .areas
+                .iter()
+                .filter(|area| area.sheet_kind == "worksheet")
+                .map(|area| NamedRangeArea {
+                    name: record.name.clone(),
+                    sheet_name: area.sheet_name.clone(),
+                    address: area.reference.clone(),
+                })
+        })
+        .collect()
 }
 
 /// Per-workbook Audit ranges for condition-format issue extraction.
@@ -151,6 +183,20 @@ pub fn resolve_s1_conditional_area_plan(
 ) -> Result<S1ConditionalAreaPlan> {
     let feature_name = feature_name
         .filter(|name| !name.trim().is_empty())
+        .or_else(|| {
+            mappings
+                .iter()
+                .find(|mapping| {
+                    mapping.name == DEFAULT_CONDITIONAL_FEATURE_NAME
+                        && mapping.feature_type == CONDITIONAL_FORMAT_EXTRACT_FUNCTION
+                })
+                .or_else(|| {
+                    mappings
+                        .iter()
+                        .find(|mapping| mapping.feature_type == CONDITIONAL_FORMAT_EXTRACT_FUNCTION)
+                })
+                .map(|mapping| mapping.name.as_str())
+        })
         .unwrap_or(DEFAULT_CONDITIONAL_FEATURE_NAME);
     let conditional_mappings = mappings
         .iter()

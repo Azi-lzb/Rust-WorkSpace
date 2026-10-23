@@ -1,8 +1,15 @@
 use anyhow::{Context, Result};
 use audit_core::{
     conditional_format::evaluate_xlsx_workbook,
-    discovery::{detect_period, organisation_from_name, source_workbooks, ScanDepth},
+    discovery::{
+        detect_period_from_workbooks, organisation_from_name, source_workbooks, ScanDepth,
+    },
     models::CopyRange,
+    name_config::{
+        load_s1_conditional_mappings, matches_named_range, named_areas_from_defined_names,
+        resolve_s1_conditional_area_plan, CONDITIONAL_FORMAT_EXTRACT_FUNCTION,
+        DEFAULT_CONDITIONAL_FEATURE_NAME,
+    },
     s1_conditional_audit::{
         extract_conditional_issues, extract_conditional_issues_batch, S1ConditionalBatchInput,
         S1ConditionalBatchProgress, S1ConditionalMetadata,
@@ -98,6 +105,14 @@ struct ConditionalAuditArgs {
     #[arg(long = "structure-area")]
     structure_areas: Vec<String>,
 
+    /// Template workbook whose configured defined names select condition and structure areas.
+    #[arg(long)]
+    template_workbook: Option<PathBuf>,
+
+    /// Optional Audit config workbook containing the “模块化功能” mappings.
+    #[arg(long)]
+    mapping_config: Option<PathBuf>,
+
     /// Emit developer-view JSON progress events with actual engine and timings.
     #[arg(long, default_value_t = false)]
     developer_view: bool,
@@ -128,6 +143,14 @@ struct ConditionalAuditBatchArgs {
     /// Optional template structure area used to resolve check_field. Repeat as needed.
     #[arg(long = "structure-area")]
     structure_areas: Vec<String>,
+
+    /// Template workbook whose configured defined names select condition and structure areas.
+    #[arg(long)]
+    template_workbook: Option<PathBuf>,
+
+    /// Optional Audit config workbook containing the “模块化功能” mappings.
+    #[arg(long)]
+    mapping_config: Option<PathBuf>,
 
     /// Emit developer-view JSON progress events with actual engine and timings.
     #[arg(long, default_value_t = false)]
@@ -163,6 +186,14 @@ struct ConditionalAuditDirectoryArgs {
     /// Optional template structure area used to resolve check_field. Repeat as needed.
     #[arg(long = "structure-area")]
     structure_areas: Vec<String>,
+
+    /// Template workbook whose configured defined names select condition and structure areas.
+    #[arg(long)]
+    template_workbook: Option<PathBuf>,
+
+    /// Optional Audit config workbook containing the “模块化功能” mappings.
+    #[arg(long)]
+    mapping_config: Option<PathBuf>,
 
     /// Emit developer-view JSON progress events with actual engine and timings.
     #[arg(long, default_value_t = false)]
@@ -293,11 +324,13 @@ fn run() -> Result<()> {
             println!("{}", serde_json::to_string_pretty(&report)?);
         }
         Command::ConditionalAudit(arguments) => {
-            let structure_ranges = arguments
-                .structure_areas
-                .iter()
-                .map(|area| parse_copy_range(area))
-                .collect::<Result<Vec<_>>>()?;
+            let (scan_areas, structure_ranges) = resolve_s1_conditional_cli_areas(
+                arguments.template_workbook.as_deref(),
+                arguments.mapping_config.as_deref(),
+                &arguments.scan_areas,
+                &arguments.structure_areas,
+                arguments.developer_view,
+            )?;
             let source_file = arguments
                 .source_file
                 .unwrap_or_else(|| arguments.workbook.clone());
@@ -329,7 +362,7 @@ fn run() -> Result<()> {
             let report = match extract_conditional_issues(
                 &arguments.workbook,
                 &source_file,
-                &arguments.scan_areas,
+                &scan_areas,
                 &structure_ranges,
                 &metadata,
             ) {
@@ -404,6 +437,13 @@ fn run() -> Result<()> {
 }
 
 fn run_conditional_audit_batch(arguments: ConditionalAuditBatchArgs) -> Result<()> {
+    let (scan_areas, structure_ranges) = resolve_s1_conditional_cli_areas(
+        arguments.template_workbook.as_deref(),
+        arguments.mapping_config.as_deref(),
+        &arguments.scan_areas,
+        &arguments.structure_areas,
+        arguments.developer_view,
+    )?;
     let manifest: ConditionalAuditManifest = serde_json::from_str(
         &fs::read_to_string(&arguments.manifest)
             .with_context(|| format!("读取 S1 条件格式清单 {}", arguments.manifest.display()))?,
@@ -439,16 +479,38 @@ fn run_conditional_audit_batch(arguments: ConditionalAuditBatchArgs) -> Result<(
             }
         })
         .collect::<Vec<_>>();
+    let excluded_workbooks = excluded_s1_input_workbooks(
+        arguments.template_workbook.as_deref(),
+        arguments.mapping_config.as_deref(),
+    );
+    let inputs = inputs
+        .into_iter()
+        .filter(|input| {
+            !excluded_workbooks
+                .iter()
+                .any(|excluded| same_file_path(&input.workbook_path, excluded))
+        })
+        .collect::<Vec<_>>();
+    if inputs.is_empty() {
+        anyhow::bail!("S1 条件格式清单中没有可审核的源工作簿");
+    }
     run_conditional_audit_inputs(
         inputs,
-        &arguments.scan_areas,
-        &arguments.structure_areas,
+        &scan_areas,
+        &structure_ranges,
         &arguments.batch_id,
         arguments.developer_view,
     )
 }
 
 fn run_conditional_audit_directory(arguments: ConditionalAuditDirectoryArgs) -> Result<()> {
+    let (scan_areas, structure_ranges) = resolve_s1_conditional_cli_areas(
+        arguments.template_workbook.as_deref(),
+        arguments.mapping_config.as_deref(),
+        &arguments.scan_areas,
+        &arguments.structure_areas,
+        arguments.developer_view,
+    )?;
     let discovery_started = Instant::now();
     let discovery_started_at = chrono::Local::now().to_rfc3339();
     if arguments.developer_view {
@@ -475,11 +537,22 @@ fn run_conditional_audit_directory(arguments: ConditionalAuditDirectoryArgs) -> 
         } else {
             ScanDepth::RootOnly
         };
-        let source_files = source_workbooks(&arguments.input_dir, depth)?;
+        let excluded_workbooks = excluded_s1_input_workbooks(
+            arguments.template_workbook.as_deref(),
+            arguments.mapping_config.as_deref(),
+        );
+        let source_files = source_workbooks(&arguments.input_dir, depth)?
+            .into_iter()
+            .filter(|path| {
+                !excluded_workbooks
+                    .iter()
+                    .any(|excluded| same_file_path(path, excluded))
+            })
+            .collect::<Vec<_>>();
         if source_files.is_empty() {
-            anyhow::bail!("源数据目录中没有可审核的 .xlsx 文件");
+            anyhow::bail!("源数据目录中没有可审核的 .xlsx 文件（模板和映射配置不会作为源文件）");
         }
-        let detection = detect_period(&arguments.input_dir, depth)?;
+        let detection = detect_period_from_workbooks(&arguments.input_dir, &source_files);
         let explicit_period = arguments
             .period
             .as_deref()
@@ -571,8 +644,8 @@ fn run_conditional_audit_directory(arguments: ConditionalAuditDirectoryArgs) -> 
 
     run_conditional_audit_inputs(
         inputs,
-        &arguments.scan_areas,
-        &arguments.structure_areas,
+        &scan_areas,
+        &structure_ranges,
         &arguments.batch_id,
         arguments.developer_view,
     )
@@ -581,14 +654,10 @@ fn run_conditional_audit_directory(arguments: ConditionalAuditDirectoryArgs) -> 
 fn run_conditional_audit_inputs(
     inputs: Vec<S1ConditionalBatchInput>,
     scan_areas: &[String],
-    structure_areas: &[String],
+    structure_ranges: &[CopyRange],
     batch_id: &str,
     developer_view: bool,
 ) -> Result<()> {
-    let structure_ranges = structure_areas
-        .iter()
-        .map(|area| parse_copy_range(area))
-        .collect::<Result<Vec<_>>>()?;
     let batch_started = Instant::now();
     let started_at = chrono::Local::now().to_rfc3339();
     if developer_view {
@@ -612,7 +681,7 @@ fn run_conditional_audit_inputs(
     let report = extract_conditional_issues_batch(
         &inputs,
         scan_areas,
-        &structure_ranges,
+        structure_ranges,
         |progress: &S1ConditionalBatchProgress| {
             if developer_view {
                 if let Ok(event) = serde_json::to_string(&serde_json::json!({
@@ -712,6 +781,236 @@ fn run_conditional_audit_inputs(
     }
     println!("{}", serde_json::to_string_pretty(&report)?);
     Ok(())
+}
+
+fn resolve_s1_conditional_cli_areas(
+    template_workbook: Option<&Path>,
+    mapping_config: Option<&Path>,
+    scan_area_overrides: &[String],
+    structure_area_overrides: &[String],
+    developer_view: bool,
+) -> Result<(Vec<String>, Vec<CopyRange>)> {
+    let explicit_structure_ranges = structure_area_overrides
+        .iter()
+        .map(|area| parse_copy_range(area))
+        .collect::<Result<Vec<_>>>()?;
+    let Some(template_workbook) = template_workbook else {
+        if mapping_config.is_some() {
+            anyhow::bail!("--mapping-config 需要同时指定 --template-workbook");
+        }
+        return Ok((scan_area_overrides.to_vec(), explicit_structure_ranges));
+    };
+
+    let started = Instant::now();
+    let started_at = chrono::Local::now().to_rfc3339();
+    if developer_view {
+        eprintln!(
+            "{}",
+            serde_json::to_string(&serde_json::json!({
+                "type": "progress",
+                "product": "open-data-audit",
+                "feature": "S1-F01",
+                "step": "conditional_area_mapping",
+                "status": "started",
+                "engine": "calamine+namespace_aware_ooxml",
+                "template_workbook": template_workbook
+                    .file_name()
+                    .map(|name| name.to_string_lossy().into_owned()),
+                "started_at": started_at
+            }))?
+        );
+    }
+
+    let resolution = (|| -> Result<_> {
+        let config_path = effective_s1_mapping_config_path(mapping_config);
+        let mappings = load_s1_conditional_mappings(config_path.as_deref(), template_workbook)?;
+        let defined_names = excel_reader::read_defined_names(template_workbook)
+            .with_context(|| format!("读取模板命名区域 {}", template_workbook.display()))?;
+        let workbook_sheets = excel_reader::read_sheet_names(template_workbook)
+            .with_context(|| format!("读取模板工作表 {}", template_workbook.display()))?;
+        let areas = named_areas_from_defined_names(&defined_names);
+        let unresolved_mappings = defined_names
+            .iter()
+            .filter(|record| {
+                mappings
+                    .iter()
+                    .any(|mapping| matches_named_range(mapping, &record.name))
+                    && !defined_name_is_fully_supported(record)
+            })
+            .count();
+        let conditional_mapping = mappings
+            .iter()
+            .find(|mapping| {
+                mapping.name == DEFAULT_CONDITIONAL_FEATURE_NAME
+                    && mapping.feature_type == CONDITIONAL_FORMAT_EXTRACT_FUNCTION
+            })
+            .or_else(|| {
+                mappings
+                    .iter()
+                    .find(|mapping| mapping.feature_type == CONDITIONAL_FORMAT_EXTRACT_FUNCTION)
+            });
+        let unresolved_conditional_names = defined_names
+            .iter()
+            .filter(|record| {
+                conditional_mapping.is_some_and(|mapping| {
+                    matches_named_range(mapping, &record.name)
+                        && !defined_name_is_fully_supported(record)
+                })
+            })
+            .map(|record| record.name.as_str())
+            .collect::<Vec<_>>();
+        if scan_area_overrides.is_empty() && !unresolved_conditional_names.is_empty() {
+            anyhow::bail!(
+                "模板中有 {} 个条件格式命名区域无法由共享 Defined Names reader 解析；为避免将扫描范围扩大到规则 AppliesTo，已停止本次审核",
+                unresolved_conditional_names.len()
+            );
+        }
+        let plan = resolve_s1_conditional_area_plan(&mappings, None, &areas, &workbook_sheets)?;
+        let mapped_area_count = plan.scan_areas.len() + plan.structure_ranges.len();
+        let scan_areas = if scan_area_overrides.is_empty() {
+            plan.scan_areas
+        } else {
+            scan_area_overrides.to_vec()
+        };
+        let structure_ranges = if structure_area_overrides.is_empty() {
+            plan.structure_ranges
+        } else {
+            explicit_structure_ranges.clone()
+        };
+        Ok((
+            scan_areas,
+            structure_ranges,
+            mappings.len(),
+            defined_names.len(),
+            mapped_area_count,
+            unresolved_mappings,
+            config_path,
+        ))
+    })();
+
+    match resolution {
+        Ok((
+            scan_areas,
+            structure_ranges,
+            mappings,
+            defined_names,
+            mapped_areas,
+            unresolved,
+            config_path,
+        )) => {
+            let source = if scan_area_overrides.is_empty() && structure_area_overrides.is_empty() {
+                if scan_areas.is_empty() {
+                    "conditional_format_applies_to"
+                } else {
+                    "template_defined_names"
+                }
+            } else if mapped_areas == 0 {
+                "explicit_overrides"
+            } else {
+                "explicit_overrides_and_template_defined_names"
+            };
+            if developer_view {
+                eprintln!(
+                    "{}",
+                    serde_json::to_string(&serde_json::json!({
+                        "type": "progress",
+                        "product": "open-data-audit",
+                        "feature": "S1-F01",
+                        "step": "conditional_area_mapping",
+                        "status": "completed",
+                        "engine": "calamine+namespace_aware_ooxml",
+                        "area_source": source,
+                        "template_workbook": template_workbook
+                    .file_name()
+                    .map(|name| name.to_string_lossy().into_owned()),
+                        "mapping_config": config_path
+                            .as_deref()
+                            .and_then(Path::file_name)
+                            .map(|name| name.to_string_lossy().into_owned()),
+                        "mappings_loaded": mappings,
+                        "defined_names_total": defined_names,
+                        "mapped_named_areas": mapped_areas,
+                        "unresolved_matching_names": unresolved,
+                        "scan_areas": scan_areas.len(),
+                        "structure_areas": structure_ranges.len(),
+                        "started_at": started_at,
+                        "finished_at": chrono::Local::now().to_rfc3339(),
+                        "elapsed_ms": started.elapsed().as_millis()
+                    }))?
+                );
+            } else {
+                eprintln!(
+                    "模板命名区域映射完成：引擎 calamine+namespace_aware_ooxml，条件范围 {} 个，结构范围 {} 个，匹配但未解析的名称 {} 个，耗时 {} ms。",
+                    scan_areas.len(),
+                    structure_ranges.len(),
+                    unresolved,
+                    started.elapsed().as_millis()
+                );
+            }
+            Ok((scan_areas, structure_ranges))
+        }
+        Err(error) => {
+            if developer_view {
+                eprintln!(
+                    "{}",
+                    serde_json::to_string(&serde_json::json!({
+                        "type": "progress",
+                        "product": "open-data-audit",
+                        "feature": "S1-F01",
+                        "step": "conditional_area_mapping",
+                        "status": "failed",
+                        "engine": "calamine+namespace_aware_ooxml",
+                        "template_workbook": template_workbook
+                    .file_name()
+                    .map(|name| name.to_string_lossy().into_owned()),
+                        "started_at": started_at,
+                        "finished_at": chrono::Local::now().to_rfc3339(),
+                        "elapsed_ms": started.elapsed().as_millis(),
+                        "error": format!("{error:#}")
+                    }))?
+                );
+            } else {
+                eprintln!("模板命名区域映射失败：{error:#}");
+            }
+            Err(error)
+        }
+    }
+}
+
+fn defined_name_is_fully_supported(record: &excel_reader::DefinedNameRecord) -> bool {
+    let resolved = named_areas_from_defined_names(std::slice::from_ref(record));
+    !resolved.is_empty() && resolved.len() == record.areas.len()
+}
+
+fn effective_s1_mapping_config_path(mapping_config: Option<&Path>) -> Option<PathBuf> {
+    mapping_config
+        .map(Path::to_path_buf)
+        .or_else(|| std::env::var_os("OPEN_DATA_AUDIT_CONFIG").map(PathBuf::from))
+}
+
+fn excluded_s1_input_workbooks(
+    template_workbook: Option<&Path>,
+    mapping_config: Option<&Path>,
+) -> Vec<PathBuf> {
+    template_workbook
+        .map(Path::to_path_buf)
+        .into_iter()
+        .chain(effective_s1_mapping_config_path(mapping_config))
+        .collect()
+}
+
+fn same_file_path(left: &Path, right: &Path) -> bool {
+    let left = fs::canonicalize(left).unwrap_or_else(|_| left.to_path_buf());
+    let right = fs::canonicalize(right).unwrap_or_else(|_| right.to_path_buf());
+    #[cfg(windows)]
+    {
+        left.to_string_lossy()
+            .eq_ignore_ascii_case(&right.to_string_lossy())
+    }
+    #[cfg(not(windows))]
+    {
+        left == right
+    }
 }
 
 fn resolve_manifest_path(base: &Path, path: PathBuf) -> PathBuf {

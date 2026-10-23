@@ -18,6 +18,14 @@ SOURCE_CORE = Path(r"C:\Users\AZI\Desktop\VibeCode\3.open-data-audit\core")
 sys.path.insert(0, str(SOURCE_CORE / "src"))
 
 from base_audit.conditional_evaluators import ConditionalFormatService  # noqa: E402
+from base_audit.name_config import (  # noqa: E402
+    CONDITIONAL_FORMAT_EXTRACT_FUNCTION,
+    STRUCTURE_COMPARE_FUNCTION,
+    features_of_type,
+    load_feature_mappings,
+)
+from base_audit.native.openpyxl_workbook import named_ranges  # noqa: E402
+from openpyxl import load_workbook  # noqa: E402
 
 
 def canonical(value):
@@ -48,11 +56,41 @@ def normalize_issue(issue):
     return row
 
 
+def template_area_plan(template_path: Path | None, config_path: Path | None):
+    if template_path is None:
+        return None, [], []
+    mappings = load_feature_mappings(config_path, template_path)
+    conditional = next(
+        (mapping for mapping in mappings
+         if mapping.feature_type == CONDITIONAL_FORMAT_EXTRACT_FUNCTION),
+        None,
+    )
+    if conditional is None:
+        raise ValueError("模板配置中没有条件格式提取映射")
+    structure_mappings = features_of_type(mappings, STRUCTURE_COMPARE_FUNCTION)
+    template = load_workbook(
+        template_path, read_only=True, data_only=False, keep_links=False,
+    )
+    try:
+        ranges = named_ranges(template, (conditional,))
+        structure_ranges = [
+            area
+            for mapping in structure_mappings
+            for area in named_ranges(template, (mapping,))
+        ]
+    finally:
+        template.close()
+    return conditional, ranges, structure_ranges
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--workbook", required=True, type=Path)
     parser.add_argument("--rust-report", required=True, type=Path)
     parser.add_argument("--source-file", type=Path)
+    parser.add_argument("--template-workbook", type=Path)
+    parser.add_argument("--mapping-config", type=Path)
+    parser.add_argument("--rust-progress", type=Path)
     parser.add_argument("--period", required=True)
     parser.add_argument("--batch-id", required=True)
     parser.add_argument("--audit-time", required=True)
@@ -63,19 +101,56 @@ def main() -> int:
 
     workbook = args.workbook.resolve(strict=True)
     source_file = (args.source_file or workbook).resolve(strict=True)
+    mapping, ranges, structure_ranges = template_area_plan(
+        args.template_workbook.resolve(strict=True) if args.template_workbook else None,
+        args.mapping_config.resolve(strict=True) if args.mapping_config else None,
+    )
     service = ConditionalFormatService(mode="PYTHON")
     python_issues, python_stats = service.extract_issues(
         workbook_path=workbook,
-        ranges=[],
-        structure_ranges=[],
+        ranges=ranges,
+        structure_ranges=structure_ranges,
         period=args.period,
         batch_id=args.batch_id,
         audit_time=args.audit_time,
         source_file=source_file,
+        mapping=mapping,
         org_code=args.org_code,
         org_name=args.org_name,
     )
     rust_report = json.loads(args.rust_report.read_text(encoding="utf-8"))
+    rust_area_mapping = None
+    if args.rust_progress:
+        progress_events = [
+            json.loads(line)
+            for line in args.rust_progress.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        mapping_event = next(
+            (
+                event
+                for event in progress_events
+                if event.get("step") == "conditional_area_mapping"
+                and event.get("status") == "completed"
+            ),
+            None,
+        )
+        if args.template_workbook and mapping_event is None:
+            raise ValueError("Rust progress has no completed template area mapping event")
+        if mapping_event is not None:
+            rust_area_mapping = {
+                "engine": mapping_event.get("engine", ""),
+                "area_source": mapping_event.get("area_source", ""),
+                "mappings_loaded": mapping_event.get("mappings_loaded", 0),
+                "defined_names_total": mapping_event.get("defined_names_total", 0),
+                "mapped_named_areas": mapping_event.get("mapped_named_areas", 0),
+                "unresolved_matching_names": mapping_event.get(
+                    "unresolved_matching_names", 0
+                ),
+                "scan_areas": mapping_event.get("scan_areas", 0),
+                "structure_areas": mapping_event.get("structure_areas", 0),
+                "elapsed_ms": mapping_event.get("elapsed_ms", 0),
+            }
     python_rows = [normalize_issue(issue) for issue in python_issues]
     rust_rows = [normalize_issue(issue) for issue in rust_report.get("issues", [])]
     python_by_id = {row["issue_id"]: row for row in python_rows}
@@ -113,6 +188,10 @@ def main() -> int:
         "rust_evaluated_cells": rust_evaluation.get("scanned_cells", 0),
         "python_rules_total": python_stats.get("rules_total", 0),
         "rust_rules_total": rust_evaluation.get("rules_total", 0),
+        "area_source": "template_defined_names" if args.template_workbook else "conditional_format_applies_to",
+        "python_scan_areas": len(ranges),
+        "python_structure_areas": len(structure_ranges),
+        "rust_area_mapping": rust_area_mapping,
         "python_unsupported_cells": python_stats.get("unsupported_cells", 0),
         "rust_diagnostics": len(rust_evaluation.get("diagnostics", [])),
         "execution": {
@@ -132,6 +211,8 @@ def main() -> int:
         },
         "verification": {
             "source_workbook": "read-only",
+            "template_workbook": "read-only" if args.template_workbook else "not used",
+            "mapping_config": "read-only" if args.mapping_config else "built-in defaults",
             "formula_recalculation": "not performed",
             "issue_order": "ignored; issue records are matched by issue_id",
             "source_paths": "compared by basename; not included in output",

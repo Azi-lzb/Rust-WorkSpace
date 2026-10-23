@@ -281,6 +281,11 @@ fn evaluate_dump(
             .iter()
             .filter(|rule| rule.sheet == area.sheet)
             .collect::<Vec<_>>();
+        // Match the Python service: mapped ranges on a sheet without any
+        // conditional-format rules are not part of the evaluator's cell count.
+        if sheet_rules.is_empty() {
+            continue;
+        }
         let Some(values) = sheet_values.get(&area.sheet) else {
             continue;
         };
@@ -1582,6 +1587,64 @@ mod tests {
             }),
             Err(error) => RuleEvaluation::with_reason(error.status(), error.reason()),
         }
+    }
+
+    #[test]
+    fn mapped_ranges_without_conditional_rules_are_not_counted_as_scanned() {
+        let rule_sheet = SheetDump {
+            name: "RuleSheet".to_owned(),
+            values: BTreeMap::from([(
+                "A1".to_owned(),
+                serde_json::json!({"type":"number", "value":5}),
+            )]),
+            formulas: BTreeMap::new(),
+            formula_status: "not_requested".to_owned(),
+            merges: Vec::new(),
+            merge_status: "not_requested".to_owned(),
+            comments: BTreeMap::new(),
+            comments_status: "not_requested".to_owned(),
+            conditional_formatting: vec![serde_json::json!({
+                "name":"conditionalFormatting",
+                "attributes":{"sqref":"A1"},
+                "content":[{
+                    "name":"cfRule",
+                    "attributes":{"type":"expression", "priority":"1"},
+                    "content":[{
+                        "name":"formula",
+                        "content":[{"text":"A1>0"}]
+                    }]
+                }]
+            })],
+            conditional_formatting_status: "read_by_namespace_aware_ooxml_supplement".to_owned(),
+            data_validations: Vec::new(),
+            data_validations_status: "not_requested".to_owned(),
+        };
+        let no_rule_sheet = SheetDump {
+            name: "NoRuleSheet".to_owned(),
+            values: BTreeMap::new(),
+            formulas: BTreeMap::new(),
+            formula_status: "not_requested".to_owned(),
+            merges: Vec::new(),
+            merge_status: "not_requested".to_owned(),
+            comments: BTreeMap::new(),
+            comments_status: "not_requested".to_owned(),
+            conditional_formatting: Vec::new(),
+            conditional_formatting_status: "not_present".to_owned(),
+            data_validations: Vec::new(),
+            data_validations_status: "not_requested".to_owned(),
+        };
+
+        let report = evaluate_dump(
+            &[rule_sheet, no_rule_sheet],
+            &["RuleSheet!A1".to_owned(), "NoRuleSheet!A1:A2".to_owned()],
+            0,
+            0,
+        )
+        .expect("evaluate mapped ranges");
+
+        assert_eq!(report.scanned_cells, 1);
+        assert_eq!(report.triggered.len(), 1);
+        assert_eq!(report.triggered[0].cell, "A1");
     }
 
     #[test]
