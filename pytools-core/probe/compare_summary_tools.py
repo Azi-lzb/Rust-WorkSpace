@@ -378,6 +378,42 @@ def projection_difference_fields(expected: Path, actual: Path) -> list[str]:
     return sorted(differences)
 
 
+
+
+def projection_difference_summary(expected: Path, actual: Path) -> dict[str, object]:
+    expected_sheets, expected_dimensions = workbook_projection(expected)
+    actual_sheets, actual_dimensions = workbook_projection(actual)
+    cell_differences: dict[str, dict[str, object]] = {}
+    for expected_sheet, actual_sheet in zip(expected_sheets, actual_sheets):
+        for field in ("values", "types", "styles"):
+            expected_cells = expected_sheet.get(field, {})
+            actual_cells = actual_sheet.get(field, {})
+            coordinates = sorted(set(expected_cells) | set(actual_cells))
+            changed = [
+                coordinate
+                for coordinate in coordinates
+                if expected_cells.get(coordinate) != actual_cells.get(coordinate)
+            ]
+            if changed:
+                cell_differences[f"{expected_sheet['name']}.{field}"] = {
+                    "count": len(changed),
+                    "coordinates_sample": changed[:12],
+                    "examples": [
+                        {
+                            "cell": coordinate,
+                            "pycode": expected_cells.get(coordinate),
+                            "nocom_pytools": actual_cells.get(coordinate),
+                        }
+                        for coordinate in changed[:6]
+                    ],
+                }
+    return {
+        "difference_fields": projection_difference_fields(expected, actual),
+        "cell_differences": cell_differences,
+        "pycode_dimensions": expected_dimensions,
+        "nocom_pytools_dimensions": actual_dimensions,
+    }
+
 def main() -> int:
     if not PYTOOLS_SOURCE.is_dir():
         raise FileNotFoundError(PYTOOLS_SOURCE)
@@ -451,6 +487,11 @@ def main() -> int:
             "python_variant_scope": {
                 "nocom_pytools_output_matches_rust_for_this_xlsx_sample": nocom_matches_rust,
                 "nocom_pytools_difference_fields": nocom_difference_fields,
+                "nocom_pytools_vs_pycode": (
+                    projection_difference_summary(python_used, nocom_used)
+                    if python_used is not None and nocom_used is not None
+                    else {"status": "not_saved"}
+                ),
                 "format_difference": "NoComPyTools accepts xls/xlsb sources; PyCode accepts xlsx/xlsm. Rust remains xlsx/xlsm only pending confirmed scope and format-specific parity.",
             },
             "limitations": [

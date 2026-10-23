@@ -36,9 +36,9 @@
   "rust_execution": {
     "reader_engine": "calamine",
     "writer_engine": "rust_xlsxwriter",
-    "read_elapsed_ms": 176,
-    "write_elapsed_ms": 295,
-    "total_elapsed_ms": 514,
+    "read_elapsed_ms": 209,
+    "write_elapsed_ms": 269,
+    "total_elapsed_ms": 522,
     "ooxml_error_cells_patched": 1
   },
   "python_variant_scope": {
@@ -49,6 +49,90 @@
       "汇总.types",
       "汇总.values"
     ],
+    "nocom_pytools_vs_pycode": {
+      "difference_fields": [
+        "汇总.rows",
+        "汇总.styles",
+        "汇总.types",
+        "汇总.values"
+      ],
+      "cell_differences": {
+        "汇总.values": {
+          "count": 1,
+          "coordinates_sample": [
+            "H5"
+          ],
+          "examples": [
+            {
+              "cell": "H5",
+              "pycode": "#DIV/0!",
+              "nocom_pytools": null
+            }
+          ]
+        },
+        "汇总.types": {
+          "count": 1,
+          "coordinates_sample": [
+            "H5"
+          ],
+          "examples": [
+            {
+              "cell": "H5",
+              "pycode": "e",
+              "nocom_pytools": null
+            }
+          ]
+        },
+        "汇总.styles": {
+          "count": 2,
+          "coordinates_sample": [
+            "E4",
+            "H5"
+          ],
+          "examples": [
+            {
+              "cell": "E4",
+              "pycode": {
+                "number_format": "yyyy-mm-dd h:mm:ss",
+                "bold": false,
+                "fill_type": null,
+                "fill_color": "00000000"
+              },
+              "nocom_pytools": {
+                "number_format": "yyyy-mm-dd",
+                "bold": false,
+                "fill_type": null,
+                "fill_color": "00000000"
+              }
+            },
+            {
+              "cell": "H5",
+              "pycode": {
+                "number_format": "General",
+                "bold": false,
+                "fill_type": null,
+                "fill_color": "00000000"
+              },
+              "nocom_pytools": null
+            }
+          ]
+        }
+      },
+      "pycode_dimensions": [
+        {
+          "name": "汇总",
+          "rows": 14,
+          "columns": 11
+        }
+      ],
+      "nocom_pytools_dimensions": [
+        {
+          "name": "汇总",
+          "rows": 14,
+          "columns": 11
+        }
+      ]
+    },
     "format_difference": "NoComPyTools accepts xls/xlsb sources; PyCode accepts xlsx/xlsm. Rust remains xlsx/xlsm only pending confirmed scope and format-specific parity."
   },
   "limitations": [

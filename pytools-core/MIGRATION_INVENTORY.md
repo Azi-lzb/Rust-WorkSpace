@@ -303,7 +303,7 @@ Python/openpyxl 合成端到端对拍报告 `probe/reports/PT-7-3_execution_pari
 
 扩展 probe/compare_summary_tools.py，通过真实 pytools summary-used-range CLI 对照只读 PyCode 基线；合成夹具覆盖两个工作簿、多个工作表、格式定义 used-range 尾部、合并范围、日期/布尔/数值/文本/空白、有缓存及缺缓存公式和 #DIV/0!。13 行的值/类型、已填充单元格样式、工作表维度、冻结窗格、表头、公式/合并/定义名称/打印区和页面设置一致。机器报告 probe/reports/summary_used_range_parity_20261024.json 记录实际 calamine 读取、rust_xlsxwriter 新建、阶段耗时及 1 个 OOXML 错误类型补丁；write_elapsed 覆盖工作簿构建、逐格写入、序列化和补丁。
 
-Rust 在新建报表时保留受支持的 Excel 错误类型；使用 namespace-aware XML 解析器定位报表工作表关系与单元格，写入后由 Calamine 重新读取校验。未知错误值会失败关闭。同步对齐 PyCode 的日期格式及页面边距。NoComPyTools Python 对照与 Rust 在 汇总.rows/styles/types/values 有差异；NoComPyTools 支持的 .xls/.xlsb 与 PyCode 的 .xlsx/.xlsm 范围差异仍待确认，不将候选差异或格式能力登记为生产范围。
+Rust 在新建报表时保留受支持的 Excel 错误类型；使用 namespace-aware XML 解析器定位报表工作表关系与单元格，写入后由 Calamine 重新读取校验。未知错误值会失败关闭。同步对齐 PyCode 的日期格式及页面边距。NoComPyTools 与 PyCode 的相同合成 XLSX 输出维度均为 14 行×11 列；NoCom 将 汇总!H5 的 #DIV/0! 输出为空值（PyCode 保留 error 类型），并将 汇总!E4 日期样式写为 yyyy-mm-dd（PyCode 为 yyyy-mm-dd h:mm:ss）。详细单元格差异见机器报告的 nocom_pytools_vs_pycode。NoComPyTools 支持的 .xls/.xlsb 与 PyCode 的 .xlsx/.xlsm 范围差异仍待确认，不将 NoCom 差异或其独有格式登记为生产范围。
 
 验证：cargo fmt -p pytools-core -- --check 通过；patch_error_cells 输出所有权回归单测和 summary_used_range_error CLI 集成测试各 1/1 通过；python pytools-core/probe/compare_summary_tools.py 合成 CLI 对拍通过；git diff --check 通过。cargo test -p pytools-core --lib --offline --locked -q 的 26 个库测试中 25 个通过，workbook_extraction_matches_original_python_helper 因当前 checkout 缺少且 Git 未跟踪 tests/fixtures/季度报表_县区报表_2024-12-31.xlsx 失败；本轮未创建替代夹具。Cargo.lock 未变。
 
