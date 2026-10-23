@@ -27,7 +27,7 @@ fn summary_used_range_cli_preserves_excel_error_cells() -> Result<()> {
     );
     let report: Value = serde_json::from_slice(&output.stdout).context("parse CLI JSON")?;
     assert_eq!(report["saved"], true);
-    assert_eq!(report["rows"], 1);
+    assert_eq!(report["rows"], 2);
     assert_eq!(report["files"], 1);
     assert_eq!(report["execution"]["reader_engine"], "calamine");
     assert_eq!(report["execution"]["writer_engine"], "rust_xlsxwriter");
@@ -60,9 +60,47 @@ fn summary_used_range_cli_preserves_excel_error_cells() -> Result<()> {
             Some(&serde_json::json!({"type":"error", "value":error}))
         );
     }
+    assert_eq!(
+        sheet.values.get("A3"),
+        Some(&serde_json::json!({"type":"string", "value":"error_value"}))
+    );
+    assert_eq!(
+        sheet.values.get("B3"),
+        Some(&serde_json::json!({"type":"string", "value":"Empty"}))
+    );
     assert!(
         sheet.formulas.is_empty(),
         "summary must export values, not formulas"
+    );
+    assert_eq!(fs::read(&fixture)?, original, "source workbook changed");
+
+    fs::remove_dir_all(output_dir)?;
+    Ok(())
+}
+
+#[test]
+fn summary_used_range_cli_fails_closed_on_unknown_xlsx_error_value() -> Result<()> {
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/summary_used_range/getting_data_error.xlsx");
+    let original = fs::read(&fixture)?;
+    let output_dir = unique_test_dir();
+    let summary_dir = output_dir.join("output");
+    let output = Command::new(env!("CARGO_BIN_EXE_pytools"))
+        .arg("summary-used-range")
+        .arg("--output-dir")
+        .arg(&summary_dir)
+        .arg(&fixture)
+        .output()
+        .context("run pytools summary-used-range with an unknown XLSX error")?;
+    assert!(!output.status.success(), "unknown error should fail closed");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("Unsupported cell error value '#DATA!'"),
+        "unexpected CLI error: {stderr}"
+    );
+    assert!(
+        fs::read_dir(&summary_dir)?.next().is_none(),
+        "failed read must not create a partial summary"
     );
     assert_eq!(fs::read(&fixture)?, original, "source workbook changed");
 

@@ -14,11 +14,12 @@
     "source_workbooks": 2
   },
   "scenario": {
-    "rows": 13,
+    "rows": 14,
     "features": [
       "actual Rust summary-used-range CLI",
       "multiple workbooks and worksheets in selection order",
       "macro-free XLSM source with macro-enabled workbook content type",
+      "empty worksheet produces the default-bound row seen in PyCode",
       "format-only used-range tail",
       "merged range used as an extent",
       "cached formula values and missing formula-cache semantics",
@@ -37,14 +38,29 @@
   "rust_execution": {
     "reader_engine": "calamine",
     "writer_engine": "rust_xlsxwriter",
-    "read_elapsed_ms": 131,
-    "write_elapsed_ms": 193,
-    "total_elapsed_ms": 354,
+    "read_elapsed_ms": 147,
+    "write_elapsed_ms": 228,
+    "total_elapsed_ms": 412,
     "ooxml_error_cells_patched": 7
+  },
+  "unknown_cell_error_probe": {
+    "input": "synthetic XLSX t=e cell with value #DATA!",
+    "pycode": {
+      "saved": true,
+      "output_value": "#DATA!",
+      "output_type": "s"
+    },
+    "rust_cli": {
+      "status": "failed_closed",
+      "message_contains": "Unsupported cell error value '#DATA!'",
+      "reader_engine": "calamine"
+    },
+    "note": "Calamine 0.37 does not parse this worksheet error token; PyTools does not use an OOXML value fallback."
   },
   "python_variant_scope": {
     "nocom_pytools_output_matches_rust_for_this_xlsx_sample": false,
     "nocom_pytools_difference_fields": [
+      "worksheet_dimensions",
       "汇总.rows",
       "汇总.styles",
       "汇总.types",
@@ -52,6 +68,7 @@
     ],
     "nocom_pytools_vs_pycode": {
       "difference_fields": [
+        "worksheet_dimensions",
         "汇总.rows",
         "汇总.styles",
         "汇总.types",
@@ -59,8 +76,11 @@
       ],
       "cell_differences": {
         "汇总.values": {
-          "count": 7,
+          "count": 10,
           "coordinates_sample": [
+            "A15",
+            "B15",
+            "C15",
             "H5",
             "I5",
             "J5",
@@ -70,6 +90,21 @@
             "N5"
           ],
           "examples": [
+            {
+              "cell": "A15",
+              "pycode": "sample_2026-07-31",
+              "nocom_pytools": null
+            },
+            {
+              "cell": "B15",
+              "pycode": "Empty",
+              "nocom_pytools": null
+            },
+            {
+              "cell": "C15",
+              "pycode": 1,
+              "nocom_pytools": null
+            },
             {
               "cell": "H5",
               "pycode": "#DIV/0!",
@@ -84,27 +119,15 @@
               "cell": "J5",
               "pycode": "#NAME?",
               "nocom_pytools": null
-            },
-            {
-              "cell": "K5",
-              "pycode": "#NULL!",
-              "nocom_pytools": null
-            },
-            {
-              "cell": "L5",
-              "pycode": "#NUM!",
-              "nocom_pytools": null
-            },
-            {
-              "cell": "M5",
-              "pycode": "#REF!",
-              "nocom_pytools": null
             }
           ]
         },
         "汇总.types": {
-          "count": 7,
+          "count": 10,
           "coordinates_sample": [
+            "A15",
+            "B15",
+            "C15",
             "H5",
             "I5",
             "J5",
@@ -114,6 +137,21 @@
             "N5"
           ],
           "examples": [
+            {
+              "cell": "A15",
+              "pycode": "s",
+              "nocom_pytools": null
+            },
+            {
+              "cell": "B15",
+              "pycode": "s",
+              "nocom_pytools": null
+            },
+            {
+              "cell": "C15",
+              "pycode": "n",
+              "nocom_pytools": null
+            },
             {
               "cell": "H5",
               "pycode": "e",
@@ -128,27 +166,15 @@
               "cell": "J5",
               "pycode": "e",
               "nocom_pytools": null
-            },
-            {
-              "cell": "K5",
-              "pycode": "e",
-              "nocom_pytools": null
-            },
-            {
-              "cell": "L5",
-              "pycode": "e",
-              "nocom_pytools": null
-            },
-            {
-              "cell": "M5",
-              "pycode": "e",
-              "nocom_pytools": null
             }
           ]
         },
         "汇总.styles": {
-          "count": 8,
+          "count": 11,
           "coordinates_sample": [
+            "A15",
+            "B15",
+            "C15",
             "E4",
             "H5",
             "I5",
@@ -159,6 +185,36 @@
             "N5"
           ],
           "examples": [
+            {
+              "cell": "A15",
+              "pycode": {
+                "number_format": "General",
+                "bold": false,
+                "fill_type": null,
+                "fill_color": "00000000"
+              },
+              "nocom_pytools": null
+            },
+            {
+              "cell": "B15",
+              "pycode": {
+                "number_format": "General",
+                "bold": false,
+                "fill_type": null,
+                "fill_color": "00000000"
+              },
+              "nocom_pytools": null
+            },
+            {
+              "cell": "C15",
+              "pycode": {
+                "number_format": "General",
+                "bold": false,
+                "fill_type": null,
+                "fill_color": "00000000"
+              },
+              "nocom_pytools": null
+            },
             {
               "cell": "E4",
               "pycode": {
@@ -193,36 +249,6 @@
                 "fill_color": "00000000"
               },
               "nocom_pytools": null
-            },
-            {
-              "cell": "J5",
-              "pycode": {
-                "number_format": "General",
-                "bold": false,
-                "fill_type": null,
-                "fill_color": "00000000"
-              },
-              "nocom_pytools": null
-            },
-            {
-              "cell": "K5",
-              "pycode": {
-                "number_format": "General",
-                "bold": false,
-                "fill_type": null,
-                "fill_color": "00000000"
-              },
-              "nocom_pytools": null
-            },
-            {
-              "cell": "L5",
-              "pycode": {
-                "number_format": "General",
-                "bold": false,
-                "fill_type": null,
-                "fill_color": "00000000"
-              },
-              "nocom_pytools": null
             }
           ]
         }
@@ -230,7 +256,7 @@
       "pycode_dimensions": [
         {
           "name": "汇总",
-          "rows": 14,
+          "rows": 15,
           "columns": 14
         }
       ],
@@ -248,6 +274,7 @@
     "Synthetic XLSX and macro-free XLSM fixtures only; no authorized real summary workbook was present.",
     "XLSM was tested only as a macro-free synthetic package; VBA-bearing XLSM, XLS, XLSB, Kylin/UOS, glibc 2.28 and deb packaging were not validated.",
     "NoComPyTools and PyCode input-format scopes differ; no production scope was inferred from the NoCom-only formats.",
-    "Output is a new data workbook; source workbook styles, formulas and unrelated OOXML parts are not copied by contract."
+    "Output is a new data workbook; source workbook styles, formulas and unrelated OOXML parts are not copied by contract.",
+    "A synthetic XLSX t=e #DATA! cell is written as a string by PyCode; Calamine 0.37 rejects it. Supporting this value requires a coordinated shared-reader capability; no OOXML fallback was added."
   ]
 }

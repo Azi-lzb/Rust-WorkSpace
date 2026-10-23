@@ -126,6 +126,7 @@ def make_second_source(path: Path) -> None:
     ws.title = "Extra"
     ws["A2"] = "第二个工作簿"
     ws["C2"] = 42
+    wb.create_sheet("Empty")
     wb.save(path)
     if path.suffix.lower() == ".xlsm":
         mark_macro_enabled(path)
@@ -194,6 +195,17 @@ def python_baselines(
         Path(used["path"]) if used.get("saved") else None,
         Path(comments["path"]) if comments.get("saved") else None,
     )
+
+
+def python_used_range_only(sources: list[Path], output: Path) -> Path | None:
+    sys.path.insert(0, str(PYTOOLS_SOURCE / "PyCode"))
+    from core.summary_321_322 import run_summary_by_usedrange
+
+    output.mkdir(parents=True, exist_ok=True)
+    with contextlib.redirect_stdout(None):
+        result = run_summary_by_usedrange(sources, output / "used", output / "logs")
+    logging.shutdown()
+    return Path(result["path"]) if result.get("saved") else None
 
 
 def python_nocom_used_range(sources: list[Path], output: Path) -> Path | None:
@@ -455,12 +467,13 @@ def main() -> int:
         source = root / "sample_2026-06-30.xlsx"
         second_source = root / "sample_2026-07-31.xlsm"
         template = root / "comment_template.xlsx"
+        unsupported_error_source = WORKSPACE / "pytools-core/tests/fixtures/summary_used_range/getting_data_error.xlsx"
         make_source(source)
         patch_formula_cache(source, "E8", "2")
         make_second_source(second_source)
         make_comment_template(template)
         sources = [source, second_source]
-        fingerprints_before = source_fingerprints([*sources, template])
+        fingerprints_before = source_fingerprints([*sources, template, unsupported_error_source])
         python_used, python_comments = python_baselines(sources, source, template, root)
         nocom_used = python_nocom_used_range(sources, root)
         rust_used, used_report = run_rust("summary-used-range", sources, root / "rust_used")
@@ -472,7 +485,37 @@ def main() -> int:
             "6-2 comment summary",
             compare_page_settings=False,
         )
-        fingerprints_after = source_fingerprints([*sources, template])
+        python_unknown_error = python_used_range_only(
+            [unsupported_error_source], root / "python_unknown_error"
+        )
+        if python_unknown_error is None:
+            raise AssertionError("PyCode did not save the unknown-error summary")
+        unknown_error_sheets, _ = workbook_projection(python_unknown_error)
+        python_unknown_cell = unknown_error_sheets[0]
+        if (
+            python_unknown_cell["values"].get("D2") != "#DATA!"
+            or python_unknown_cell["types"].get("D2") != "s"
+        ):
+            raise AssertionError("PyCode unknown-error behavior changed from string output")
+        try:
+            run_rust(
+                "summary-used-range",
+                [unsupported_error_source],
+                root / "rust_unknown_error",
+            )
+        except subprocess.CalledProcessError as error:
+            rust_unknown_error_stderr = error.stderr.decode(
+                "utf-8-sig", errors="replace"
+            )
+            rust_unknown_error_marker = "Unsupported cell error value '#DATA!'"
+            if rust_unknown_error_marker not in rust_unknown_error_stderr:
+                raise AssertionError(
+                    "Rust CLI failed for the unknown error for an unexpected reason: "
+                    + rust_unknown_error_stderr[-1600:]
+                )
+        else:
+            raise AssertionError("Rust CLI unexpectedly accepted the unknown XLSX error")
+        fingerprints_after = source_fingerprints([*sources, template, unsupported_error_source])
         if fingerprints_before != fingerprints_after:
             raise AssertionError("a source workbook or template was modified")
 
@@ -482,7 +525,7 @@ def main() -> int:
             nocom_difference_fields = projection_difference_fields(nocom_used, rust_used)
             nocom_matches_rust = not nocom_difference_fields
 
-        if used_report.get("rows") != 13 or used_report.get("files") != 2:
+        if used_report.get("rows") != 14 or used_report.get("files") != 2:
             raise AssertionError(f"unexpected used-range summary report: {used_report}")
         if used_report.get("execution", {}).get("ooxml_error_cells_patched") != 7:
             raise AssertionError(f"expected seven preserved Excel error values: {used_report}")
@@ -504,6 +547,7 @@ def main() -> int:
                     "actual Rust summary-used-range CLI",
                     "multiple workbooks and worksheets in selection order",
                     "macro-free XLSM source with macro-enabled workbook content type",
+                    "empty worksheet produces the default-bound row seen in PyCode",
                     "format-only used-range tail",
                     "merged range used as an extent",
                     "cached formula values and missing formula-cache semantics",
@@ -520,6 +564,16 @@ def main() -> int:
                 "formulas_merges_defined_names_print_area_page_setup": "exact (default portrait normalized)",
             },
             "rust_execution": used_report.get("execution"),
+            "unknown_cell_error_probe": {
+                "input": "synthetic XLSX t=e cell with value #DATA!",
+                "pycode": {"saved": True, "output_value": "#DATA!", "output_type": "s"},
+                "rust_cli": {
+                    "status": "failed_closed",
+                    "message_contains": "Unsupported cell error value '#DATA!'",
+                    "reader_engine": "calamine",
+                },
+                "note": "Calamine 0.37 does not parse this worksheet error token; PyTools does not use an OOXML value fallback.",
+            },
             "python_variant_scope": {
                 "nocom_pytools_output_matches_rust_for_this_xlsx_sample": nocom_matches_rust,
                 "nocom_pytools_difference_fields": nocom_difference_fields,
@@ -535,6 +589,7 @@ def main() -> int:
                 "XLSM was tested only as a macro-free synthetic package; VBA-bearing XLSM, XLS, XLSB, Kylin/UOS, glibc 2.28 and deb packaging were not validated.",
                 "NoComPyTools and PyCode input-format scopes differ; no production scope was inferred from the NoCom-only formats.",
                 "Output is a new data workbook; source workbook styles, formulas and unrelated OOXML parts are not copied by contract.",
+                "A synthetic XLSX t=e #DATA! cell is written as a string by PyCode; Calamine 0.37 rejects it. Supporting this value requires a coordinated shared-reader capability; no OOXML fallback was added.",
             ],
         }
         report_day = dt.date.today().strftime("%Y%m%d")
