@@ -9,9 +9,12 @@
 - `pytools-core/tests/summary_used_range_error.rs`：断言普通用户视图显示生成完成提示；开发者视图包含带实际引擎和耗时的输出簿完成事件，且事件耗时与 `execution.write_elapsed_ms` 相同。
 - `pytools-core/probe/compare_summary_tools.py`：扩展名过滤对拍要求完成输出簿阶段时间存在。
 - `pytools-core/probe/reports/summary_used_range_parity_20261024.json`：记录定向 Python/Rust CLI 对拍中的该阶段时间和进度事件。
+- `pytools-core/probe/reports/summary_used_range_real_parity_20261024.json`：补记 7,462 行真实报表对拍，含错误值补丁、实际引擎和写出完成事件。
 - 本修改记录。
 
 实际入口与结果：通过真实 `pytools summary-used-range` CLI 跑混合 XLSX/XLSM 与跳过输入。普通用户视图显示“汇总工作簿生成完成”；开发者视图输出 `output_workbook/succeeded`，`actual_engine=rust_xlsxwriter`，其 `stage_elapsed_ms` 与原执行结果 `write_elapsed_ms` 完全一致。定向 Python/Rust 对拍输出仍为 19 行且一致；Rust 报告 20 个连续事件，并保存与事件流匹配的 JSON 历史。机器报告中的样本测得 write 阶段 220 ms，仅是该临时合成输入的观测，不作性能结论。
+
+真实样本补充复核（2026-10-24，基于提交 `089d166`）：通过相同真实 CLI 对 `xlsx/1.报表分口径.xlsx` 执行 Python/Rust 对拍，输出完全一致，共 7,462 行；1,212 个受支持的 Excel 错误值由 OOXML Patch 保留。实际引擎记录为 Calamine、工作表范围读取器、rust_xlsxwriter 和 OOXML Patch；14 个开发者事件与保存的历史一致，`output_workbook` 阶段记录 7,459 ms，输入文件未变。该耗时仅描述此样本本次运行，不作为性能结论。
 
 验证：
 - `cargo fmt -p pytools-core -- --check`（WSL）：通过。

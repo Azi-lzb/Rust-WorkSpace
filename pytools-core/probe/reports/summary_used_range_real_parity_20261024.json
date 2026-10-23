@@ -302,6 +302,22 @@
     "status": "validated",
     "rust_batch_count": 4,
     "event_sequences_contiguous": true,
-    "persisted_event_streams_match_cli": true
+    "persisted_event_streams_match_cli": true,
+    "focused_real_patch_sample": {
+      "relative_path": "xlsx/1.报表分口径.xlsx",
+      "summary_rows": 7462,
+      "ooxml_error_cells_patched": 1212,
+      "python_rust_output": "exact",
+      "developer_event_count": 14,
+      "event_stream_matches_saved_history": true,
+      "actual_engines": [
+        "OOXML Patch",
+        "calamine",
+        "excel-reader::read_xlsx_worksheet_extents",
+        "rust_xlsxwriter"
+      ],
+      "write_stage_elapsed_ms": 7459,
+      "input_unchanged": true
+    }
   }
 }
