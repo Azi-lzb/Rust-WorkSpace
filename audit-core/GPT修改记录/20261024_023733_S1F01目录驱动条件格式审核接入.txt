@@ -1,0 +1,45 @@
+# S1-F01 目录驱动条件格式审核入口接入
+
+- 时间：2026-10-24 02:37:33（Asia/Shanghai）
+- 执行者：Codex
+- 分支：`audit-dev`
+- Worktree：Windows 本地 `audit-dev` Worktree
+- 修改前 commit：`8abad52`；开始时工作区有 3 个 Audit 代码/测试 WIP 文件，本轮接续并保留
+- 功能 commit：`0339ff1`
+- 本记录与迁移清单由后续独立提交纳入版本控制
+- 【组件版本】不升级；workspace crate 版本未变。
+
+## 目的与改动
+
+为既有 S1-F01 静态条件格式计算和 Issue 构造增加目录驱动的真实 Rust CLI 路径：`open-data-audit conditional-audit-directory`。入口复用 `source_workbooks` 和 `detect_period`；支持根目录扫描及显式递归、由文件名推断机构标识、自动期间识别、期间冲突时要求显式指定，并把发现的文件送入现有批量条件格式审核器。`conditional-audit-batch` 与新入口共用同一业务执行器。普通视图记录用户可读步骤、实际引擎与耗时；开发者视图输出发现/审核阶段 JSON 进度和实测信息。
+
+修改文件：
+
+- `audit-core/src/bin/open-data-audit.rs`
+- `audit-core/src/discovery.rs`
+- `audit-core/tests/s1_conditional_audit_directory_cli.rs`
+- `audit-core/MIGRATION_INVENTORY.md`
+- 本记录
+
+目录 CLI 尚未加载 S1 功能映射并读取模板 Defined Names；`name_config::load_s1_conditional_mappings` 与 `resolve_s1_conditional_area_plan` 仍待 main 提供共享 Defined Names reader API 后接入。此项保持为未完成边界，不代表完整 S1-F01 已迁移。未修改 `DEVELOPMENT_GOAL.md`、`pytools-core/**`、`crates/**`、根 Cargo 文件、Cargo.lock 或 Python 源项目。提交中不含真实工作簿、Issue 内容或对拍输出。
+
+## 验证结果
+
+- WSL Ubuntu：`cargo fmt --all -- --check` 通过。Windows 原生 `cargo` 未安装在当前可用 PATH，故本轮 Rust 验证使用已有 WSL 工具链。
+- WSL Ubuntu：`cargo test -p audit-core --locked` 全量通过，退出码 0；包含新目录 CLI 的合成测试、既有 S1 条件格式审核和 Audit 回归测试。
+- Python/Rust 真实只读样本对拍：目录入口发现 1 个 `.xlsx`，Rust 使用 `calamine+namespace_aware_ooxml` 读取 1 条规则、评估 29 格、生成 2 条 Issue；只读 Python `ConditionalFormatService(PYTHON)` 生成同样 2 条 Issue，Issue 字段差异 0。自动从文件名识别期间，机构标识按源 Python `_organisation_from_name` 规则赋值。此运行状态为 `completed_with_diagnostics`，不把诊断数解释为通过条件格式规则的 Issue。
+- 真实运行开发者日志：源文件发现和条件格式审核各有完成事件，报告实际 reader 与读取/计算/组装耗时。此前 348 Issue 真实样本证据仍仅覆盖 AppliesTo 默认范围；本轮真实样本也没有验证模板命名区域。
+- 合成入口测试覆盖期间自动识别、期间冲突失败、递归开关及普通/开发者视图事件与耗时字段。
+- 真实样本源文件保持只读；用于运行的新临时副本、Rust/Python 对拍结果和临时日志已清理。
+
+## 未执行项与已知问题
+
+- Windows 原生 Rust 编译/测试、麒麟 V10/UOS V20 构建、glibc 2.28 检查和 deb 安装验收未执行。
+- 等待 main 的共享 `read_defined_names` 能力安全同步后，把配置映射和模板命名区域计划接到目录/批量入口；再用命名区域范围的真实模板对拍。
+- 完整 S1-F01 普通规则、公式重算旁路、结果写回、历史及重复运行尚未迁移。
+
+## 删除清单与回滚
+
+- 删除清单：无。测试过程中生成的真实样本临时副本和结果已清理。
+- 代码、测试和新入口回滚：`git revert 0339ff1`。
+- 本记录和迁移清单为独立文档提交；不升级版本、不改用户版更新日志。
