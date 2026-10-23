@@ -367,3 +367,9 @@ timeline_ops::keyword_match 改为复用共享 Python 语义匹配器，修复�
 对原 PyTools 只读 xlsx/备份/ 中此前已测最小和最大端点以外的 51 份 XLSX，调用只读 PyCode run_summary_by_usedrange 和真实 Rust summary-used-range CLI，按 17 批、每批 3 份进行对拍。输出共 1,016,511 行；17/17 批的完整工作簿投影一致，覆盖值/行、类型、样式、工作表维度、冻结窗格、表头、合并、公式、定义名称、打印区域、页面设置、页边距及居中属性。开发者视图累计 549 条事件，与每次运行保存的历史事件流逐项一致；报告记录实际组件为 Calamine、excel-reader::read_xlsx_worksheet_extents 和 rust_xlsxwriter。
 
 51 份源文件合计 84,340,966 字节，测试前后文件大小与修改时间均未变化；生成的工作簿和运行日志仅位于临时目录。机器报告 probe/reports/summary_used_range_backup_assets_20261024.json 只记录计数、投影结果及实际组件，不含源文件名或单元格内容。此项补充真实样本证据，不改变 PT-6-1 的最终验收状态：未知 #DATA! 错误值仍按 Calamine 未支持能力失败关闭；麒麟/UOS 实机、deb 与 glibc 2.28 仍未验证。
+
+### 2026-10-24 PT-6-1 glibc 2.28 release 阶段对拍
+
+使用 Zig 0.17.0 与 cargo-zigbuild，在 WSL Ubuntu 离线构建 `x86_64-unknown-linux-gnu.2.28` release `pytools`。ELF 为动态链接 PIE，`ldd` 成功解析系统运行库；`objdump -T` 观测到的最高 GLIBC 符号为 `GLIBC_2.28`。直接运行 release 二进制的 `summary-used-range` 处理原 PyTools 最大备份 XLSX（3,800,854 字节），39,171 行完整工作簿投影与只读 PyCode 一致；实际组件为 Calamine、`excel-reader::read_xlsx_worksheet_extents` 和 `rust_xlsxwriter`。developer 视图 18 条事件与保存历史一致，输出工作簿阶段记录 1,406 ms，输入大小和修改时间未变。
+
+机器结果见 `probe/reports/summary_used_range_real_parity_20261024.json` 的 `additional_project_assets_20261024.platform_validation.linux_glibc_2_28_release_largest_backup`。此证据只覆盖 WSL 上的 glibc 2.28 ABI 构建检查和真实 CLI 对拍，不是麒麟 V10/UOS V20 实机或 deb 验收；PT-6-1 未知 `#DATA!` token、目标系统、deb 及最终验收仍未完成。
