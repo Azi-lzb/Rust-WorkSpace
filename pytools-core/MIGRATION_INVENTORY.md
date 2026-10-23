@@ -309,7 +309,7 @@ Rust 在新建报表时保留受支持的 Excel 错误类型；使用 namespace-
 
 验证：cargo fmt -p pytools-core -- --check 通过；patch_error_cells 输出所有权回归单测和 summary_used_range_error CLI 集成测试各 1/1 通过；python pytools-core/probe/compare_summary_tools.py 合成 CLI 对拍通过；git diff --check 通过。cargo test -p pytools-core --lib --offline --locked -q 的 26 个库测试中 25 个通过，workbook_extraction_matches_original_python_helper 因当前 checkout 缺少且 Git 未跟踪 tests/fixtures/季度报表_县区报表_2024-12-31.xlsx 失败；本轮未创建替代夹具。Cargo.lock 未变。
 
-原项目 13 份 .xlsx 已在 Windows Python 与 WSL Rust CLI 间完成四批真实对拍（96 张工作表、203,580 行），结果无差异；开发者视图在四批中均成功验证进度事件序号连续、历史 JSON 与 CLI 事件数一致。普通用户、开发者及 off 模式的输出一致性由真实 CLI 集成测试验证。Windows 原生 Rust 运行、一般 XLSM（宏自由合成样本及官方真实 VBA 样本已测；原项目业务样本未提供）、麒麟/UOS、glibc 2.28、deb 和正式 peak RSS 尚未验证；PT-6-1 按原 Python 合同过滤 .xls/.xlsb，工作区这些格式的通用 reader 能力仍未验收。PT-6-1 整体仍未完成验收。
+原项目 13 份 .xlsx 已在 Windows Python 与 WSL Rust CLI 间完成四批真实对拍（96 张工作表、203,580 行），结果无差异；开发者视图在四批中均成功验证进度事件序号连续、历史 JSON 与 CLI 事件数一致。普通用户、开发者及 off 模式的输出一致性由真实 CLI 集成测试验证。Windows 原生 Cargo 构建仍未验证（WSL 交叉构建的 Windows GNU 目标已在 PowerShell 实际运行并通过 VBA 样本对拍）；一般 XLSM（宏自由合成样本及官方真实 VBA 样本已测；原项目业务样本未提供）、麒麟/UOS、glibc 2.28、deb 和正式 peak RSS 尚未验证；PT-6-1 按原 Python 合同过滤 .xls/.xlsb，工作区这些格式的通用 reader 能力仍未验收。PT-6-1 整体仍未完成验收。
 
 ### 2026-10-24 PT-6-1 VBA 启用 XLSM 对拍
 
@@ -318,3 +318,7 @@ Rust 在新建报表时保留受支持的 Excel 错误类型；使用 namespace-
 ### 2026-10-24 PT-6-1 musl Linux 阶段验证
 
 WSL Ubuntu（host glibc 2.39）上离线构建 `pytools` CLI 到 `x86_64-unknown-linux-musl` debug 目标成功。debug 产物为 ELF static PIE，`readelf -l` 未发现动态解释器段，`objdump -T` 未发现 GLIBC 动态符号；相同 musl 目标的 `summary_used_range_error` 集成测试 4/4 通过，包含 VBA 启用 XLSM 输入。随后以 `--release --offline --locked` 成功构建同目标；release 产物同为 static PIE，无动态解释器段或 GLIBC 动态符号。直接运行 release `pytools summary-used-range` 处理官方 VBA 启用 XLSM 测试夹具，PyCode/Rust 工作簿投影完全一致（1 行）；源文件未改变，新建 XLSX 不含 VBA，11 条开发者事件与保存历史一致，实际读取/写入引擎为 Calamine/rust_xlsxwriter，本次 `output_workbook` 阶段记录 104 ms。以上仅覆盖 WSL 上的 musl debug/release 阶段，不等于麒麟 V10/UOS V20 实机、deb 安装或 glibc 2.28 验收；PT-6-1 仍未完成最终验收。
+
+### 2026-10-24 PT-6-1 Windows 目标运行阶段验证
+
+Windows 主机未安装 Rust/Cargo。复用 WSL Ubuntu 中已安装的 MinGW 与 `x86_64-pc-windows-gnu` target，离线构建 `pytools.exe` 成功，并从 Windows PowerShell 进程直接运行 `summary-used-range`。固定 VBA 启用 XLSM 样本与只读 PyCode 的工作簿投影完全一致（1 行），使用 Calamine/rust_xlsxwriter；源文件未改变，输出 `.xlsx` 不含 VBA，11 条开发者事件与保存历史一致，`output_workbook` 阶段为 14 ms。该证据覆盖交叉构建后的 Windows 目标二进制运行，不等于 Windows 原生 Rust 构建；麒麟/UOS 实机、deb 与 glibc 2.28 仍未验证。

@@ -473,5 +473,27 @@
       "event_stream_matches_saved_history": true,
       "output_workbook_elapsed_ms": 104
     }
+  },
+  "windows_target_runtime_validation": {
+    "status": "passed_windows_runtime_after_wsl_cross_build",
+    "host_runtime": "Windows PowerShell, x86_64",
+    "native_windows_cargo_available": false,
+    "build_host": "WSL Ubuntu",
+    "target_triple": "x86_64-pc-windows-gnu",
+    "build_profile": "debug",
+    "cargo_build_command": "cargo build --offline --locked -p pytools-core --bin pytools --target x86_64-pc-windows-gnu",
+    "artifact": "target/x86_64-pc-windows-gnu/debug/pytools.exe",
+    "actual_cli": "pytools.exe summary-used-range --log-view developer <VBA-enabled XLSM fixture>",
+    "fixture": "tests/fixtures/summary_used_range/vba_enabled_xlsxwriter_macro01.xlsm",
+    "python_rust_output": "exact",
+    "summary_rows": 1,
+    "reader_engine": "calamine",
+    "writer_engine": "rust_xlsxwriter",
+    "new_output_format": "xlsx",
+    "source_sha256_before_after_equal": true,
+    "source_vba_copied_to_new_summary": false,
+    "progress_event_count": 11,
+    "event_stream_matches_saved_history": true,
+    "output_workbook_elapsed_ms": 14
   }
 }
