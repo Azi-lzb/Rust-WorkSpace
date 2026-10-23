@@ -12,6 +12,7 @@ pub mod name_config;
 pub mod period_pairs;
 pub mod report_source;
 pub mod s1_conditional_audit;
+pub mod s1_structure_compare;
 pub mod s1_template;
 pub mod s2_analysis;
 pub mod s2_config;

@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "suite": "audit.s1_structure_preflight",
+  "baseline": "Open-Data-Audit base_audit.preflight_xlsx.validate_source_xlsx",
+  "status": "passed",
+  "sample": {
+    "source_workbook": "redacted real S1 workbook copy",
+    "template_workbook": "redacted real S1 template copy",
+    "read_only": true
+  },
+  "template": {
+    "structure_areas": 8,
+    "fixed_labels": 1075
+  },
+  "python": {
+    "matched": true,
+    "matched_labels": 1075,
+    "checked_labels": 1075,
+    "score": 1.0,
+    "missing_sheet_count": 0,
+    "elapsed_ms": 77
+  },
+  "rust": {
+    "matched": true,
+    "matched_labels": 1075,
+    "checked_labels": 1075,
+    "score": 1.0,
+    "missing_sheet_count": 0,
+    "engine": "calamine",
+    "read_time_ms": 983,
+    "elapsed_ms": 1003
+  },
+  "comparison": {
+    "fields": {
+      "matched": true,
+      "matched_labels": true,
+      "checked_labels": true,
+      "score": true,
+      "missing_sheets": true,
+      "template_label_count": true
+    },
+    "mismatch_count": 0
+  },
+  "verification": {
+    "source_and_template_modified": false,
+    "cell_values_and_paths_recorded": false,
+    "formula_recalculation": "not performed",
+    "scope": "one real S1 source/template pair; structure preflight and conditional issue extraction"
+  },
+  "conditional_audit": {
+    "baseline": "Open-Data-Audit ConditionalFormatService(PYTHON)",
+    "status": "passed",
+    "python_issue_count": 2,
+    "rust_issue_count": 2,
+    "mismatch_count": 0,
+    "field_difference_counts": {},
+    "python_evaluated_cells": 602,
+    "rust_evaluated_cells": 602,
+    "python_rules_total": 4,
+    "rust_rules_total": 4,
+    "rust_engine": "calamine+namespace_aware_ooxml"
+  }
+}

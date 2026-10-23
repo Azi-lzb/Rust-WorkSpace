@@ -11,8 +11,12 @@ use audit_core::{
         DEFAULT_CONDITIONAL_FEATURE_NAME,
     },
     s1_conditional_audit::{
-        extract_conditional_issues, extract_conditional_issues_batch, S1ConditionalBatchInput,
-        S1ConditionalBatchProgress, S1ConditionalMetadata,
+        extract_conditional_issues, extract_conditional_issues_batch,
+        S1ConditionalBatchAuditResult, S1ConditionalBatchInput, S1ConditionalBatchProgress,
+        S1ConditionalMetadata,
+    },
+    s1_structure_compare::{
+        compare_s1_source_structure, read_s1_structure_template_with_required_sheets,
     },
     s1_template::{recommend_template, recommend_template_for_workbooks, template_workbook_paths},
     s2_service::{run_s2_audit, S2ProgressEvent, S2RunRequest},
@@ -20,6 +24,7 @@ use audit_core::{
     web_bridge::serve_web_ui,
 };
 use clap::{Args, Parser, Subcommand};
+use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::{
     fs,
@@ -225,6 +230,34 @@ struct ConditionalAuditManifestFile {
     org_name: String,
 }
 
+#[derive(Clone, Debug, Serialize)]
+struct S1StructurePreflightFile {
+    source_file: String,
+    status: &'static str,
+    matched_labels: usize,
+    checked_labels: usize,
+    score: f64,
+    missing_sheets: Vec<String>,
+    read_time_ms: Option<u128>,
+    elapsed_ms: u128,
+    diagnostic: Option<String>,
+    error: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct S1StructurePreflightSummary {
+    status: &'static str,
+    engine: &'static str,
+    files_total: usize,
+    files_accepted: usize,
+    files_rejected: usize,
+    template_areas: usize,
+    template_labels: usize,
+    template_read_time_ms: u128,
+    elapsed_ms: u128,
+    files: Vec<S1StructurePreflightFile>,
+}
+
 #[derive(Debug, Args)]
 struct TemplateSuggestArgs {
     /// Directory containing .xlsx templates.
@@ -368,6 +401,20 @@ fn run() -> Result<()> {
             } else {
                 eprintln!("正在执行 S1-F01 条件格式检查…");
             }
+            let (preflighted, structure_preflight) = prepare_s1_structure_inputs(
+                vec![S1ConditionalBatchInput {
+                    workbook_path: arguments.workbook.clone(),
+                    source_file: source_file.clone(),
+                    metadata: metadata.clone(),
+                }],
+                arguments.template_workbook.as_deref(),
+                &scan_areas,
+                &structure_ranges,
+                arguments.developer_view,
+            )?;
+            if preflighted.is_empty() {
+                anyhow::bail!("报送文件与模板表结构不匹配，已跳过条件格式审核");
+            }
             let report = match extract_conditional_issues(
                 &arguments.workbook,
                 &source_file,
@@ -433,7 +480,11 @@ fn run() -> Result<()> {
                     run_started.elapsed().as_millis()
                 );
             }
-            println!("{}", serde_json::to_string_pretty(&report)?);
+            let mut output = serde_json::to_value(&report)?;
+            if let Some(summary) = structure_preflight {
+                output["structure_preflight"] = serde_json::to_value(summary)?;
+            }
+            println!("{}", serde_json::to_string_pretty(&output)?);
         }
         Command::ConditionalAuditBatch(arguments) => {
             run_conditional_audit_batch(arguments)?;
@@ -506,6 +557,7 @@ fn run_conditional_audit_batch(arguments: ConditionalAuditBatchArgs) -> Result<(
     }
     run_conditional_audit_inputs(
         inputs,
+        arguments.template_workbook.as_deref(),
         &scan_areas,
         &structure_ranges,
         &arguments.batch_id,
@@ -694,6 +746,7 @@ fn run_conditional_audit_directory(arguments: ConditionalAuditDirectoryArgs) -> 
 
     run_conditional_audit_inputs(
         inputs,
+        template_workbook.as_deref(),
         &scan_areas,
         &structure_ranges,
         &arguments.batch_id,
@@ -703,6 +756,7 @@ fn run_conditional_audit_directory(arguments: ConditionalAuditDirectoryArgs) -> 
 
 fn run_conditional_audit_inputs(
     inputs: Vec<S1ConditionalBatchInput>,
+    template_workbook: Option<&Path>,
     scan_areas: &[String],
     structure_ranges: &[CopyRange],
     batch_id: &str,
@@ -710,6 +764,13 @@ fn run_conditional_audit_inputs(
 ) -> Result<()> {
     let batch_started = Instant::now();
     let started_at = chrono::Local::now().to_rfc3339();
+    let (inputs, structure_preflight) = prepare_s1_structure_inputs(
+        inputs,
+        template_workbook,
+        scan_areas,
+        structure_ranges,
+        developer_view,
+    )?;
     if developer_view {
         eprintln!(
             "{}",
@@ -728,24 +789,32 @@ fn run_conditional_audit_inputs(
         eprintln!("正在执行 S1-F01 条件格式检查：{} 个工作簿。", inputs.len());
     }
 
-    let report = extract_conditional_issues_batch(
-        &inputs,
-        scan_areas,
-        structure_ranges,
-        |progress: &S1ConditionalBatchProgress| {
-            if developer_view {
-                if let Ok(event) = serde_json::to_string(&serde_json::json!({
-                    "type": "progress",
-                    "product": "open-data-audit",
-                    "feature": "S1-F01",
-                    "step": "conditional_format_issue_extraction",
-                    "batch_id": batch_id,
-                    "event": progress
-                })) {
-                    eprintln!("{event}");
-                }
-            } else {
-                match progress.status {
+    let report = if inputs.is_empty() {
+        Ok(S1ConditionalBatchAuditResult {
+            status: "completed_with_diagnostics",
+            issues: Vec::new(),
+            files: Vec::new(),
+            total_elapsed_ms: 0,
+        })
+    } else {
+        extract_conditional_issues_batch(
+            &inputs,
+            scan_areas,
+            structure_ranges,
+            |progress: &S1ConditionalBatchProgress| {
+                if developer_view {
+                    if let Ok(event) = serde_json::to_string(&serde_json::json!({
+                        "type": "progress",
+                        "product": "open-data-audit",
+                        "feature": "S1-F01",
+                        "step": "conditional_format_issue_extraction",
+                        "batch_id": batch_id,
+                        "event": progress
+                    })) {
+                        eprintln!("{event}");
+                    }
+                } else {
+                    match progress.status {
                     "started" => eprintln!(
                         "正在检查条件格式：{}（{}/{}）",
                         progress.source_file, progress.file_index, progress.files_total
@@ -772,11 +841,12 @@ fn run_conditional_audit_inputs(
                     ),
                     _ => {}
                 }
-            }
-        },
-    );
+                }
+            },
+        )
+    };
 
-    let report = match report {
+    let mut report = match report {
         Ok(report) => report,
         Err(error) => {
             if developer_view {
@@ -801,6 +871,13 @@ fn run_conditional_audit_inputs(
             return Err(error);
         }
     };
+    report.total_elapsed_ms = batch_started.elapsed().as_millis();
+    if structure_preflight
+        .as_ref()
+        .is_some_and(|summary| summary.files_rejected > 0)
+    {
+        report.status = "completed_with_diagnostics";
+    }
 
     if developer_view {
         eprintln!(
@@ -829,8 +906,274 @@ fn run_conditional_audit_inputs(
             batch_started.elapsed().as_millis()
         );
     }
-    println!("{}", serde_json::to_string_pretty(&report)?);
+    let mut output = serde_json::to_value(&report)?;
+    if let Some(summary) = structure_preflight {
+        output["structure_preflight"] = serde_json::to_value(summary)?;
+    }
+    println!("{}", serde_json::to_string_pretty(&output)?);
     Ok(())
+}
+
+fn prepare_s1_structure_inputs(
+    inputs: Vec<S1ConditionalBatchInput>,
+    template_workbook: Option<&Path>,
+    scan_areas: &[String],
+    structure_ranges: &[CopyRange],
+    developer_view: bool,
+) -> Result<(
+    Vec<S1ConditionalBatchInput>,
+    Option<S1StructurePreflightSummary>,
+)> {
+    let Some(template_workbook) = template_workbook else {
+        return Ok((inputs, None));
+    };
+    if structure_ranges.is_empty() {
+        if developer_view {
+            eprintln!(
+                "{}",
+                serde_json::to_string(&serde_json::json!({
+                    "type": "progress",
+                    "product": "open-data-audit",
+                    "feature": "S1-F01",
+                    "step": "structure_preflight",
+                    "status": "skipped",
+                    "reason": "template_has_no_mapped_structure_ranges"
+                }))?
+            );
+        } else {
+            eprintln!("未配置模板表结构区域，本次跳过结构预检。");
+        }
+        return Ok((inputs, None));
+    }
+
+    let started = Instant::now();
+    let started_at = chrono::Local::now().to_rfc3339();
+    if developer_view {
+        eprintln!(
+            "{}",
+            serde_json::to_string(&serde_json::json!({
+                "type": "progress",
+                "product": "open-data-audit",
+                "feature": "S1-F01",
+                "step": "structure_preflight",
+                "status": "started",
+                "engine": "calamine",
+                "files_total": inputs.len(),
+                "template_workbook": template_workbook.file_name().map(|name| name.to_string_lossy()),
+                "started_at": started_at
+            }))?
+        );
+    } else {
+        eprintln!("正在按模板检查 S1-F01 报送文件的固定表结构…");
+    }
+
+    let required_sheets = scan_areas
+        .iter()
+        .filter_map(|area| scan_area_sheet_name(area))
+        .chain(
+            structure_ranges
+                .iter()
+                .map(|range| range.sheet_name.clone()),
+        )
+        .collect::<Vec<_>>();
+    let template = match read_s1_structure_template_with_required_sheets(
+        template_workbook,
+        structure_ranges,
+        &required_sheets,
+    ) {
+        Ok(template) => template,
+        Err(error) => {
+            if developer_view {
+                eprintln!(
+                    "{}",
+                    serde_json::to_string(&serde_json::json!({
+                        "type": "progress",
+                        "product": "open-data-audit",
+                        "feature": "S1-F01",
+                        "step": "structure_preflight",
+                        "status": "failed",
+                        "engine": "calamine",
+                        "started_at": started_at,
+                        "finished_at": chrono::Local::now().to_rfc3339(),
+                        "elapsed_ms": started.elapsed().as_millis(),
+                        "error": format!("{error:#}")
+                    }))?
+                );
+            } else {
+                eprintln!("无法读取模板表结构，已停止本次审核。");
+            }
+            return Err(error.context("S1-F01 表结构模板读取失败"));
+        }
+    };
+
+    let outcomes = inputs
+        .par_iter()
+        .map(|input| {
+            let file_started = Instant::now();
+            (
+                input.clone(),
+                compare_s1_source_structure(&input.workbook_path, &template),
+                file_started.elapsed().as_millis(),
+            )
+        })
+        .collect::<Vec<_>>();
+    let mut accepted = Vec::new();
+    let mut files = Vec::with_capacity(outcomes.len());
+    for (input, result, file_elapsed_ms) in outcomes {
+        let source_file = input
+            .source_file
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_else(|| input.source_file.display().to_string());
+        let (
+            status,
+            matched_labels,
+            checked_labels,
+            score,
+            missing_sheets,
+            read_time_ms,
+            elapsed_ms,
+            diagnostic,
+            error,
+        ) = match result {
+            Ok(result) => {
+                if result.matched {
+                    accepted.push(input);
+                }
+                (
+                    if result.matched {
+                        "matched"
+                    } else {
+                        "rejected"
+                    },
+                    result.matched_labels,
+                    result.checked_labels,
+                    result.score,
+                    result.missing_sheets,
+                    Some(result.read_time_ms),
+                    result.elapsed_ms,
+                    result.diagnostic,
+                    None,
+                )
+            }
+            Err(error) => (
+                "read_error",
+                0,
+                0,
+                0.0,
+                Vec::new(),
+                None,
+                file_elapsed_ms,
+                None,
+                Some(format!("{error:#}")),
+            ),
+        };
+        let file = S1StructurePreflightFile {
+            source_file: source_file.clone(),
+            status,
+            matched_labels,
+            checked_labels,
+            score,
+            missing_sheets: missing_sheets.clone(),
+            read_time_ms,
+            elapsed_ms,
+            diagnostic: diagnostic.clone(),
+            error: error.as_ref().map(|_| "无法读取报送文件结构".to_owned()),
+        };
+
+        if developer_view {
+            eprintln!(
+                "{}",
+                serde_json::to_string(&serde_json::json!({
+                    "type": "progress",
+                    "product": "open-data-audit",
+                    "feature": "S1-F01",
+                    "step": "structure_preflight_file",
+                    "status": status,
+                    "engine": "calamine",
+                    "source_file": source_file,
+                    "matched_labels": matched_labels,
+                    "checked_labels": checked_labels,
+                    "score": score,
+                    "missing_sheets": missing_sheets,
+                    "read_time_ms": read_time_ms,
+                    "elapsed_ms": elapsed_ms,
+                    "diagnostic": diagnostic,
+                    "error": error
+                }))?
+            );
+        } else if status == "rejected" {
+            eprintln!(
+                "{}：表结构未通过，匹配 {}/{}（{:.0}%），已跳过。{}{}",
+                source_file,
+                matched_labels,
+                checked_labels,
+                score * 100.0,
+                if missing_sheets.is_empty() {
+                    String::new()
+                } else {
+                    format!("缺少工作表：{}。", missing_sheets.join("、"))
+                },
+                diagnostic
+                    .as_deref()
+                    .map(|message| format!("{message}。"))
+                    .unwrap_or_default()
+            );
+        } else if status == "read_error" {
+            eprintln!("{}：无法读取表结构，已跳过。", source_file);
+        }
+        files.push(file);
+    }
+
+    let files_rejected = files.len() - accepted.len();
+    let summary = S1StructurePreflightSummary {
+        status: if files_rejected == 0 {
+            "completed"
+        } else {
+            "completed_with_rejections"
+        },
+        engine: "calamine",
+        files_total: files.len(),
+        files_accepted: accepted.len(),
+        files_rejected,
+        template_areas: template.area_count,
+        template_labels: template.label_count,
+        template_read_time_ms: template.read_time_ms,
+        elapsed_ms: started.elapsed().as_millis(),
+        files,
+    };
+    if developer_view {
+        eprintln!(
+            "{}",
+            serde_json::to_string(&serde_json::json!({
+                "type": "progress",
+                "product": "open-data-audit",
+                "feature": "S1-F01",
+                "step": "structure_preflight",
+                "status": summary.status,
+                "engine": summary.engine,
+                "files_total": summary.files_total,
+                "files_accepted": summary.files_accepted,
+                "files_rejected": summary.files_rejected,
+                "template_areas": summary.template_areas,
+                "template_labels": summary.template_labels,
+                "template_read_time_ms": summary.template_read_time_ms,
+                "started_at": started_at,
+                "finished_at": chrono::Local::now().to_rfc3339(),
+                "elapsed_ms": summary.elapsed_ms
+            }))?
+        );
+    } else {
+        eprintln!(
+            "表结构预检完成：通过 {} 个，跳过 {} 个；读取引擎 {}，模板读取 {} ms，预检 {} ms。",
+            summary.files_accepted,
+            summary.files_rejected,
+            summary.engine,
+            summary.template_read_time_ms,
+            summary.elapsed_ms
+        );
+    }
+    Ok((accepted, Some(summary)))
 }
 
 fn recommend_s1_directory_template(
@@ -1263,13 +1606,30 @@ fn parse_copy_range(specification: &str) -> Result<CopyRange> {
     let (sheet_name, address) = specification
         .split_once('!')
         .context("结构区域应使用 Sheet!A1:B20 格式")?;
-    let sheet_name = sheet_name.trim().trim_matches('\'');
+    let sheet_name = decode_sheet_name(sheet_name.trim());
     let address = address.trim();
     if sheet_name.is_empty() || address.is_empty() {
         anyhow::bail!("结构区域应包含工作表名称和单元格范围");
     }
     Ok(CopyRange {
-        sheet_name: sheet_name.to_owned(),
+        sheet_name,
         address: address.to_owned(),
     })
+}
+
+fn scan_area_sheet_name(specification: &str) -> Option<String> {
+    let (sheet_name, _) = specification.split_once('!')?;
+    let sheet_name = decode_sheet_name(sheet_name.trim());
+    (!sheet_name.is_empty()).then_some(sheet_name)
+}
+
+fn decode_sheet_name(value: &str) -> String {
+    if let Some(quoted) = value
+        .strip_prefix('\'')
+        .and_then(|value| value.strip_suffix('\''))
+    {
+        quoted.replace("''", "'")
+    } else {
+        value.to_owned()
+    }
 }

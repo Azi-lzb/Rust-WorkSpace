@@ -148,11 +148,22 @@ fn directory_cli_discovers_period_derives_organization_and_logs_both_views() {
     fs::remove_dir_all(directory).expect("remove temporary input directory");
 }
 
-fn named_template_fixture() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests")
-        .join("fixtures")
-        .join("s1_conditional_named_template.xlsx")
+fn named_template_fixture(path: &Path) {
+    let mut workbook = Workbook::new();
+    let sheet = workbook.add_worksheet();
+    sheet
+        .set_name("S1Conditional")
+        .expect("set synthetic template worksheet name");
+    sheet
+        .write_number(1, 0, 2.0)
+        .expect("write fixed structure label");
+    workbook
+        .define_name("条件格式区域_集成样例", "='S1Conditional'!$B$2:$B$2")
+        .expect("define synthetic conditional area");
+    workbook
+        .define_name("表结构区域_集成样例", "='S1Conditional'!$A$2:$A$2")
+        .expect("define synthetic structure area");
+    workbook.save(path).expect("save synthetic named template");
 }
 
 fn mapping_config(path: &Path) {
@@ -209,8 +220,12 @@ fn workbook_with_sheet_name(path: &Path, name: &str) {
 fn directory_cli_reads_template_defined_names_and_applies_configured_areas() {
     let directory = temporary_directory("s1_named_area_mapping");
     copy_fixture(&directory, "9144_甲银行_2026-07-31.xlsx");
+    workbook_with_sheet_name(
+        &directory.join("9145_乙银行_2026-07-31.xlsx"),
+        "S1Conditional",
+    );
     let template = directory.join("template_2026-09.xlsx");
-    fs::copy(named_template_fixture(), &template).expect("copy synthetic named template");
+    named_template_fixture(&template);
     let config = directory.join("mapping-config_2026-08.xlsx");
     mapping_config(&config);
 
@@ -237,6 +252,10 @@ fn directory_cli_reads_template_defined_names_and_applies_configured_areas() {
     assert_eq!(report["files"][0]["issue_count"], 1);
     assert_eq!(report["issues"].as_array().unwrap().len(), 1);
     assert_eq!(report["issues"][0]["target_cell"], "B2");
+    assert_eq!(report["structure_preflight"]["engine"], "calamine");
+    assert_eq!(report["structure_preflight"]["files_total"], 2);
+    assert_eq!(report["structure_preflight"]["files_accepted"], 1);
+    assert_eq!(report["structure_preflight"]["files_rejected"], 1);
 
     let events = String::from_utf8_lossy(&output.stderr)
         .lines()
@@ -260,6 +279,17 @@ fn directory_cli_reads_template_defined_names_and_applies_configured_areas() {
     assert_eq!(mapping["scan_areas"], 1);
     assert_eq!(mapping["structure_areas"], 1);
     assert!(mapping["elapsed_ms"].as_u64().is_some());
+    let structure = events
+        .iter()
+        .find(|event| {
+            event["step"] == "structure_preflight" && event["status"] == "completed_with_rejections"
+        })
+        .expect("structure preflight completion event");
+    assert_eq!(structure["engine"], "calamine");
+    assert_eq!(structure["files_total"], 2);
+    assert_eq!(structure["files_accepted"], 1);
+    assert_eq!(structure["files_rejected"], 1);
+    assert!(structure["elapsed_ms"].as_u64().is_some());
 
     let override_output = run_cli_with_mapping(
         &directory,
@@ -281,6 +311,10 @@ fn directory_cli_reads_template_defined_names_and_applies_configured_areas() {
         serde_json::from_slice(&override_output.stdout).expect("valid override batch JSON");
     assert_eq!(override_report["issues"].as_array().unwrap().len(), 1);
     assert_eq!(override_report["issues"][0]["target_cell"], "C5");
+    assert!(override_report["total_elapsed_ms"].as_u64().is_some());
+    let user_logs = String::from_utf8_lossy(&override_output.stderr);
+    assert!(user_logs.contains("表结构未通过"));
+    assert!(user_logs.contains("表结构预检完成：通过 1 个，跳过 1 个；读取引擎 calamine"));
 
     fs::remove_dir_all(directory).expect("remove temporary input directory");
 }
@@ -294,7 +328,7 @@ fn directory_cli_recommends_template_for_selected_sources_and_excludes_template_
     fs::create_dir_all(&template_dir).expect("create template directory inside source tree");
     copy_fixture(&input_dir, "9144_甲银行_2026-07-31.xlsx");
     let template = template_dir.join("单位模板.xlsx");
-    fs::copy(named_template_fixture(), &template).expect("copy synthetic named template");
+    named_template_fixture(&template);
     let config = directory.join("mapping-config.xlsx");
     mapping_config(&config);
 
@@ -372,10 +406,8 @@ fn directory_cli_stops_when_template_recommendation_is_ambiguous() {
     fs::create_dir_all(&input_dir).expect("create source input directory");
     fs::create_dir_all(&template_dir).expect("create template directory");
     copy_fixture(&input_dir, "9144_甲银行_2026-07-31.xlsx");
-    fs::copy(named_template_fixture(), template_dir.join("候选甲.xlsx"))
-        .expect("copy first synthetic template");
-    fs::copy(named_template_fixture(), template_dir.join("候选乙.xlsx"))
-        .expect("copy second synthetic template");
+    named_template_fixture(&template_dir.join("候选甲.xlsx"));
+    named_template_fixture(&template_dir.join("候选乙.xlsx"));
 
     let output = run_cli_with_mapping(
         &input_dir,
@@ -423,8 +455,7 @@ fn directory_cli_template_recommendation_respects_selected_files_for_mixed_types
     fs::create_dir_all(&template_dir).expect("create template directory");
     copy_fixture(&input_dir, "9144_甲银行_2026-07-31.xlsx");
     workbook_with_sheet_name(&input_dir.join("9145_乙银行_2026-07-31.xlsx"), "其他报表");
-    fs::copy(named_template_fixture(), template_dir.join("单位模板.xlsx"))
-        .expect("copy unit template");
+    named_template_fixture(&template_dir.join("单位模板.xlsx"));
     workbook_with_sheet_name(&template_dir.join("其他模板.xlsx"), "其他报表");
     let config = directory.join("mapping-config.xlsx");
     mapping_config(&config);
@@ -487,7 +518,7 @@ fn directory_cli_limits_period_detection_to_selected_files() {
     copy_fixture(&directory, "9144_甲银行_2026-06-30.xlsx");
     copy_fixture(&directory, "9145_乙银行_2026-07-31.xlsx");
     let template = directory.join("template_2026-09.xlsx");
-    fs::copy(named_template_fixture(), &template).expect("copy synthetic named template");
+    named_template_fixture(&template);
     let config = directory.join("mapping-config_2026-08.xlsx");
     mapping_config(&config);
 
