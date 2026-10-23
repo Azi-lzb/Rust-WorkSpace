@@ -163,6 +163,337 @@ pub struct WorksheetHeaderInventory {
     pub headers: Vec<WorksheetHeaderText>,
 }
 
+/// Scope of a workbook defined name. `local_sheet_id` follows the zero-based
+/// index in the workbook's `<sheets>` collection, including non-worksheet tabs.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum DefinedNameScope {
+    Workbook,
+    Worksheet {
+        local_sheet_id: usize,
+        sheet_name: Option<String>,
+        sheet_kind: Option<String>,
+    },
+    UnresolvedWorksheet {
+        local_sheet_id: usize,
+    },
+    InvalidWorksheetScope {
+        raw_local_sheet_id: String,
+    },
+}
+
+/// A resolved A1 area in a defined-name formula.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct DefinedNameArea {
+    pub sheet_name: String,
+    pub sheet_kind: String,
+    pub reference: String,
+}
+
+/// How much of the defined-name formula this reader understands.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DefinedNameParseStatus {
+    Areas,
+    NonAreaExpression,
+    UnsupportedAreaExpression,
+    InvalidAreaExpression,
+}
+
+/// Namespace-aware inventory of workbook defined names. `raw_reference` is
+/// preserved exactly as stored (apart from XML entity decoding); `areas` is
+/// populated only when every union member is a supported A1 area reference.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct DefinedNameRecord {
+    pub name: String,
+    pub scope: DefinedNameScope,
+    pub raw_reference: String,
+    pub parse_status: DefinedNameParseStatus,
+    pub areas: Vec<DefinedNameArea>,
+}
+
+#[derive(Clone, Debug)]
+struct WorkbookSheetIdentity {
+    name: String,
+    kind: String,
+}
+
+/// Read workbook and worksheet-scoped defined names from XLSX/XLSM OOXML.
+/// This is a metadata adapter and does not read or infer cell values. Supported
+/// area expressions are returned with sheet identity; formulas, constants,
+/// external references and unsupported reference forms remain available in
+/// `raw_reference` with an explicit parse status.
+pub fn read_defined_names(path: impl AsRef<Path>) -> Result<Vec<DefinedNameRecord>> {
+    let path = path.as_ref();
+    ensure!(
+        path.extension()
+            .and_then(|extension| extension.to_str())
+            .is_some_and(|extension| {
+                extension.eq_ignore_ascii_case("xlsx") || extension.eq_ignore_ascii_case("xlsm")
+            }),
+        "defined-name reader only supports .xlsx and .xlsm"
+    );
+    let mut zip = ZipArchive::new(fs::File::open(path).context("open workbook package")?)
+        .context("open workbook ZIP package")?;
+    let (workbook_part, sheets) = workbook_sheet_identities(&mut zip)?;
+    let workbook_xml = zip_read(&mut zip, &workbook_part).context("read workbook part")?;
+    let document = Document::parse(&workbook_xml).context("parse workbook part")?;
+    let root = document.root_element();
+    ensure!(
+        root.tag_name().namespace() == Some(SPREADSHEET_MAIN_NS)
+            && root.tag_name().name() == "workbook",
+        "workbook part has an unexpected root element"
+    );
+
+    let Some(container) = root.children().find(|node| {
+        node.is_element()
+            && node.tag_name().namespace() == Some(SPREADSHEET_MAIN_NS)
+            && node.tag_name().name() == "definedNames"
+    }) else {
+        return Ok(Vec::new());
+    };
+    let mut records = Vec::new();
+    for node in container.children().filter(|node| {
+        node.is_element()
+            && node.tag_name().namespace() == Some(SPREADSHEET_MAIN_NS)
+            && node.tag_name().name() == "definedName"
+    }) {
+        let name = node.attribute("name").context("definedName has no name")?;
+        let raw_reference = node.text().unwrap_or_default().to_owned();
+        let scope = match node.attribute("localSheetId") {
+            None => DefinedNameScope::Workbook,
+            Some(raw) => match raw.parse::<usize>() {
+                Ok(local_sheet_id) => match sheets.get(local_sheet_id) {
+                    Some(sheet) => DefinedNameScope::Worksheet {
+                        local_sheet_id,
+                        sheet_name: Some(sheet.name.clone()),
+                        sheet_kind: Some(sheet.kind.clone()),
+                    },
+                    None => DefinedNameScope::UnresolvedWorksheet { local_sheet_id },
+                },
+                Err(_) => DefinedNameScope::InvalidWorksheetScope {
+                    raw_local_sheet_id: raw.to_owned(),
+                },
+            },
+        };
+        let (parse_status, areas) = parse_defined_name_areas(&raw_reference, &sheets);
+        records.push(DefinedNameRecord {
+            name: name.to_owned(),
+            scope,
+            raw_reference,
+            parse_status,
+            areas,
+        });
+    }
+    Ok(records)
+}
+
+fn workbook_sheet_identities(
+    zip: &mut ZipArchive<fs::File>,
+) -> Result<(String, Vec<WorkbookSheetIdentity>)> {
+    let root_rels_xml = zip_read(zip, "_rels/.rels")?;
+    let root_rels = Document::parse(&root_rels_xml)?;
+    let workbook_target = root_rels
+        .descendants()
+        .filter(|node| {
+            node.is_element()
+                && node.tag_name().namespace() == Some(PACKAGE_REL_NS)
+                && node.tag_name().name() == "Relationship"
+        })
+        .find_map(|relationship| {
+            let workbook = relationship
+                .attribute("Type")
+                .is_some_and(|kind| kind.ends_with("/officeDocument"));
+            let external = relationship
+                .attribute("TargetMode")
+                .is_some_and(|mode| mode.eq_ignore_ascii_case("External"));
+            (workbook && !external)
+                .then(|| relationship.attribute("Target"))
+                .flatten()
+        })
+        .context("package relationships do not identify an internal officeDocument part")?;
+    let workbook_part = norm_part("", workbook_target);
+    let workbook_parent = workbook_part
+        .rsplit_once('/')
+        .map(|(parent, _)| parent)
+        .unwrap_or("");
+    let workbook_xml = zip_read(zip, &workbook_part)?;
+    let workbook_doc = Document::parse(&workbook_xml)?;
+    let workbook_rels_xml = zip_read(zip, &relationships_part(&workbook_part))?;
+    let rels_doc = Document::parse(&workbook_rels_xml)?;
+    let mut rels = BTreeMap::new();
+    for relationship in rels_doc.descendants().filter(|node| {
+        node.is_element()
+            && node.tag_name().namespace() == Some(PACKAGE_REL_NS)
+            && node.tag_name().name() == "Relationship"
+    }) {
+        if let (Some(id), Some(kind), Some(target)) = (
+            relationship.attribute("Id"),
+            relationship.attribute("Type"),
+            relationship.attribute("Target"),
+        ) {
+            let external = relationship
+                .attribute("TargetMode")
+                .is_some_and(|mode| mode.eq_ignore_ascii_case("External"));
+            rels.insert(
+                id.to_owned(),
+                (kind.to_owned(), target.to_owned(), external),
+            );
+        }
+    }
+    let mut sheets = Vec::new();
+    for sheet in workbook_doc.descendants().filter(|node| {
+        node.is_element()
+            && node.tag_name().namespace() == Some(SPREADSHEET_MAIN_NS)
+            && node.tag_name().name() == "sheet"
+    }) {
+        let name = sheet
+            .attribute("name")
+            .context("workbook sheet has no name")?;
+        let rel_id = sheet
+            .attribute((OFFICE_REL_NS, "id"))
+            .context("workbook sheet has no relationship id")?;
+        let (kind, target, external) = rels
+            .get(rel_id)
+            .with_context(|| format!("unresolved relationship for sheet {name:?}"))?;
+        ensure!(
+            !*external,
+            "workbook sheet {name:?} has an external relationship"
+        );
+        let part = norm_part(workbook_parent, target);
+        ensure!(
+            !part.is_empty(),
+            "workbook sheet {name:?} has an empty part path"
+        );
+        sheets.push(WorkbookSheetIdentity {
+            name: name.to_owned(),
+            kind: kind.rsplit('/').next().unwrap_or(kind).to_owned(),
+        });
+    }
+    Ok((workbook_part, sheets))
+}
+
+fn parse_defined_name_areas(
+    expression: &str,
+    sheets: &[WorkbookSheetIdentity],
+) -> (DefinedNameParseStatus, Vec<DefinedNameArea>) {
+    if expression.contains('(') || expression.contains(')') {
+        return (DefinedNameParseStatus::NonAreaExpression, Vec::new());
+    }
+    let parts = split_formula_union(expression);
+    if parts.is_empty() {
+        return (DefinedNameParseStatus::NonAreaExpression, Vec::new());
+    }
+    let mut areas = Vec::new();
+    for part in parts {
+        let Some((sheet_token, reference)) = part.rsplit_once('!') else {
+            let status = if is_a1_area(part) {
+                DefinedNameParseStatus::UnsupportedAreaExpression
+            } else {
+                DefinedNameParseStatus::NonAreaExpression
+            };
+            return (status, Vec::new());
+        };
+        let Some(sheet_name) = decode_sheet_token(sheet_token) else {
+            return (
+                DefinedNameParseStatus::UnsupportedAreaExpression,
+                Vec::new(),
+            );
+        };
+        if !is_a1_area(reference) {
+            return (
+                DefinedNameParseStatus::UnsupportedAreaExpression,
+                Vec::new(),
+            );
+        }
+        let Some(sheet) = sheets.iter().find(|sheet| sheet.name == sheet_name) else {
+            return (DefinedNameParseStatus::InvalidAreaExpression, Vec::new());
+        };
+        areas.push(DefinedNameArea {
+            sheet_name: sheet.name.clone(),
+            sheet_kind: sheet.kind.clone(),
+            reference: reference.to_owned(),
+        });
+    }
+    (DefinedNameParseStatus::Areas, areas)
+}
+
+fn split_formula_union(expression: &str) -> Vec<&str> {
+    split_formula_union_bytes(expression)
+}
+
+fn split_formula_union_bytes(expression: &str) -> Vec<&str> {
+    let (mut start, mut quoted) = (0, false);
+    let mut parts = Vec::new();
+    let chars: Vec<(usize, char)> = expression.char_indices().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        let (byte, ch) = chars[i];
+        if ch == '\'' {
+            if quoted && chars.get(i + 1).is_some_and(|(_, next)| *next == '\'') {
+                i += 2;
+                continue;
+            }
+            quoted = !quoted;
+        } else if ch == ',' && !quoted {
+            parts.push(expression[start..byte].trim());
+            start = byte + 1;
+        }
+        i += 1;
+    }
+    if quoted {
+        return Vec::new();
+    }
+    parts.push(expression[start..].trim());
+    parts
+}
+
+fn decode_sheet_token(token: &str) -> Option<String> {
+    let token = token.strip_prefix('=').unwrap_or(token);
+    let decoded = if token.starts_with('\'') && token.ends_with('\'') && token.len() >= 2 {
+        token[1..token.len() - 1].replace("''", "'")
+    } else if token
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '.')
+    {
+        token.to_owned()
+    } else {
+        return None;
+    };
+    // External workbook qualifiers and 3-D references are deliberately unsupported.
+    (!decoded.contains('[') && !decoded.contains(']') && !decoded.contains(':')).then_some(decoded)
+}
+
+fn is_a1_area(reference: &str) -> bool {
+    fn cell(value: &str) -> bool {
+        let value = value.strip_prefix('$').unwrap_or(value);
+        let letters = value
+            .chars()
+            .take_while(|ch| ch.is_ascii_alphabetic())
+            .count();
+        if letters == 0 || letters > 3 {
+            return false;
+        }
+        let column = value[..letters].chars().fold(0_usize, |column, ch| {
+            column * 26 + (ch.to_ascii_uppercase() as usize - 'A' as usize + 1)
+        });
+        if column > 16_384 {
+            return false;
+        }
+        let rest = &value[letters..];
+        let rest = rest.strip_prefix('$').unwrap_or(rest);
+        !rest.is_empty()
+            && rest.chars().all(|ch| ch.is_ascii_digit())
+            && rest
+                .parse::<u32>()
+                .is_ok_and(|row| (1..=1_048_576).contains(&row))
+    }
+    let mut pair = reference.split(':');
+    let first = pair.next().unwrap_or_default();
+    let second = pair.next();
+    pair.next().is_none() && cell(first) && second.map_or(true, cell)
+}
+
 /// Read odd/even/first-page header text from an OOXML workbook.
 ///
 /// This is an OOXML metadata read, separate from Calamine cell-value reading.
@@ -1033,6 +1364,36 @@ mod tests {
         Ok(path)
     }
 
+    fn defined_names_ooxml_fixture() -> Result<PathBuf> {
+        let path = std::env::temp_dir().join(format!(
+            "excel-reader-defined-names-{}-{}.xlsx",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_nanos()
+        ));
+        let root_rels = format!(
+            r#"<Relationships xmlns="{PACKAGE_REL_NS}"><Relationship Id="rId0" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="custom/book.xml"/></Relationships>"#
+        );
+        let workbook = format!(
+            r#"<s:workbook xmlns:s="{SPREADSHEET_MAIN_NS}" xmlns:r="{OFFICE_REL_NS}"><s:sheets><s:sheet name="Data Set" sheetId="1" r:id="rId1"/><s:sheet name="Chart" sheetId="2" r:id="rId2"/></s:sheets><s:definedNames><s:definedName name="GlobalRange">'Data Set'!$A$1:$B$8</s:definedName><s:definedName name="LocalUnion" localSheetId="0">'Data Set'!A1:B2,'Data Set'!D4</s:definedName><s:definedName name="Formula">SUM('Data Set'!A:A)</s:definedName><s:definedName name="Broken" localSheetId="9">'Missing'!A1</s:definedName></s:definedNames></s:workbook>"#
+        );
+        let workbook_rels = format!(
+            r#"<Relationships xmlns="{PACKAGE_REL_NS}"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/s1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/chartsheet" Target="chartsheets/c1.xml"/></Relationships>"#
+        );
+        let mut archive = ZipWriter::new(fs::File::create(&path)?);
+        for (name, xml) in [
+            ("_rels/.rels", root_rels),
+            ("custom/book.xml", workbook),
+            ("custom/_rels/book.xml.rels", workbook_rels),
+        ] {
+            archive.start_file(name, SimpleFileOptions::default())?;
+            archive.write_all(xml.as_bytes())?;
+        }
+        archive.finish()?;
+        Ok(path)
+    }
+
     fn worksheet_extent_fixture() -> Result<PathBuf> {
         let path = std::env::temp_dir().join(format!(
             "excel-reader-worksheet-extents-{}-{}.xlsx",
@@ -1108,6 +1469,52 @@ mod tests {
         let names = read_xlsx_sheet_names_ooxml(&fixture)?;
         fs::remove_file(fixture)?;
         assert_eq!(names, vec!["单位贷款".to_owned(), "图表页".to_owned()]);
+        Ok(())
+    }
+
+    #[test]
+    fn defined_name_reader_preserves_scope_raw_text_and_resolves_area_sheet_identity() -> Result<()>
+    {
+        let fixture = defined_names_ooxml_fixture()?;
+        let names = read_defined_names(&fixture)?;
+        fs::remove_file(fixture)?;
+
+        assert_eq!(names.len(), 4);
+        assert_eq!(names[0].name, "GlobalRange");
+        assert_eq!(names[0].scope, DefinedNameScope::Workbook);
+        assert_eq!(names[0].raw_reference, "'Data Set'!$A$1:$B$8");
+        assert_eq!(names[0].parse_status, DefinedNameParseStatus::Areas);
+        assert_eq!(
+            names[0].areas,
+            vec![DefinedNameArea {
+                sheet_name: "Data Set".to_owned(),
+                sheet_kind: "worksheet".to_owned(),
+                reference: "$A$1:$B$8".to_owned(),
+            }]
+        );
+        assert_eq!(
+            names[1].scope,
+            DefinedNameScope::Worksheet {
+                local_sheet_id: 0,
+                sheet_name: Some("Data Set".to_owned()),
+                sheet_kind: Some("worksheet".to_owned()),
+            }
+        );
+        assert_eq!(names[1].parse_status, DefinedNameParseStatus::Areas);
+        assert_eq!(names[1].areas.len(), 2);
+        assert_eq!(
+            names[2].parse_status,
+            DefinedNameParseStatus::NonAreaExpression
+        );
+        assert_eq!(names[2].raw_reference, "SUM('Data Set'!A:A)");
+        assert_eq!(
+            names[3].scope,
+            DefinedNameScope::UnresolvedWorksheet { local_sheet_id: 9 }
+        );
+        assert_eq!(
+            names[3].parse_status,
+            DefinedNameParseStatus::InvalidAreaExpression
+        );
         Ok(())
     }
 
