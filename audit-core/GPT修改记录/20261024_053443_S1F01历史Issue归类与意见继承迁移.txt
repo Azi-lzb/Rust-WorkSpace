@@ -1,0 +1,35 @@
+时间：2026-10-24 05:34（Asia/Shanghai）
+执行者：Codex
+分支/Worktree：audit-dev / 当前 audit-dev Worktree
+修改前 commit：91591d4；修改前工作区干净。
+功能代码 commit：7920557 feat(audit): classify S1 issues against history
+本记录与迁移清单作为独立留痕提交；最终提交号以 Git 历史为准。
+
+修改目的：继续 S1-F01，将旧 Python history.py 中 Issue 历史归类和人工意见继承迁入 audit-core，并由实际 Rust CLI 提供调用入口。
+
+变更文件：
+- audit-core/src/s1_history.rs：实现历史意见继承、按期次归类新增/连续/再次出现 Issue、按机构范围生成已整改 Issue、按 Python 兼容口径排序历史期次。
+- audit-core/src/lib.rs：导出 S1 历史业务模块。
+- audit-core/src/bin/open-data-audit.rs：新增 `s1-history-classify` JSON CLI；普通日志和开发者 JSON 事件均包含 Rust 引擎、步骤及耗时。
+- audit-core/tests/s1_history_cli.rs：覆盖命令输出、历史状态归类和双视图日志。
+- audit-core/tests/compare/compare_s1_history_classification.py：只读调用旧 Python history 函数，与 Rust CLI 对拍当前 Issue、已整改 Issue 和合并历史。
+- audit-core/probe/reports/s1_history_classification_parity.json：保存脱敏合成样本汇总结果。
+- audit-core/MIGRATION_INVENTORY.md：登记此局部迁移及范围。
+
+业务与配置影响：
+- 覆盖 `merge_history` 与 `classify_current_issues` 的业务语义，包括人工意见去重合并、首次出现期、前一期连续判断、再次出现判断、已整改合成以及机构范围过滤。
+- CLI 输入/输出为包含 Issue 数组的 JSON 文档；本次没有迁移 Excel 历史库读取/写回、完整重复运行流程、公式重算或结果工作簿写入。
+- 没有修改 Python 源项目、DEVELOPMENT_GOAL.md、pytools-core、共享 crates、Cargo.toml 或 Cargo.lock；没有配置或 VBA 变化。
+- 【组件版本】不升级；workspace crate 版本未变，旧产品 Sx-Fxx 组件版本制度不适用。
+
+验证结果：
+- `cargo fmt --all -- --check`：通过。
+- `cargo test -p audit-core --locked --quiet`：112 通过（69 个单元测试、43 个集成测试），0 跳过、0 失败、0 错误；文档测试 0 项。
+- `compare_s1_history_classification.py`：8 条合成历史、4 条当前 Issue；current_issues、resolved_issues、merged_history 三组完整字段差异均为 0；普通和开发者日志均验证含引擎与耗时。
+- 对拍报告：`audit-core/probe/reports/s1_history_classification_parity.json`。
+- WSL Ubuntu 构建/测试通过；Windows 原生 Rust、麒麟 V10/UOS V20、deb、真实 Excel 历史库未执行。
+- 构建中出现的 deprecated umya API 警告位于未修改的 `crates/excel-editor`，与本次 Audit 变更无关。
+
+删除清单：无。
+已知限制：JSON CLI 是 Issue 历史业务逻辑入口；Excel 历史库的读取、保存及重复运行整链仍未迁移或验收。
+回滚方式：`git revert 7920557`；若需撤销本留痕提交，单独 revert 后续文档提交。

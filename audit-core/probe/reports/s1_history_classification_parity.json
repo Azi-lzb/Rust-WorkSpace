@@ -1,0 +1,26 @@
+{
+  "suite": "audit.s1_history_classification",
+  "baseline": "Open-Data-Audit base_audit.history",
+  "status": "passed",
+  "fixture": "synthetic_issue_history",
+  "history_rows": 8,
+  "current_issues": 4,
+  "resolved_issues": 1,
+  "merged_history_rows": 6,
+  "python_rust_field_differences": 0,
+  "compared_fields": [
+    "current_issues",
+    "resolved_issues",
+    "merged_history"
+  ],
+  "summary": {
+    "new_issues": 2,
+    "continuous_issues": 1,
+    "recurring_issues": 1,
+    "resolved_issues": 1,
+    "previous_period": "2026-02"
+  },
+  "user_log_engine_and_timing": true,
+  "developer_log_engine_and_timing": true,
+  "source_workbooks_modified": false
+}
