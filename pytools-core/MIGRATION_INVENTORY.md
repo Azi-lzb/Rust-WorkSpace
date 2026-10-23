@@ -375,3 +375,5 @@ timeline_ops::keyword_match 改为复用共享 Python 语义匹配器，修复�
 机器结果见 `probe/reports/summary_used_range_real_parity_20261024.json` 的 `additional_project_assets_20261024.platform_validation.linux_glibc_2_28_release_largest_backup`。此证据只覆盖 WSL 上的 glibc 2.28 ABI 构建检查和真实 CLI 对拍，不是麒麟 V10/UOS V20 实机或 deb 验收；PT-6-1 未知 `#DATA!` token、目标系统、deb 及最终验收仍未完成。
 
 同一 glibc 2.28 release CLI 在合成 `getting_data_error.xlsx` 边界夹具上以退出码 2 失败关闭；运行记录为 `failed`，stage 为 `value_read`、error type 为 `value_read_error`，未生成部分汇总且运行日志不包含单元格 token。此项验证当前 workspace reader 边界，不属于未知 token 的 Python/Rust 输出对拍；保持未支持状态。
+
+glibc 2.28 release CLI 对同一最大真实工作簿的 user、developer、off 三种日志视图均与 PyCode 完整工作簿投影精确一致（各 39,171 行）。user/developer 运行记录均成功且含 18 条事件；developer stderr 事件流与保存历史逐项一致；off 未创建运行历史且没有 CLI 进度输出（WSL 主机启动提示单独识别）。三种模式均验证了读取/写入引擎字段；输入大小和修改时间未变。该证据仍不代表麒麟/UOS 实机或 deb 验收。

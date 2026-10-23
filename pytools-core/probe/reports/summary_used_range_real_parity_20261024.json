@@ -694,6 +694,52 @@
           "run_log_exposes_cell_token": false,
           "source_metadata_unchanged": true,
           "python_rust_output_parity": "not_applicable_unknown_token_is_fail_closed_by_current_workspace_reader_boundary"
+        },
+        "log_view_validation": {
+          "status": "passed_all_log_views",
+          "runtime": "WSL Ubuntu; x86_64-unknown-linux-gnu.2.28 release CLI",
+          "source_scope": "xlsx/备份/（最大工作簿，3,800,854 bytes）",
+          "source_size_bytes": 3800854,
+          "rows": 39171,
+          "files": 1,
+          "python_rust_full_projection": "exact_in_user_developer_off_views",
+          "views": {
+            "user": {
+              "status": "passed",
+              "python_rust_full_projection": "exact",
+              "rows": 39171,
+              "files": 1,
+              "reader_writer_engine_report_verified": true,
+              "run_log_status": "succeeded",
+              "event_count": 18
+            },
+            "developer": {
+              "status": "passed",
+              "python_rust_full_projection": "exact",
+              "rows": 39171,
+              "files": 1,
+              "actual_engines": [
+                "calamine",
+                "excel-reader::read_xlsx_worksheet_extents",
+                "rust_xlsxwriter"
+              ],
+              "event_count": 18,
+              "event_stream_matches_saved_history": true,
+              "output_workbook_elapsed_ms": 1245
+            },
+            "off": {
+              "status": "passed",
+              "python_rust_full_projection": "exact",
+              "rows": 39171,
+              "files": 1,
+              "reader_writer_engine_report_verified": true,
+              "run_log_created": false,
+              "application_progress_emitted": false,
+              "host_startup_notice_present": true
+            }
+          },
+          "source_metadata_unchanged": true,
+          "target_os_acceptance": "not_claimed"
         }
       }
     }
