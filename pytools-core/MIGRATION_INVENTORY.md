@@ -314,3 +314,7 @@ Rust 在新建报表时保留受支持的 Excel 错误类型；使用 namespace-
 ### 2026-10-24 PT-6-1 VBA 启用 XLSM 对拍
 
 使用 XlsxWriter 固定提交 `a880ecc15c1573449dba051e5c21025f00c7c9fc` 的测试样本 `macro01.xlsm`（BSD-2-Clause），保存为 `tests/fixtures/summary_used_range/vba_enabled_xlsxwriter_macro01.xlsm` 并附上许可文本。样本含 13,312 字节 `xl/vbaProject.bin`；测试未执行宏。PyCode `run_summary_by_usedrange` 与实际 `summary-used-range` Rust CLI 对拍输出完全一致（1 行），两边均生成不带 VBA 部件的 `.xlsx`；输入未改变。Rust 实际使用 Calamine 和 rust_xlsxwriter，开发者事件历史一致，输出工作簿阶段 205 ms。机器结果保存在 `probe/reports/summary_used_range_parity_20261024.json`。原 PyTools 业务目录仍无含 VBA 的 XLSM 样本，目标 Linux 平台和 deb 仍待验收。
+
+### 2026-10-24 PT-6-1 musl Linux 阶段验证
+
+WSL Ubuntu（host glibc 2.39）上离线构建 `pytools` CLI 到 `x86_64-unknown-linux-musl`：成功。产物为 ELF static PIE，`readelf -l` 未发现动态解释器段，`objdump -T` 未发现 GLIBC 动态符号。相同 musl 目标的 `summary_used_range_error` 集成测试 4/4 通过，包含 VBA 启用 XLSM 输入。该结果只覆盖 WSL 上的 musl debug 构建及运行，不等于麒麟 V10/UOS V20 实机、release/deb、安装或 glibc 2.28 验收；PT-6-1 仍未完成最终验收。

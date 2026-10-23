@@ -18,11 +18,14 @@
 验证：
 - `cargo fmt -p pytools-core -- --check`（WSL）：通过。
 - `cargo test --offline --locked -p pytools-core --test summary_used_range_error`（WSL）：4/4 通过，含 VBA 启用 XLSM 回归。
+- `cargo build --offline --locked -p pytools-core --bin pytools --target x86_64-unknown-linux-musl`（WSL）：通过。
+- `file` / `readelf -l` / `objdump -T` 检查 musl debug CLI：static PIE，无动态解释器段，无 GLIBC 动态符号。
+- `cargo test --offline --locked -p pytools-core --test summary_used_range_error --target x86_64-unknown-linux-musl`（WSL）：4/4 通过。
 - `compare_vba_enabled_xlsm_sample` 固定样本 PyCode/Rust CLI 对拍：值/类型、样式、工作表及输出属性完全一致；Rust 输出日志事件完整。
 - Python probe AST 和 fixture ZIP/VBA 部件检查：通过。
 - `git diff --check`：通过。
 
-差异与边界：未观察到 PyCode/Rust 输出差异。XlsxWriter fixture 是公开格式测试样本，不是原 PyTools 业务工作簿；源项目仍无真实 VBA 启用 XLSM 样本。宏未执行。麒麟 V10/UOS V20、glibc 2.28、deb、Windows 原生 Rust 和正式峰值 RSS 仍未验证。未修改 Rust 产品业务语义和路由。
+差异与边界：未观察到 PyCode/Rust 输出差异。XlsxWriter fixture 是公开格式测试样本，不是原 PyTools 业务工作簿；源项目仍无真实 VBA 启用 XLSM 样本。宏未执行。WSL Ubuntu glibc 2.39 上的 musl 静态 debug CLI 已构建并通过集成测试；麒麟 V10/UOS V20 实机、release/deb、glibc 2.28 目标构建、Windows 原生 Rust 和正式峰值 RSS 仍未验证。未修改 Rust 产品业务语义和路由。
 
 删除文件：无；Python/Rust 对拍输出位于系统临时目录。
 回滚：可用 `git revert <本轮提交>` 撤回本轮变更。

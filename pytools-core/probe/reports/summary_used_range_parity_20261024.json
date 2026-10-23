@@ -439,5 +439,19 @@
       "skipped_input_names": [],
       "input_filter_events_have_no_engine": true
     }
+  },
+  "linux_stage_validation": {
+    "status": "passed_wsl_musl_stage",
+    "host": "WSL Ubuntu, glibc 2.39",
+    "target_triple": "x86_64-unknown-linux-musl",
+    "build_profile": "debug",
+    "cargo_build": "passed",
+    "artifact": "target/x86_64-unknown-linux-musl/debug/pytools",
+    "artifact_type": "ELF static PIE",
+    "dynamic_interpreter_segment": false,
+    "glibc_dynamic_symbols": false,
+    "integration_test_command": "cargo test --offline --locked -p pytools-core --test summary_used_range_error --target x86_64-unknown-linux-musl",
+    "integration_test_result": "4 passed, 0 failed",
+    "kylin_uos_deb_install_validation": "not performed"
   }
 }
