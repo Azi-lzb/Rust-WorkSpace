@@ -16,6 +16,7 @@ use audit_core::{
         S1ConditionalMetadata,
     },
     s1_formula_audit::{extract_s1_formula_issues, S1FormulaMetadata},
+    s1_history::{process_s1_history, S1HistoryRequest},
     s1_structure_compare::{
         compare_s1_source_structure, read_s1_structure_template_with_required_sheets,
     },
@@ -63,6 +64,8 @@ enum Command {
     S1TemplateRules(S1TemplateRulesArgs),
     /// Extract standard S1 Issues from formula values already stored in an audit copy.
     S1FormulaAudit(S1FormulaAuditArgs),
+    /// Classify S1 Issues against prior history and carry forward manual notes.
+    S1HistoryClassify(S1HistoryClassifyArgs),
     /// Serve the bundled Audit frontend through the Rust API bridge on localhost.
     Serve(ServeArgs),
 }
@@ -278,6 +281,17 @@ struct S1FormulaAuditArgs {
     mapping_config: Option<PathBuf>,
 
     /// Emit developer-view JSON progress events with actual engines and timings.
+    #[arg(long, default_value_t = false)]
+    developer_view: bool,
+}
+
+#[derive(Debug, Args)]
+struct S1HistoryClassifyArgs {
+    /// JSON document with period, current_issues and prior history Issue arrays.
+    #[arg(long)]
+    input: PathBuf,
+
+    /// Emit developer-view JSON progress events with stage timing details.
     #[arg(long, default_value_t = false)]
     developer_view: bool,
 }
@@ -566,6 +580,9 @@ fn run() -> Result<()> {
         Command::S1FormulaAudit(arguments) => {
             run_s1_formula_audit(arguments)?;
         }
+        Command::S1HistoryClassify(arguments) => {
+            run_s1_history_classify(arguments)?;
+        }
     }
     Ok(())
 }
@@ -795,6 +812,77 @@ fn run_s1_formula_audit(arguments: S1FormulaAuditArgs) -> Result<()> {
         "issues": result.issues
     });
     println!("{}", serde_json::to_string_pretty(&output)?);
+    Ok(())
+}
+
+fn run_s1_history_classify(arguments: S1HistoryClassifyArgs) -> Result<()> {
+    let started = Instant::now();
+    let started_at = chrono::Local::now().to_rfc3339();
+    if arguments.developer_view {
+        eprintln!(
+            "{}",
+            serde_json::to_string(&serde_json::json!({
+                "type": "progress",
+                "product": "open-data-audit",
+                "feature": "S1-F01",
+                "step": "history_issue_classification",
+                "status": "started",
+                "engine": "rust_s1_history",
+                "started_at": started_at
+            }))?
+        );
+    } else {
+        eprintln!("正在按历史审核记录归类 S1-F01 审核项…");
+    }
+
+    let request: S1HistoryRequest = serde_json::from_str(
+        &fs::read_to_string(&arguments.input)
+            .with_context(|| format!("读取 S1 历史审核数据 {}", arguments.input.display()))?,
+    )
+    .with_context(|| format!("解析 S1 历史审核数据 {}", arguments.input.display()))?;
+    let history_rows = request.history.len();
+    let batch_id = request.batch_id.clone();
+    let mut result = process_s1_history(request);
+    result.summary.elapsed_ms = started.elapsed().as_millis();
+
+    if arguments.developer_view {
+        eprintln!(
+            "{}",
+            serde_json::to_string(&serde_json::json!({
+                "type": "progress",
+                "product": "open-data-audit",
+                "feature": "S1-F01",
+                "step": "history_issue_classification",
+                "status": "completed",
+                "engine": "rust_s1_history",
+                "batch_id": batch_id,
+                "started_at": started_at,
+                "finished_at": chrono::Local::now().to_rfc3339(),
+                "elapsed_ms": result.summary.elapsed_ms,
+                "history_rows": history_rows,
+                "current_issues": result.summary.current_issues,
+                "new_issues": result.summary.new_issues,
+                "continuous_issues": result.summary.continuous_issues,
+                "recurring_issues": result.summary.recurring_issues,
+                "resolved_issues": result.summary.resolved_issues,
+                "merged_history_rows": result.summary.merged_history_rows,
+                "previous_period": result.summary.previous_period
+            }))?
+        );
+    } else {
+        eprintln!(
+            "S1-F01 历史归类完成：引擎 Rust，历史 {} 条，本期 {} 条（新增 {}、连续 {}、再次出现 {}），已整改 {} 条；耗时 {} ms。",
+            result.summary.history_rows,
+            result.summary.current_issues,
+            result.summary.new_issues,
+            result.summary.continuous_issues,
+            result.summary.recurring_issues,
+            result.summary.resolved_issues,
+            result.summary.elapsed_ms
+        );
+    }
+
+    println!("{}", serde_json::to_string_pretty(&result)?);
     Ok(())
 }
 
