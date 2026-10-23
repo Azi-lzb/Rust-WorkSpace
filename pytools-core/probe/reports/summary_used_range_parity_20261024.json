@@ -330,7 +330,8 @@
   "progress_logging": {
     "view": "developer",
     "status": "validated",
-    "event_stream_matches_saved_history": true
+    "event_stream_matches_saved_history": true,
+    "workbook_write_duration_recorded": 220
   },
   "input_filter_probe": {
     "python_supported_extensions": [
@@ -353,7 +354,7 @@
       "view": "developer",
       "status": "succeeded",
       "event_stream_matches_saved_history": true,
-      "event_count": 19,
+      "event_count": 20,
       "phases": [
         "extent_scan",
         "input_filter",
@@ -371,12 +372,13 @@
         "rust_xlsxwriter"
       ],
       "completed_stage_elapsed_ms": {
-        "extent_scan": 14,
-        "value_read": 42,
+        "extent_scan": 15,
+        "value_read": 40,
         "row_write": 0,
-        "output_save": 73,
-        "ooxml_error_patch": 118,
-        "run": 407
+        "output_save": 74,
+        "ooxml_error_patch": 127,
+        "output_workbook": 220,
+        "run": 421
       },
       "skipped_input_names": [
         "ignored_source.xls",

@@ -631,10 +631,21 @@ fn summarize_used_ranges_inner(
         );
     }
     let read_elapsed_ms = (read_elapsed + read_elapsed_during_write).as_millis();
-    let write_elapsed_ms = write_started
+    let write_elapsed = write_started
         .elapsed()
-        .saturating_sub(read_elapsed_during_write)
-        .as_millis();
+        .saturating_sub(read_elapsed_during_write);
+    emitter.emit(
+        "output_workbook",
+        "succeeded",
+        "汇总工作簿生成完成",
+        &progress,
+        None,
+        Some(write_elapsed),
+        &["pytools-core", "excel-writer"],
+        Some("rust_xlsxwriter"),
+        None,
+    );
+    let write_elapsed_ms = write_elapsed.as_millis();
     let result = SummaryResult {
         saved: true,
         rows: out_row.saturating_sub(1) as usize,

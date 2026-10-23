@@ -1,0 +1,27 @@
+时间：2026-10-24（Asia/Shanghai）
+执行者：Codex（pytools-dev）
+修改前 commit：caf3c5a（pytools-dev 与 origin/pytools-dev 同步）；修改前工作树干净。实际 worktree 为 C:\Users\AZI\Desktop\VibeCode\pytools-dev，分支 pytools-dev。原 Python 项目只读；未修改 DEVELOPMENT_GOAL.md、AGENTS.md、规则、Audit、共享 crates、根 Cargo 配置或 Cargo.lock。
+
+目的：完善 PT-6-1 开发者/用户进度事件，使汇总工作簿生成阶段有明确的完成事件和持续时间，并与 CLI 现有 `write_elapsed_ms` 采用同一计时值。
+
+修改文件：
+- `pytools-core/src/summary_ops.rs`：工作簿成功保存且错误值补丁（若有）完成后，发出 `output_workbook/succeeded` 事件，记录 `rust_xlsxwriter` 和去除 Calamine 读取耗时后的写出阶段时长；CLI 结果的 `execution.write_elapsed_ms` 复用该 Duration。
+- `pytools-core/tests/summary_used_range_error.rs`：断言普通用户视图显示生成完成提示；开发者视图包含带实际引擎和耗时的输出簿完成事件，且事件耗时与 `execution.write_elapsed_ms` 相同。
+- `pytools-core/probe/compare_summary_tools.py`：扩展名过滤对拍要求完成输出簿阶段时间存在。
+- `pytools-core/probe/reports/summary_used_range_parity_20261024.json`：记录定向 Python/Rust CLI 对拍中的该阶段时间和进度事件。
+- 本修改记录。
+
+实际入口与结果：通过真实 `pytools summary-used-range` CLI 跑混合 XLSX/XLSM 与跳过输入。普通用户视图显示“汇总工作簿生成完成”；开发者视图输出 `output_workbook/succeeded`，`actual_engine=rust_xlsxwriter`，其 `stage_elapsed_ms` 与原执行结果 `write_elapsed_ms` 完全一致。定向 Python/Rust 对拍输出仍为 19 行且一致；Rust 报告 20 个连续事件，并保存与事件流匹配的 JSON 历史。机器报告中的样本测得 write 阶段 220 ms，仅是该临时合成输入的观测，不作性能结论。
+
+验证：
+- `cargo fmt -p pytools-core -- --check`（WSL）：通过。
+- `cargo test --offline --locked -p pytools-core --test summary_used_range_error`（WSL）：3/3 通过。
+- `compare_used_range_extension_filter` 定向 PyCode/Rust CLI 对拍：通过，值/类型、样式、工作表属性与维度一致。
+- 13 份真实 XLSX 的完整批次对拍未在本次仅日志事件变更后重跑；该对拍及输出结果验证见此前 `20261024_PT-6-1双视图运行日志与真实对拍` 记录。本轮没有改业务数据生成、读取、过滤或 Excel 输出内容。
+- `git diff --check`：提交前执行。
+
+差异与边界：没有观察到 Excel 输出差异。VBA 启用 XLSM、Windows 原生 Rust、麒麟/UOS、glibc 2.28、deb 和正式 peak RSS 仍未验证；原项目无真实 XLSM 样本。
+
+删除文件：无；probe 临时输入/输出位于系统临时目录。
+回滚：可用 `git revert <本轮提交>` 撤回本轮修改。
+【组件版本】：不升级，当前 0.1.0。

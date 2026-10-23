@@ -53,6 +53,7 @@ fn summary_used_range_cli_preserves_excel_error_cells() -> Result<()> {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("正在扫描工作簿范围"));
     assert!(stderr.contains("工作簿读取完成"));
+    assert!(stderr.contains("汇总工作簿生成完成"));
     assert!(stderr.contains("忽略不支持的输入"));
     assert!(!stderr.contains("calamine"));
     assert!(!stderr.contains("rust_xlsxwriter"));
@@ -126,6 +127,19 @@ fn summary_used_range_cli_preserves_excel_error_cells() -> Result<()> {
             && event["actual_engine"] == "rust_xlsxwriter"
             && event["stage_elapsed_ms"].is_number()
     }));
+    let workbook_write_event = developer_events
+        .iter()
+        .find(|event| {
+            event["phase"] == "output_workbook"
+                && event["status"] == "succeeded"
+                && event["actual_engine"] == "rust_xlsxwriter"
+                && event["stage_elapsed_ms"].is_number()
+        })
+        .context("completed output workbook event missing")?;
+    assert_eq!(
+        developer_report["execution"]["write_elapsed_ms"],
+        workbook_write_event["stage_elapsed_ms"]
+    );
     assert!(developer_events
         .iter()
         .filter(|event| { event["phase"] == "input_filter" && event["status"] == "skipped" })

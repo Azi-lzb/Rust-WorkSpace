@@ -627,6 +627,8 @@ def compare_used_range_extension_filter(
         raise AssertionError("Rust CLI did not report both unsupported input extensions")
     if progress_log.get("input_filter_events_have_no_engine") is not True:
         raise AssertionError("unsupported inputs were associated with a reader engine")
+    if progress_log.get("completed_stage_elapsed_ms", {}).get("output_workbook") is None:
+        raise AssertionError("Rust CLI did not record the completed workbook-write duration")
     if before != source_fingerprints(all_sources):
         raise AssertionError("an extension-filter input was modified")
     return {
