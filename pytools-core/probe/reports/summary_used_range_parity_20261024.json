@@ -38,12 +38,12 @@
     "formulas_merges_defined_names_print_area_page_setup": "exact (default portrait normalized)"
   },
   "rust_execution": {
+    "ooxml_error_cells_patched": 7,
+    "read_elapsed_ms": 240,
     "reader_engine": "calamine",
-    "writer_engine": "rust_xlsxwriter",
-    "read_elapsed_ms": 260,
-    "write_elapsed_ms": 251,
-    "total_elapsed_ms": 575,
-    "ooxml_error_cells_patched": 7
+    "total_elapsed_ms": 577,
+    "write_elapsed_ms": 266,
+    "writer_engine": "rust_xlsxwriter"
   },
   "offset_used_range_probe": {
     "source_sheet": "Offset",
@@ -325,5 +325,10 @@
     "NoComPyTools and PyCode input-format scopes differ; no production scope was inferred from the NoCom-only formats.",
     "Output is a new data workbook; source workbook styles, formulas and unrelated OOXML parts are not copied by contract.",
     "A synthetic XLSX t=e #DATA! cell is written as a string by PyCode; Calamine 0.37 rejects it. Supporting this value requires a coordinated shared-reader capability; no OOXML fallback was added."
-  ]
+  ],
+  "progress_logging": {
+    "view": "developer",
+    "status": "validated",
+    "event_stream_matches_saved_history": true
+  }
 }

@@ -10,7 +10,7 @@ use std::{
     fs::{self, OpenOptions},
     io::{Read, Write},
     path::{Path, PathBuf},
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 use zip::{write::SimpleFileOptions, ZipArchive, ZipWriter};
 
@@ -38,6 +38,85 @@ pub struct SummaryExecution {
     pub ooxml_error_cells_patched: usize,
 }
 
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct SummaryProgress {
+    pub total_inputs: usize,
+    pub total_files: usize,
+    pub current_file: Option<usize>,
+    pub processed_files: usize,
+    pub completed_files: usize,
+    pub failed_files: usize,
+    pub processed_rows: usize,
+    pub total_rows: usize,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct SummaryRunEvent {
+    pub sequence: usize,
+    pub timestamp: String,
+    pub phase: String,
+    pub status: String,
+    pub user_message: String,
+    pub progress: SummaryProgress,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub file_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stage_elapsed_ms: Option<u128>,
+    pub total_elapsed_ms: u128,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub components: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub actual_engine: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_type: Option<String>,
+}
+
+struct SummaryProgressEmitter<'a> {
+    started: Instant,
+    sequence: usize,
+    callback: Option<&'a mut dyn FnMut(SummaryRunEvent)>,
+}
+
+impl SummaryProgressEmitter<'_> {
+    fn emit(
+        &mut self,
+        phase: &str,
+        status: &str,
+        user_message: impl Into<String>,
+        progress: &SummaryProgress,
+        file: Option<&Path>,
+        stage_elapsed: Option<Duration>,
+        components: &[&str],
+        actual_engine: Option<&str>,
+        error_type: Option<&str>,
+    ) {
+        let Some(callback) = self.callback.as_mut() else {
+            return;
+        };
+        self.sequence += 1;
+        let event = SummaryRunEvent {
+            sequence: self.sequence,
+            timestamp: Local::now().to_rfc3339(),
+            phase: phase.to_owned(),
+            status: status.to_owned(),
+            user_message: user_message.into(),
+            progress: progress.clone(),
+            file_name: file
+                .and_then(Path::file_name)
+                .map(|name| name.to_string_lossy().into_owned()),
+            stage_elapsed_ms: stage_elapsed.map(|elapsed| elapsed.as_millis()),
+            total_elapsed_ms: self.started.elapsed().as_millis(),
+            components: components
+                .iter()
+                .map(|component| (*component).to_owned())
+                .collect(),
+            actual_engine: actual_engine.map(str::to_owned),
+            error_type: error_type.map(str::to_owned),
+        };
+        (**callback)(event);
+    }
+}
+
 #[derive(Clone, Debug)]
 struct PendingErrorCell {
     address: String,
@@ -46,29 +125,166 @@ struct PendingErrorCell {
 }
 
 pub fn summarize_used_ranges(sources: &[PathBuf], output_dir: &Path) -> Result<SummaryResult> {
-    let started = std::time::Instant::now();
-    fs::create_dir_all(output_dir)
-        .with_context(|| format!("create summary output directory {}", output_dir.display()))?;
+    summarize_used_ranges_inner(sources, output_dir, None)
+}
+
+pub fn summarize_used_ranges_with_progress<F>(
+    sources: &[PathBuf],
+    output_dir: &Path,
+    mut on_event: F,
+) -> Result<SummaryResult>
+where
+    F: FnMut(SummaryRunEvent),
+{
+    summarize_used_ranges_inner(sources, output_dir, Some(&mut on_event))
+}
+
+fn summarize_used_ranges_inner(
+    sources: &[PathBuf],
+    output_dir: &Path,
+    callback: Option<&mut dyn FnMut(SummaryRunEvent)>,
+) -> Result<SummaryResult> {
+    let started = Instant::now();
+    let mut emitter = SummaryProgressEmitter {
+        started,
+        sequence: 0,
+        callback,
+    };
+    let mut progress = SummaryProgress {
+        total_inputs: sources.len(),
+        total_files: sources
+            .iter()
+            .filter(|path| supported(path) && path.is_file())
+            .count(),
+        ..SummaryProgress::default()
+    };
+    emitter.emit(
+        "run",
+        "started",
+        format!(
+            "开始按使用区域汇总：{} 个输入，{} 个可用工作簿",
+            progress.total_inputs, progress.total_files
+        ),
+        &progress,
+        None,
+        None,
+        &["pytools-core"],
+        None,
+        None,
+    );
+    if let Err(error) = fs::create_dir_all(output_dir) {
+        emitter.emit(
+            "prepare_output",
+            "failed",
+            "无法准备汇总输出目录",
+            &progress,
+            None,
+            None,
+            &["pytools-core"],
+            None,
+            Some("output_directory_error"),
+        );
+        return Err(error)
+            .with_context(|| format!("create summary output directory {}", output_dir.display()));
+    }
     let mut workbooks = Vec::new();
     let mut max_col = 0usize;
     let mut rows_written = 0usize;
     let mut files = 0usize;
     let mut read_elapsed = Duration::ZERO;
-    for path in sources {
+    for (input_index, path) in sources.iter().enumerate() {
         if !supported(path) {
+            emitter.emit(
+                "input_filter",
+                "skipped",
+                format!("忽略不支持的输入 [{}/{}]", input_index + 1, sources.len()),
+                &progress,
+                Some(path),
+                None,
+                &["pytools-core"],
+                None,
+                None,
+            );
             continue;
         }
         if !path.is_file() {
+            emitter.emit(
+                "input_filter",
+                "skipped",
+                format!("忽略不存在的输入 [{}/{}]", input_index + 1, sources.len()),
+                &progress,
+                Some(path),
+                None,
+                &["pytools-core"],
+                None,
+                None,
+            );
             continue;
         }
-        let read_started = std::time::Instant::now();
-        let extents = read_xlsx_worksheet_extents(path)
-            .with_context(|| format!("read used-range summary extents {}", path.display()))?;
+        let current_file = files + 1;
+        let file_name = path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        progress.current_file = Some(current_file);
+        let stage_started = Instant::now();
+        emitter.emit(
+            "extent_scan",
+            "started",
+            format!(
+                "正在扫描工作簿范围 [{current_file}/{}]：{file_name}",
+                progress.total_files
+            ),
+            &progress,
+            Some(path),
+            None,
+            &["pytools-core", "excel-reader"],
+            Some("excel-reader::read_xlsx_worksheet_extents"),
+            None,
+        );
+        let read_started = Instant::now();
+        let extents = match read_xlsx_worksheet_extents(path) {
+            Ok(extents) => extents,
+            Err(error) => {
+                progress.failed_files += 1;
+                emitter.emit(
+                    "extent_scan",
+                    "failed",
+                    format!(
+                        "工作簿范围扫描失败 [{current_file}/{}]：{file_name}",
+                        progress.total_files
+                    ),
+                    &progress,
+                    Some(path),
+                    Some(stage_started.elapsed()),
+                    &["pytools-core", "excel-reader"],
+                    Some("excel-reader::read_xlsx_worksheet_extents"),
+                    Some("extent_scan_error"),
+                );
+                return Err(error).with_context(|| {
+                    format!("read used-range summary extents {}", path.display())
+                });
+            }
+        };
         let bounds_by_sheet = extents
             .iter()
             .map(|extent| (extent.name.clone(), summary_bounds(extent)))
             .collect::<BTreeMap<_, _>>();
         read_elapsed += read_started.elapsed();
+        emitter.emit(
+            "extent_scan",
+            "succeeded",
+            format!(
+                "范围扫描完成 [{current_file}/{}]：{file_name}",
+                progress.total_files
+            ),
+            &progress,
+            Some(path),
+            Some(stage_started.elapsed()),
+            &["pytools-core", "excel-reader"],
+            Some("excel-reader::read_xlsx_worksheet_extents"),
+            None,
+        );
         files += 1;
         for (min_row, _min_col, max_row, max_col_sheet) in bounds_by_sheet.values() {
             max_col = max_col.max(*max_col_sheet);
@@ -76,10 +292,12 @@ pub fn summarize_used_ranges(sources: &[PathBuf], output_dir: &Path) -> Result<S
                 rows_written += max_row.saturating_sub(*min_row) + 1;
             }
         }
+        progress.processed_files = files;
+        progress.total_rows = rows_written;
         workbooks.push((path.clone(), bounds_by_sheet));
     }
     if files == 0 || rows_written == 0 || max_col == 0 {
-        return Ok(SummaryResult {
+        let result = SummaryResult {
             saved: false,
             rows: 0,
             files,
@@ -92,7 +310,19 @@ pub fn summarize_used_ranges(sources: &[PathBuf], output_dir: &Path) -> Result<S
                 total_elapsed_ms: started.elapsed().as_millis(),
                 ooxml_error_cells_patched: 0,
             }),
-        });
+        };
+        emitter.emit(
+            "run",
+            "skipped",
+            "没有可汇总的工作簿或使用区域",
+            &progress,
+            None,
+            None,
+            &["pytools-core"],
+            None,
+            None,
+        );
+        return Ok(result);
     }
     fs::create_dir_all(output_dir)?;
     let path = unique_output(
@@ -103,6 +333,17 @@ pub fn summarize_used_ranges(sources: &[PathBuf], output_dir: &Path) -> Result<S
         ),
     )?;
     let write_started = std::time::Instant::now();
+    emitter.emit(
+        "output_workbook",
+        "started",
+        "正在创建汇总工作簿",
+        &progress,
+        None,
+        None,
+        &["pytools-core", "excel-writer"],
+        Some("rust_xlsxwriter"),
+        None,
+    );
     let mut workbook = Workbook::new();
     let sheet = workbook.add_worksheet();
     sheet.set_name("汇总")?;
@@ -118,11 +359,67 @@ pub fn summarize_used_ranges(sources: &[PathBuf], output_dir: &Path) -> Result<S
     let mut out_row = 1u32;
     let mut error_cells = Vec::new();
     let mut read_elapsed_during_write = Duration::ZERO;
-    for (path, bounds_by_sheet) in workbooks {
-        let read_started = std::time::Instant::now();
-        let dump = read_workbook(&path)
-            .with_context(|| format!("read used-range summary source {}", path.display()))?;
+    for (file_index, (path, bounds_by_sheet)) in workbooks.into_iter().enumerate() {
+        let current_file = file_index + 1;
+        let file_name = path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        progress.current_file = Some(current_file);
+        let stage_started = Instant::now();
+        emitter.emit(
+            "value_read",
+            "started",
+            format!(
+                "正在读取工作簿数据 [{current_file}/{}]：{file_name}",
+                progress.total_files
+            ),
+            &progress,
+            Some(&path),
+            None,
+            &["pytools-core", "calamine"],
+            Some("calamine"),
+            None,
+        );
+        let read_started = Instant::now();
+        let dump = match read_workbook(&path) {
+            Ok(dump) => dump,
+            Err(error) => {
+                progress.failed_files += 1;
+                emitter.emit(
+                    "value_read",
+                    "failed",
+                    format!(
+                        "工作簿读取失败 [{current_file}/{}]：{file_name}",
+                        progress.total_files
+                    ),
+                    &progress,
+                    Some(&path),
+                    Some(stage_started.elapsed()),
+                    &["pytools-core", "calamine"],
+                    Some("calamine"),
+                    Some("value_read_error"),
+                );
+                return Err(error)
+                    .with_context(|| format!("read used-range summary source {}", path.display()));
+            }
+        };
         read_elapsed_during_write += read_started.elapsed();
+        emitter.emit(
+            "value_read",
+            "succeeded",
+            format!(
+                "工作簿读取完成 [{current_file}/{}]：{file_name}",
+                progress.total_files
+            ),
+            &progress,
+            Some(&path),
+            Some(stage_started.elapsed()),
+            &["pytools-core", "calamine"],
+            Some("calamine"),
+            None,
+        );
+        let row_stage_started = Instant::now();
         let base = path
             .file_stem()
             .map(|s| s.to_string_lossy().into_owned())
@@ -170,6 +467,23 @@ pub fn summarize_used_ranges(sources: &[PathBuf], output_dir: &Path) -> Result<S
                     }
                 }
                 out_row += 1;
+                progress.processed_rows = out_row.saturating_sub(1) as usize;
+                if progress.processed_rows > 0 && progress.processed_rows % 5_000 == 0 {
+                    emitter.emit(
+                        "row_write",
+                        "running",
+                        format!(
+                            "已汇总 {} / {} 行",
+                            progress.processed_rows, progress.total_rows
+                        ),
+                        &progress,
+                        Some(&path),
+                        Some(row_stage_started.elapsed()),
+                        &["pytools-core", "rust_xlsxwriter"],
+                        Some("rust_xlsxwriter"),
+                        None,
+                    );
+                }
             }
         }
         anyhow::ensure!(
@@ -177,31 +491,151 @@ pub fn summarize_used_ranges(sources: &[PathBuf], output_dir: &Path) -> Result<S
             "worksheet set changed between extent scan and value read for {}",
             path.display()
         );
+        progress.completed_files += 1;
+        emitter.emit(
+            "row_write",
+            "succeeded",
+            format!(
+                "工作簿汇总完成 [{current_file}/{}]：{file_name}",
+                progress.total_files
+            ),
+            &progress,
+            Some(&path),
+            Some(row_stage_started.elapsed()),
+            &["pytools-core", "rust_xlsxwriter"],
+            Some("rust_xlsxwriter"),
+            None,
+        );
     }
     if error_cells.is_empty() {
-        workbook
-            .save(&path)
-            .with_context(|| format!("save used-range summary {}", path.display()))?;
+        let save_started = Instant::now();
+        emitter.emit(
+            "output_save",
+            "started",
+            "正在保存汇总工作簿",
+            &progress,
+            None,
+            None,
+            &["rust_xlsxwriter"],
+            Some("rust_xlsxwriter"),
+            None,
+        );
+        if let Err(error) = workbook.save(&path) {
+            emitter.emit(
+                "output_save",
+                "failed",
+                "汇总工作簿保存失败",
+                &progress,
+                None,
+                Some(save_started.elapsed()),
+                &["rust_xlsxwriter"],
+                Some("rust_xlsxwriter"),
+                Some("output_save_error"),
+            );
+            return Err(error)
+                .with_context(|| format!("save used-range summary {}", path.display()));
+        }
+        emitter.emit(
+            "output_save",
+            "succeeded",
+            "汇总工作簿已保存",
+            &progress,
+            None,
+            Some(save_started.elapsed()),
+            &["rust_xlsxwriter"],
+            Some("rust_xlsxwriter"),
+            None,
+        );
     } else {
+        let save_started = Instant::now();
+        emitter.emit(
+            "output_save",
+            "started",
+            format!("正在保存汇总结果和 {} 个错误单元格", error_cells.len()),
+            &progress,
+            None,
+            None,
+            &["rust_xlsxwriter"],
+            Some("rust_xlsxwriter"),
+            None,
+        );
         let staging_path = staging_path_for(&path)?;
         if let Err(error) = workbook.save(&staging_path) {
             let _ = fs::remove_file(&staging_path);
+            emitter.emit(
+                "output_save",
+                "failed",
+                "汇总工作簿保存失败",
+                &progress,
+                None,
+                Some(save_started.elapsed()),
+                &["rust_xlsxwriter"],
+                Some("rust_xlsxwriter"),
+                Some("output_save_error"),
+            );
             return Err(error).with_context(|| {
                 format!("save staged used-range summary {}", staging_path.display())
             });
         }
+        emitter.emit(
+            "output_save",
+            "succeeded",
+            "汇总工作簿已保存",
+            &progress,
+            None,
+            Some(save_started.elapsed()),
+            &["rust_xlsxwriter"],
+            Some("rust_xlsxwriter"),
+            None,
+        );
+        let patch_started = Instant::now();
+        emitter.emit(
+            "ooxml_error_patch",
+            "started",
+            format!("正在保留 {} 个 Excel 错误值", error_cells.len()),
+            &progress,
+            None,
+            None,
+            &["ooxml-patch"],
+            Some("OOXML Patch"),
+            None,
+        );
         let patch_result = patch_error_cells(&staging_path, &path, &error_cells);
         let _ = fs::remove_file(&staging_path);
-        patch_result.with_context(|| {
-            format!("preserve Excel error values in summary {}", path.display())
-        })?;
+        if let Err(error) = patch_result {
+            emitter.emit(
+                "ooxml_error_patch",
+                "failed",
+                "Excel 错误值保留失败",
+                &progress,
+                None,
+                Some(patch_started.elapsed()),
+                &["ooxml-patch"],
+                Some("OOXML Patch"),
+                Some("ooxml_patch_error"),
+            );
+            return Err(error).with_context(|| {
+                format!("preserve Excel error values in summary {}", path.display())
+            });
+        }
+        emitter.emit(
+            "ooxml_error_patch",
+            "succeeded",
+            "Excel 错误值已保留",
+            &progress,
+            None,
+            Some(patch_started.elapsed()),
+            &["ooxml-patch"],
+            Some("OOXML Patch"),
+            None,
+        );
     }
     let read_elapsed_ms = (read_elapsed + read_elapsed_during_write).as_millis();
     let write_elapsed_ms = write_started
         .elapsed()
         .saturating_sub(read_elapsed_during_write)
         .as_millis();
-    Ok(SummaryResult {
+    let result = SummaryResult {
         saved: true,
         rows: out_row.saturating_sub(1) as usize,
         files,
@@ -214,7 +648,22 @@ pub fn summarize_used_ranges(sources: &[PathBuf], output_dir: &Path) -> Result<S
             total_elapsed_ms: started.elapsed().as_millis(),
             ooxml_error_cells_patched: error_cells.len(),
         }),
-    })
+    };
+    emitter.emit(
+        "run",
+        "succeeded",
+        format!(
+            "按使用区域汇总完成：{} 个工作簿，{} 行",
+            result.files, result.rows
+        ),
+        &progress,
+        None,
+        Some(started.elapsed()),
+        &["pytools-core"],
+        None,
+        None,
+    );
+    Ok(result)
 }
 #[derive(Default)]
 struct TemplateSpec {

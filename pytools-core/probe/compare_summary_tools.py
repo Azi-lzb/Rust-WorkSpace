@@ -343,6 +343,7 @@ def compare_real_used_range_sample() -> dict[str, object]:
                 "python_elapsed_ms": python_elapsed_ms,
                 "rust_cli_wall_elapsed_ms": rust_cli_wall_elapsed_ms,
                 "rust_execution": rust_result.get("execution"),
+                "progress_log": rust_result.get("progress_log"),
             })
 
         after = source_fingerprints(samples)
@@ -374,6 +375,13 @@ def compare_real_used_range_sample() -> dict[str, object]:
             "source_max_used_columns": source_max_used_columns,
             "summary_rows": summary_rows,
             "batches": batch_reports,
+            "progress_logging": {
+                "view": "developer",
+                "status": "validated",
+                "batch_count": len(batch_reports),
+                "event_stream_matches_saved_history": True,
+                "batches": [batch["progress_log"] for batch in batch_reports],
+            },
             "verified_edge_cases": [
                 {
                     "kind": "worksheet_dimension_elements_missing",
@@ -510,9 +518,15 @@ def python_nocom_used_range(sources: list[Path], output: Path) -> Path | None:
 
 def run_rust(command_name: str, args: list[Path], output: Path) -> tuple[Path | None, dict[str, object]]:
     cli = " ".join(shlex.quote(wsl_path(path)) for path in args)
+    log_options = ""
+    if command_name == "summary-used-range":
+        log_options = (
+            f"--log-dir {shlex.quote(wsl_path(output / 'logs'))} "
+            "--log-view developer "
+        )
     command = (
         f"cd {shlex.quote(wsl_path(WORKSPACE))} && cargo run --quiet -p pytools-core --bin pytools -- "
-        f"{command_name} --output-dir {shlex.quote(wsl_path(output))} {cli}"
+        f"{command_name} --output-dir {shlex.quote(wsl_path(output))} {log_options}{cli}"
     )
     completed = subprocess.run(["wsl", "-e", "sh", "-lc", command], check=True, capture_output=True)
     stdout = completed.stdout.decode("utf-8-sig", errors="replace").replace("\x00", "")
@@ -523,6 +537,51 @@ def run_rust(command_name: str, args: list[Path], output: Path) -> tuple[Path | 
         try:
             result = json.loads(stdout[index:])
             path = result.get("path")
+            if command_name == "summary-used-range":
+                events = []
+                for line in stderr.splitlines():
+                    try:
+                        event = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if isinstance(event, dict) and "phase" in event:
+                        events.append(event)
+                if not events:
+                    raise RuntimeError("Rust CLI emitted no developer progress events")
+                if [event.get("sequence") for event in events] != list(
+                    range(1, len(events) + 1)
+                ):
+                    raise RuntimeError("Rust CLI progress event sequence is not contiguous")
+                log_path_value = result.get("run_log_path")
+                if not log_path_value:
+                    raise RuntimeError("Rust CLI omitted its PT-6-1 run log path")
+                log_path = from_wsl_path(log_path_value)
+                with log_path.open("r", encoding="utf-8") as log_file:
+                    run_log = json.load(log_file)
+                if run_log.get("status") != "succeeded":
+                    raise RuntimeError("Rust CLI PT-6-1 run log did not record success")
+                if len(run_log.get("events", [])) != len(events):
+                    raise RuntimeError("Rust CLI progress stream and saved run log differ")
+                result["progress_log"] = {
+                    "view": "developer",
+                    "status": run_log["status"],
+                    "event_stream_matches_saved_history": True,
+                    "event_count": len(events),
+                    "phases": sorted({event["phase"] for event in events}),
+                    "actual_engines": sorted(
+                        {
+                            event["actual_engine"]
+                            for event in events
+                            if event.get("actual_engine")
+                        }
+                    ),
+                    "completed_stage_elapsed_ms": {
+                        event["phase"]: event["stage_elapsed_ms"]
+                        for event in events
+                        if event.get("status") == "succeeded"
+                        and event.get("stage_elapsed_ms") is not None
+                    },
+                }
             return (from_wsl_path(path) if path else None), result
         except json.JSONDecodeError:
             continue
@@ -905,6 +964,7 @@ def main() -> int:
                 "formulas_merges_defined_names_print_area_page_setup": "exact (default portrait normalized)",
             },
             "rust_execution": used_report.get("execution"),
+            "progress_logging": used_report.get("progress_log"),
             "offset_used_range_probe": {
                 "source_sheet": "Offset",
                 "source_bounds": "D5:F6",
