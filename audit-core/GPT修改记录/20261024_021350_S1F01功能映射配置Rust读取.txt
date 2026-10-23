@@ -1,0 +1,46 @@
+# S1-F01 功能映射配置 Rust 读取
+
+- 时间：2026-10-24 02:13:50（Asia/Shanghai）
+- 执行者：Codex
+- 分支：audit-dev
+- Worktree：C:/Users/AZI/Desktop/VibeCode/audit-dev
+- 修改前 commit：0853ae8；开始时工作区干净
+- 功能 commit：4e575c7
+- 修改记录与迁移清单由后续独立提交纳入版本控制
+- 【组件版本】不升级；workspace crate 版本未变。
+
+## 目的与改动
+
+把旧 Python name_config.load_feature_mappings 中 S1 条件格式提取和表结构比对所需的配置选择规则迁入 Audit Rust。新增 name_config::load_s1_conditional_mappings，通过共享 excel-reader 读取配置簿，按模块名称筛选、按目标模板文件名应用受限配置优先级，并在配置表缺失或没有适用项时返回 S1 默认映射。配置行的输入/输出说明字段按 Python FeatureMapping 构造行为保持为空。配置文件仅读取，不修改。
+
+新增合成 XLSX 集成测试，覆盖模板受限映射优先级、S1 类型过滤、默认回退和缺少必需表头报错。迁移清单记录该映射 loader 尚未接入 CLI，避免将其误报为完整 S1-F01 能力。
+
+修改文件：
+
+- audit-core/src/name_config.rs
+- audit-core/tests/s1_feature_mapping_config.rs
+- audit-core/MIGRATION_INVENTORY.md
+- 本记录
+
+未修改 DEVELOPMENT_GOAL.md、pytools-core、crates、根 Cargo 文件、Cargo.lock 或 Python 源项目；未提交真实业务配置、工作簿或输出数据。
+
+## 验证结果
+
+- WSL Ubuntu：cargo fmt --all -- --check 通过。
+- WSL Ubuntu：定向映射测试通过，配置 loader 3 项、既有命名区域映射 1 项，0 失败。
+- WSL Ubuntu：cargo test -p audit-core --locked 全量通过，0 失败。
+- Python 只读源基线：用临时合成配置簿执行 load_feature_mappings，条件格式/结构两条选中映射与预期字段一致；临时目录由 Python 自动清理。
+- Windows Git：git diff --check 通过。
+- 本轮未重跑真实条件格式工作簿；已有真实 Issue 对拍证据不受本次配置 loader 修改影响。
+
+## 未执行项与已知范围
+
+- 本轮未运行 Windows 原生 Cargo、麒麟 V10/UOS V20 目标构建、glibc 2.28 检查或 deb 安装验收。
+- loader 还未接入 conditional-audit CLI。真实模板命名区域解析仍依赖 main 协调的共享 Defined Names reader API；API 同步后继续把配置映射和区域解析接入批次业务入口。
+- 完整 S1-F01 的普通规则、审核结果写回、历史和重复运行仍未迁移，S1-F01 整体仍未验证。
+
+## 删除清单与回滚
+
+- 删除文件：无。
+- 代码与测试回滚：git revert 4e575c7。
+- 迁移清单和本记录是后续独立留痕提交；如需回滚文档，仅撤销该文档提交，不删除历史记录文件。
