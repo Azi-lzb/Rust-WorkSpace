@@ -53,7 +53,9 @@ def make_source(path: Path) -> None:
     ws["A4"] = "丙"
     ws["B4"] = "text"
     ws["C4"] = 0
-    for column, error in enumerate(("#DIV/0!", "#N/A", "#NAME?", "#NULL!", "#NUM!", "#REF!", "#VALUE!"), start=5):
+    for column, error in enumerate(
+        ("#DIV/0!", "#N/A", "#NAME?", "#NULL!", "#NUM!", "#REF!", "#VALUE!"), start=5
+    ):
         ws.cell(row=4, column=column).value = error
     ws["F6"] = "merged value"
     ws.merge_cells("F6:G6")
@@ -125,6 +127,36 @@ def make_second_source(path: Path) -> None:
     ws["A2"] = "第二个工作簿"
     ws["C2"] = 42
     wb.save(path)
+    if path.suffix.lower() == ".xlsm":
+        mark_macro_enabled(path)
+
+
+def mark_macro_enabled(path: Path) -> None:
+    content_types_ns = "http://schemas.openxmlformats.org/package/2006/content-types"
+    with ZipFile(path, "r") as archive:
+        entries = [(info, archive.read(info.filename)) for info in archive.infolist()]
+    content_types_found = False
+    updated_entries = []
+    ET.register_namespace("", content_types_ns)
+    for info, payload in entries:
+        if info.filename == "[Content_Types].xml":
+            root = ET.fromstring(payload)
+            workbook_type = root.find(
+                f"{{{content_types_ns}}}Override[@PartName='/xl/workbook.xml']"
+            )
+            if workbook_type is None:
+                raise AssertionError("workbook content type is missing")
+            workbook_type.set(
+                "ContentType", "application/vnd.ms-excel.sheet.macroEnabled.main+xml"
+            )
+            payload = ET.tostring(root, encoding="utf-8", xml_declaration=True)
+            content_types_found = True
+        updated_entries.append((info, payload))
+    if not content_types_found:
+        raise AssertionError("package content types are missing")
+    with ZipFile(path, "w") as archive:
+        for info, payload in updated_entries:
+            archive.writestr(info, payload)
 
 
 def make_comment_template(path: Path) -> None:
@@ -421,7 +453,7 @@ def main() -> int:
     with tempfile.TemporaryDirectory(prefix="pytools-summary-parity-", ignore_cleanup_errors=True) as temp:
         root = Path(temp)
         source = root / "sample_2026-06-30.xlsx"
-        second_source = root / "sample_2026-07-31.xlsx"
+        second_source = root / "sample_2026-07-31.xlsm"
         template = root / "comment_template.xlsx"
         make_source(source)
         patch_formula_cache(source, "E8", "2")
@@ -471,6 +503,7 @@ def main() -> int:
                 "features": [
                     "actual Rust summary-used-range CLI",
                     "multiple workbooks and worksheets in selection order",
+                    "macro-free XLSM source with macro-enabled workbook content type",
                     "format-only used-range tail",
                     "merged range used as an extent",
                     "cached formula values and missing formula-cache semantics",
@@ -495,11 +528,11 @@ def main() -> int:
                     if python_used is not None and nocom_used is not None
                     else {"status": "not_saved"}
                 ),
-                "format_difference": "NoComPyTools accepts xls/xlsb sources; PyCode accepts xlsx/xlsm. Rust remains xlsx/xlsm only pending confirmed scope and format-specific parity.",
+                "format_difference": "This probe covers xlsx and macro-free xlsm. VBA-bearing xlsm and NoComPyTools-only xls/xlsb remain outside the validated Rust/PyCode set.",
             },
             "limitations": [
-                "Synthetic XLSX fixtures only; no authorized real summary workbook was present.",
-                "XLSM, XLS, XLSB, Kylin/UOS, glibc 2.28 and deb packaging were not validated.",
+                "Synthetic XLSX and macro-free XLSM fixtures only; no authorized real summary workbook was present.",
+                "XLSM was tested only as a macro-free synthetic package; VBA-bearing XLSM, XLS, XLSB, Kylin/UOS, glibc 2.28 and deb packaging were not validated.",
                 "NoComPyTools and PyCode input-format scopes differ; no production scope was inferred from the NoCom-only formats.",
                 "Output is a new data workbook; source workbook styles, formulas and unrelated OOXML parts are not copied by contract.",
             ],
