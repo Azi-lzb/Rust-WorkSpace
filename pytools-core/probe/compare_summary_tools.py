@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import datetime as dt
+import hashlib
 import json
 import logging
 import math
@@ -15,6 +16,7 @@ from pathlib import Path
 
 from openpyxl import Workbook, load_workbook
 from openpyxl.comments import Comment
+from openpyxl.styles import PatternFill
 
 sys.dont_write_bytecode = True
 WORKSPACE = Path(__file__).resolve().parents[2]
@@ -23,13 +25,6 @@ PYTOOLS_SOURCE = Path(r"C:\Users\AZI\Desktop\VibeCode\4.pytools-main")
 
 def wsl_path(path: Path) -> str:
     return f"/mnt/{path.drive.rstrip(':').lower()}/{path.as_posix()[2:].lstrip('/')}"
-
-
-def from_wsl_path(value: str) -> Path:
-    normalized = value.replace("\\", "/")
-    if not normalized.startswith("/mnt/"):
-        raise ValueError(f"Rust output outside WSL mounted drive: {value}")
-    return Path(f"{normalized[5].upper()}:\\{normalized[7:].replace('/', chr(92))}")
 
 
 def from_wsl_path(value: str) -> Path:
@@ -56,14 +51,27 @@ def make_source(path: Path) -> None:
     ws["A4"] = "丙"
     ws["B4"] = "text"
     ws["C4"] = 0
+    ws["E4"] = "#DIV/0!"
+    ws["F6"] = "merged value"
+    ws.merge_cells("F6:G6")
+    ws["E8"] = "=1+1"
     ws["H10"] = "dimension tail"
-    ws["H10"].number_format = "General"
+    ws["H10"].fill = PatternFill(fill_type="solid", fgColor="FFFF00")
 
     matching = wb.create_sheet("模板")
     matching["A1"] = "sheet"
     matching["B2"] = 5
     matching["C2"] = 6
     matching["D1"] = "华南"
+    wb.save(path)
+
+
+def make_second_source(path: Path) -> None:
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Extra"
+    ws["A2"] = "第二个工作簿"
+    ws["C2"] = 42
     wb.save(path)
 
 
@@ -85,19 +93,33 @@ def make_comment_template(path: Path) -> None:
     wb.save(path)
 
 
-def python_baselines(source: Path, template: Path, output: Path) -> tuple[Path | None, Path | None]:
+def python_baselines(
+    sources: list[Path], comment_source: Path, template: Path, output: Path
+) -> tuple[Path | None, Path | None]:
     sys.path.insert(0, str(PYTOOLS_SOURCE / "PyCode"))
     from core.summary_321_322 import run_summary_by_comment, run_summary_by_usedrange
 
     output.mkdir(parents=True, exist_ok=True)
     with contextlib.redirect_stdout(None):
-        used = run_summary_by_usedrange([source], output / "python_used", output / "python_logs")
-        comments = run_summary_by_comment(template, [source], output / "python_comments", output / "python_logs")
+        used = run_summary_by_usedrange(sources, output / "python_used", output / "python_logs")
+        comments = run_summary_by_comment(
+            template, [comment_source], output / "python_comments", output / "python_logs"
+        )
     logging.shutdown()
     return (
         Path(used["path"]) if used.get("saved") else None,
         Path(comments["path"]) if comments.get("saved") else None,
     )
+
+
+def python_nocom_used_range(sources: list[Path], output: Path) -> Path | None:
+    sys.path.insert(0, str(PYTOOLS_SOURCE / "NoComPyTools"))
+    from nocompytools.core.summary_321_322 import run_summary_by_usedrange
+
+    with contextlib.redirect_stdout(None):
+        result = run_summary_by_usedrange(sources, output / "nocom_used", output / "nocom_logs")
+    logging.shutdown()
+    return Path(result["path"]) if result.get("saved") else None
 
 
 def run_rust(command_name: str, args: list[Path], output: Path) -> tuple[Path | None, dict[str, object]]:
@@ -154,12 +176,66 @@ def workbook_projection(path: Path) -> tuple[list[dict[str, object]], list[dict[
     wb = load_workbook(path, data_only=False)
     sheets = []
     for ws in wb.worksheets:
-        rows = [[normalize(value) for value in row] for row in ws.iter_rows(values_only=True)]
+        cells = [cell for row in ws.iter_rows() for cell in row]
+        values = {
+            cell.coordinate: normalize(cell.value)
+            for cell in cells
+            if cell.value is not None
+        }
+        types = {
+            cell.coordinate: cell.data_type
+            for cell in cells
+            if cell.value is not None
+        }
+        styles = {
+            cell.coordinate: {
+                "number_format": cell.number_format,
+                "bold": bool(cell.font.bold),
+                "fill_type": cell.fill.fill_type,
+                "fill_color": cell.fill.fgColor.rgb if cell.fill.fgColor.type == "rgb" else None,
+            }
+            for cell in cells
+            if cell.value is not None
+        }
+        setup_properties = ws.sheet_properties.pageSetUpPr
+        rows = [
+            [normalize(cell.value) for cell in row]
+            for row in ws.iter_rows()
+        ]
         sheets.append({
             "name": ws.title,
             "rows": rows,
+            "values": values,
+            "types": types,
+            "styles": styles,
             "freeze_panes": ws.freeze_panes,
             "header_bold": [ws.cell(1, column).font.bold for column in range(1, ws.max_column + 1)],
+            "merged_ranges": sorted(str(item) for item in ws.merged_cells.ranges),
+            "formula_cells": {
+                cell.coordinate: cell.value
+                for cell in cells
+                if cell.data_type == "f"
+            },
+            "defined_names": sorted(wb.defined_names.keys()),
+            "print_area": str(ws.print_area) if ws.print_area else None,
+            "page_setup": {
+                "orientation": ws.page_setup.orientation or "portrait",
+                "fitToPage": setup_properties.fitToPage if setup_properties else None,
+                "fitToWidth": ws.page_setup.fitToWidth,
+                "fitToHeight": ws.page_setup.fitToHeight,
+                "paperSize": ws.page_setup.paperSize,
+                "scale": ws.page_setup.scale,
+            },
+            "page_margins": {
+                "left": ws.page_margins.left,
+                "right": ws.page_margins.right,
+                "top": ws.page_margins.top,
+                "bottom": ws.page_margins.bottom,
+                "header": ws.page_margins.header,
+                "footer": ws.page_margins.footer,
+            },
+            "horizontal_centered": ws.print_options.horizontalCentered,
+            "vertical_centered": ws.print_options.verticalCentered,
         })
     wb.close()
     return sheets, [
@@ -168,19 +244,87 @@ def workbook_projection(path: Path) -> tuple[list[dict[str, object]], list[dict[
     ]
 
 
-def assert_equivalent(expected: Path | None, actual: Path | None, label: str) -> None:
+def assert_equivalent(
+    expected: Path | None,
+    actual: Path | None,
+    label: str,
+    compare_page_settings: bool = True,
+) -> None:
     if expected is None or actual is None:
         if expected is not actual:
             raise AssertionError(f"{label}: saved status differs Python={expected}, Rust={actual}")
         return
     expected_sheets, expected_dimensions = workbook_projection(expected)
     actual_sheets, actual_dimensions = workbook_projection(actual)
+    if not compare_page_settings:
+        omitted_fields = {
+            "page_setup",
+            "page_margins",
+            "horizontal_centered",
+            "vertical_centered",
+        }
+        expected_sheets = [
+            {key: value for key, value in sheet.items() if key not in omitted_fields}
+            for sheet in expected_sheets
+        ]
+        actual_sheets = [
+            {key: value for key, value in sheet.items() if key not in omitted_fields}
+            for sheet in actual_sheets
+        ]
     if expected_sheets != actual_sheets or expected_dimensions != actual_dimensions:
+        field_differences = []
+        for expected_sheet, actual_sheet in zip(expected_sheets, actual_sheets):
+            field_differences.extend(
+                f"{expected_sheet['name']}.{field}"
+                for field in expected_sheet
+                if expected_sheet.get(field) != actual_sheet.get(field)
+            )
+            if expected_sheet.get("styles") != actual_sheet.get("styles"):
+                expected_styles = expected_sheet.get("styles", {})
+                actual_styles = actual_sheet.get("styles", {})
+                style_cells = sorted(set(expected_styles) | set(actual_styles))
+                style_differences = {
+                    cell: {"python": expected_styles.get(cell), "rust": actual_styles.get(cell)}
+                    for cell in style_cells
+                    if expected_styles.get(cell) != actual_styles.get(cell)
+                }
+            else:
+                style_differences = {}
+        if expected_dimensions != actual_dimensions:
+            field_differences.append("worksheet_dimensions")
         raise AssertionError(json.dumps({
             "label": label,
-            "python": expected_sheets,
-            "rust": actual_sheets,
+            "different_fields": field_differences,
+            "style_differences": style_differences,
+            "python_page_setup": expected_sheets[0].get("page_setup"),
+            "rust_page_setup": actual_sheets[0].get("page_setup"),
+            "python_page_margins": expected_sheets[0].get("page_margins"),
+            "rust_page_margins": actual_sheets[0].get("page_margins"),
+            "python_dimensions": expected_dimensions,
+            "rust_dimensions": actual_dimensions,
         }, ensure_ascii=False, default=str, indent=2))
+
+
+def source_fingerprints(paths: list[Path]) -> dict[str, str]:
+    return {
+        path.name: hashlib.sha256(path.read_bytes()).hexdigest()
+        for path in paths
+    }
+
+
+def projection_difference_fields(expected: Path, actual: Path) -> list[str]:
+    expected_sheets, expected_dimensions = workbook_projection(expected)
+    actual_sheets, actual_dimensions = workbook_projection(actual)
+    differences = []
+    for expected_sheet, actual_sheet in zip(expected_sheets, actual_sheets):
+        differences.extend(
+            f"{expected_sheet['name']}.{field}"
+            for field in expected_sheet
+            if expected_sheet.get(field) != actual_sheet.get(field)
+        )
+    if expected_dimensions != actual_dimensions:
+        differences.append("worksheet_dimensions")
+    return sorted(differences)
 
 
 def main() -> int:
@@ -189,20 +333,92 @@ def main() -> int:
     with tempfile.TemporaryDirectory(prefix="pytools-summary-parity-", ignore_cleanup_errors=True) as temp:
         root = Path(temp)
         source = root / "sample_2026-06-30.xlsx"
+        second_source = root / "sample_2026-07-31.xlsx"
         template = root / "comment_template.xlsx"
         make_source(source)
+        make_second_source(second_source)
         make_comment_template(template)
-        python_used, python_comments = python_baselines(source, template, root)
-        rust_used, used_report = run_rust("summary-used-range", [source], root / "rust_used")
+        sources = [source, second_source]
+        fingerprints_before = source_fingerprints([*sources, template])
+        python_used, python_comments = python_baselines(sources, source, template, root)
+        nocom_used = python_nocom_used_range(sources, root)
+        rust_used, used_report = run_rust("summary-used-range", sources, root / "rust_used")
         rust_comments, comments_report = run_rust_comments(template, source, root / "rust_comments")
         assert_equivalent(python_used, rust_used, "6-1 used-range summary")
-        assert_equivalent(python_comments, rust_comments, "6-2 comment summary")
+        assert_equivalent(
+            python_comments,
+            rust_comments,
+            "6-2 comment summary",
+            compare_page_settings=False,
+        )
+        fingerprints_after = source_fingerprints([*sources, template])
+        if fingerprints_before != fingerprints_after:
+            raise AssertionError("a source workbook or template was modified")
+
+        nocom_matches_rust = False
+        nocom_difference_fields = ["not_saved"]
+        if nocom_used is not None and rust_used is not None:
+            nocom_difference_fields = projection_difference_fields(nocom_used, rust_used)
+            nocom_matches_rust = not nocom_difference_fields
+
+        if used_report.get("rows") != 13 or used_report.get("files") != 2:
+            raise AssertionError(f"unexpected used-range summary report: {used_report}")
+        report = {
+            "schema_version": 1,
+            "suite": "pytools.summary_used_range_python_rust_parity",
+            "date": dt.date.today().isoformat(),
+            "status": "passed_synthetic_cli_parity",
+            "source_python_file": "PyCode/core/summary_321_322.py::run_summary_by_usedrange",
+            "real_sample": False,
+            "inputs": {
+                "files": [path.name for path in sources],
+                "sha256_before_after_equal": True,
+                "source_workbooks": 2,
+            },
+            "scenario": {
+                "rows": used_report["rows"],
+                "features": [
+                    "actual Rust summary-used-range CLI",
+                    "multiple workbooks and worksheets in selection order",
+                    "format-only used-range tail",
+                    "merged range used as an extent",
+                    "date, boolean, numeric, text, blank and missing-formula-cache semantics",
+                    "Excel error value preserved as an error-typed cell",
+                ],
+            },
+            "comparison": {
+                "cell_values_and_types": "exact",
+                "cell_styles": "exact for populated output cells",
+                "worksheet_names_and_dimensions": "exact",
+                "freeze_panes": "exact",
+                "header_bold_flags": "exact",
+                "formulas_merges_defined_names_print_area_page_setup": "exact (default portrait normalized)",
+            },
+            "rust_execution": used_report.get("execution"),
+            "python_variant_scope": {
+                "nocom_pytools_output_matches_rust_for_this_xlsx_sample": nocom_matches_rust,
+                "nocom_pytools_difference_fields": nocom_difference_fields,
+                "format_difference": "NoComPyTools accepts xls/xlsb sources; PyCode accepts xlsx/xlsm. Rust remains xlsx/xlsm only pending confirmed scope and format-specific parity.",
+            },
+            "limitations": [
+                "Synthetic XLSX fixtures only; no authorized real summary workbook was present.",
+                "XLSM, XLS, XLSB, Kylin/UOS, glibc 2.28 and deb packaging were not validated.",
+                "NoComPyTools and PyCode input-format scopes differ; no production scope was inferred from the NoCom-only formats.",
+                "Output is a new data workbook; source workbook styles, formulas and unrelated OOXML parts are not copied by contract.",
+            ],
+        }
+        report_day = dt.date.today().strftime("%Y%m%d")
+        report_path = Path(__file__).resolve().parent / "reports" / f"summary_used_range_parity_{report_day}.json"
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         print(json.dumps({
-            "status": "passed",
-            "used_range": {"python": python_used is not None, "rust": rust_used is not None},
-            "comment_summary": {"python": python_comments is not None, "rust": rust_comments is not None},
+            "status": report["status"],
             "used_range_rows_rust": used_report.get("rows"),
+            "used_range_files_rust": used_report.get("files"),
+            "error_cells_patched": (used_report.get("execution") or {}).get("ooxml_error_cells_patched"),
+            "nocom_pytools_matches_rust": nocom_matches_rust,
             "comment_summary_rows_rust": comments_report.get("rows"),
+            "report": str(report_path),
         }, ensure_ascii=False))
     return 0
 

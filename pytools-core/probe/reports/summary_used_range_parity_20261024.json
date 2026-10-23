@@ -1,0 +1,59 @@
+{
+  "schema_version": 1,
+  "suite": "pytools.summary_used_range_python_rust_parity",
+  "date": "2026-10-24",
+  "status": "passed_synthetic_cli_parity",
+  "source_python_file": "PyCode/core/summary_321_322.py::run_summary_by_usedrange",
+  "real_sample": false,
+  "inputs": {
+    "files": [
+      "sample_2026-06-30.xlsx",
+      "sample_2026-07-31.xlsx"
+    ],
+    "sha256_before_after_equal": true,
+    "source_workbooks": 2
+  },
+  "scenario": {
+    "rows": 13,
+    "features": [
+      "actual Rust summary-used-range CLI",
+      "multiple workbooks and worksheets in selection order",
+      "format-only used-range tail",
+      "merged range used as an extent",
+      "date, boolean, numeric, text, blank and missing-formula-cache semantics",
+      "Excel error value preserved as an error-typed cell"
+    ]
+  },
+  "comparison": {
+    "cell_values_and_types": "exact",
+    "cell_styles": "exact for populated output cells",
+    "worksheet_names_and_dimensions": "exact",
+    "freeze_panes": "exact",
+    "header_bold_flags": "exact",
+    "formulas_merges_defined_names_print_area_page_setup": "exact (default portrait normalized)"
+  },
+  "rust_execution": {
+    "reader_engine": "calamine",
+    "writer_engine": "rust_xlsxwriter",
+    "read_elapsed_ms": 163,
+    "write_elapsed_ms": 242,
+    "total_elapsed_ms": 458,
+    "ooxml_error_cells_patched": 1
+  },
+  "python_variant_scope": {
+    "nocom_pytools_output_matches_rust_for_this_xlsx_sample": false,
+    "nocom_pytools_difference_fields": [
+      "汇总.rows",
+      "汇总.styles",
+      "汇总.types",
+      "汇总.values"
+    ],
+    "format_difference": "NoComPyTools accepts xls/xlsb sources; PyCode accepts xlsx/xlsm. Rust remains xlsx/xlsm only pending confirmed scope and format-specific parity."
+  },
+  "limitations": [
+    "Synthetic XLSX fixtures only; no authorized real summary workbook was present.",
+    "XLSM, XLS, XLSB, Kylin/UOS, glibc 2.28 and deb packaging were not validated.",
+    "NoComPyTools and PyCode input-format scopes differ; no production scope was inferred from the NoCom-only formats.",
+    "Output is a new data workbook; source workbook styles, formulas and unrelated OOXML parts are not copied by contract."
+  ]
+}

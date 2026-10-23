@@ -7,9 +7,16 @@ use excel_writer::{Format, Workbook, Worksheet};
 use serde::Serialize;
 use std::{
     collections::{BTreeMap, BTreeSet},
-    fs,
+    fs::{self, OpenOptions},
+    io::{Read, Write},
     path::{Path, PathBuf},
+    time::{SystemTime, UNIX_EPOCH},
 };
+use zip::{write::SimpleFileOptions, ZipArchive, ZipWriter};
+
+const SPREADSHEET_MAIN_NS: &str = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
+const OFFICE_REL_NS: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+const PACKAGE_REL_NS: &str = "http://schemas.openxmlformats.org/package/2006/relationships";
 
 #[derive(Clone, Debug, Serialize)]
 pub struct SummaryResult {
@@ -17,15 +24,36 @@ pub struct SummaryResult {
     pub rows: usize,
     pub files: usize,
     pub path: Option<PathBuf>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub execution: Option<SummaryExecution>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct SummaryExecution {
+    pub reader_engine: Option<&'static str>,
+    pub writer_engine: Option<&'static str>,
+    pub read_elapsed_ms: u128,
+    pub write_elapsed_ms: u128,
+    pub total_elapsed_ms: u128,
+    pub ooxml_error_cells_patched: usize,
+}
+
+#[derive(Clone, Debug)]
+struct PendingErrorCell {
+    address: String,
+    reader_value: String,
+    excel_value: &'static str,
 }
 
 pub fn summarize_used_ranges(sources: &[PathBuf], output_dir: &Path) -> Result<SummaryResult> {
+    let started = std::time::Instant::now();
     fs::create_dir_all(output_dir)
         .with_context(|| format!("create summary output directory {}", output_dir.display()))?;
     let mut workbooks = Vec::new();
     let mut max_col = 0usize;
     let mut rows_written = 0usize;
     let mut files = 0usize;
+    let mut read_elapsed_ms = 0u128;
     for path in sources {
         if !supported(path) {
             continue;
@@ -33,6 +61,7 @@ pub fn summarize_used_ranges(sources: &[PathBuf], output_dir: &Path) -> Result<S
         if !path.is_file() {
             continue;
         }
+        let read_started = std::time::Instant::now();
         let dump = read_workbook(path)
             .with_context(|| format!("read used-range summary source {}", path.display()))?;
         let extents = if is_xlsx_or_xlsm(path) {
@@ -48,6 +77,7 @@ pub fn summarize_used_ranges(sources: &[PathBuf], output_dir: &Path) -> Result<S
                 (sheet.name.clone(), summary_bounds(sheet, extent))
             })
             .collect::<BTreeMap<_, _>>();
+        read_elapsed_ms += read_started.elapsed().as_millis();
         files += 1;
         for sheet in &dump.sheets {
             let (min_row, _min_col, max_row, max_col_sheet) = bounds_by_sheet[&sheet.name];
@@ -64,6 +94,14 @@ pub fn summarize_used_ranges(sources: &[PathBuf], output_dir: &Path) -> Result<S
             rows: 0,
             files,
             path: None,
+            execution: Some(SummaryExecution {
+                reader_engine: (files > 0).then_some("calamine"),
+                writer_engine: None,
+                read_elapsed_ms,
+                write_elapsed_ms: 0,
+                total_elapsed_ms: started.elapsed().as_millis(),
+                ooxml_error_cells_patched: 0,
+            }),
         });
     }
     fs::create_dir_all(output_dir)?;
@@ -85,7 +123,9 @@ pub fn summarize_used_ranges(sources: &[PathBuf], output_dir: &Path) -> Result<S
         sheet.write_string_with_format(0, (col + 2) as u16, &format!("列{col}"), &header_format)?;
     }
     sheet.set_freeze_panes(1, 0)?;
+    sheet.set_margins(0.75, 0.75, 1.0, 1.0, 0.5, 0.5);
     let mut out_row = 1u32;
+    let mut error_cells = Vec::new();
     for (path, dump, bounds_by_sheet) in workbooks {
         let base = path
             .file_stem()
@@ -105,7 +145,22 @@ pub fn summarize_used_ranges(sources: &[PathBuf], output_dir: &Path) -> Result<S
                         if let Some(value) =
                             ws.values.get(&format!("{}{}", column_letters(col), row))
                         {
-                            write_probe_value(sheet, out_row, (col + 2) as u16, value)?;
+                            if value.get("type").and_then(serde_json::Value::as_str)
+                                == Some("error")
+                            {
+                                let reader_value = value
+                                    .get("value")
+                                    .and_then(serde_json::Value::as_str)
+                                    .unwrap_or_default()
+                                    .to_owned();
+                                error_cells.push(PendingErrorCell {
+                                    address: format!("{}{}", column_letters(col + 3), out_row + 1),
+                                    excel_value: excel_error_value(&reader_value)?,
+                                    reader_value,
+                                });
+                            } else {
+                                write_probe_value(sheet, out_row, (col + 2) as u16, value)?;
+                            }
                         }
                     }
                 }
@@ -113,14 +168,39 @@ pub fn summarize_used_ranges(sources: &[PathBuf], output_dir: &Path) -> Result<S
             }
         }
     }
-    workbook
-        .save(&path)
-        .with_context(|| format!("save used-range summary {}", path.display()))?;
+    let write_started = std::time::Instant::now();
+    if error_cells.is_empty() {
+        workbook
+            .save(&path)
+            .with_context(|| format!("save used-range summary {}", path.display()))?;
+    } else {
+        let staging_path = staging_path_for(&path)?;
+        if let Err(error) = workbook.save(&staging_path) {
+            let _ = fs::remove_file(&staging_path);
+            return Err(error).with_context(|| {
+                format!("save staged used-range summary {}", staging_path.display())
+            });
+        }
+        let patch_result = patch_error_cells(&staging_path, &path, &error_cells);
+        let _ = fs::remove_file(&staging_path);
+        patch_result.with_context(|| {
+            format!("preserve Excel error values in summary {}", path.display())
+        })?;
+    }
+    let write_elapsed_ms = write_started.elapsed().as_millis();
     Ok(SummaryResult {
         saved: true,
         rows: out_row.saturating_sub(1) as usize,
         files,
         path: Some(path),
+        execution: Some(SummaryExecution {
+            reader_engine: Some("calamine"),
+            writer_engine: Some("rust_xlsxwriter"),
+            read_elapsed_ms,
+            write_elapsed_ms,
+            total_elapsed_ms: started.elapsed().as_millis(),
+            ooxml_error_cells_patched: error_cells.len(),
+        }),
     })
 }
 
@@ -245,6 +325,7 @@ pub fn summarize_by_comments(
             rows: 0,
             files: files_hit,
             path: None,
+            execution: None,
         });
     }
     fs::create_dir_all(output_dir)?;
@@ -282,6 +363,7 @@ pub fn summarize_by_comments(
         rows: total_rows,
         files: files_hit,
         path: Some(path),
+        execution: None,
     })
 }
 
@@ -294,6 +376,291 @@ fn is_xlsx_or_xlsm(path: &Path) -> bool {
     path.extension()
         .and_then(|extension| extension.to_str())
         .is_some_and(|extension| matches!(extension.to_ascii_lowercase().as_str(), "xlsx" | "xlsm"))
+}
+
+fn excel_error_value(reader_value: &str) -> Result<&'static str> {
+    match reader_value {
+        "Div0" => Ok("#DIV/0!"),
+        "NA" => Ok("#N/A"),
+        "Name" => Ok("#NAME?"),
+        "Null" => Ok("#NULL!"),
+        "Num" => Ok("#NUM!"),
+        "Ref" => Ok("#REF!"),
+        "Value" => Ok("#VALUE!"),
+        other => anyhow::bail!("unsupported Calamine error value {other:?} in used-range summary"),
+    }
+}
+
+fn staging_path_for(output: &Path) -> Result<PathBuf> {
+    let file_name = output
+        .file_name()
+        .context("summary output path has no filename")?
+        .to_string_lossy();
+    for _ in 0..1000 {
+        let sequence = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
+        let candidate = output.with_file_name(format!(
+            ".{file_name}.{}.{}.staging",
+            std::process::id(),
+            sequence
+        ));
+        if !candidate.exists() {
+            return Ok(candidate);
+        }
+    }
+    anyhow::bail!("cannot reserve a staging file beside {}", output.display())
+}
+
+fn patch_error_cells(source: &Path, output: &Path, errors: &[PendingErrorCell]) -> Result<()> {
+    anyhow::ensure!(
+        !errors.is_empty(),
+        "no error cells requested for OOXML patch"
+    );
+    let mut output_created = false;
+    let result = (|| -> Result<()> {
+        let (worksheet_part, replacement) = {
+            let mut archive = ZipArchive::new(fs::File::open(source)?)
+                .with_context(|| format!("open staged XLSX {}", source.display()))?;
+            let part = resolve_summary_worksheet_part(&mut archive)?;
+            let original = read_zip_part(&mut archive, &part)?;
+            let replacement = patch_worksheet_error_cells(&original, errors)?;
+            (part, replacement)
+        };
+
+        let target = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(output)
+            .with_context(|| format!("create patched summary {}", output.display()))?;
+        output_created = true;
+        let mut writer = ZipWriter::new(target);
+        let mut archive = ZipArchive::new(fs::File::open(source)?)?;
+        let mut patched_parts = 0usize;
+        for index in 0..archive.len() {
+            let mut entry = archive.by_index(index)?;
+            let name = entry.name().to_owned();
+            let mut options = SimpleFileOptions::default().compression_method(entry.compression());
+            if let Some(modified) = entry.last_modified() {
+                options = options.last_modified_time(modified);
+            }
+            if entry.is_dir() {
+                writer.add_directory(name, options)?;
+                continue;
+            }
+            writer.start_file(&name, options)?;
+            if name == worksheet_part {
+                writer.write_all(&replacement)?;
+                patched_parts += 1;
+            } else {
+                std::io::copy(&mut entry, &mut writer)?;
+            }
+        }
+        anyhow::ensure!(
+            patched_parts == 1,
+            "expected one summary worksheet part, patched {patched_parts}"
+        );
+        writer.finish()?;
+        validate_error_cells(output, errors)?;
+        Ok(())
+    })();
+    if result.is_err() && output_created {
+        let _ = fs::remove_file(output);
+    }
+    result
+}
+
+fn resolve_summary_worksheet_part(archive: &mut ZipArchive<fs::File>) -> Result<String> {
+    let workbook = read_zip_part(archive, "xl/workbook.xml")?;
+    let relationships = read_zip_part(archive, "xl/_rels/workbook.xml.rels")?;
+    let workbook_text = std::str::from_utf8(&workbook).context("workbook.xml must be UTF-8")?;
+    let relationships_text =
+        std::str::from_utf8(&relationships).context("workbook relationships must be UTF-8")?;
+    let workbook_doc = roxmltree::Document::parse(workbook_text).context("parse workbook.xml")?;
+    let relationships_doc =
+        roxmltree::Document::parse(relationships_text).context("parse workbook relationships")?;
+    let sheet = workbook_doc
+        .root()
+        .descendants()
+        .find(|node| {
+            is_xml_element(*node, SPREADSHEET_MAIN_NS, "sheet")
+                && node.attribute("name") == Some("汇总")
+        })
+        .context("generated summary worksheet '汇总' is missing")?;
+    let relationship_id = sheet
+        .attribute((OFFICE_REL_NS, "id"))
+        .context("summary worksheet relationship id is missing")?;
+    let relationship = relationships_doc
+        .root()
+        .descendants()
+        .find(|node| {
+            is_xml_element(*node, PACKAGE_REL_NS, "Relationship")
+                && node.attribute("Id") == Some(relationship_id)
+        })
+        .context("summary worksheet relationship is missing")?;
+    anyhow::ensure!(
+        relationship.attribute("TargetMode") != Some("External"),
+        "summary worksheet relationship cannot be external"
+    );
+    let relationship_type = relationship
+        .attribute("Type")
+        .context("summary worksheet relationship type is missing")?;
+    anyhow::ensure!(
+        relationship_type.ends_with("/worksheet"),
+        "summary worksheet relationship targets a non-worksheet part"
+    );
+    let target = relationship
+        .attribute("Target")
+        .context("summary worksheet relationship target is missing")?;
+    normalize_package_target(target)
+}
+
+fn normalize_package_target(target: &str) -> Result<String> {
+    anyhow::ensure!(
+        !target.contains('\\'),
+        "OOXML relationship target uses an invalid separator"
+    );
+    let joined = if target.starts_with('/') {
+        target.trim_start_matches('/').to_owned()
+    } else {
+        format!("xl/{target}")
+    };
+    let mut parts = Vec::new();
+    for part in joined.split('/') {
+        match part {
+            "" | "." => {}
+            ".." => {
+                anyhow::ensure!(
+                    parts.pop().is_some(),
+                    "OOXML relationship target escapes the package root"
+                );
+            }
+            value => parts.push(value),
+        }
+    }
+    anyhow::ensure!(!parts.is_empty(), "OOXML relationship target is empty");
+    Ok(parts.join("/"))
+}
+
+fn read_zip_part(archive: &mut ZipArchive<fs::File>, name: &str) -> Result<Vec<u8>> {
+    let mut entry = archive
+        .by_name(name)
+        .with_context(|| format!("XLSX package is missing {name}"))?;
+    let mut bytes = Vec::new();
+    entry
+        .read_to_end(&mut bytes)
+        .with_context(|| format!("read XLSX package part {name}"))?;
+    Ok(bytes)
+}
+
+fn patch_worksheet_error_cells(xml: &[u8], errors: &[PendingErrorCell]) -> Result<Vec<u8>> {
+    let source = std::str::from_utf8(xml).context("worksheet XML must be UTF-8")?;
+    let document = roxmltree::Document::parse(source).context("parse summary worksheet XML")?;
+    let root = document.root_element();
+    anyhow::ensure!(
+        is_xml_element(root, SPREADSHEET_MAIN_NS, "worksheet"),
+        "expected a SpreadsheetML worksheet"
+    );
+    let sheet_data = root
+        .children()
+        .find(|node| is_xml_element(*node, SPREADSHEET_MAIN_NS, "sheetData"))
+        .context("summary worksheet has no sheetData")?;
+    let prefix = root.lookup_prefix(SPREADSHEET_MAIN_NS);
+    let cell_tag = xml_local_name(prefix, "c");
+    let value_tag = xml_local_name(prefix, "v");
+    let mut edits = Vec::with_capacity(errors.len());
+    let mut seen = BTreeSet::new();
+
+    for error in errors {
+        anyhow::ensure!(
+            seen.insert(error.address.as_str()),
+            "duplicate error cell {}",
+            error.address
+        );
+        let (row_number, column_number) = parse_a1(&error.address)
+            .with_context(|| format!("invalid summary error cell {}", error.address))?;
+        let row_text = row_number.to_string();
+        let row = sheet_data
+            .children()
+            .find(|node| {
+                is_xml_element(*node, SPREADSHEET_MAIN_NS, "row")
+                    && node.attribute("r") == Some(row_text.as_str())
+            })
+            .with_context(|| format!("summary output row {row_number} is missing"))?;
+        let mut last_cell = None;
+        let mut insertion = None;
+        for cell in row
+            .children()
+            .filter(|node| is_xml_element(*node, SPREADSHEET_MAIN_NS, "c"))
+        {
+            let cell_address = cell
+                .attribute("r")
+                .context("summary output contains a cell without an address")?;
+            let (_, cell_column) = parse_a1(cell_address)
+                .with_context(|| format!("invalid summary output cell {cell_address}"))?;
+            anyhow::ensure!(
+                cell_address != error.address,
+                "summary error cell {} already exists",
+                error.address
+            );
+            if cell_column > column_number {
+                insertion = Some(cell.range().start);
+                break;
+            }
+            last_cell = Some(cell);
+        }
+        let offset = insertion
+            .or_else(|| last_cell.map(|cell| cell.range().end))
+            .with_context(|| format!("summary output row {row_number} has no cell anchor"))?;
+        let markup = format!(
+            "<{cell_tag} r=\"{}\" t=\"e\"><{value_tag}>{}</{value_tag}></{cell_tag}>",
+            error.address, error.excel_value
+        );
+        edits.push((offset, column_number, markup));
+    }
+
+    edits.sort_by(|left, right| right.0.cmp(&left.0).then_with(|| right.1.cmp(&left.1)));
+    let mut patched = source.to_owned();
+    for (offset, _, markup) in edits {
+        patched.insert_str(offset, &markup);
+    }
+    roxmltree::Document::parse(&patched).context("validate patched summary worksheet XML")?;
+    Ok(patched.into_bytes())
+}
+
+fn validate_error_cells(workbook: &Path, errors: &[PendingErrorCell]) -> Result<()> {
+    let dump = read_workbook(workbook)
+        .with_context(|| format!("reopen patched summary workbook {}", workbook.display()))?;
+    let sheet = dump
+        .sheets
+        .iter()
+        .find(|sheet| sheet.name == "汇总")
+        .context("reopened summary worksheet is missing")?;
+    for error in errors {
+        let cell = sheet
+            .values
+            .get(&error.address)
+            .with_context(|| format!("patched summary error cell {} is missing", error.address))?;
+        anyhow::ensure!(
+            cell.get("type").and_then(serde_json::Value::as_str) == Some("error")
+                && cell.get("value").and_then(serde_json::Value::as_str)
+                    == Some(error.reader_value.as_str()),
+            "patched summary error cell {} did not round trip: {cell}",
+            error.address
+        );
+    }
+    Ok(())
+}
+
+fn is_xml_element(node: roxmltree::Node<'_, '_>, namespace: &str, local_name: &str) -> bool {
+    node.is_element()
+        && node.tag_name().name() == local_name
+        && node.tag_name().namespace() == Some(namespace)
+}
+
+fn xml_local_name(prefix: Option<&str>, name: &str) -> String {
+    match prefix {
+        Some(prefix) => format!("{prefix}:{name}"),
+        None => name.to_owned(),
+    }
 }
 fn bounds(sheet: &SheetDump) -> (usize, usize, usize, usize) {
     let mut min_row = usize::MAX;
@@ -552,12 +919,10 @@ fn cell_at_or_merged(sheet: &SheetDump, address: &str) -> serde_json::Value {
     serde_json::Value::Null
 }
 
-fn date_format(serial: f64) -> Format {
-    if serial.fract().abs() < f64::EPSILON {
-        Format::new().set_num_format("yyyy-mm-dd")
-    } else {
-        Format::new().set_num_format("yyyy-mm-dd hh:mm:ss")
-    }
+fn date_format(_serial: f64) -> Format {
+    // openpyxl's data_only read returns date-formatted XLSX cells as midnight
+    // datetimes. Appending those values to a new workbook uses this format.
+    Format::new().set_num_format("yyyy-mm-dd h:mm:ss")
 }
 
 fn iso_datetime_serial(text: &str) -> Option<f64> {
@@ -646,4 +1011,36 @@ fn disambiguate(names: &[String]) -> Vec<String> {
             }
         })
         .collect()
+}
+
+#[cfg(test)]
+mod patch_error_cells_tests {
+    use super::*;
+
+    #[test]
+    fn failed_patch_does_not_remove_a_preexisting_output() -> Result<()> {
+        let unique = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "pytools-summary-patch-{}-{unique}",
+            std::process::id()
+        ));
+        fs::create_dir(&root)?;
+        let source = root.join("invalid.xlsx");
+        let output = root.join("existing.xlsx");
+        fs::write(&source, b"not an xlsx archive")?;
+        fs::write(&output, b"existing output")?;
+        let errors = [PendingErrorCell {
+            address: "A1".to_owned(),
+            reader_value: "Div0".to_owned(),
+            excel_value: "#DIV/0!",
+        }];
+
+        let result = patch_error_cells(&source, &output, &errors);
+        let output_bytes = fs::read(&output);
+        fs::remove_dir_all(&root)?;
+
+        assert!(result.is_err());
+        assert_eq!(output_bytes?, b"existing output");
+        Ok(())
+    }
 }

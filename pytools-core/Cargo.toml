@@ -14,15 +14,15 @@ excel-reader = { path = "../crates/excel-reader" }
 excel-writer = { path = "../crates/excel-writer" }
 ooxml-patch = { path = "../crates/ooxml-patch" }
 rayon.workspace = true
+roxmltree.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
+zip.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 windows-sys.workspace = true
 
 [dev-dependencies]
-roxmltree.workspace = true
 rust_xlsxwriter.workspace = true
 serde_json.workspace = true
-zip.workspace = true
