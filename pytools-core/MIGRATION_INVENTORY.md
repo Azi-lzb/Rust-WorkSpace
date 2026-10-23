@@ -309,7 +309,7 @@ Rust 在新建报表时保留受支持的 Excel 错误类型；使用 namespace-
 
 验证：cargo fmt -p pytools-core -- --check 通过；patch_error_cells 输出所有权回归单测和 summary_used_range_error CLI 集成测试各 1/1 通过；python pytools-core/probe/compare_summary_tools.py 合成 CLI 对拍通过；git diff --check 通过。cargo test -p pytools-core --lib --offline --locked -q 的 26 个库测试中 25 个通过，workbook_extraction_matches_original_python_helper 因当前 checkout 缺少且 Git 未跟踪 tests/fixtures/季度报表_县区报表_2024-12-31.xlsx 失败；本轮未创建替代夹具。Cargo.lock 未变。
 
-原项目 13 份 .xlsx 已在 Windows Python 与 WSL Rust CLI 间完成四批真实对拍（96 张工作表、203,580 行），结果无差异；开发者视图在四批中均成功验证进度事件序号连续、历史 JSON 与 CLI 事件数一致。普通用户、开发者及 off 模式的输出一致性由真实 CLI 集成测试验证。Windows 原生 Cargo 构建仍未验证（WSL 交叉构建的 Windows GNU 目标已在 PowerShell 实际运行并通过 VBA 样本对拍）；一般 XLSM（宏自由合成样本及官方真实 VBA 样本已测；原项目业务样本未提供）、麒麟/UOS、glibc 2.28、deb 和正式 peak RSS 尚未验证；PT-6-1 按原 Python 合同过滤 .xls/.xlsb，工作区这些格式的通用 reader 能力仍未验收。PT-6-1 整体仍未完成验收。
+原项目 13 份 .xlsx 已在 Windows Python 与 WSL Rust CLI 间完成四批真实对拍（96 张工作表、203,580 行），结果无差异；开发者视图在四批中均成功验证进度事件序号连续、历史 JSON 与 CLI 事件数一致；此外，WSL 交叉构建的 Windows GNU CLI 在 Windows PowerShell 上对同一 13 份 XLSX 四批重跑（203,580 行）均与 PyCode 投影一致，源文件大小/修改时间未变，事件历史全部匹配。普通用户、开发者及 off 模式的输出一致性由真实 CLI 集成测试验证。Windows 原生 Cargo 构建仍未验证（WSL 交叉构建的 Windows GNU 目标已在 PowerShell 实际运行并通过 VBA 样本对拍）；一般 XLSM（宏自由合成样本及官方真实 VBA 样本已测；原项目业务样本未提供）、麒麟/UOS、glibc 2.28、deb 和正式 peak RSS 尚未验证；PT-6-1 按原 Python 合同过滤 .xls/.xlsb，工作区这些格式的通用 reader 能力仍未验收。PT-6-1 整体仍未完成验收。
 
 ### 2026-10-24 PT-6-1 VBA 启用 XLSM 对拍
 
@@ -321,4 +321,4 @@ WSL Ubuntu（host glibc 2.39）上离线构建 `pytools` CLI 到 `x86_64-unknown
 
 ### 2026-10-24 PT-6-1 Windows 目标运行阶段验证
 
-Windows 主机未安装 Rust/Cargo。复用 WSL Ubuntu 中已安装的 MinGW 与 `x86_64-pc-windows-gnu` target，离线构建 `pytools.exe` 成功，并从 Windows PowerShell 进程直接运行 `summary-used-range`。固定 VBA 启用 XLSM 样本与只读 PyCode 的工作簿投影完全一致（1 行），使用 Calamine/rust_xlsxwriter；源文件未改变，输出 `.xlsx` 不含 VBA，11 条开发者事件与保存历史一致，`output_workbook` 阶段为 14 ms。该证据覆盖交叉构建后的 Windows 目标二进制运行，不等于 Windows 原生 Rust 构建；麒麟/UOS 实机、deb 与 glibc 2.28 仍未验证。
+Windows 主机未安装 Rust/Cargo。复用 WSL Ubuntu 中已安装的 MinGW 与 `x86_64-pc-windows-gnu` target，离线构建 `pytools.exe` 成功，并从 Windows PowerShell 进程直接运行 `summary-used-range`。固定 VBA 启用 XLSM 样本与只读 PyCode 的工作簿投影完全一致（1 行），使用 Calamine/rust_xlsxwriter；源文件未改变，输出 `.xlsx` 不含 VBA，11 条开发者事件与保存历史一致，`output_workbook` 阶段为 14 ms。随后 Windows 目标 CLI 对原 PyTools 只读 `xlsx/` 下 13 份 XLSX 分四批运行，203,580 行的完整工作簿投影逐批与 PyCode 一致；各批 26/14/27/63 条事件均与保存历史一致，源文件大小和修改时间未变。各批 `output_workbook` 阶段观测值为 472/6,665/1,438/55,095 ms，仅记录本次运行，不作性能比较。该证据覆盖交叉构建后的 Windows 目标二进制运行，不等于 Windows 原生 Rust 构建；麒麟/UOS 实机、deb 与 glibc 2.28 仍未验证。

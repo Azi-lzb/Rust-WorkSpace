@@ -494,6 +494,39 @@
     "source_vba_copied_to_new_summary": false,
     "progress_event_count": 11,
     "event_stream_matches_saved_history": true,
-    "output_workbook_elapsed_ms": 14
+    "output_workbook_elapsed_ms": 14,
+    "original_pytools_xlsx_batches": {
+      "status": "passed_exact_python_projection_parity",
+      "source_workbooks": 13,
+      "batch_count": 4,
+      "summary_rows_total": 203580,
+      "summary_rows_by_batch": [
+        1956,
+        7462,
+        5797,
+        188365
+      ],
+      "output_columns_by_batch": [
+        260,
+        213,
+        17,
+        22
+      ],
+      "progress_event_counts_by_batch": [
+        26,
+        14,
+        27,
+        63
+      ],
+      "all_event_streams_match_saved_histories": true,
+      "source_file_sizes_and_mtimes_unchanged": true,
+      "output_workbook_elapsed_ms_by_batch": [
+        472,
+        6665,
+        1438,
+        55095
+      ],
+      "timing_note": "Single diagnostic run; not a performance comparison."
+    }
   }
 }
