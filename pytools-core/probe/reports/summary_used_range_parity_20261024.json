@@ -318,11 +318,11 @@
         }
       ]
     },
-    "format_difference": "This probe covers xlsx and macro-free xlsm. VBA-bearing xlsm and NoComPyTools-only xls/xlsb remain outside the validated Rust/PyCode set."
+    "format_difference": "This probe covers xlsx, macro-free xlsm and the pinned VBA-enabled XlsxWriter test fixture. Original PyTools VBA-bearing xlsm and NoComPyTools-only xls/xlsb remain outside the validated set."
   },
   "limitations": [
-    "This report covers synthetic XLSX and macro-free XLSM fixtures; real-project XLSX parity is recorded separately in summary_used_range_real_parity_<date>.json.",
-    "XLSM was tested only as a macro-free synthetic package; VBA-bearing XLSM, XLS, XLSB, Kylin/UOS, glibc 2.28 and deb packaging were not validated.",
+    "This report covers synthetic XLSX/XLSM plus one pinned VBA-enabled XlsxWriter test fixture; real-project XLSX parity is recorded separately in summary_used_range_real_parity_20261024.json.",
+    "The official VBA-enabled fixture passed, but original PyTools VBA-bearing XLSM, XLS, XLSB, Kylin/UOS, glibc 2.28 and deb packaging remain unvalidated.",
     "NoComPyTools and PyCode input-format scopes differ; no production scope was inferred from the NoCom-only formats.",
     "Output is a new data workbook; source workbook styles, formulas and unrelated OOXML parts are not copied by contract.",
     "A synthetic XLSX t=e #DATA! cell is written as a string by PyCode; Calamine 0.37 rejects it. Supporting this value requires a coordinated shared-reader capability; no OOXML fallback was added."
@@ -384,6 +384,59 @@
         "ignored_source.xls",
         "ignored_source.xlsb"
       ],
+      "input_filter_events_have_no_engine": true
+    }
+  },
+  "vba_enabled_xlsm_probe": {
+    "status": "passed_python_rust_cli_parity",
+    "fixture": "tests/fixtures/summary_used_range/vba_enabled_xlsxwriter_macro01.xlsm",
+    "fixture_origin": {
+      "repository": "jmcnamara/XlsxWriter",
+      "commit": "a880ecc15c1573449dba051e5c21025f00c7c9fc",
+      "path": "xlsxwriter/test/comparison/xlsx_files/macro01.xlsm",
+      "license": "BSD-2-Clause; notice is adjacent to fixture",
+      "macro_execution": "not performed"
+    },
+    "vba_project_bytes": 13312,
+    "summary_rows": 1,
+    "python_rust_output": "exact",
+    "new_output_format": "xlsx",
+    "source_vba_copied_to_new_summary": false,
+    "source_sha256_before_after_equal": true,
+    "rust_execution": {
+      "reader_engine": "calamine",
+      "writer_engine": "rust_xlsxwriter",
+      "read_elapsed_ms": 134,
+      "write_elapsed_ms": 205,
+      "total_elapsed_ms": 414
+    },
+    "progress_log": {
+      "view": "developer",
+      "status": "succeeded",
+      "event_stream_matches_saved_history": true,
+      "event_count": 11,
+      "phases": [
+        "extent_scan",
+        "output_save",
+        "output_workbook",
+        "row_write",
+        "run",
+        "value_read"
+      ],
+      "actual_engines": [
+        "calamine",
+        "excel-reader::read_xlsx_worksheet_extents",
+        "rust_xlsxwriter"
+      ],
+      "completed_stage_elapsed_ms": {
+        "extent_scan": 67,
+        "value_read": 69,
+        "row_write": 3,
+        "output_save": 174,
+        "output_workbook": 205,
+        "run": 414
+      },
+      "skipped_input_names": [],
       "input_filter_events_have_no_engine": true
     }
   }

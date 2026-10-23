@@ -254,6 +254,97 @@ fn summary_used_range_cli_preserves_excel_error_cells() -> Result<()> {
 }
 
 #[test]
+fn summary_used_range_cli_reads_vba_enabled_xlsm() -> Result<()> {
+    // This XlsxWriter test fixture is pinned at commit a880ecc15c1573449dba051e5c21025f00c7c9fc.
+    // It contains a real xl/vbaProject.bin; this test reads the workbook and never executes VBA.
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/summary_used_range/vba_enabled_xlsxwriter_macro01.xlsm");
+    let original = fs::read(&fixture)?;
+    let mut source_package =
+        zip::ZipArchive::new(fs::File::open(&fixture)?).context("open VBA-enabled XLSM fixture")?;
+    let vba_project_size = source_package
+        .by_name("xl/vbaProject.bin")
+        .context("VBA project part missing from XLSM fixture")?
+        .size();
+    assert!(vba_project_size > 0);
+
+    let output_dir = unique_test_dir();
+    let output = Command::new(env!("CARGO_BIN_EXE_pytools"))
+        .arg("summary-used-range")
+        .arg("--output-dir")
+        .arg(output_dir.join("output"))
+        .arg("--log-dir")
+        .arg(output_dir.join("logs"))
+        .arg("--log-view")
+        .arg("developer")
+        .arg(&fixture)
+        .output()
+        .context("run pytools summary-used-range with VBA-enabled XLSM")?;
+    assert!(
+        output.status.success(),
+        "CLI failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: Value = serde_json::from_slice(&output.stdout).context("parse CLI JSON")?;
+    assert_eq!(report["saved"], true);
+    assert_eq!(report["files"], 1);
+    assert_eq!(report["rows"], 1);
+    assert_eq!(report["execution"]["reader_engine"], "calamine");
+    assert_eq!(report["execution"]["writer_engine"], "rust_xlsxwriter");
+
+    let run_log_path = PathBuf::from(
+        report["run_log_path"]
+            .as_str()
+            .context("CLI run log path must be a string")?,
+    );
+    let run_log: Value =
+        serde_json::from_slice(&fs::read(run_log_path)?).context("parse PT-6-1 run log")?;
+    assert_eq!(run_log["status"], "succeeded");
+    let write_event = run_log["events"]
+        .as_array()
+        .context("run log events must be an array")?
+        .iter()
+        .find(|event| {
+            event["phase"] == "output_workbook"
+                && event["status"] == "succeeded"
+                && event["actual_engine"] == "rust_xlsxwriter"
+        })
+        .context("completed output workbook event missing")?;
+    assert_eq!(
+        report["execution"]["write_elapsed_ms"],
+        write_event["stage_elapsed_ms"]
+    );
+
+    let output_path = PathBuf::from(
+        report["path"]
+            .as_str()
+            .context("summary output path must be a string")?,
+    );
+    assert_eq!(
+        output_path.extension().and_then(|ext| ext.to_str()),
+        Some("xlsx")
+    );
+    let mut output_package = zip::ZipArchive::new(fs::File::open(&output_path)?)
+        .context("open generated summary workbook")?;
+    assert!(
+        output_package.by_name("xl/vbaProject.bin").is_err(),
+        "new summary workbook must not copy source VBA"
+    );
+    let workbook = excel_reader::read_workbook(&output_path)?;
+    let summary = workbook
+        .sheets
+        .iter()
+        .find(|sheet| sheet.name == "汇总")
+        .context("summary sheet missing")?;
+    assert!(!summary.values.is_empty());
+    assert!(summary.formulas.is_empty());
+    assert_eq!(fs::read(&fixture)?, original, "source workbook changed");
+
+    fs::remove_dir_all(output_dir)?;
+    Ok(())
+}
+
+#[test]
 fn summary_used_range_cli_fails_closed_on_unknown_xlsx_error_value() -> Result<()> {
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/summary_used_range/getting_data_error.xlsx");

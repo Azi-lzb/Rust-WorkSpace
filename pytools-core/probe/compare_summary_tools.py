@@ -25,6 +25,7 @@ from openpyxl.styles import PatternFill
 sys.dont_write_bytecode = True
 WORKSPACE = Path(__file__).resolve().parents[2]
 PYTOOLS_SOURCE = Path(r"C:\Users\AZI\Desktop\VibeCode\4.pytools-main")
+XLSXWRITER_XLSM_COMMIT = "a880ecc15c1573449dba051e5c21025f00c7c9fc"
 
 
 def wsl_path(path: Path) -> str:
@@ -222,6 +223,74 @@ def python_used_range_only(sources: list[Path], output: Path) -> Path | None:
         result = run_summary_by_usedrange(sources, output / "used", output / "logs")
     logging.shutdown()
     return Path(result["path"]) if result.get("saved") else None
+
+
+def compare_vba_enabled_xlsm_sample(output: Path) -> dict[str, object]:
+    fixture = WORKSPACE / "pytools-core/tests/fixtures/summary_used_range/vba_enabled_xlsxwriter_macro01.xlsm"
+    with ZipFile(fixture) as package:
+        try:
+            vba_project_bytes = package.getinfo("xl/vbaProject.bin").file_size
+        except KeyError as error:
+            raise AssertionError("VBA-enabled XLSM fixture has no xl/vbaProject.bin") from error
+    if vba_project_bytes == 0:
+        raise AssertionError("VBA-enabled XLSM fixture has an empty VBA project part")
+
+    source_sha256 = hashlib.sha256(fixture.read_bytes()).hexdigest()
+    python_output = python_used_range_only([fixture], output / "python")
+    rust_output, rust_report = run_rust(
+        "summary-used-range", [fixture], output / "rust"
+    )
+    if python_output is None or rust_output is None:
+        raise AssertionError("PyCode or Rust did not save the VBA-enabled XLSM summary")
+    assert_equivalent(python_output, rust_output, "PT-6-1 VBA-enabled XLSM summary")
+    if python_output.suffix.lower() != ".xlsx" or rust_output.suffix.lower() != ".xlsx":
+        raise AssertionError("summary outputs for XLSM input must be new XLSX workbooks")
+    for generated in (python_output, rust_output):
+        with ZipFile(generated) as package:
+            if "xl/vbaProject.bin" in package.namelist():
+                raise AssertionError("new data-only summary unexpectedly copied source VBA")
+    if hashlib.sha256(fixture.read_bytes()).hexdigest() != source_sha256:
+        raise AssertionError("VBA-enabled XLSM source changed during parity probe")
+
+    progress_log = rust_report.get("progress_log", {})
+    if (
+        progress_log.get("status") != "succeeded"
+        or not progress_log.get("event_stream_matches_saved_history")
+        or progress_log.get("completed_stage_elapsed_ms", {}).get("output_workbook") is None
+    ):
+        raise AssertionError("VBA-enabled XLSM CLI progress log is incomplete")
+    execution = rust_report.get("execution", {})
+    if rust_report.get("rows") != 1 or execution.get("reader_engine") != "calamine":
+        raise AssertionError(f"unexpected Rust result for VBA-enabled XLSM fixture: {rust_report}")
+
+    return {
+        "status": "passed_python_rust_cli_parity",
+        "fixture": "tests/fixtures/summary_used_range/vba_enabled_xlsxwriter_macro01.xlsm",
+        "fixture_origin": {
+            "repository": "jmcnamara/XlsxWriter",
+            "commit": XLSXWRITER_XLSM_COMMIT,
+            "path": "xlsxwriter/test/comparison/xlsx_files/macro01.xlsm",
+            "license": "BSD-2-Clause; notice is adjacent to fixture",
+            "macro_execution": "not performed",
+        },
+        "vba_project_bytes": vba_project_bytes,
+        "summary_rows": rust_report["rows"],
+        "python_rust_output": "exact",
+        "new_output_format": "xlsx",
+        "source_vba_copied_to_new_summary": False,
+        "source_sha256_before_after_equal": True,
+        "rust_execution": {
+            key: execution.get(key)
+            for key in (
+                "reader_engine",
+                "writer_engine",
+                "read_elapsed_ms",
+                "write_elapsed_ms",
+                "total_elapsed_ms",
+            )
+        },
+        "progress_log": progress_log,
+    }
 
 
 def compare_real_used_range_sample() -> dict[str, object]:
@@ -889,6 +958,9 @@ def main() -> int:
         extension_filter_report = compare_used_range_extension_filter(
             sources, root / "extension_filter_probe"
         )
+        vba_enabled_xlsm_report = compare_vba_enabled_xlsm_sample(
+            root / "vba_enabled_xlsm_probe"
+        )
         rust_comments, comments_report = run_rust_comments(template, source, root / "rust_comments")
         assert_equivalent(python_used, rust_used, "6-1 used-range summary")
         used_sheets, _ = workbook_projection(rust_used)
@@ -1024,6 +1096,7 @@ def main() -> int:
             "rust_execution": used_report.get("execution"),
             "progress_logging": used_report.get("progress_log"),
             "input_filter_probe": extension_filter_report,
+            "vba_enabled_xlsm_probe": vba_enabled_xlsm_report,
             "offset_used_range_probe": {
                 "source_sheet": "Offset",
                 "source_bounds": "D5:F6",
@@ -1066,11 +1139,11 @@ def main() -> int:
                     if python_used is not None and nocom_used is not None
                     else {"status": "not_saved"}
                 ),
-                "format_difference": "This probe covers xlsx and macro-free xlsm. VBA-bearing xlsm and NoComPyTools-only xls/xlsb remain outside the validated Rust/PyCode set.",
+                "format_difference": "This probe covers xlsx, macro-free xlsm and the pinned VBA-enabled XlsxWriter test fixture. Original PyTools VBA-bearing xlsm and NoComPyTools-only xls/xlsb remain outside the validated set.",
             },
             "limitations": [
-                "This report covers synthetic XLSX and macro-free XLSM fixtures; real-project XLSX parity is recorded separately in summary_used_range_real_parity_<date>.json.",
-                "XLSM was tested only as a macro-free synthetic package; VBA-bearing XLSM, XLS, XLSB, Kylin/UOS, glibc 2.28 and deb packaging were not validated.",
+                "This report covers synthetic XLSX/XLSM plus one pinned VBA-enabled XlsxWriter test fixture; real-project XLSX parity is recorded separately in summary_used_range_real_parity_<date>.json.",
+                "The official VBA-enabled fixture passed, but original PyTools VBA-bearing XLSM, XLS, XLSB, Kylin/UOS, glibc 2.28 and deb packaging remain unvalidated.",
                 "NoComPyTools and PyCode input-format scopes differ; no production scope was inferred from the NoCom-only formats.",
                 "Output is a new data workbook; source workbook styles, formulas and unrelated OOXML parts are not copied by contract.",
                 "A synthetic XLSX t=e #DATA! cell is written as a string by PyCode; Calamine 0.37 rejects it. Supporting this value requires a coordinated shared-reader capability; no OOXML fallback was added.",
