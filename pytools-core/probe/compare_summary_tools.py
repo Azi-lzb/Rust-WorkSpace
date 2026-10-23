@@ -12,7 +12,9 @@ import shlex
 import subprocess
 import sys
 import tempfile
+import xml.etree.ElementTree as ET
 from pathlib import Path
+from zipfile import ZipFile
 
 from openpyxl import Workbook, load_workbook
 from openpyxl.comments import Comment
@@ -55,6 +57,7 @@ def make_source(path: Path) -> None:
     ws["F6"] = "merged value"
     ws.merge_cells("F6:G6")
     ws["E8"] = "=1+1"
+    ws["F8"] = "=1+2"
     ws["H10"] = "dimension tail"
     ws["H10"].fill = PatternFill(fill_type="solid", fgColor="FFFF00")
 
@@ -65,6 +68,54 @@ def make_source(path: Path) -> None:
     matching["D1"] = "华南"
     wb.save(path)
 
+
+
+def patch_formula_cache(path: Path, address: str, cached_value: str) -> None:
+    main_ns = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+    ET.register_namespace("", main_ns)
+    with ZipFile(path, "r") as source_archive:
+        entries = [
+            (info, source_archive.read(info.filename))
+            for info in source_archive.infolist()
+        ]
+
+    worksheet_found = False
+    patched_entries = []
+    for info, payload in entries:
+        if info.filename == "xl/worksheets/sheet1.xml":
+            root = ET.fromstring(payload)
+            cell = root.find(f".//{{{main_ns}}}c[@r='{address}']")
+            if cell is None:
+                raise AssertionError(f"formula cell {address} is missing from source")
+            formula = cell.find(f"{{{main_ns}}}f")
+            if formula is None:
+                raise AssertionError(f"formula text is missing from {address}")
+            cached = cell.find(f"{{{main_ns}}}v")
+            if cached is None:
+                cached = ET.SubElement(cell, f"{{{main_ns}}}v")
+            cached.text = cached_value
+            payload = ET.tostring(root, encoding="utf-8", xml_declaration=True)
+            worksheet_found = True
+        patched_entries.append((info, payload))
+
+    if not worksheet_found:
+        raise AssertionError("source worksheet part is missing")
+    with ZipFile(path, "w") as output_archive:
+        for info, payload in patched_entries:
+            output_archive.writestr(info, payload)
+
+    formula_book = load_workbook(path, data_only=False, read_only=False)
+    value_book = load_workbook(path, data_only=True, read_only=False)
+    try:
+        formula_ws = formula_book["Branch_A"]
+        value_ws = value_book["Branch_A"]
+        if formula_ws[address].value != "=1+1" or value_ws[address].value != 2:
+            raise AssertionError("cached formula fixture did not round trip as expected")
+        if formula_ws["F8"].value != "=1+2" or value_ws["F8"].value is not None:
+            raise AssertionError("missing formula cache fixture did not round trip as expected")
+    finally:
+        formula_book.close()
+        value_book.close()
 
 def make_second_source(path: Path) -> None:
     wb = Workbook()
@@ -336,6 +387,7 @@ def main() -> int:
         second_source = root / "sample_2026-07-31.xlsx"
         template = root / "comment_template.xlsx"
         make_source(source)
+        patch_formula_cache(source, "E8", "2")
         make_second_source(second_source)
         make_comment_template(template)
         sources = [source, second_source]
@@ -382,7 +434,8 @@ def main() -> int:
                     "multiple workbooks and worksheets in selection order",
                     "format-only used-range tail",
                     "merged range used as an extent",
-                    "date, boolean, numeric, text, blank and missing-formula-cache semantics",
+                    "cached formula values and missing formula-cache semantics",
+                    "date, boolean, numeric, text and blank semantics",
                     "Excel error value preserved as an error-typed cell",
                 ],
             },

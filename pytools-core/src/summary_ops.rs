@@ -112,6 +112,7 @@ pub fn summarize_used_ranges(sources: &[PathBuf], output_dir: &Path) -> Result<S
             Local::now().format("%Y%m%d_%H%M%S")
         ),
     )?;
+    let write_started = std::time::Instant::now();
     let mut workbook = Workbook::new();
     let sheet = workbook.add_worksheet();
     sheet.set_name("汇总")?;
@@ -168,7 +169,6 @@ pub fn summarize_used_ranges(sources: &[PathBuf], output_dir: &Path) -> Result<S
             }
         }
     }
-    let write_started = std::time::Instant::now();
     if error_cells.is_empty() {
         workbook
             .save(&path)

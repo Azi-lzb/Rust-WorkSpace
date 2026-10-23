@@ -20,7 +20,8 @@
       "multiple workbooks and worksheets in selection order",
       "format-only used-range tail",
       "merged range used as an extent",
-      "date, boolean, numeric, text, blank and missing-formula-cache semantics",
+      "cached formula values and missing formula-cache semantics",
+      "date, boolean, numeric, text and blank semantics",
       "Excel error value preserved as an error-typed cell"
     ]
   },
@@ -35,9 +36,9 @@
   "rust_execution": {
     "reader_engine": "calamine",
     "writer_engine": "rust_xlsxwriter",
-    "read_elapsed_ms": 163,
-    "write_elapsed_ms": 242,
-    "total_elapsed_ms": 458,
+    "read_elapsed_ms": 176,
+    "write_elapsed_ms": 295,
+    "total_elapsed_ms": 514,
     "ooxml_error_cells_patched": 1
   },
   "python_variant_scope": {
