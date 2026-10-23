@@ -641,6 +641,25 @@
     },
     "source_assets_unchanged": true,
     "total_output_rows": 39962,
-    "validated_workbook_runs": 6
+    "validated_workbook_runs": 6,
+    "platform_validation": {
+      "linux_musl_release_largest_backup": {
+        "status": "passed",
+        "runtime": "WSL Ubuntu; x86_64-unknown-linux-musl release static PIE",
+        "source_scope": "xlsx/备份/（最大工作簿，3,800,854 bytes）",
+        "source_size_bytes": 3800854,
+        "rows": 39171,
+        "files": 1,
+        "python_rust_full_projection": "exact",
+        "actual_engines": [
+          "calamine",
+          "rust_xlsxwriter"
+        ],
+        "developer_event_count": 18,
+        "history_matches_event_stream": true,
+        "source_metadata_unchanged": true,
+        "target_os_acceptance": "not_claimed"
+      }
+    }
   }
 }

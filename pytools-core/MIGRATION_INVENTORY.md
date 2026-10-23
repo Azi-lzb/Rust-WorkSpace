@@ -346,3 +346,9 @@ PT-6-2 原项目真实批注区域模板仍未找到，当前业务及日志对�
 从原 PyTools 只读目录 xlsx/备份/ 单独选取最大 XLSX（3,800,854 字节）；Windows PowerShell 运行 Windows GNU 目标 pytools summary-used-range，按 user/developer/off 三种日志视图逐次生成输出，并与只读 PyCode run_summary_by_usedrange 的完整工作簿投影比较。输出 39,171 行，三视图均与 PyCode 精确一致；实际读取/写入引擎为 Calamine/rust_xlsxwriter。developer 视图 18 条事件与保存历史逐条一致；user 历史状态成功；off 未创建运行记录。源簿大小和修改时间未变，临时输出已清理。本结果只作为该真实样本的保真证据，不作性能结论或其他格式推断。
 
 机器结果见 probe/reports/summary_used_range_real_parity_20261024.json 的 additional_project_assets_20261024.largest_backup_workbook；只记录文件大小、来源目录和汇总结果，不记录工作簿名称或单元格内容。PT-6-1 整体仍未完成最终验收。
+
+### 2026-10-24 PT-6-1 musl Linux 最大备份簿对拍
+
+使用 WSL Ubuntu 上已构建的 x86_64-unknown-linux-musl release static PIE pytools CLI，单独处理原 PyTools 最大备份 XLSX（3,800,854 字节），并与 Windows 原 PyCode 的只读基线完整投影对拍。39,171 行输出完全一致；实际读取/写入引擎为 Calamine/rust_xlsxwriter；developer 18 条事件与保存历史逐条一致。源文件大小和修改时间未变，输出及日志位于临时目录并已清理。此项仅证明 WSL musl 阶段行为，不等于麒麟 V10/UOS V20 实机、deb 或 glibc 2.28 验收。
+
+机器结果见 probe/reports/summary_used_range_real_parity_20261024.json 的 additional_project_assets_20261024.platform_validation.linux_musl_release_largest_backup。
