@@ -17,6 +17,12 @@ use zip::{write::SimpleFileOptions, ZipArchive, ZipWriter};
 const SPREADSHEET_MAIN_NS: &str = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
 const OFFICE_REL_NS: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
 const PACKAGE_REL_NS: &str = "http://schemas.openxmlformats.org/package/2006/relationships";
+const COMMENT_READ_COMPONENTS: &[&str] = &[
+    "pytools-core",
+    "excel-reader",
+    "calamine",
+    "namespace-aware OOXML supplement",
+];
 
 #[derive(Clone, Debug, Serialize)]
 pub struct SummaryResult {
@@ -690,14 +696,189 @@ pub fn summarize_by_comments(
     sources: &[PathBuf],
     output_dir: &Path,
 ) -> Result<SummaryResult> {
-    fs::create_dir_all(output_dir)
-        .with_context(|| format!("create summary output directory {}", output_dir.display()))?;
-    anyhow::ensure!(
-        is_xlsx_or_xlsm(template_path),
-        "summary template must be .xlsx or .xlsm"
+    summarize_by_comments_inner(template_path, sources, output_dir, None)
+}
+
+pub fn summarize_by_comments_with_progress<F>(
+    template_path: &Path,
+    sources: &[PathBuf],
+    output_dir: &Path,
+    mut on_event: F,
+) -> Result<SummaryResult>
+where
+    F: FnMut(SummaryRunEvent),
+{
+    summarize_by_comments_inner(template_path, sources, output_dir, Some(&mut on_event))
+}
+
+fn summarize_by_comments_inner(
+    template_path: &Path,
+    sources: &[PathBuf],
+    output_dir: &Path,
+    callback: Option<&mut dyn FnMut(SummaryRunEvent)>,
+) -> Result<SummaryResult> {
+    let started = Instant::now();
+    let mut emitter = SummaryProgressEmitter {
+        started,
+        sequence: 0,
+        callback,
+    };
+    let mut progress = SummaryProgress {
+        total_inputs: sources.len(),
+        total_files: sources
+            .iter()
+            .filter(|path| supported(path) && path.is_file())
+            .count(),
+        ..SummaryProgress::default()
+    };
+    emitter.emit(
+        "run",
+        "started",
+        format!(
+            "开始按批注汇总：{} 个输入，{} 个可用工作簿",
+            progress.total_inputs, progress.total_files
+        ),
+        &progress,
+        None,
+        None,
+        &["pytools-core"],
+        None,
+        None,
     );
-    let template = read_workbook(template_path)
-        .with_context(|| format!("read summary template {}", template_path.display()))?;
+
+    let output_started = Instant::now();
+    emitter.emit(
+        "prepare_output",
+        "started",
+        "正在准备汇总输出目录",
+        &progress,
+        None,
+        None,
+        &["pytools-core"],
+        None,
+        None,
+    );
+    if let Err(error) = fs::create_dir_all(output_dir) {
+        emitter.emit(
+            "prepare_output",
+            "failed",
+            "无法准备汇总输出目录",
+            &progress,
+            None,
+            Some(output_started.elapsed()),
+            &["pytools-core"],
+            None,
+            Some("output_directory_error"),
+        );
+        return Err(error)
+            .with_context(|| format!("create summary output directory {}", output_dir.display()));
+    }
+    emitter.emit(
+        "prepare_output",
+        "succeeded",
+        "汇总输出目录已准备",
+        &progress,
+        None,
+        Some(output_started.elapsed()),
+        &["pytools-core"],
+        None,
+        None,
+    );
+
+    let validation_started = Instant::now();
+    emitter.emit(
+        "template_validation",
+        "started",
+        "正在检查批注汇总模板格式",
+        &progress,
+        Some(template_path),
+        None,
+        &["pytools-core"],
+        None,
+        None,
+    );
+    if !is_xlsx_or_xlsm(template_path) {
+        emitter.emit(
+            "template_validation",
+            "failed",
+            "批注汇总模板格式不受支持",
+            &progress,
+            Some(template_path),
+            Some(validation_started.elapsed()),
+            &["pytools-core"],
+            None,
+            Some("template_format_error"),
+        );
+        anyhow::bail!("summary template must be .xlsx or .xlsm");
+    }
+    emitter.emit(
+        "template_validation",
+        "succeeded",
+        "批注汇总模板格式检查完成",
+        &progress,
+        Some(template_path),
+        Some(validation_started.elapsed()),
+        &["pytools-core"],
+        None,
+        None,
+    );
+
+    let mut read_elapsed = Duration::ZERO;
+    let template_read_started = Instant::now();
+    emitter.emit(
+        "template_read",
+        "started",
+        "正在读取批注汇总模板",
+        &progress,
+        Some(template_path),
+        None,
+        COMMENT_READ_COMPONENTS,
+        Some("calamine + namespace-aware OOXML supplement"),
+        None,
+    );
+    let template = match read_workbook(template_path) {
+        Ok(template) => template,
+        Err(error) => {
+            emitter.emit(
+                "template_read",
+                "failed",
+                "批注汇总模板读取失败",
+                &progress,
+                Some(template_path),
+                Some(template_read_started.elapsed()),
+                COMMENT_READ_COMPONENTS,
+                Some("calamine + namespace-aware OOXML supplement"),
+                Some("template_read_error"),
+            );
+            return Err(error)
+                .with_context(|| format!("read summary template {}", template_path.display()));
+        }
+    };
+    read_elapsed += template_read_started.elapsed();
+    emitter.emit(
+        "template_read",
+        "succeeded",
+        "批注汇总模板读取完成",
+        &progress,
+        Some(template_path),
+        Some(template_read_started.elapsed()),
+        COMMENT_READ_COMPONENTS,
+        Some("calamine + namespace-aware OOXML supplement"),
+        None,
+    );
+
+    let rules_started = Instant::now();
+    emitter.emit(
+        "template_rules",
+        "started",
+        "正在解析模板中的行列区域和表头",
+        &progress,
+        Some(template_path),
+        None,
+        &["pytools-core"],
+        None,
+        None,
+    );
     let mut specs = BTreeMap::new();
     let mut spec_order = Vec::new();
     for sheet in &template.sheets {
@@ -726,6 +907,17 @@ pub fn summarize_by_comments(
         specs.insert(sheet.name.clone(), spec);
     }
     if specs.is_empty() {
+        emitter.emit(
+            "template_rules",
+            "failed",
+            "模板中没有可用的批注区域",
+            &progress,
+            Some(template_path),
+            Some(rules_started.elapsed()),
+            &["pytools-core"],
+            None,
+            Some("template_rules_error"),
+        );
         anyhow::bail!("template has no supported comment-marked row/column regions");
     }
     let mut data: BTreeMap<String, Vec<Vec<serde_json::Value>>> = BTreeMap::new();
@@ -742,30 +934,147 @@ pub fn summarize_by_comments(
         headers_by_sheet.insert(name.clone(), header);
         data.insert(name.clone(), Vec::new());
     }
+    emitter.emit(
+        "template_rules",
+        "succeeded",
+        format!("模板区域解析完成：{} 个工作表", spec_order.len()),
+        &progress,
+        Some(template_path),
+        Some(rules_started.elapsed()),
+        &["pytools-core"],
+        None,
+        None,
+    );
     let mut files_hit = 0usize;
-    for source in sources {
+    for (input_index, source) in sources.iter().enumerate() {
         if !supported(source) || !source.is_file() {
+            let reason = if supported(source) {
+                "输入文件不存在"
+            } else {
+                "输入格式不受支持"
+            };
+            emitter.emit(
+                "input_filter",
+                "skipped",
+                format!("跳过{reason} [{}/{}]", input_index + 1, sources.len()),
+                &progress,
+                Some(source),
+                None,
+                &["pytools-core"],
+                None,
+                None,
+            );
             continue;
         }
-        let dump = read_workbook(source)
-            .with_context(|| format!("read comment-summary source {}", source.display()))?;
+        let current_file = files_hit + progress.failed_files + 1;
+        progress.current_file = Some(current_file);
+        let source_read_started = Instant::now();
+        emitter.emit(
+            "source_read",
+            "started",
+            format!(
+                "正在读取源工作簿 [{current_file}/{}]：{}",
+                progress.total_files,
+                source.file_name().unwrap_or_default().to_string_lossy()
+            ),
+            &progress,
+            Some(source),
+            None,
+            COMMENT_READ_COMPONENTS,
+            Some("calamine + namespace-aware OOXML supplement"),
+            None,
+        );
+        let read_started = Instant::now();
+        let dump = match read_workbook(source) {
+            Ok(dump) => dump,
+            Err(error) => {
+                progress.failed_files += 1;
+                emitter.emit(
+                    "source_read",
+                    "failed",
+                    format!(
+                        "源工作簿读取失败 [{current_file}/{}]：{}",
+                        progress.total_files,
+                        source.file_name().unwrap_or_default().to_string_lossy()
+                    ),
+                    &progress,
+                    Some(source),
+                    Some(source_read_started.elapsed()),
+                    COMMENT_READ_COMPONENTS,
+                    Some("calamine + namespace-aware OOXML supplement"),
+                    Some("source_read_error"),
+                );
+                return Err(error)
+                    .with_context(|| format!("read comment-summary source {}", source.display()));
+            }
+        };
+        read_elapsed += read_started.elapsed();
         files_hit += 1;
+        progress.processed_files = files_hit;
+        emitter.emit(
+            "source_read",
+            "succeeded",
+            format!(
+                "源工作簿读取完成 [{current_file}/{}]：{}",
+                progress.total_files,
+                source.file_name().unwrap_or_default().to_string_lossy()
+            ),
+            &progress,
+            Some(source),
+            Some(source_read_started.elapsed()),
+            COMMENT_READ_COMPONENTS,
+            Some("calamine + namespace-aware OOXML supplement"),
+            None,
+        );
+
+        let row_stage_started = Instant::now();
+        emitter.emit(
+            "row_extract",
+            "started",
+            format!(
+                "正在按模板匹配并提取区域数据 [{current_file}/{}]",
+                progress.total_files
+            ),
+            &progress,
+            Some(source),
+            None,
+            &["pytools-core"],
+            None,
+            None,
+        );
+        let applicable_sheets = dump
+            .sheets
+            .iter()
+            .filter_map(|sheet| {
+                let spec_key = if specs.contains_key(&sheet.name) {
+                    Some(sheet.name.as_str())
+                } else if specs.contains_key("模板") {
+                    Some("模板")
+                } else {
+                    None
+                }?;
+                Some((sheet, spec_key.to_owned()))
+            })
+            .collect::<Vec<_>>();
+        let source_row_count = applicable_sheets
+            .iter()
+            .map(|(_, spec_key)| {
+                specs[spec_key]
+                    .row_ranges
+                    .iter()
+                    .map(|(start, end, _, _)| end.saturating_sub(*start) + 1)
+                    .sum::<usize>()
+            })
+            .sum::<usize>();
+        progress.total_rows += source_row_count;
         let book_name = source
             .file_stem()
             .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_default();
-        for sheet in &dump.sheets {
-            let spec_key = if specs.contains_key(&sheet.name) {
-                Some(sheet.name.as_str())
-            } else if specs.contains_key("模板") {
-                Some("模板")
-            } else {
-                None
-            };
-            let Some(spec_key) = spec_key else { continue };
-            let spec = &specs[spec_key];
+        for (sheet, spec_key) in applicable_sheets {
+            let spec = &specs[&spec_key];
             let values = data
-                .get_mut(spec_key)
+                .get_mut(&spec_key)
                 .expect("spec output table initialized");
             for (start, end, _, _) in &spec.row_ranges {
                 for row in *start..=*end {
@@ -787,57 +1096,265 @@ pub fn summarize_by_comments(
                     output.push(serde_json::Value::from(row as u64));
                     values.push(output);
                     total_rows += 1;
+                    progress.processed_rows += 1;
+                    if progress.processed_rows > 0 && progress.processed_rows % 5_000 == 0 {
+                        emitter.emit(
+                            "row_extract",
+                            "running",
+                            format!(
+                                "已提取 {} / {} 行",
+                                progress.processed_rows, progress.total_rows
+                            ),
+                            &progress,
+                            Some(source),
+                            Some(row_stage_started.elapsed()),
+                            &["pytools-core"],
+                            None,
+                            None,
+                        );
+                    }
                 }
             }
         }
+        progress.completed_files += 1;
+        emitter.emit(
+            "row_extract",
+            "succeeded",
+            format!(
+                "源工作簿区域提取完成 [{current_file}/{}]：{} 行",
+                progress.total_files, source_row_count
+            ),
+            &progress,
+            Some(source),
+            Some(row_stage_started.elapsed()),
+            &["pytools-core"],
+            None,
+            None,
+        );
     }
     if total_rows == 0 {
-        return Ok(SummaryResult {
+        let result = SummaryResult {
             saved: false,
             rows: 0,
             files: files_hit,
             path: None,
-            execution: None,
-        });
+            execution: Some(SummaryExecution {
+                reader_engine: Some("calamine"),
+                writer_engine: None,
+                read_elapsed_ms: read_elapsed.as_millis(),
+                write_elapsed_ms: 0,
+                total_elapsed_ms: started.elapsed().as_millis(),
+                ooxml_error_cells_patched: 0,
+            }),
+        };
+        emitter.emit(
+            "run",
+            "skipped",
+            "没有可汇总的批注区域数据",
+            &progress,
+            None,
+            Some(started.elapsed()),
+            &["pytools-core"],
+            None,
+            None,
+        );
+        return Ok(result);
     }
-    fs::create_dir_all(output_dir)?;
-    let path = unique_output(
+    let output_prepare_started = Instant::now();
+    emitter.emit(
+        "output_prepare",
+        "started",
+        "正在准备汇总工作簿输出位置",
+        &progress,
+        None,
+        None,
+        &["pytools-core"],
+        None,
+        None,
+    );
+    if let Err(error) = fs::create_dir_all(output_dir) {
+        emitter.emit(
+            "output_prepare",
+            "failed",
+            "无法准备汇总工作簿输出位置",
+            &progress,
+            None,
+            Some(output_prepare_started.elapsed()),
+            &["pytools-core"],
+            None,
+            Some("output_directory_error"),
+        );
+        return Err(error)
+            .with_context(|| format!("create summary output directory {}", output_dir.display()));
+    }
+    let path = match unique_output(
         output_dir,
         &format!(
             "{}_按批注汇总（模板+源文件）",
             Local::now().format("%Y%m%d_%H%M%S")
         ),
-    )?;
-    let mut workbook = Workbook::new();
-    let header_format = Format::new().set_bold();
-    for name in &spec_order {
-        let rows = &data[name];
-        let sheet_name = crate::sheet_extract::sanitize_sheet_name(&name);
-        let ws = workbook.add_worksheet();
-        ws.set_name(&sheet_name)?;
-        ws.set_margins(0.75, 0.75, 1.0, 1.0, 0.5, 0.5);
-        for (col, header) in headers_by_sheet[name].iter().enumerate() {
-            ws.write_string_with_format(0, col as u16, header, &header_format)?;
+    ) {
+        Ok(path) => path,
+        Err(error) => {
+            emitter.emit(
+                "output_prepare",
+                "failed",
+                "无法生成汇总工作簿文件名",
+                &progress,
+                None,
+                Some(output_prepare_started.elapsed()),
+                &["pytools-core"],
+                None,
+                Some("output_path_error"),
+            );
+            return Err(error);
         }
-        for (row, values) in rows.iter().enumerate() {
-            for (col, value) in values.iter().enumerate() {
-                write_json(ws, (row + 1) as u32, col as u16, value)?;
+    };
+    emitter.emit(
+        "output_prepare",
+        "succeeded",
+        "汇总工作簿输出位置已准备",
+        &progress,
+        None,
+        Some(output_prepare_started.elapsed()),
+        &["pytools-core"],
+        None,
+        None,
+    );
+
+    let write_started = Instant::now();
+    emitter.emit(
+        "output_workbook",
+        "started",
+        "正在生成批注汇总工作簿",
+        &progress,
+        None,
+        None,
+        &["pytools-core", "excel-writer"],
+        Some("rust_xlsxwriter"),
+        None,
+    );
+    let workbook_result = (|| -> Result<Workbook> {
+        let mut workbook = Workbook::new();
+        let header_format = Format::new().set_bold();
+        for name in &spec_order {
+            let rows = &data[name];
+            let sheet_name = crate::sheet_extract::sanitize_sheet_name(name);
+            let ws = workbook.add_worksheet();
+            ws.set_name(&sheet_name)?;
+            ws.set_margins(0.75, 0.75, 1.0, 1.0, 0.5, 0.5);
+            for (col, header) in headers_by_sheet[name].iter().enumerate() {
+                ws.write_string_with_format(0, col as u16, header, &header_format)?;
+            }
+            for (row, values) in rows.iter().enumerate() {
+                for (col, value) in values.iter().enumerate() {
+                    write_json(ws, (row + 1) as u32, col as u16, value)?;
+                }
+            }
+            if !rows.is_empty() {
+                ws.set_freeze_panes(1, 0)?;
             }
         }
-        if !rows.is_empty() {
-            ws.set_freeze_panes(1, 0)?;
+        Ok(workbook)
+    })();
+    let mut workbook = match workbook_result {
+        Ok(workbook) => workbook,
+        Err(error) => {
+            emitter.emit(
+                "output_workbook",
+                "failed",
+                "批注汇总工作簿生成失败",
+                &progress,
+                None,
+                Some(write_started.elapsed()),
+                &["pytools-core", "excel-writer"],
+                Some("rust_xlsxwriter"),
+                Some("output_workbook_error"),
+            );
+            return Err(error).context("build comment summary workbook");
         }
+    };
+    emitter.emit(
+        "output_workbook",
+        "succeeded",
+        "批注汇总工作簿已生成",
+        &progress,
+        None,
+        Some(write_started.elapsed()),
+        &["pytools-core", "excel-writer"],
+        Some("rust_xlsxwriter"),
+        None,
+    );
+
+    let save_started = Instant::now();
+    emitter.emit(
+        "output_save",
+        "started",
+        "正在保存批注汇总工作簿",
+        &progress,
+        None,
+        None,
+        &["rust_xlsxwriter"],
+        Some("rust_xlsxwriter"),
+        None,
+    );
+    if let Err(error) = workbook.save(&path) {
+        emitter.emit(
+            "output_save",
+            "failed",
+            "批注汇总工作簿保存失败",
+            &progress,
+            None,
+            Some(save_started.elapsed()),
+            &["rust_xlsxwriter"],
+            Some("rust_xlsxwriter"),
+            Some("output_save_error"),
+        );
+        return Err(error).with_context(|| format!("save comment summary {}", path.display()));
     }
-    workbook
-        .save(&path)
-        .with_context(|| format!("save comment summary {}", path.display()))?;
-    Ok(SummaryResult {
+    emitter.emit(
+        "output_save",
+        "succeeded",
+        "批注汇总工作簿已保存",
+        &progress,
+        None,
+        Some(save_started.elapsed()),
+        &["rust_xlsxwriter"],
+        Some("rust_xlsxwriter"),
+        None,
+    );
+
+    progress.processed_rows = total_rows;
+    let write_elapsed = write_started.elapsed();
+    let result = SummaryResult {
         saved: true,
         rows: total_rows,
         files: files_hit,
         path: Some(path),
-        execution: None,
-    })
+        execution: Some(SummaryExecution {
+            reader_engine: Some("calamine"),
+            writer_engine: Some("rust_xlsxwriter"),
+            read_elapsed_ms: read_elapsed.as_millis(),
+            write_elapsed_ms: write_elapsed.as_millis(),
+            total_elapsed_ms: started.elapsed().as_millis(),
+            ooxml_error_cells_patched: 0,
+        }),
+    };
+    emitter.emit(
+        "run",
+        "succeeded",
+        format!(
+            "按批注汇总完成：{} 个工作簿，{} 行",
+            result.files, result.rows
+        ),
+        &progress,
+        None,
+        Some(started.elapsed()),
+        &["pytools-core"],
+        None,
+        None,
+    );
+    Ok(result)
 }
 
 fn supported(path: &Path) -> bool {

@@ -133,6 +133,95 @@
         }
       ],
       "original_source_marker_template": "not found; 72 xlsx/xlsm workbooks scanned, comment-bearing config workbooks contained no PT-6-2 row/column/set markers"
+    },
+    "runtime_logging": {
+      "status": "passed_windows_gnu_target_runtime",
+      "views": [
+        "user",
+        "developer",
+        "off"
+      ],
+      "parity_cases": [
+        {
+          "template": "standard_markers",
+          "sources": 2,
+          "rows": 21,
+          "comparison": "exact_full_projection_including_page_settings",
+          "events": 24,
+          "history_matches_event_stream": true
+        },
+        {
+          "template": "duplicate_row_markers",
+          "sources": 2,
+          "rows": 21,
+          "comparison": "exact_full_projection_including_page_settings",
+          "events": 24,
+          "history_matches_event_stream": true
+        }
+      ],
+      "event_history_consistency": "developer stderr events exactly match PT-6-2 saved history",
+      "failure_stage_recording": "template format validation failure reports stage and error type",
+      "representative_load": {
+        "input": "synthetic XLSX",
+        "selected_rows": 10000,
+        "runs_per_mode": 3,
+        "medians_wall_elapsed_ms": {
+          "developer": 2640.29,
+          "off": 2618.42
+        },
+        "median_relative_difference_percent": 0.84,
+        "interpretation": "Developer mode was 0.84% slower by median in this three-run sample; the mode ranges overlap, so the difference is inconclusive. Outputs match; this is not a platform performance guarantee.",
+        "measurements": [
+          {
+            "mode": "developer",
+            "wall_elapsed_ms": 2670.35,
+            "pipeline_elapsed_ms": 2610,
+            "rows": 10000,
+            "events": 22
+          },
+          {
+            "mode": "off",
+            "wall_elapsed_ms": 2629.45,
+            "pipeline_elapsed_ms": 2571,
+            "rows": 10000,
+            "events": 0
+          },
+          {
+            "mode": "off",
+            "wall_elapsed_ms": 2612.88,
+            "pipeline_elapsed_ms": 2555,
+            "rows": 10000,
+            "events": 0
+          },
+          {
+            "mode": "developer",
+            "wall_elapsed_ms": 2640.29,
+            "pipeline_elapsed_ms": 2577,
+            "rows": 10000,
+            "events": 22
+          },
+          {
+            "mode": "developer",
+            "wall_elapsed_ms": 2609.87,
+            "pipeline_elapsed_ms": 2548,
+            "rows": 10000,
+            "events": 22
+          },
+          {
+            "mode": "off",
+            "wall_elapsed_ms": 2618.42,
+            "pipeline_elapsed_ms": 2562,
+            "rows": 10000,
+            "events": 0
+          }
+        ],
+        "python_rust_output": "exact_full_projection_including_page_settings",
+        "logging_changed_output": false
+      },
+      "actual_engines": {
+        "template_and_source_read": "Calamine + namespace-aware OOXML supplement",
+        "output": "rust_xlsxwriter"
+      }
     }
   },
   "python_variant_scope": {

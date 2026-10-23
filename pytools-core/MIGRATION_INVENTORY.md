@@ -326,3 +326,11 @@ Windows 主机未安装 Rust/Cargo。复用 WSL Ubuntu 中已安装的 MinGW 与
 ### 2026-10-24 PT-6-2 页边距契约补齐
 
 真实 `summary-comments` CLI 对拍发现新工作簿页边距和 PyCode 的 openpyxl 默认值不同；旧 probe 曾关闭页面设置比较。Rust 现对输出工作表显式写入 PyCode 默认左/右 0.75、上/下 1.0、页眉/页脚 0.5，并恢复完整页面设置对拍。Windows PowerShell 实际运行 Windows GNU 目标 CLI，对标准标记和重复行标记两类合成模板、各含 2 个源工作簿，输出均为 21 行，完整值/类型、样式、工作表维度、冻结窗格和页面设置投影与 PyCode 完全一致。扫描原项目中的 72 份 XLSX/XLSM 未发现含 PT-6-2 行/列/set 标记的真实模板；含批注的两个配置工作簿没有该汇总标记。
+
+### 2026-10-24 PT-6-2 双视图运行日志接入
+
+`summary-comments` 真实 CLI 已接入 PT-6-2 结构化运行记录，默认普通用户视图，并支持 `--log-view developer|off` 与 `--log-dir`。Rust 业务层按运行、输出目录准备、模板格式/读取/区域解析、输入筛选、源工作簿读取、区域提取、工作簿生成和保存发出阶段事件；事件记录进度、文件/行计数、阶段与总耗时、错误阶段及实际引擎。模板/源读取实际经 `excel-reader`（Calamine 读值并执行 namespace-aware OOXML 元数据补充），输出使用 `rust_xlsxwriter`。日志不含单元格原始值。
+
+新增 `tests/summary_comments_cli.rs`，验证普通用户/开发者/off 三种视图、事件流与历史 JSON 一致、模板格式失败阶段、实际引擎与耗时字段、跳过输入无引擎、日志不含原始单元格值，以及三种视图生成的工作簿一致；与 PT-6-1 的 `summary_used_range_error` 回归共 6 项通过。Windows PowerShell 直接运行 Windows GNU 目标 CLI，对原 Python `run_summary_by_comment` 的标准标记及重复行标记两场景（每场景 2 个合成源簿、21 行）做完整工作簿投影对拍，值、类型、样式、维度、冻结窗格、页面设置/页边距均精确一致；developer stderr 事件和历史 JSON 24 条逐项一致。10,000 行合成 XLSX 上 developer/off 各运行 3 次，三次结果投影均一致，中位墙钟耗时约 2,640/2,618ms，developer 中位数约慢 0.8%；差异在该小样本的运行间波动范围内，不能外推为其他平台或真实模板的性能保证。机器结果见 `probe/reports/summary_used_range_parity_20261024.json`。
+
+PT-6-2 原项目真实批注区域模板仍未找到，当前业务及日志对拍使用合成模板；本轮 Windows 实际入口通过交叉生成的 Windows GNU 二进制执行，当前 Windows 会话没有原生 Cargo。麒麟 V10/UOS V20、glibc 2.28 与 deb 仍待验收，不据此宣称 PT-6-2 整体完成。
