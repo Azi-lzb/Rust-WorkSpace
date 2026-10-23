@@ -115,6 +115,14 @@ fn conditional_audit_batch_cli_merges_issues_and_logs_per_file_engine_timings() 
     assert_eq!(user_report["files"][1]["issue_count"], 4);
     assert_eq!(user_report["issues"][0]["org_code"], "9144");
     assert_eq!(user_report["issues"][4]["org_code"], "9145");
+    assert_eq!(
+        user_report["issues"][0]["issue_id"],
+        "甲银行｜S1Conditional｜B2｜校验指标未识别"
+    );
+    assert_eq!(
+        user_report["issues"][4]["issue_id"],
+        "乙银行｜S1Conditional｜B2｜校验指标未识别"
+    );
     let user_log = String::from_utf8_lossy(&user.stderr);
     assert!(user_log.contains("甲银行_20260731.xlsx"));
     assert!(user_log.contains("引擎 calamine+namespace_aware_ooxml"));

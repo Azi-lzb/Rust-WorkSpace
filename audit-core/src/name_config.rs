@@ -4,7 +4,9 @@
 //! only represents already-read feature mappings and applies their scalar
 //! matching rules.
 
+use crate::models::CopyRange;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FeatureMapping {
@@ -18,6 +20,17 @@ pub struct FeatureMapping {
     pub output: String,
     #[serde(default)]
     pub input_note: String,
+}
+
+/// One already-resolved destination from a workbook or worksheet-scoped name.
+///
+/// OOXML parsing and reference validation belong to the shared Excel reader;
+/// this Audit type carries only the values needed for business mapping.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NamedRangeArea {
+    pub name: String,
+    pub sheet_name: String,
+    pub address: String,
 }
 
 /// Split a delimited named-range cell using the source project's separators.
@@ -63,4 +76,46 @@ pub fn matches_named_range(mapping: &FeatureMapping, candidate: &str) -> bool {
         let name = name.to_lowercase();
         folded == name || folded.starts_with(&format!("{name}_"))
     })
+}
+
+/// Resolve already-parsed defined-name destinations for the requested Audit
+/// mappings, matching the source project's `named_ranges` behavior.
+///
+/// Workbook-scoped and worksheet-scoped names are both accepted. Unmatched
+/// names and destinations pointing at sheets absent from the input workbook
+/// are ignored. The reader must omit unresolved or invalid OOXML references;
+/// this function does not parse Excel references itself.
+pub fn resolve_named_ranges_for_mappings(
+    mappings: &[FeatureMapping],
+    areas: &[NamedRangeArea],
+    workbook_sheets: &[String],
+) -> Vec<CopyRange> {
+    let mut seen = BTreeSet::new();
+    let mut resolved = Vec::new();
+
+    for area in areas {
+        if !mappings
+            .iter()
+            .any(|mapping| matches_named_range(mapping, &area.name))
+            || !workbook_sheets
+                .iter()
+                .any(|sheet_name| sheet_name == &area.sheet_name)
+        {
+            continue;
+        }
+
+        let address = area.address.replace('$', "").trim().to_owned();
+        if address.is_empty() {
+            continue;
+        }
+        let identity = (area.sheet_name.clone(), address.to_ascii_uppercase());
+        if seen.insert(identity) {
+            resolved.push(CopyRange {
+                sheet_name: area.sheet_name.clone(),
+                address,
+            });
+        }
+    }
+
+    resolved
 }
