@@ -317,4 +317,4 @@ Rust 在新建报表时保留受支持的 Excel 错误类型；使用 namespace-
 
 ### 2026-10-24 PT-6-1 musl Linux 阶段验证
 
-WSL Ubuntu（host glibc 2.39）上离线构建 `pytools` CLI 到 `x86_64-unknown-linux-musl`：成功。产物为 ELF static PIE，`readelf -l` 未发现动态解释器段，`objdump -T` 未发现 GLIBC 动态符号。相同 musl 目标的 `summary_used_range_error` 集成测试 4/4 通过，包含 VBA 启用 XLSM 输入。该结果只覆盖 WSL 上的 musl debug 构建及运行，不等于麒麟 V10/UOS V20 实机、release/deb、安装或 glibc 2.28 验收；PT-6-1 仍未完成最终验收。
+WSL Ubuntu（host glibc 2.39）上离线构建 `pytools` CLI 到 `x86_64-unknown-linux-musl` debug 目标成功。debug 产物为 ELF static PIE，`readelf -l` 未发现动态解释器段，`objdump -T` 未发现 GLIBC 动态符号；相同 musl 目标的 `summary_used_range_error` 集成测试 4/4 通过，包含 VBA 启用 XLSM 输入。随后以 `--release --offline --locked` 成功构建同目标；release 产物同为 static PIE，无动态解释器段或 GLIBC 动态符号。直接运行 release `pytools summary-used-range` 处理官方 VBA 启用 XLSM 测试夹具，PyCode/Rust 工作簿投影完全一致（1 行）；源文件未改变，新建 XLSX 不含 VBA，11 条开发者事件与保存历史一致，实际读取/写入引擎为 Calamine/rust_xlsxwriter，本次 `output_workbook` 阶段记录 104 ms。以上仅覆盖 WSL 上的 musl debug/release 阶段，不等于麒麟 V10/UOS V20 实机、deb 安装或 glibc 2.28 验收；PT-6-1 仍未完成最终验收。
