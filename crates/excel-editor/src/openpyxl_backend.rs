@@ -1458,6 +1458,22 @@ fn validate_unmodified_styles(
                 .cell(address.as_str())
                 .map(|cell| cell.style().clone())
                 .unwrap_or_default();
+            // openpyxl normalizes non-anchor cells in merged ranges when it
+            // loads/saves a workbook. Validate only border sides on the
+            // merged range perimeter here; non-border style comes from the
+            // anchor, which is checked independently above.
+            if let Some(equal) = merged_member_perimeter_borders_equal(
+                source_sheet,
+                &address,
+                source_cell.style(),
+                &actual,
+            ) {
+                anyhow::ensure!(
+                    equal,
+                    "Rust unmodified merged-cell border readback mismatch at {output_name}!{address}"
+                );
+                continue;
+            }
             anyhow::ensure!(
                 styles_semantically_equal(&actual, source_cell.style()),
                 "Rust unmodified-style readback mismatch at {output_name}!{address}"
@@ -1465,6 +1481,38 @@ fn validate_unmodified_styles(
         }
     }
     Ok(())
+}
+
+fn merged_member_perimeter_borders_equal(
+    sheet: &umya_spreadsheet::Worksheet,
+    address: &str,
+    expected_style: &umya_spreadsheet::Style,
+    actual_style: &umya_spreadsheet::Style,
+) -> Option<bool> {
+    let Ok((row, column)) = parse_cell(address) else {
+        return None;
+    };
+    let merged = sheet.merge_cells().iter().find_map(|merged| {
+        let Ok((start_row, start_column, end_row, end_column)) = parse_range(&merged.range())
+        else {
+            return None;
+        };
+        (row >= start_row
+            && row <= end_row
+            && column >= start_column
+            && column <= end_column
+            && (row != start_row || column != start_column))
+            .then_some((start_row, start_column, end_row, end_column))
+    })?;
+
+    let expected = expected_style.borders().cloned().unwrap_or_default();
+    let actual = actual_style.borders().cloned().unwrap_or_default();
+    Some(
+        (row != merged.0 || expected.top() == actual.top())
+            && (row != merged.2 || expected.bottom() == actual.bottom())
+            && (column != merged.1 || expected.left() == actual.left())
+            && (column != merged.3 || expected.right() == actual.right()),
+    )
 }
 
 fn final_sheet_name(plan: &ExcelEditPlan, source_name: &str) -> String {
@@ -2477,6 +2525,45 @@ fn read_diagnostic(path: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn merged_style_readback_treats_only_non_anchor_cells_as_normalized() {
+        let mut workbook = umya_spreadsheet::new_file();
+        let sheet = workbook.sheet_by_name_mut("Sheet1").unwrap();
+        sheet.add_merge_cells("A27:A55");
+
+        let mut expected = umya_spreadsheet::Style::default();
+        expected
+            .borders_mut()
+            .top_mut()
+            .set_style(umya_spreadsheet::BorderStyleValues::Thin);
+        let mut actual = expected.clone();
+        actual
+            .borders_mut()
+            .bottom_mut()
+            .set_style(umya_spreadsheet::BorderStyleValues::Double);
+
+        // A43 is an interior merged cell: top/bottom differences are not
+        // visible perimeter changes and are normalized by openpyxl.
+        assert_eq!(
+            merged_member_perimeter_borders_equal(sheet, "A43", &expected, &actual),
+            Some(true)
+        );
+        // A27 is the anchor and remains under the full style comparison.
+        assert_eq!(
+            merged_member_perimeter_borders_equal(sheet, "A27", &expected, &actual),
+            None
+        );
+        // A55 is a perimeter cell: the bottom border must still be preserved.
+        assert_eq!(
+            merged_member_perimeter_borders_equal(sheet, "A55", &expected, &actual),
+            Some(false)
+        );
+        assert_eq!(
+            merged_member_perimeter_borders_equal(sheet, "A56", &expected, &actual),
+            None
+        );
+    }
 
     #[test]
     fn packaged_runtime_uses_an_absolute_internal_path_and_never_path_lookup() {
