@@ -514,3 +514,13 @@ Windows 原生验证：`cargo fmt --manifest-path pytools-core/Cargo.toml -- --c
 新增 `tests/batch_tools_menu_cli.rs` 启动真实 `pytools menu`，通过 7→5 对五个地区核对合成夹具（正常、不一致、无目标、非数值/缺项、损坏文件）验证统计、结果表、日志和输入不变；额外的合成 `.xls` 路径被跳过并提示显式转换。与既有 `region_sum_parity` 的 PyCode 基线逐值/格式对拍一并回归通过。该证据仅覆盖 PT-7-5 合成样本，不代表 7-1 至 7-4、7-6 至 7-8 或整个类别已接入。
 
 Windows 原生 Rust：格式检查通过；`batch_tools_menu_cli`、`region_sum_parity`、`timeline_menu_cli`、`conversion_menu_cli`、`summary_menu_cli` 共 11/11 通过。为消除 Windows 并行测试时纳秒临时目录名可能碰撞，`region_sum_parity` 测试目录追加进程内原子序号。真实业务模板、Windows 原生弹窗手动操作、目标平台和 deb 仍未验收；未运行全量 PyTools 测试。
+
+### 2026-10-24 PT-7-1 村镇银行拆分菜单与运行事件
+
+在既有 `batch_ops::build_village_split_plan` 计划逻辑上接入主菜单 7→1 和 `village-split` 批处理 CLI。菜单选择本期、上期及 `.xlsx` 目标文件；默认只生成计划、不修改原文件。实际执行仍要求显式 ExcelModifier capability 并经过候选校验、安全替换。补入 `user`/`developer`/`off` 事件视图和配置日志目录中的 PT-7-1 运行历史；历史仅保留状态、计数、阶段时间及实际引擎，不写文件名或单元格值。
+
+Windows 原生 `cargo fmt --manifest-path pytools-core/Cargo.toml -- --check` 通过；`cargo test --offline --locked -p pytools-core --test batch_tools_menu_cli -j 1` 4/4 通过，覆盖 7→1 计划只读、用户日志历史、开发者实际引擎事件、off 模式不写历史，以及真实菜单经合成 capability 执行后的 Excel 值、同表与跨表公式、全局定义名称、合并区域、批注、行高和非目标工作表保真。真实 Rust 菜单与只读 PyCode `feature_1_1_split_village_bank.run_split_village_bank` 执行对拍使用 Python 3.12.10/openpyxl 3.1.5、3 张填充表及未匹配/未修改表；`probe/reports/village_split_menu_parity_20261024.json` 状态为 `passed_synthetic_menu_execution_parity`，全部工作表值投影一致，输入本期/上期不变，目标已安全提交；报告不含单元格值。
+
+共享修复由 main 完成并提交，本分支经 Git cherry-pick 包含 `4a08852`（目标 worksheet 范围内插行及共享回归）和 `afaed4f`（共享修改记录终结）。共享回归由 main 报告 `excel-editor/tests/insert_rows` 1/1 通过；本分支没有重复运行该共享测试，以上 PT-7-1 菜单测试和多工作表执行对拍验证了业务调用链。
+
+仍未取得授权的真实业务模板或真实业务样本；synthetic capability 仅用于隔离测试，不登记为生产 Passed 能力或默认路由。真实模板/平台、Windows 弹窗手工验收、目标 Linux/glibc 2.28/deb 验收未执行；PT-7-1 的生产验收状态仍为未验证。

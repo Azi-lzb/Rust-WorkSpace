@@ -1,5 +1,11 @@
 use anyhow::{Context, Result};
+use excel_editor::{
+    BackendCapability, CapabilityEvidence, CapabilityStatus, EditOperation, EngineId,
+};
 use excel_reader::read_workbook;
+use pytools_core::batch_ops::build_village_split_plan;
+use rust_xlsxwriter::Workbook;
+use serde_json::Value;
 use std::{
     fs,
     io::Write,
@@ -121,6 +127,245 @@ fn interactive_batch_menu_runs_region_sum_check_through_real_cli() -> Result<()>
     Ok(())
 }
 
+#[test]
+fn interactive_village_split_menu_writes_plan_without_modifying_target() -> Result<()> {
+    let root = TestDirectory::new()?;
+    let config = create_config(root.path())?;
+    let current = root.path().join("current.xlsx");
+    let previous = root.path().join("previous.xlsx");
+    let target = root.path().join("target.xlsx");
+    make_village_period(&current, true)?;
+    make_village_period(&previous, false)?;
+    make_village_target(&target)?;
+    let original_target = excel_editor::open_xlsx(&target)?;
+    assert!(original_target
+        .defined_names()
+        .iter()
+        .chain(
+            original_target
+                .sheet_collection()
+                .iter()
+                .flat_map(|sheet| sheet.defined_names()),
+        )
+        .any(|name| name.name() == "VillageTail"));
+    let current_bytes = fs::read(&current)?;
+    let previous_bytes = fs::read(&previous)?;
+    let target_bytes = fs::read(&target)?;
+
+    let input = village_menu_input(&current, &previous, &target);
+    let output = run_menu(&config, &input)?;
+    assert!(
+        output.status.success(),
+        "batch menu failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("7-1"));
+    assert!(stdout.contains("[计划模式]"));
+    assert!(stdout.contains(r#""feature_id": "PT-7-1""#));
+    assert!(stdout.contains(r#""planned_files": 1"#));
+    assert!(stdout.contains(r#""committed_files": 0"#));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("已完成业务计算并生成工作簿修改计划"));
+    assert!(!stderr.contains("\"actual_engine\""));
+    assert_eq!(fs::read(&current)?, current_bytes);
+    assert_eq!(fs::read(&previous)?, previous_bytes);
+    assert_eq!(
+        fs::read(&target)?,
+        target_bytes,
+        "plan-only must be read-only"
+    );
+
+    let output_dir = root.path().join("app/output");
+    let plan_file = find_file_recursively(&output_dir, ".plan.json")?
+        .context("village split edit plan was not written")?;
+    let plan: Value = serde_json::from_slice(&fs::read(plan_file)?)?;
+    let operations = plan["operations"]
+        .as_array()
+        .context("plan operations missing")?;
+    assert!(operations
+        .iter()
+        .any(|operation| operation["operation"] == "delete_rows"));
+    assert!(operations
+        .iter()
+        .any(|operation| operation["operation"] == "insert_rows"));
+
+    let history_path = find_file_recursively(&root.path().join("app/logs"), ".run.json")?
+        .context("village split run history was not written")?;
+    let history_bytes = fs::read(&history_path)?;
+    let history: Value = serde_json::from_slice(&history_bytes)?;
+    assert_eq!(history["product"], "pytools");
+    assert_eq!(history["feature_id"], "PT-7-1");
+    assert_eq!(history["status"], "succeeded");
+    assert!(history["events"].as_array().is_some_and(|events| {
+        events
+            .iter()
+            .any(|event| event["phase"] == "planning" && event["actual_engine"] == "calamine")
+            && events
+                .iter()
+                .any(|event| event["phase"] == "engine_execution" && event["status"] == "skipped")
+    }));
+    assert!(!String::from_utf8_lossy(&history_bytes).contains("target.xlsx"));
+    Ok(())
+}
+
+#[test]
+fn interactive_village_split_menu_off_view_skips_run_history() -> Result<()> {
+    let root = TestDirectory::new()?;
+    let config = create_config(root.path())?;
+    let current = root.path().join("current.xlsx");
+    let previous = root.path().join("previous.xlsx");
+    let target = root.path().join("target.xlsx");
+    make_village_period(&current, true)?;
+    make_village_period(&previous, false)?;
+    make_village_target(&target)?;
+    let target_bytes = fs::read(&target)?;
+
+    let output = run_menu_with_arguments(
+        &config,
+        &village_menu_input(&current, &previous, &target),
+        &["--log-view".to_owned(), "off".to_owned()],
+    )?;
+    assert!(
+        output.status.success(),
+        "batch menu failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!String::from_utf8_lossy(&output.stderr).contains("运行记录已保存"));
+    assert_eq!(fs::read(&target)?, target_bytes);
+    let log_dir = root.path().join("app/logs");
+    assert!(!log_dir.exists() || fs::read_dir(log_dir)?.next().is_none());
+    Ok(())
+}
+
+#[test]
+fn interactive_village_split_menu_executes_capability_and_safely_commits_target() -> Result<()> {
+    let root = TestDirectory::new()?;
+    let config = create_config(root.path())?;
+    let current = root.path().join("current.xlsx");
+    let previous = root.path().join("previous.xlsx");
+    let target = root.path().join("target.xlsx");
+    let capability_path = root.path().join("test-capability.json");
+    make_village_period(&current, true)?;
+    make_village_period(&previous, false)?;
+    make_village_target(&target)?;
+    let original_target = excel_editor::open_xlsx(&target)?;
+    let original_branch_row_height = original_target
+        .sheet_by_name("广东分机构本外币")?
+        .row_dimension(4)
+        .map(|row| row.height());
+    let original_untouched_row_height = original_target
+        .sheet_by_name("非目标工作表")?
+        .row_dimension(5)
+        .map(|row| row.height());
+    let current_bytes = fs::read(&current)?;
+    let previous_bytes = fs::read(&previous)?;
+    let target_bytes = fs::read(&target)?;
+    let plan = build_village_split_plan(
+        &current,
+        &previous,
+        &target,
+        &root.path().join("capability-candidate.xlsx"),
+    )?
+    .plan
+    .context("village split plan missing")?;
+    let capability = village_split_capability(&plan);
+    fs::write(&capability_path, serde_json::to_vec_pretty(&capability)?)?;
+
+    let input = village_menu_input(&current, &previous, &target);
+    let output = run_menu_with_capability(
+        &config,
+        &input,
+        &capability_path,
+        "synthetic-pt-7-1-umya-menu-test",
+        "developer",
+    )?;
+    assert!(
+        output.status.success(),
+        "batch menu failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stdout.contains("[执行模式]"));
+    assert!(stdout.contains(r#""committed_files": 1"#));
+    assert!(stdout.contains("umya_spreadsheet"));
+    assert!(stderr.contains("\"actual_engine\":\"umya_spreadsheet\""));
+    assert!(stderr.contains("\"phase\":\"safe_commit\""));
+    assert_eq!(fs::read(&current)?, current_bytes);
+    assert_eq!(fs::read(&previous)?, previous_bytes);
+    assert_ne!(
+        fs::read(&target)?,
+        target_bytes,
+        "target should be committed"
+    );
+
+    let workbook = read_workbook(&target)?;
+    let branch = workbook
+        .sheets
+        .iter()
+        .find(|sheet| sheet.name == "广东分机构本外币")
+        .context("branch sheet missing after village split")?;
+    assert_eq!(branch.values["A3"]["value"], "博罗长江村镇银行");
+    assert_eq!(branch.values["A4"]["value"], "惠东惠民村镇银行");
+    assert_eq!(branch.values["B3"]["value"], 100.0);
+    assert_eq!(branch.values["B4"]["value"], 110.0);
+    let untouched = workbook
+        .sheets
+        .iter()
+        .find(|sheet| sheet.name == "非目标工作表")
+        .context("untouched worksheet missing")?;
+    assert_eq!(untouched.values["A2"]["value"], "保持不变");
+
+    let preserved = excel_editor::open_xlsx(&target)?;
+    let branch = preserved.sheet_by_name("广东分机构本外币")?;
+    assert_eq!(branch.cell("J5").map(|cell| cell.formula()), Some("A5"));
+    assert!(branch
+        .merge_cells()
+        .iter()
+        .any(|range| range.range() == "K5:L5"));
+    assert_eq!(
+        branch.row_dimension(5).map(|row| row.height()),
+        original_branch_row_height
+    );
+    assert!(branch
+        .comments()
+        .iter()
+        .any(|comment| comment.coordinate().to_string() == "M5"));
+    let defined_name = preserved
+        .defined_names()
+        .iter()
+        .chain(
+            preserved
+                .sheet_collection()
+                .iter()
+                .flat_map(|sheet| sheet.defined_names()),
+        )
+        .find(|name| name.name() == "VillageTail")
+        .context("village tail defined name missing")?;
+    assert!(defined_name.address().ends_with("$J$5"));
+
+    let untouched = preserved.sheet_by_name("非目标工作表")?;
+    assert_eq!(
+        untouched.cell("B2").map(|cell| cell.formula()),
+        Some("'广东分机构本外币'!A5"),
+        "cross-sheet formula references must follow the target row"
+    );
+    assert!(untouched
+        .merge_cells()
+        .iter()
+        .any(|range| range.range() == "D4:E4"));
+    assert_eq!(
+        untouched.row_dimension(5).map(|row| row.height()),
+        original_untouched_row_height
+    );
+    assert!(untouched
+        .comments()
+        .iter()
+        .any(|comment| comment.coordinate().to_string() == "F2"));
+    Ok(())
+}
+
 fn create_config(root: &Path) -> Result<PathBuf> {
     let app = root.join("app");
     let config = app.join("config/config.xlsx");
@@ -147,11 +392,139 @@ fn create_config(root: &Path) -> Result<PathBuf> {
     Ok(config)
 }
 
+fn make_village_period(path: &Path, current: bool) -> Result<()> {
+    let mut workbook = Workbook::new();
+    let sheet = workbook.add_worksheet();
+    sheet.set_name("村镇银行本外币")?;
+    for (row, base) in [(4_u32, 100.0), (5_u32, 110.0)] {
+        let factor = if current { 1.0 } else { 0.5 };
+        sheet.write_number(row, 2, base * factor)?;
+        sheet.write_string(row, 3, "存款备注")?;
+        sheet.write_number(row, 4, row as f64 + 1.0)?;
+        sheet.write_number(row, 86, (base + 100.0) * factor)?;
+        sheet.write_string(row, 87, "贷款备注")?;
+        sheet.write_number(row, 88, row as f64 + 2.0)?;
+    }
+    workbook.save(path)?;
+    Ok(())
+}
+
+fn make_village_target(path: &Path) -> Result<()> {
+    let mut workbook = Workbook::new();
+    let branch = workbook.add_worksheet();
+    branch.set_name("广东分机构本外币")?;
+    for (row, name) in [(0_u32, "机构"), (1, "其他"), (2, "村镇银行"), (3, "尾行")] {
+        branch.write_string(row, 0, name)?;
+    }
+    branch.write_number(2, 1, 9.0)?;
+    branch.write_formula(3, 9, "=A4")?;
+    branch.merge_range(
+        3,
+        10,
+        3,
+        11,
+        "保留尾行合并区域",
+        &rust_xlsxwriter::Format::new(),
+    )?;
+    branch.insert_note(3, 12, &rust_xlsxwriter::Note::new("保留尾行批注"))?;
+    branch.set_row_height(3, 24.0)?;
+    let untouched = workbook.add_worksheet();
+    untouched.set_name("非目标工作表")?;
+    untouched.write_string(0, 0, "标题")?;
+    untouched.write_string(1, 0, "保持不变")?;
+    untouched.write_formula(1, 1, "='广东分机构本外币'!A4")?;
+    untouched.merge_range(
+        3,
+        3,
+        3,
+        4,
+        "非目标合并区域",
+        &rust_xlsxwriter::Format::new(),
+    )?;
+    untouched.insert_note(1, 5, &rust_xlsxwriter::Note::new("非目标批注"))?;
+    untouched.set_row_height(4, 19.0)?;
+    workbook.define_name("VillageTail", "'广东分机构本外币'!$J$4")?;
+    workbook.save(path)?;
+    Ok(())
+}
+
+fn village_split_capability(plan: &excel_editor::ExcelEditPlan) -> BackendCapability {
+    BackendCapability {
+        engine: EngineId::UmyaSpreadsheet,
+        status: CapabilityStatus::Passed,
+        format: plan.format,
+        operations: plan.operations.iter().map(EditOperation::kind).collect(),
+        supported_features: plan.workbook.features_present.clone(),
+        preserved: plan.preserve.clone(),
+        platform: "synthetic-pt-7-1-umya-menu-test".to_owned(),
+        evidence: Some(CapabilityEvidence {
+            sample_id: "synthetic-pt-7-1-village-split".to_owned(),
+            report_path: "pytools-core/tests/batch_tools_menu_cli.rs".to_owned(),
+            adapter_version: "umya-spreadsheet-3.1.1".to_owned(),
+            engine_version: "umya-spreadsheet-3.1.1".to_owned(),
+            platform: "synthetic-pt-7-1-umya-menu-test".to_owned(),
+        }),
+    }
+}
+
+fn village_menu_input(current: &Path, previous: &Path, target: &Path) -> String {
+    format!(
+        "7\n1\n{}\n{}\n1\n{}\n0\n0\n",
+        current.display(),
+        previous.display(),
+        target.display()
+    )
+}
+
+fn find_file_recursively(root: &Path, suffix: &str) -> Result<Option<PathBuf>> {
+    for entry in fs::read_dir(root).with_context(|| format!("read directory {}", root.display()))? {
+        let path = entry?.path();
+        if path.is_dir() {
+            if let Some(found) = find_file_recursively(&path, suffix)? {
+                return Ok(Some(found));
+            }
+        } else if path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.ends_with(suffix))
+        {
+            return Ok(Some(path));
+        }
+    }
+    Ok(None)
+}
+
 fn run_menu(config: &Path, input: &str) -> Result<Output> {
+    run_menu_with_arguments(config, input, &[])
+}
+
+fn run_menu_with_capability(
+    config: &Path,
+    input: &str,
+    capability: &Path,
+    platform: &str,
+    log_view: &str,
+) -> Result<Output> {
+    run_menu_with_arguments(
+        config,
+        input,
+        &[
+            "--capabilities".to_owned(),
+            capability.to_string_lossy().into_owned(),
+            "--platform".to_owned(),
+            platform.to_owned(),
+            "--log-view".to_owned(),
+            log_view.to_owned(),
+        ],
+    )
+}
+
+fn run_menu_with_arguments(config: &Path, input: &str, extra: &[String]) -> Result<Output> {
     let mut child = Command::new(env!("CARGO_BIN_EXE_pytools"))
         .arg("menu")
         .arg("--config")
         .arg(config)
+        .args(extra)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

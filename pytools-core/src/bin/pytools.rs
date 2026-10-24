@@ -22,7 +22,7 @@ use pytools_core::dedup_ops::{
 use pytools_core::edit_plan::{apply_plan_file, apply_plan_with_capability_file};
 use pytools_core::file_commit::{
     copy_workbook_to_new_target, create_target_from_candidate, replace_target_from_candidate,
-    sha256_file,
+    sha256_file, verify_planning_snapshot,
 };
 use pytools_core::file_sort_prefix::{
     run_content_prefix_rename_xlsx_candidate, run_content_prefix_unrename_xlsx_candidate,
@@ -105,6 +105,7 @@ fn run() -> Result<()> {
         "print-config-precheck" => run_print_config_precheck(arguments),
         "print-config-plan" => run_print_config_plan(arguments),
         "village-split-plan" => run_village_split_plan(arguments),
+        "village-split" => run_village_split_batch(arguments),
         "remove-foreign-bank-plan" => run_remove_foreign_bank_plan(arguments),
         "remove-foreign-bank" => run_remove_foreign_bank_batch(arguments),
         "rural-loan-plan" => run_rural_loan_plan(arguments),
@@ -153,6 +154,12 @@ fn run_interactive_menu(arguments: Vec<String>) -> Result<()> {
         matches!(log_view, "user" | "developer" | "off"),
         "--log-view must be user, developer, or off"
     );
+    let capabilities = options.values.get("capabilities").map(PathBuf::from);
+    let platform = options.values.get("platform").cloned();
+    anyhow::ensure!(
+        capabilities.is_some() == platform.is_some(),
+        "--capabilities and --platform must be provided together"
+    );
     let global = load_global(&config_path).with_context(|| {
         format!(
             "load PyTools global configuration {}",
@@ -172,6 +179,8 @@ fn run_interactive_menu(arguments: Vec<String>) -> Result<()> {
         &global,
         log_view,
         allow_native_dialog,
+        capabilities.as_deref(),
+        platform.as_deref(),
     )
 }
 
@@ -191,6 +200,8 @@ fn run_interactive_main_menu<R, W>(
     global: &GlobalConfig,
     log_view: &str,
     allow_native_dialog: bool,
+    capabilities: Option<&Path>,
+    platform: Option<&str>,
 ) -> Result<()>
 where
     R: BufRead,
@@ -203,7 +214,7 @@ where
         writeln!(output, "  3  打印工具（生成页面设置计划）")?;
         writeln!(output, "  4  转换与文件命名工具")?;
         writeln!(output, "  6  汇总工具")?;
-        writeln!(output, "  7  一二批处理工具（当前接入 7-5）")?;
+        writeln!(output, "  7  一二批处理工具（当前接入 7-1、7-5）")?;
         writeln!(output, "  0  退出")?;
         writeln!(output, "==============================")?;
         let Some(choice) = read_menu_choice(input, output, "主菜单选择> ")? else {
@@ -228,9 +239,16 @@ where
             "6" => {
                 run_interactive_summary_menu(input, output, global, log_view, allow_native_dialog)?
             }
-            "7" => {
-                run_interactive_batch_menu(input, output, config_path, global, allow_native_dialog)?
-            }
+            "7" => run_interactive_batch_menu(
+                input,
+                output,
+                config_path,
+                global,
+                log_view,
+                allow_native_dialog,
+                capabilities,
+                platform,
+            )?,
             "0" => {
                 writeln!(output, "再见。")?;
                 return Ok(());
@@ -823,7 +841,10 @@ fn run_interactive_batch_menu<R, W>(
     output: &mut W,
     config_path: &Path,
     global: &GlobalConfig,
+    log_view: &str,
     allow_native_dialog: bool,
+    capabilities: Option<&Path>,
+    platform: Option<&str>,
 ) -> Result<()>
 where
     R: BufRead,
@@ -831,6 +852,7 @@ where
 {
     loop {
         writeln!(output, "------ 一二批处理工具 ------")?;
+        writeln!(output, "  1  拆分村镇银行数据（Rust 计划/能力门控执行）")?;
         writeln!(output, "  5  地区总分校验（读取并生成核对结果）")?;
         writeln!(output, "  0  返回")?;
         writeln!(output, "----------------------------")?;
@@ -838,6 +860,97 @@ where
             return Ok(());
         };
         match choice.as_str() {
+            "1" => {
+                let Some(current) = choose_single_xlsx_workbook(
+                    "选择本期村镇银行数据工作簿",
+                    input,
+                    output,
+                    allow_native_dialog,
+                )?
+                else {
+                    writeln!(output, "[已取消] 未选择本期工作簿。")?;
+                    return Ok(());
+                };
+                let Some(previous) = choose_single_xlsx_workbook(
+                    "选择去年同期村镇银行数据工作簿",
+                    input,
+                    output,
+                    allow_native_dialog,
+                )?
+                else {
+                    writeln!(output, "[已取消] 未选择上期工作簿。")?;
+                    return Ok(());
+                };
+                let Some(selected) = choose_source_files_or_folders(
+                    "选择需要拆分村镇银行数据的目标工作簿",
+                    NativeFileFilter::XlsxOnly,
+                    input,
+                    output,
+                    allow_native_dialog,
+                )?
+                else {
+                    writeln!(output, "[已取消] 未选择目标工作簿。")?;
+                    return Ok(());
+                };
+                let mut targets = Vec::new();
+                for path in selected {
+                    if path
+                        .extension()
+                        .is_some_and(|extension| extension.eq_ignore_ascii_case("xlsx"))
+                    {
+                        targets.push(path);
+                    } else {
+                        writeln!(
+                            output,
+                            "[跳过] {}：PT-7-1 当前只接受 .xlsx；未验收的格式请勿直接修改。",
+                            path.display()
+                        )?;
+                    }
+                }
+                if targets.is_empty() {
+                    writeln!(output, "[提示] 没有可处理的 .xlsx 目标工作簿。")?;
+                    return Ok(());
+                }
+                if capabilities.is_none() {
+                    writeln!(
+                        output,
+                        "[计划模式] 当前未提供已验收的 ExcelModifier 能力文件；原目标不会修改。"
+                    )?;
+                } else {
+                    writeln!(
+                        output,
+                        "[执行模式] 将按能力文件生成并验证候选，再安全替换目标并保留备份。"
+                    )?;
+                }
+                let mut arguments = vec![
+                    "--current".to_owned(),
+                    current.to_string_lossy().into_owned(),
+                    "--previous".to_owned(),
+                    previous.to_string_lossy().into_owned(),
+                    "--output-dir".to_owned(),
+                    global.output_dir.to_string_lossy().into_owned(),
+                    "--log-dir".to_owned(),
+                    global.log_dir.to_string_lossy().into_owned(),
+                    "--log-view".to_owned(),
+                    log_view.to_owned(),
+                ];
+                if let (Some(capabilities), Some(platform)) = (capabilities, platform) {
+                    arguments.extend([
+                        "--capabilities".to_owned(),
+                        capabilities.to_string_lossy().into_owned(),
+                        "--platform".to_owned(),
+                        platform.to_owned(),
+                        "--commit-target".to_owned(),
+                    ]);
+                }
+                arguments.extend(
+                    targets
+                        .into_iter()
+                        .map(|path| path.to_string_lossy().into_owned()),
+                );
+                run_village_split_batch(arguments)?;
+                return Ok(());
+            }
             "5" => {
                 let Some(selected) = choose_source_files_or_folders(
                     "选择要做地区总分校验的 Excel 文件",
@@ -885,7 +998,7 @@ where
                 return Ok(());
             }
             "0" => return Ok(()),
-            _ => writeln!(output, "仅接受 5 或 0")?,
+            _ => writeln!(output, "仅接受 1、5 或 0")?,
         }
     }
 }
@@ -934,6 +1047,46 @@ where
         output,
         allow_native_dialog,
     )
+}
+
+fn choose_single_xlsx_workbook<R, W>(
+    title: &str,
+    input: &mut R,
+    output: &mut W,
+    allow_native_dialog: bool,
+) -> Result<Option<PathBuf>>
+where
+    R: BufRead,
+    W: Write,
+{
+    let Some(mut selected) = choose_input_paths(
+        title,
+        false,
+        NativeFileFilter::XlsxOnly,
+        input,
+        output,
+        allow_native_dialog,
+    )?
+    else {
+        return Ok(None);
+    };
+    if selected.len() != 1 {
+        writeln!(output, "[提示] 此步骤需要且只需要选择一个 .xlsx 工作簿。")?;
+        return Ok(None);
+    }
+    let path = selected.remove(0);
+    if !path
+        .extension()
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("xlsx"))
+    {
+        writeln!(
+            output,
+            "[跳过] {}：PT-7-1 当前只接受 .xlsx；未验收的格式请勿直接修改。",
+            path.display()
+        )?;
+        return Ok(None);
+    }
+    Ok(Some(path))
 }
 
 #[derive(Clone, Copy)]
@@ -1857,6 +2010,451 @@ fn run_village_split_plan(arguments: Vec<String>) -> Result<()> {
     result["execution"] = execution;
     println!("{}", serde_json::to_string_pretty(&result)?);
     Ok(())
+}
+
+fn run_village_split_batch(arguments: Vec<String>) -> Result<()> {
+    let (commit_target, arguments) = extract_boolean_flag(arguments, "commit-target")?;
+    let options = parse_cli_arguments(arguments)?;
+    let current = required_path(&options, "current")?;
+    let previous = required_path(&options, "previous")?;
+    anyhow::ensure!(
+        current
+            .extension()
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("xlsx")),
+        "PT-7-1 current-period input currently supports .xlsx only"
+    );
+    anyhow::ensure!(
+        previous
+            .extension()
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("xlsx")),
+        "PT-7-1 prior-period input currently supports .xlsx only"
+    );
+    anyhow::ensure!(
+        !options.positional.is_empty(),
+        "provide at least one target workbook"
+    );
+    let capabilities = options.values.get("capabilities");
+    let platform = options.values.get("platform");
+    anyhow::ensure!(
+        capabilities.is_some() == platform.is_some(),
+        "--capabilities and --platform must be provided together"
+    );
+    anyhow::ensure!(
+        !commit_target || capabilities.is_some(),
+        "--commit-target requires --capabilities and --platform"
+    );
+    let log_view = options
+        .values
+        .get("log-view")
+        .map(String::as_str)
+        .unwrap_or("user");
+    anyhow::ensure!(
+        matches!(log_view, "user" | "developer" | "off"),
+        "--log-view must be user, developer, or off"
+    );
+    let config = options
+        .values
+        .get("config")
+        .map(|path| load_global(path))
+        .transpose()?;
+    let output_dir = match options.values.get("output-dir") {
+        Some(path) => PathBuf::from(path),
+        None => config
+            .as_ref()
+            .map(|config| config.output_dir.clone())
+            .unwrap_or_else(|| PathBuf::from("output")),
+    };
+    let log_dir = match options.values.get("log-dir") {
+        Some(path) => PathBuf::from(path),
+        None => config
+            .as_ref()
+            .map(|config| config.log_dir.clone())
+            .unwrap_or_else(|| PathBuf::from("logs")),
+    };
+    let plan_dir = unique_menu_action_dir(&output_dir, "village-split");
+    fs::create_dir_all(&output_dir)
+        .with_context(|| format!("create output directory {}", output_dir.display()))?;
+    fs::create_dir_all(&plan_dir)
+        .with_context(|| format!("create plan directory {}", plan_dir.display()))?;
+
+    let started = Instant::now();
+    let started_at = Local::now().to_rfc3339();
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or_default();
+    let run_id = format!("pytools-pt-7-1-{}-{nonce}", std::process::id());
+    let mut planned_files = 0usize;
+    let mut committed_files = 0usize;
+    let mut completed_files = 0usize;
+    let mut failed_files = 0usize;
+    let mut matched_sheets = 0usize;
+    let mut changed_cells = 0usize;
+    let total = options.positional.len();
+    let mut events = Vec::<SummaryRunEvent>::new();
+    let mut progress = SummaryProgress {
+        total_inputs: total,
+        total_files: total,
+        ..SummaryProgress::default()
+    };
+    let mut items = Vec::new();
+    for (index, input) in options.positional.iter().enumerate() {
+        let display_name = input
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_else(|| input.display().to_string());
+        progress.current_file = Some(index + 1);
+        progress.processed_files = index;
+        progress.completed_files = completed_files;
+        progress.failed_files = failed_files;
+        if log_view == "user" {
+            eprintln!(
+                "[处理中] {}/{} 拆分村镇银行数据：{}",
+                index + 1,
+                total,
+                display_name
+            );
+        }
+        emit_village_split_event(
+            &mut events,
+            log_view,
+            started,
+            "planning",
+            "started",
+            format!("开始处理第 {}/{} 个工作簿", index + 1, total),
+            &progress,
+            None,
+            &["pytools-core"],
+            None,
+            None,
+        );
+        let file_started = Instant::now();
+        let mut current_stage = "planning";
+        let candidate = unique_workbook_candidate(input, &output_dir, "village_split");
+        let plan_path = plan_dir.join(format!("target-{:04}.plan.json", index + 1));
+        let item_result = (|| -> Result<serde_json::Value> {
+            anyhow::ensure!(
+                input
+                    .extension()
+                    .is_some_and(|extension| extension.eq_ignore_ascii_case("xlsx")),
+                "PT-7-1 target currently supports .xlsx only"
+            );
+            let expected_target_hash = if commit_target {
+                Some(sha256_file(input)?)
+            } else {
+                None
+            };
+            let planning_started = Instant::now();
+            let report = build_village_split_plan(&current, &previous, input, &candidate)?;
+            if let Some(expected_hash) = expected_target_hash.as_deref() {
+                verify_planning_snapshot(input, Some(expected_hash))?;
+            }
+            emit_village_split_event(
+                &mut events,
+                log_view,
+                started,
+                "planning",
+                if report.plan.is_some() {
+                    "completed"
+                } else {
+                    "no_changes"
+                },
+                if report.plan.is_some() {
+                    "已完成业务计算并生成工作簿修改计划"
+                } else {
+                    "没有需要修改的工作表"
+                },
+                &progress,
+                Some(planning_started),
+                &["pytools-core", "excel-reader", "calamine"],
+                Some("calamine"),
+                None,
+            );
+            let execution = if let Some(plan) = report.plan.as_ref() {
+                current_stage = "plan_persistence";
+                let persistence_started = Instant::now();
+                fs::write(&plan_path, serde_json::to_vec_pretty(plan)?)
+                    .with_context(|| format!("write edit plan {}", plan_path.display()))?;
+                emit_village_split_event(
+                    &mut events,
+                    log_view,
+                    started,
+                    "plan_persistence",
+                    "completed",
+                    "已保存工作簿修改计划",
+                    &progress,
+                    Some(persistence_started),
+                    &["pytools-core"],
+                    None,
+                    None,
+                );
+                current_stage = "engine_execution";
+                let execution_started = Instant::now();
+                let execution = execute_optional_plan(&options, Some(plan))?;
+                let engine = execution.get("engine").and_then(serde_json::Value::as_str);
+                let plan_only = execution.as_str() == Some("plan_only");
+                emit_village_split_event(
+                    &mut events,
+                    log_view,
+                    started,
+                    "engine_execution",
+                    if plan_only { "skipped" } else { "completed" },
+                    if plan_only {
+                        "已生成计划；当前没有已验收的执行 capability，原工作簿未修改"
+                    } else {
+                        "已完成工作簿候选修改与引擎验证"
+                    },
+                    &progress,
+                    Some(execution_started),
+                    if plan_only {
+                        &["pytools-core"]
+                    } else {
+                        &["pytools-core", "excel-editor"]
+                    },
+                    engine,
+                    None,
+                );
+                execution
+            } else {
+                serde_json::Value::String("no_changes".to_owned())
+            };
+            let commit = if commit_target && report.plan.is_some() {
+                current_stage = "safe_commit";
+                let commit_started = Instant::now();
+                let commit = replace_target_from_candidate(
+                    &candidate,
+                    input,
+                    expected_target_hash
+                        .as_deref()
+                        .context("target snapshot missing before commit")?,
+                )?;
+                emit_village_split_event(
+                    &mut events,
+                    log_view,
+                    started,
+                    "safe_commit",
+                    "completed",
+                    "已验证候选并安全提交到目标工作簿",
+                    &progress,
+                    Some(commit_started),
+                    &["pytools-core", "file-commit"],
+                    execution.get("engine").and_then(serde_json::Value::as_str),
+                    None,
+                );
+                Some(commit)
+            } else {
+                None
+            };
+            Ok(serde_json::json!({
+                "input": input,
+                "candidate": candidate,
+                "plan_file": if report.plan.is_some() { Some(plan_path) } else { None },
+                "status": if commit.is_some() {
+                    "committed"
+                } else if report.plan.is_none() {
+                    "no_changes"
+                } else if execution.as_str() == Some("plan_only") {
+                    "planned"
+                } else {
+                    "candidate_created"
+                },
+                "matched_sheets": report.matched_sheets,
+                "changed_cells": report.changed_cells,
+                "warnings": report.warnings,
+                "execution": execution,
+                "target_commit": commit,
+                "elapsed_ms": file_started.elapsed().as_millis(),
+            }))
+        })();
+        match item_result {
+            Ok(item) => {
+                if item["plan_file"].is_string() {
+                    planned_files += 1;
+                }
+                if item["status"] == "committed" {
+                    committed_files += 1;
+                }
+                completed_files += 1;
+                matched_sheets += item["matched_sheets"].as_u64().unwrap_or_default() as usize;
+                changed_cells += item["changed_cells"].as_u64().unwrap_or_default() as usize;
+                let (status, message) = match item["status"].as_str().unwrap_or_default() {
+                    "committed" => ("completed", "当前工作簿已安全提交"),
+                    "planned" => ("planned", "当前工作簿修改计划已生成，原文件未修改"),
+                    "candidate_created" => ("completed", "当前工作簿候选已生成"),
+                    _ => ("no_changes", "当前工作簿无需修改"),
+                };
+                items.push(item);
+                progress.processed_files = index + 1;
+                progress.completed_files = completed_files;
+                emit_village_split_event(
+                    &mut events,
+                    log_view,
+                    started,
+                    "file_summary",
+                    status,
+                    message,
+                    &progress,
+                    Some(file_started),
+                    &["pytools-core"],
+                    None,
+                    None,
+                );
+            }
+            Err(error) => {
+                failed_files += 1;
+                progress.processed_files = index + 1;
+                progress.failed_files = failed_files;
+                emit_village_split_event(
+                    &mut events,
+                    log_view,
+                    started,
+                    current_stage,
+                    "failed",
+                    "当前工作簿处理失败；请查看开发者运行记录中的失败阶段",
+                    &progress,
+                    Some(file_started),
+                    &["pytools-core"],
+                    None,
+                    Some("village_split_stage_error"),
+                );
+                items.push(serde_json::json!({
+                    "input": input,
+                    "status": "failed",
+                    "error_stage": current_stage,
+                    "error": format!("{error:#}"),
+                    "elapsed_ms": file_started.elapsed().as_millis(),
+                }));
+            }
+        }
+    }
+    let status = if failed_files == 0 {
+        "succeeded"
+    } else if completed_files == 0 {
+        "failed"
+    } else {
+        "partial"
+    };
+    let mut result = serde_json::json!({
+        "feature_id": "PT-7-1",
+        "files": total,
+        "planned_files": planned_files,
+        "completed_files": completed_files,
+        "committed_files": committed_files,
+        "failed_files": failed_files,
+        "matched_sheets": matched_sheets,
+        "changed_cells": changed_cells,
+        "mode": if commit_target { "commit_target" } else if capabilities.is_some() { "candidate" } else { "plan_only" },
+        "status": status,
+        "plan_dir": plan_dir,
+        "elapsed_ms": started.elapsed().as_millis(),
+        "items": items,
+    });
+    let run_log_path = if log_view == "off" {
+        None
+    } else {
+        let path = log_dir.join(format!("PT-7-1_{run_id}.run.json"));
+        let safe_items = result["items"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|item| {
+                serde_json::json!({
+                    "status": item["status"],
+                    "error_stage": item.get("error_stage"),
+                    "error_type": if item["status"] == "failed" {
+                        Some("village_split_stage_error")
+                    } else {
+                        None
+                    },
+                    "matched_sheets": item.get("matched_sheets"),
+                    "changed_cells": item.get("changed_cells"),
+                    "elapsed_ms": item.get("elapsed_ms"),
+                })
+            })
+            .collect::<Vec<_>>();
+        let history = serde_json::json!({
+            "schema_version": 1,
+            "product": "pytools",
+            "feature_id": "PT-7-1",
+            "function": "village-split",
+            "run_id": run_id,
+            "started_at": started_at,
+            "status": status,
+            "total_inputs": total,
+            "completed_files": completed_files,
+            "failed_files": failed_files,
+            "planned_files": planned_files,
+            "committed_files": committed_files,
+            "matched_sheets": matched_sheets,
+            "changed_cells": changed_cells,
+            "elapsed_ms": started.elapsed().as_millis(),
+            "items": safe_items,
+            "events": events,
+        });
+        match write_json_report_create_new(&path, &history) {
+            Ok(()) => {
+                result["run_id"] = serde_json::Value::String(run_id.clone());
+                result["run_log_path"] = serde_json::Value::String(path.display().to_string());
+                Some(path)
+            }
+            Err(error) => {
+                eprintln!("pytools: warning: could not save PT-7-1 run history: {error:#}");
+                None
+            }
+        }
+    };
+    if log_view == "user" {
+        if let Some(path) = run_log_path {
+            eprintln!("运行记录已保存：{}", path.display());
+        }
+    }
+    println!("{}", serde_json::to_string_pretty(&result)?);
+    Ok(())
+}
+
+fn emit_village_split_event(
+    events: &mut Vec<SummaryRunEvent>,
+    log_view: &str,
+    run_started: Instant,
+    phase: &str,
+    status: &str,
+    user_message: impl Into<String>,
+    progress: &SummaryProgress,
+    stage_started: Option<Instant>,
+    components: &[&str],
+    actual_engine: Option<&str>,
+    error_type: Option<&str>,
+) {
+    if log_view == "off" {
+        return;
+    }
+    let event = SummaryRunEvent {
+        sequence: events.len() + 1,
+        timestamp: Local::now().to_rfc3339(),
+        phase: phase.to_owned(),
+        status: status.to_owned(),
+        user_message: user_message.into(),
+        progress: progress.clone(),
+        file_name: None,
+        stage_elapsed_ms: stage_started.map(|started| started.elapsed().as_millis()),
+        total_elapsed_ms: run_started.elapsed().as_millis(),
+        components: components
+            .iter()
+            .map(|component| (*component).to_owned())
+            .collect(),
+        actual_engine: actual_engine.map(str::to_owned),
+        error_type: error_type.map(str::to_owned),
+    };
+    if log_view == "developer" {
+        if let Ok(encoded) = serde_json::to_string(&event) {
+            eprintln!("{encoded}");
+        } else {
+            eprintln!("{{\"phase\":\"progress_event\",\"status\":\"serialization_failed\"}}");
+        }
+    } else {
+        eprintln!("{}", event.user_message);
+    }
+    events.push(event);
 }
 
 fn run_remove_foreign_bank_plan(arguments: Vec<String>) -> Result<()> {
@@ -3533,8 +4131,8 @@ fn run_region_sum(arguments: Vec<String>) -> Result<()> {
 fn print_usage() {
     eprintln!(
         "Usage:\n\
-         pytools [menu] [--config <config.xlsx>] [--log-view user|developer|off]\n\
-         no command opens the migrated menu; available categories: 1 (timeline 1/3/4/5), 2 (dedup 1-6), 3 (print 1-4), 4 (conversion and file naming 1-10), 6 (summary 1/2), and 7 (batch 7-5)\n\
+         pytools [menu] [--config <config.xlsx>] [--log-view user|developer|off] [--capabilities <json> --platform <id>]\n\
+         no command opens the migrated menu; available categories: 1 (timeline 1/3/4/5), 2 (dedup 1-6), 3 (print 1-4), 4 (conversion and file naming 1-10), 6 (summary 1/2), and 7 (batch 7-1/7-5)\n\
          timeline-precheck --config <workbook.xlsx>\n\
          timeline-compare --config <workbook.xlsx> --template <workbook.xlsx> <source.xlsx>...\n\
          wide-summary --config <workbook.xlsx> <source.xlsx>...\n\
@@ -3555,6 +4153,7 @@ fn print_usage() {
          config-repair-plan --input <config.xlsx> --output <candidate.xlsx> [--plan-output <plan.json>] [--capabilities <json> --platform <id>]\n\
          config-view --config <config.xlsx>\n\
          village-split-plan --current <xlsx> --previous <xlsx> --input <target.xlsx> --output <candidate.xlsx> [--plan-output <json>] [--capabilities <json> --platform <id>]\n\
+         village-split --current <xlsx> --previous <xlsx> [--config <config.xlsx>] [--output-dir <directory>] [--log-dir <directory>] [--log-view user|developer|off] [--capabilities <json> --platform <id> [--commit-target]] <target.xlsx>...\n\
          remove-foreign-bank-plan --config <config.xlsx> --input <xlsx> --output <candidate.xlsx> [--plan-output <json>] [--capabilities <json> --platform <id>]\n\
          remove-foreign-bank --config <config.xlsx> [--capabilities <json> --platform <id>] <source.xlsx>...\n\
          rural-loan-plan --current <xlsx> --previous <xlsx> --output <candidate.xlsx> [--plan-output <json>] [--capabilities <json> --platform <id>]\n\
