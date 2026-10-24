@@ -4,7 +4,7 @@
 
 - 只读源项目：C:\Users\AZI\Desktop\VibeCode\4.pytools-main
 - 主入口基线：PyCode/main.py 的用户菜单和 dispatch 映射；继续追踪 PyCode/core 中的规则、配置、文件处理与工作簿调用链。
-- NoComPyTools 是同一产品目标的变体参考；共有和独有行为尚未逐项比较。独有行为先登记为待确认，不静默丢弃，也不生成第三个产品。
+- NoComPyTools 是同一产品目标的变体参考；共有和独有行为尚未逐项比较。PT-6-1 已对一份真实 XLSX 做 PyCode/NoCom/Rust 对照，确认 NoCom 与 PyCode 有输出差异；未确认的 NoCom 行为不并入 PyCode 生产基线，详见本清单末尾记录。
 - 状态统一使用保留、丢失、损坏、不适用、未验证；源代码入口和真实业务样本尚未对拍的功能一律不得标为完成。
 - 工作表提取以不带批注普通版为准；COM 批注版不迁移。Python 运行模式切换和 PDF 导出不迁移。
 
@@ -411,3 +411,9 @@ Windows GNU debug CLI 在 PowerShell 与只读 PyCode `PyCode.core.summary_321_3
 验证包括 `cargo fmt --check -p pytools-core`、`cargo test --offline --locked -p pytools-core --test summary_used_range_error`、Windows GNU CLI 交叉构建及执行、WSL glibc 2.28 release CLI 执行与完整 Python/Rust 工作簿投影对拍。麒麟 V10/UOS V20 实机、deb 安装和离线交付仍未验证；PT-6-1 整体仍未完成最终验收。
 
 共享 opt-in reader API 接入后，Windows GNU debug CLI 对原 PyTools xlsx/ 13 份主样本按 4 批完整回归；96 张工作表、203,580 行在 4/4 批与只读 PyCode 完整投影一致，各批 reader 为 Calamine、未知错误 token 归一化计数为 0，writer 为 rust_xlsxwriter，开发者事件数 26/14/27/63 均与历史 JSON 匹配，输入前后指纹一致。公共 reader 更新到 `aa2797d` 后，重新构建 Windows GNU CLI 并运行完整 `compare_summary_tools.py`：合成汇总为 19 行，7 个已支持 Excel 错误单元格及 `#DATA!` 字符串语义与 PyCode 一致；上述 13 份样本再次 4/4 完整投影一致。之后同步的 `9c869de` 只改共享 `excel-editor` 工作表布局能力；在该 HEAD 上 `cargo fmt --check -p pytools-core`、`cargo test --offline --locked -p pytools-core --test summary_used_range_error`（4/4）和 Windows GNU CLI 构建均通过，未因该编辑器变更重复读取对拍。当前环境缺少 Zig，未能在本轮重建最新 glibc 2.28 release；既有 release 证据见 `additional_project_assets_20261024.platform_validation`，不外推为最新共享 crate 构建或目标发行版验收。机器结果见 `probe/reports/summary_used_range_parity_20261024.json` 与 `probe/reports/summary_used_range_real_parity_20261024.json`。
+
+### 2026-10-24 PT-6-1 PyCode/NoComPyTools 真实样本变体对拍
+
+在 Windows Python 3.12.10 中分别使用 PyCode 项目虚拟环境（openpyxl 3.1.5）和 NoComPyTools 项目虚拟环境（openpyxl 3.1.5、python-calamine 0.9.0），与当前 Windows GNU `summary-used-range` CLI 对同一份原项目真实 XLSX 对拍。PyCode/Rust 完整投影精确一致，均输出 7,462 行；NoComPyTools 输出维度相同，但值、类型、样式和行投影存在差异：1,213 个单元格，其中 1,212 个 PyCode 错误类型单元格在 NoCom 输出中为空，另有 1 个空值变为字符串。Rust 实际使用 Calamine 与 rust_xlsxwriter，并由既有 OOXML Patch 保留 1,212 个错误单元格；源文件大小和修改时间未变，报告不含源文件名或单元格值。
+
+该结果只确认此真实样本上的变体差异；不据此判定 NoComPyTools 独有行为属于最终产品范围，也不改变已确认的 PyCode 基线。其余样本和格式差异仍待逐项比较。机器结果见 `probe/reports/summary_used_range_real_parity_20261024.json` 的 `nocom_pytools_pt61_variant_comparison`。

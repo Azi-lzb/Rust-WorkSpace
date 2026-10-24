@@ -847,5 +847,64 @@
       27,
       63
     ]
+  },
+  "nocom_pytools_pt61_variant_comparison": {
+    "date": "2026-10-24",
+    "source_scope": "one read-only XLSX selected from the original PyTools xlsx root; workbook name omitted",
+    "python_runtime": "Windows Python 3.12.10",
+    "pycode_environment": {
+      "openpyxl": "3.1.5"
+    },
+    "nocom_environment": {
+      "openpyxl": "3.1.5",
+      "python_calamine": "0.9.0"
+    },
+    "rust_runtime": "Windows GNU executable built from pytools-dev HEAD 1b2a784",
+    "output_dimensions": {
+      "pycode": {
+        "worksheets": 1,
+        "rows_including_header": 7463,
+        "columns": 213
+      },
+      "nocom_pytools": {
+        "worksheets": 1,
+        "rows_including_header": 7463,
+        "columns": 213
+      },
+      "rust": {
+        "worksheets": 1,
+        "rows_including_header": 7463,
+        "columns": 213
+      }
+    },
+    "summary_rows": 7462,
+    "pycode_rust_complete_projection": "exact",
+    "rust_execution": {
+      "reader_engine": "calamine",
+      "writer_engine": "rust_xlsxwriter",
+      "ooxml_error_cells_patched": 1212,
+      "read_elapsed_ms": 9519,
+      "write_elapsed_ms": 10789,
+      "total_elapsed_ms": 20312
+    },
+    "pycode_nocom_difference_fields": [
+      "rows",
+      "styles",
+      "types",
+      "values"
+    ],
+    "pycode_nocom_difference_counts": {
+      "value_cells": 1213,
+      "type_cells": 1213,
+      "style_cells": 1213,
+      "changed_output_rows": 1213
+    },
+    "pycode_to_nocom_type_transitions": {
+      "e->None": 1212,
+      "None->s": 1
+    },
+    "source_size_and_mtime_unchanged": true,
+    "scope_note": "NoComPyTools is a variant reference; this one-sample PT-6-1 difference is not adopted into the PyCode production baseline. Wider NoComPyTools behavior and format scope remain unconfirmed.",
+    "comparison": "PyCode/Rust exact; NoComPyTools differs on the same real input"
   }
 }
