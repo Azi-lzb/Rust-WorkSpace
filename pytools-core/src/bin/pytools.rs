@@ -245,6 +245,7 @@ where
         writeln!(output, "  6  汇总工具")?;
         writeln!(output, "  7  一二批处理工具（当前接入 7-1 至 7-8）")?;
         writeln!(output, "  8  归档工具")?;
+        writeln!(output, "  9  快捷工具")?;
         writeln!(output, "  0  退出")?;
         writeln!(output, "==============================")?;
         if let Some(error) = config_error.as_deref() {
@@ -331,12 +332,64 @@ where
                 log_view,
                 allow_native_dialog,
             )?,
+            "9" => run_interactive_quick_menu(input, output, config_path, global)?,
             "0" => {
                 writeln!(output, "再见。")?;
                 return Ok(());
             }
-            _ => writeln!(output, "仅接受 1、2、3、4、5、6、7、8 或 0")?,
+            _ => writeln!(output, "仅接受 1、2、3、4、5、6、7、8、9 或 0")?,
         }
+    }
+}
+
+fn run_interactive_quick_menu<R, W>(
+    input: &mut R,
+    output: &mut W,
+    config_path: &Path,
+    global: &GlobalConfig,
+) -> Result<()>
+where
+    R: BufRead,
+    W: Write,
+{
+    loop {
+        writeln!(output, "------ 快捷工具 ------")?;
+        writeln!(output, "  1  打开配置文件（config.xlsx）")?;
+        writeln!(output, "  2  打开 output 最新文件")?;
+        writeln!(output, "  3  打开 output 文件夹")?;
+        writeln!(output, "  0  返回")?;
+        writeln!(output, "----------------------")?;
+        let Some(choice) = read_menu_choice(input, output, "子菜单选择> ")? else {
+            return Ok(());
+        };
+        match choice.as_str() {
+            "1" => match open_config(config_path) {
+                Ok(()) => writeln!(output, "[完成] 已打开配置文件: {}", config_path.display())?,
+                Err(error) => writeln!(output, "[失败] 打开配置文件失败: {error:#}")?,
+            },
+            "2" => match open_latest_output(&global.output_dir) {
+                Ok(Some(path)) => {
+                    writeln!(output, "[完成] 已打开最新输出文件: {}", path.display())?
+                }
+                Ok(None) => writeln!(
+                    output,
+                    "[提示] 未找到输出文件: {}",
+                    global.output_dir.display()
+                )?,
+                Err(error) => writeln!(output, "[失败] 打开输出文件失败: {error:#}")?,
+            },
+            "3" => match open_output_directory(&global.output_dir) {
+                Ok(()) => writeln!(
+                    output,
+                    "[完成] 已打开输出文件夹: {}",
+                    global.output_dir.display()
+                )?,
+                Err(error) => writeln!(output, "[失败] 打开输出文件夹失败: {error:#}")?,
+            },
+            "0" => return Ok(()),
+            _ => writeln!(output, "仅接受 1、2、3 或 0")?,
+        }
+        return Ok(());
     }
 }
 
