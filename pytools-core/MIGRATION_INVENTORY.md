@@ -377,3 +377,9 @@ timeline_ops::keyword_match 改为复用共享 Python 语义匹配器，修复�
 同一 glibc 2.28 release CLI 在合成 `getting_data_error.xlsx` 边界夹具上以退出码 2 失败关闭；运行记录为 `failed`，stage 为 `value_read`、error type 为 `value_read_error`，未生成部分汇总且运行日志不包含单元格 token。此项验证当前 workspace reader 边界，不属于未知 token 的 Python/Rust 输出对拍；保持未支持状态。
 
 glibc 2.28 release CLI 对同一最大真实工作簿的 user、developer、off 三种日志视图均与 PyCode 完整工作簿投影精确一致（各 39,171 行）。user/developer 运行记录均成功且含 18 条事件；developer stderr 事件流与保存历史逐项一致；off 未创建运行历史且没有 CLI 进度输出（WSL 主机启动提示单独识别）。三种模式均验证了读取/写入引擎字段；输入大小和修改时间未变。该证据仍不代表麒麟/UOS 实机或 deb 验收。
+
+### 2026-10-24 PT-6-1 glibc 2.28 release 备份簿完整批次对拍
+
+将此前完成 debug CLI 对拍的 51 份 XLSX 再由 `x86_64-unknown-linux-gnu.2.28` release 二进制直接处理，并调用只读 PyCode 基线按原 17 批、每批 3 份逐批比较。51/51 份、1,016,511 行的值/行、类型、样式、工作表维度、冻结窗格、表头、合并、公式、定义名称、打印区、页面设置、页边距和居中属性完整投影一致；17/17 批通过，无失败组。开发者事件历史匹配，51 份源文件大小和修改时间均未变化。
+
+机器报告 `probe/reports/summary_used_range_backup_assets_20261024.json` 的 `platform_validation.linux_glibc_2_28_release` 记录目标二进制及汇总结果。此项扩大 glibc release 的 PyTools 真实样本覆盖，不等于麒麟 V10/UOS V20 实机或 deb 验收；PT-6-1 最终验收仍未完成。
