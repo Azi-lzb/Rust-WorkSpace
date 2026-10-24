@@ -25,8 +25,40 @@ from base_audit.name_config import (  # noqa: E402
     FeatureMapping,
 )
 from base_audit.region_summary import run_region_summaries  # noqa: E402
+from base_audit.excel_com import ExcelSession  # noqa: E402
 from openpyxl import Workbook, load_workbook  # noqa: E402
 from openpyxl.workbook.defined_name import DefinedName  # noqa: E402
+
+
+def _open_workbook_for_parity(
+    session: ExcelSession, path: Path, *, read_only: bool, purpose: str = ""
+) -> Any:
+    """Use Excel's supported named arguments for this Windows parity run.
+
+    This Office installation rejects the source adapter's named `UpdateLinks`
+    argument even though it opens the same workbook when that option is left
+    at its default and `AskToUpdateLinks` is disabled on the application.
+    The adapter changes only the COM call shape, not the Python summary logic.
+    """
+    opened_at = time.monotonic()
+    workbook = session.excel.Workbooks.Open(
+        str(path.resolve()),
+        ReadOnly=read_only,
+        IgnoreReadOnlyRecommended=True,
+    )
+    elapsed = time.monotonic() - opened_at
+    if purpose == "template":
+        session.lifecycle_metrics["template_com_open_time"] += elapsed
+    if not session._first_workbook_opened:
+        session._first_workbook_opened = True
+        if session._ready_at is not None:
+            session.lifecycle_metrics["idle_wait_time"] = max(
+                0.0, opened_at - session._ready_at
+            )
+    return workbook
+
+
+ExcelSession.open_workbook = _open_workbook_for_parity
 
 
 def digest(path: Path) -> str:
@@ -225,6 +257,66 @@ def write_history_case(root: Path) -> tuple[Path, Path, Path, Path]:
     return template_path, input_dir, history_path, source_path
 
 
+def write_fallback_case(root: Path) -> tuple[Path, Path, Path, Path]:
+    template_path = root / "fallback_template.xlsx"
+    template = Workbook()
+    fallback = template.active
+    fallback.title = "兜底模板"
+    fallback["B1"] = "字段甲"
+    fallback["C1"] = "字段乙"
+    template.create_sheet("Meta")
+    template.defined_names.add(
+        DefinedName("任意行汇总区域", attr_text="'兜底模板'!$B$2:$C$100")
+    )
+    template.defined_names.add(
+        DefinedName("固定行汇总区域", attr_text="'兜底模板'!$B$2:$C$6")
+    )
+    template.defined_names.add(
+        DefinedName("表头区域", attr_text="'兜底模板'!$B$1:$C$1")
+    )
+    template.defined_names.add(DefinedName("全局单元格区域.批次", attr_text="Meta!$A$1"))
+    template.defined_names.add(
+        DefinedName("单元格区域.区域", attr_text="'兜底模板'!$F$1")
+    )
+    template.save(template_path)
+    template.close()
+
+    input_dir = root / "fallback_input"
+    input_dir.mkdir()
+    source_path = input_dir / "FallbackSource.xlsx"
+    source = Workbook()
+    unmatched = source.active
+    unmatched.title = "未匹配表"
+    unmatched["F1"] = "区域甲"
+    unmatched["B4"] = "记录甲"
+    unmatched["C4"] = 11
+    unmatched["B6"] = "记录乙"
+    unmatched["C6"] = 0
+    empty = source.create_sheet("无兜底数据")
+    empty["A1"] = "不在兜底列范围内"
+    other = source.create_sheet("另一张表")
+    other["F1"] = "区域乙"
+    other["B2"] = "另一条记录"
+    other["C2"] = 12
+    metadata = source.create_sheet("Meta")
+    metadata["A1"] = "批次-01"
+    source.save(source_path)
+    source.close()
+
+    second_source_path = input_dir / "FallbackSource2.xlsx"
+    second_source = Workbook()
+    repeated = second_source.active
+    repeated.title = "未匹配表"
+    repeated["F1"] = "区域丙"
+    repeated["B2"] = "记录丙"
+    repeated["C2"] = 5
+    second_metadata = second_source.create_sheet("Meta")
+    second_metadata["A1"] = "批次-02"
+    second_source.save(second_source_path)
+    second_source.close()
+    return template_path, input_dir, source_path, second_source_path
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--audit-binary", type=Path, required=True)
@@ -394,14 +486,165 @@ def main() -> int:
             else "failed"
         )
 
+        fallback_root = root / "fallback_case"
+        fallback_root.mkdir()
+        (
+            fallback_template,
+            fallback_input_dir,
+            fallback_source,
+            fallback_second_source,
+        ) = write_fallback_case(fallback_root)
+        fallback_before = {
+            path: digest(path)
+            for path in (
+                fallback_template,
+                fallback_source,
+                fallback_second_source,
+            )
+        }
+        fallback_feature = FeatureMapping(
+            "任意行汇总",
+            USED_RANGE_SUMMARY_FUNCTION,
+            ("任意行汇总区域",),
+            False,
+            "",
+            "",
+        )
+        fallback_progress: list[str] = []
+        fallback_python_started = time.perf_counter()
+        fallback_python = run_region_summaries(
+            template_path=fallback_template,
+            input_dir=fallback_input_dir,
+            output_dir=fallback_root / "python",
+            config_path=fallback_template,
+            summary_features=(fallback_feature,),
+            on_step=fallback_progress.append,
+            engine_preference="自动",
+        )
+        fallback_python_elapsed_ms = round(
+            (time.perf_counter() - fallback_python_started) * 1000
+        )
+        fallback_rust_path = fallback_root / "rust.xlsx"
+        fallback_command = [
+            str(binary),
+            "s1-region-summary",
+            "--template-workbook",
+            str(fallback_template),
+            "--input-dir",
+            str(fallback_input_dir),
+            "--output-workbook",
+            str(fallback_rust_path),
+            "--feature-name",
+            "任意行汇总",
+            "--developer-view",
+        ]
+        fallback_completed = subprocess.run(
+            fallback_command,
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+        )
+        if fallback_completed.returncode:
+            raise RuntimeError(
+                f"Rust fallback summary CLI failed: {fallback_completed.stderr.strip()}"
+            )
+        fallback_payload = json.loads(fallback_completed.stdout)
+        fallback_events = [
+            json.loads(line)
+            for line in fallback_completed.stderr.splitlines()
+            if line.strip().startswith("{")
+        ]
+        fallback_comparison = compare_workbooks(
+            fallback_python.output_path, fallback_rust_path
+        )
+
+        fixed_fallback_feature = FeatureMapping(
+            "固定行汇总",
+            FIXED_ROW_SUMMARY_FUNCTION,
+            ("固定行汇总区域",),
+            False,
+            "",
+            "",
+        )
+        fixed_fallback_progress: list[str] = []
+        fixed_fallback_python_started = time.perf_counter()
+        fixed_fallback_python = run_region_summaries(
+            template_path=fallback_template,
+            input_dir=fallback_input_dir,
+            output_dir=fallback_root / "python_fixed",
+            config_path=fallback_template,
+            summary_features=(fixed_fallback_feature,),
+            on_step=fixed_fallback_progress.append,
+            engine_preference="自动",
+        )
+        fixed_fallback_python_elapsed_ms = round(
+            (time.perf_counter() - fixed_fallback_python_started) * 1000
+        )
+        fixed_fallback_rust_path = fallback_root / "rust_fixed.xlsx"
+        fixed_fallback_command = [
+            str(binary),
+            "s1-region-summary",
+            "--template-workbook",
+            str(fallback_template),
+            "--input-dir",
+            str(fallback_input_dir),
+            "--output-workbook",
+            str(fixed_fallback_rust_path),
+            "--feature-name",
+            "固定行汇总",
+            "--developer-view",
+        ]
+        fixed_fallback_completed = subprocess.run(
+            fixed_fallback_command,
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+        )
+        if fixed_fallback_completed.returncode:
+            raise RuntimeError(
+                "Rust fixed-row fallback summary CLI failed: "
+                + fixed_fallback_completed.stderr.strip()
+            )
+        fixed_fallback_payload = json.loads(fixed_fallback_completed.stdout)
+        fixed_fallback_events = [
+            json.loads(line)
+            for line in fixed_fallback_completed.stderr.splitlines()
+            if line.strip().startswith("{")
+        ]
+        fixed_fallback_comparison = compare_workbooks(
+            fixed_fallback_python.output_path, fixed_fallback_rust_path
+        )
+        fallback_unchanged = all(
+            digest(path) == value for path, value in fallback_before.items()
+        )
+        fallback_status = (
+            "passed"
+            if fallback_comparison["status"] == "passed"
+            and fixed_fallback_comparison["status"] == "passed"
+            and fallback_payload["summary"]["output_sheets"] == 2
+            and fallback_payload["summary"]["data_rows"] == 4
+            and fixed_fallback_payload["summary"]["output_sheets"] == 2
+            and fixed_fallback_payload["summary"]["data_rows"] == 4
+            and fallback_unchanged
+            else "failed"
+        )
+
         status = (
             "passed"
-            if comparison["status"] == "passed" and history_status == "passed"
+            if comparison["status"] == "passed"
+            and history_status == "passed"
+            and fallback_status == "passed"
             else "failed"
         )
         if status == "passed" and (
             not comparison["column_widths_exact"]
             or not history_comparison["column_widths_exact"]
+            or not fallback_comparison["column_widths_exact"]
+            or not fixed_fallback_comparison["column_widths_exact"]
         ):
             status = "passed_with_column_width_variance"
         report = {
@@ -412,6 +655,7 @@ def main() -> int:
                 (line.split("：", 1)[1] for line in progress if line.startswith("已连接表格引擎：")),
                 "not_reported",
             ),
+            "python_com_call_adapter": "test-only: this Office installation rejects the source adapter's named UpdateLinks=0 argument; the baseline used ReadOnly and IgnoreReadOnlyRecommended while Excel AskToUpdateLinks remained disabled",
             "rust_reader": rust_payload["summary"]["reader"],
             "rust_writer": rust_payload["summary"]["writer"],
             "python_elapsed_ms": python_elapsed_ms,
@@ -444,14 +688,60 @@ def main() -> int:
                 "comparison": history_comparison,
                 "scope": "synthetic local-validation history sheet; eight-column composite key; numeric 1.0 to text '1' key normalization; duplicate history rows joined in source order; unmatched source row remains blank",
             },
-            "scope": "Windows synthetic formula-free XLSX; named arbitrary/fixed rows; global/local single-cell metadata fields; missing source metadata sheet leaves the global field blank; merged multi-row header; value/type, sheet order, dimensions, number format, header style, filter and freeze comparison; additional built-in local-validation history append comparison; no fallback template, real template or Linux runtime",
+            "fallback_template": {
+                "status": fallback_status,
+                "python_engine": next(
+                    (
+                        line.split("：", 1)[1]
+                        for line in fallback_progress
+                        if line.startswith("已连接表格引擎：")
+                    ),
+                    "not_reported",
+                ),
+                "python_elapsed_ms": fallback_python_elapsed_ms,
+                "rust_reader": fallback_payload["summary"]["reader"],
+                "rust_writer": fallback_payload["summary"]["writer"],
+                "rust_elapsed_ms": fallback_payload["summary"]["elapsed_ms"],
+                "rust_events": len(fallback_events),
+                "output_sheets": fallback_payload["summary"]["output_sheets"],
+                "data_rows": fallback_payload["summary"]["data_rows"],
+                "input_files_unchanged": fallback_unchanged,
+                "comparison": fallback_comparison,
+                "fixed_rows": {
+                    "python_engine": next(
+                        (
+                            line.split("：", 1)[1]
+                            for line in fixed_fallback_progress
+                            if line.startswith("已连接表格引擎：")
+                        ),
+                        "not_reported",
+                    ),
+                    "python_elapsed_ms": fixed_fallback_python_elapsed_ms,
+                    "rust_reader": fixed_fallback_payload["summary"]["reader"],
+                    "rust_writer": fixed_fallback_payload["summary"]["writer"],
+                    "rust_elapsed_ms": fixed_fallback_payload["summary"]["elapsed_ms"],
+                    "rust_events": len(fixed_fallback_events),
+                    "output_sheets": fixed_fallback_payload["summary"]["output_sheets"],
+                    "data_rows": fixed_fallback_payload["summary"]["data_rows"],
+                    "comparison": fixed_fallback_comparison,
+                    "scope": "same source workbooks using the configured fixed-row fallback range",
+                },
+                "scope": "synthetic unmatched source sheets across multiple workbooks; arbitrary-row and fixed-row fallback ranges; repeated sheet names merged; local fallback-sheet metadata mapped by coordinates onto each source sheet; global metadata; blank-only unmatched sheet omitted",
+            },
+            "scope": "Windows synthetic formula-free XLSX; named arbitrary/fixed rows; unmatched source-sheet fallback; global/local single-cell metadata fields; missing source metadata sheet leaves the global field blank; merged multi-row header; value/type, sheet order, dimensions, number format, header style, filter and freeze comparison; built-in local-validation history append comparison; no real template or Linux runtime",
         }
         encoded = json.dumps(report, ensure_ascii=False, indent=2) + "\n"
         if args.report:
             args.report.parent.mkdir(parents=True, exist_ok=True)
             args.report.write_text(encoded, encoding="utf-8")
         print(encoded, end="")
-        return 0 if status.startswith("passed") and report["input_files_unchanged"] else 1
+        return (
+            0
+            if status.startswith("passed")
+            and report["input_files_unchanged"]
+            and fallback_unchanged
+            else 1
+        )
 
 
 if __name__ == "__main__":

@@ -1,4 +1,4 @@
-use excel_reader::{read_workbook, CellValue, SheetDump};
+use excel_reader::{CellValue, SheetDump, read_workbook};
 use excel_writer::{Format, Workbook};
 use serde_json::Value;
 use std::{
@@ -141,6 +141,143 @@ fn run_summary_with_history(
     command
         .output()
         .expect("run S1-F02 history-enriched summary CLI")
+}
+
+fn run_fallback_summary(
+    template: &Path,
+    input_dir: &Path,
+    output: &Path,
+    feature_name: &str,
+    developer_view: bool,
+) -> Output {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_open-data-audit"));
+    command
+        .arg("s1-region-summary")
+        .arg("--template-workbook")
+        .arg(template)
+        .arg("--input-dir")
+        .arg(input_dir)
+        .arg("--output-workbook")
+        .arg(output)
+        .arg("--feature-name")
+        .arg(feature_name);
+    if developer_view {
+        command.arg("--developer-view");
+    }
+    command.output().expect("run S1-F02 fallback summary CLI")
+}
+
+fn write_fallback_summary_template(path: &Path) {
+    let mut workbook = Workbook::new();
+    let fallback = workbook.add_worksheet();
+    fallback
+        .set_name("兜底模板")
+        .expect("set fallback template sheet name");
+    fallback
+        .write_string(0, 1, "字段甲")
+        .expect("write fallback first header");
+    fallback
+        .write_string(0, 2, "字段乙")
+        .expect("write fallback second header");
+    workbook
+        .add_worksheet()
+        .set_name("Meta")
+        .expect("set fallback template metadata sheet name");
+    workbook
+        .define_name("任意行汇总区域", "='兜底模板'!$B$2:$C$100")
+        .expect("define fallback data range");
+    workbook
+        .define_name("固定行汇总区域", "='兜底模板'!$B$2:$C$6")
+        .expect("define fixed-row fallback data range");
+    workbook
+        .define_name("表头区域", "='兜底模板'!$B$1:$C$1")
+        .expect("define fallback header range");
+    workbook
+        .define_name("全局单元格区域.批次", "=Meta!$A$1")
+        .expect("define fallback global metadata field");
+    workbook
+        .define_name("单元格区域.区域", "='兜底模板'!$F$1")
+        .expect("define fallback local metadata field");
+    workbook.save(path).expect("save fallback summary template");
+}
+
+fn write_fallback_summary_source(path: &Path, second_path: &Path) {
+    let mut workbook = Workbook::new();
+    let source = workbook.add_worksheet();
+    source
+        .set_name("未匹配表")
+        .expect("set fallback source sheet name");
+    source
+        .write_string(0, 5, "区域甲")
+        .expect("write fallback local metadata value");
+    source
+        .write_string(3, 1, "记录甲")
+        .expect("write first fallback row label");
+    source
+        .write_number(3, 2, 11.0)
+        .expect("write first fallback row value");
+    source
+        .write_string(5, 1, "记录乙")
+        .expect("write second fallback row label");
+    source
+        .write_number(5, 2, 0.0)
+        .expect("write second fallback row value");
+
+    let empty = workbook.add_worksheet();
+    empty
+        .set_name("无兜底数据")
+        .expect("set empty source sheet name");
+    empty
+        .write_string(0, 0, "不在兜底列范围内")
+        .expect("write value outside fallback data columns");
+
+    let other = workbook.add_worksheet();
+    other
+        .set_name("另一张表")
+        .expect("set second unmatched source sheet name");
+    other
+        .write_string(0, 5, "区域乙")
+        .expect("write second unmatched local metadata value");
+    other
+        .write_string(1, 1, "另一条记录")
+        .expect("write second unmatched row label");
+    other
+        .write_number(1, 2, 12.0)
+        .expect("write second unmatched row value");
+
+    let metadata = workbook.add_worksheet();
+    metadata
+        .set_name("Meta")
+        .expect("set fallback source metadata sheet name");
+    metadata
+        .write_string(0, 0, "批次-01")
+        .expect("write fallback global metadata value");
+    workbook.save(path).expect("save fallback summary source");
+
+    let mut second = Workbook::new();
+    let source = second.add_worksheet();
+    source
+        .set_name("未匹配表")
+        .expect("set repeated fallback source sheet name");
+    source
+        .write_string(0, 5, "区域丙")
+        .expect("write repeated fallback local metadata value");
+    source
+        .write_string(1, 1, "记录丙")
+        .expect("write repeated fallback row label");
+    source
+        .write_number(1, 2, 5.0)
+        .expect("write repeated fallback row value");
+    let metadata = second.add_worksheet();
+    metadata
+        .set_name("Meta")
+        .expect("set repeated fallback metadata sheet name");
+    metadata
+        .write_string(0, 0, "批次-02")
+        .expect("write repeated fallback global metadata value");
+    second
+        .save(second_path)
+        .expect("save repeated fallback summary source");
 }
 
 fn write_history_summary_template(path: &Path) {
@@ -450,6 +587,110 @@ fn cli_summarizes_used_and_fixed_named_ranges_and_logs_both_views() {
     assert_eq!(events[1]["metadata_fields_left_blank"], 2);
 
     fs::remove_dir_all(&root).expect("remove synthetic test directory");
+}
+
+#[test]
+fn cli_summarizes_unmatched_source_sheets_with_the_fallback_template() {
+    let root = temporary_root("fallback_summary");
+    let input_dir = root.join("input");
+    fs::create_dir_all(&input_dir).expect("create fallback source directory");
+    let template = root.join("fallback_template.xlsx");
+    let source = input_dir.join("FallbackSource.xlsx");
+    let second_source = input_dir.join("FallbackSource2.xlsx");
+    let output_path = root.join("fallback_summary.xlsx");
+    let fixed_output_path = root.join("fixed_fallback_summary.xlsx");
+    write_fallback_summary_template(&template);
+    write_fallback_summary_source(&source, &second_source);
+    let template_before = fs::read(&template).expect("read fallback template snapshot");
+    let source_before = fs::read(&source).expect("read fallback source snapshot");
+    let second_source_before = fs::read(&second_source).expect("read second source snapshot");
+
+    let result = run_fallback_summary(&template, &input_dir, &output_path, "任意行汇总", true);
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let payload: Value = serde_json::from_slice(&result.stdout).expect("parse fallback CLI result");
+    assert_eq!(payload["status"], "completed");
+    assert_eq!(payload["summary"]["features"], 1);
+    assert_eq!(payload["summary"]["output_sheets"], 2);
+    assert_eq!(payload["summary"]["data_rows"], 4);
+
+    let output = read_workbook(&output_path).expect("read fallback summary workbook");
+    assert_eq!(
+        output
+            .sheets
+            .iter()
+            .map(|sheet| sheet.name.as_str())
+            .collect::<Vec<_>>(),
+        ["另一张表", "未匹配表"]
+    );
+    let other_sheet = &output.sheets[0];
+    assert_eq!(read_text(other_sheet, "B2"), "另一张表");
+    assert_eq!(read_text(other_sheet, "C2"), "批次-01");
+    assert_eq!(read_text(other_sheet, "D2"), "区域乙");
+    assert_eq!(read_text(other_sheet, "E2"), "另一条记录");
+    assert_eq!(read_numeric(other_sheet, "F2"), 12.0);
+
+    let sheet = &output.sheets[1];
+    assert_eq!(read_text(sheet, "A1"), "来源文件");
+    assert_eq!(read_text(sheet, "B1"), "来源工作表");
+    assert_eq!(read_text(sheet, "C1"), "批次");
+    assert_eq!(read_text(sheet, "D1"), "区域");
+    assert_eq!(read_text(sheet, "E1"), "字段甲");
+    assert_eq!(read_text(sheet, "F1"), "字段乙");
+    assert_eq!(read_text(sheet, "B2"), "未匹配表");
+    assert_eq!(read_text(sheet, "C2"), "批次-01");
+    assert_eq!(read_text(sheet, "D2"), "区域甲");
+    assert_eq!(read_text(sheet, "E2"), "记录甲");
+    assert_eq!(read_numeric(sheet, "F2"), 11.0);
+    assert_eq!(read_text(sheet, "E3"), "记录乙");
+    assert_eq!(read_numeric(sheet, "F3"), 0.0);
+    assert_eq!(read_text(sheet, "B4"), "未匹配表");
+    assert_eq!(read_text(sheet, "C4"), "批次-02");
+    assert_eq!(read_text(sheet, "D4"), "区域丙");
+    assert_eq!(read_text(sheet, "E4"), "记录丙");
+    assert_eq!(read_numeric(sheet, "F4"), 5.0);
+    assert_eq!(
+        fs::read(&template).expect("read fallback template after run"),
+        template_before
+    );
+    assert_eq!(
+        fs::read(&source).expect("read fallback source after run"),
+        source_before
+    );
+    assert_eq!(
+        fs::read(&second_source).expect("read second source after run"),
+        second_source_before
+    );
+
+    let fixed_result = run_fallback_summary(
+        &template,
+        &input_dir,
+        &fixed_output_path,
+        "固定行汇总",
+        false,
+    );
+    assert!(
+        fixed_result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&fixed_result.stderr)
+    );
+    let fixed_payload: Value =
+        serde_json::from_slice(&fixed_result.stdout).expect("parse fixed fallback CLI result");
+    assert_eq!(fixed_payload["summary"]["output_sheets"], 2);
+    assert_eq!(fixed_payload["summary"]["data_rows"], 4);
+    let fixed_output = read_workbook(&fixed_output_path).expect("read fixed fallback summary");
+    assert_eq!(fixed_output.sheets.len(), 2);
+    assert_eq!(read_text(&fixed_output.sheets[1], "E2"), "记录甲");
+    assert_eq!(read_numeric(&fixed_output.sheets[1], "F4"), 5.0);
+    assert_eq!(
+        fs::read(&template).expect("read fixed fallback template after run"),
+        template_before
+    );
+
+    fs::remove_dir_all(&root).expect("remove fallback summary test directory");
 }
 
 #[test]

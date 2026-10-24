@@ -1,0 +1,40 @@
+时间：2026-10-24 20:19:02 +08:00
+执行者：Codex Audit migration agent
+修改前 commit：afbb587
+修改后 commit：随本地功能提交落地
+WIP：开始时仅有既存未跟踪 `audit-core/examples/`；保留原样，未纳入本次改动。
+
+## 目的
+
+继续 Audit S1-F02 命名区域汇总迁移，按只读 Python `summary_fallback.split_summary_fallback_ranges` 与 `region_summary.run_region_summaries` 的行为，汇总未匹配但含有效数据的源工作表。S1-F01 公式复制仍受共享 ExcelModifier 保留保护约束，本次不修改共享代码或改变其 Unverified 路由。
+
+## 修改文件
+
+- `audit-core/src/s1_region_summary.rs`：拆分保留工作表“兜底模板”的数据/表头命名区域；未匹配源工作表按兜底行列范围、模板表头和字段映射聚合输出；保留全局字段、将兜底局部字段坐标应用到源工作表；空工作表不生成输出。
+- `audit-core/tests/s1_region_summary_cli.rs`：增加 Windows CLI 合成样例，覆盖任意行/固定行兜底、多源文件同名工作表合并、多张兜底表、0 值、全局/局部字段、空工作表跳过及输入不变。
+- `audit-core/tests/compare/compare_s1_region_summary.py`：增加 Python/Rust 兜底样本文件级比较；为此 Office 安装拒绝的命名 `UpdateLinks=0` 参数添加仅限对拍脚本的 COM 调用适配，业务 Python 函数未修改。
+- `audit-core/probe/reports/s1_f02_named_region_summary_synthetic_parity_20261024.json`：保存 Windows 合成对拍证据。
+- `audit-core/MIGRATION_INVENTORY.md`：追加兜底模板局部状态；S1-F02 整体仍标记未验证。
+- 本记录。
+
+## 行为与边界
+
+- 通过现有 `open-data-audit s1-region-summary` CLI 入口执行；配置格式和共享 Excel 路由不变。
+- 本次仅使用临时合成输入/输出，不读取或提交用户业务文件；不修改源 Python。
+- 公式源工作簿仍拒绝；真实 F02 模板、Linux 与 deb 尚未验收。
+
+## 测试证据
+
+- Windows 原生 `cargo test --offline --locked -p audit-core --test s1_region_summary_cli -j 1`：5/5 通过。
+- Windows `compare_s1_region_summary.py`：主汇总、历史追加及任意行/固定行兜底 Python/Rust 对拍均通过。各兜底场景为 2 个源簿、2 张输出表、4 行；值/类型、表序、尺寸、数字格式、表头样式、筛选和冻结差异为 0；列宽最大偏差 4.21484375 字符；输入模板/源簿均未改变。
+- Python 基线引擎 Microsoft Excel；Rust Calamine + namespace-aware OOXML 读取、rust_xlsxwriter 新建。对拍报告仅覆盖合成样本。
+
+## 未执行项与已知问题
+
+- 未对真实 S1-F02 模板/样本验收，也未验证 Linux、麒麟/UOS 或 deb。
+- C: 临时盘已满；Rust 链接临时目录和 Python 临时样本改放 F: 后测试通过。Cargo 全局缓存仍报告 last-use 数据库不可写，但不影响离线编译和测试。
+- S1-F01 公式复制/重算、既有历史工作簿写回及完整业务配置仍未验收；合并非锚点保护不能绕过。
+
+## 回滚
+
+- 撤销时使用包含本功能的本地提交 SHA 执行 `git revert`；本次无删除项，无用户业务数据恢复事项。

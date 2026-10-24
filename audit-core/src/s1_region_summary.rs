@@ -1,21 +1,23 @@
 //! S1-F02 named-range summaries for formula-free XLSX input.
 //!
-//! This migrates the ordinary `任意行汇总` and `固定行汇总` value path. It
-//! intentionally rejects fallback-template and formula-bearing source cases
-//! until each behavior has an Audit-specific parity contract. Optional history
-//! enrichment follows the source project's built-in sheet/key rules.
+//! This migrates the `任意行汇总` and `固定行汇总` value paths, including the
+//! optional fallback template for unmatched source worksheets. Formula-bearing
+//! sources remain rejected until their calculation semantics have an
+//! Audit-specific parity contract. Optional history enrichment follows the
+//! source project's built-in sheet/key rules.
 
 use crate::{
+    models::CopyRange,
     name_config::{
-        load_s1_region_summary_mappings, resolve_named_ranges_for_mappings, NamedRangeArea,
-        FIXED_ROW_SUMMARY_FUNCTION, USED_RANGE_SUMMARY_FUNCTION,
+        FIXED_ROW_SUMMARY_FUNCTION, NamedRangeArea, USED_RANGE_SUMMARY_FUNCTION,
+        load_s1_region_summary_mappings, resolve_named_ranges_for_mappings,
     },
     template::normalize_template_name,
 };
-use anyhow::{bail, ensure, Context, Result};
+use anyhow::{Context, Result, bail, ensure};
 use excel_reader::{
-    read_defined_names, read_workbook, read_xlsx_worksheet_extents, CellValue,
-    DefinedNameParseStatus, DefinedNameRecord, SheetDump, WorkbookDump, WorksheetExtent,
+    CellValue, DefinedNameParseStatus, DefinedNameRecord, SheetDump, WorkbookDump, WorksheetExtent,
+    read_defined_names, read_workbook, read_xlsx_worksheet_extents,
 };
 use excel_writer::{Color, Format, Workbook};
 use serde::Serialize;
@@ -96,6 +98,25 @@ struct Bounds {
     right: usize,
 }
 
+#[derive(Clone, Debug)]
+struct FallbackSummaryRanges {
+    sheet_name: String,
+    data_bounds: Bounds,
+    header_bounds: Bounds,
+    left: usize,
+    right: usize,
+}
+
+#[derive(Clone, Debug)]
+struct PreparedFallbackSummary {
+    data_top: usize,
+    data_bottom: usize,
+    left: usize,
+    right: usize,
+    headers: Vec<String>,
+    local_fields: Vec<SummaryField>,
+}
+
 /// Summarize configured named regions into a new XLSX workbook.
 ///
 /// `mapping_config` is read-only. A missing mapping workbook uses the source
@@ -169,13 +190,6 @@ pub fn summarize_s1_named_regions(
         !selected_mappings.is_empty(),
         "配置中没有匹配的 S1-F02 任意行/固定行汇总功能"
     );
-    ensure!(
-        !template
-            .sheets
-            .iter()
-            .any(|sheet| sheet.name.eq_ignore_ascii_case("兜底模板")),
-        "S1-F02 模板含“兜底模板”工作表；当前 Rust 命名区域汇总尚未迁移兜底汇总"
-    );
     let areas = crate::name_config::named_areas_from_defined_names(&defined_names);
     let (global_summary_fields, local_summary_fields) = parse_summary_fields(&defined_names)?;
     let template_sheet_names = template
@@ -232,27 +246,76 @@ pub fn summarize_s1_named_regions(
         };
         feature_count += 1;
 
-        let data_ranges = resolve_named_ranges_for_mappings(
+        let all_data_ranges = resolve_named_ranges_for_mappings(
             std::slice::from_ref(mapping),
             &areas,
             &template_sheet_names,
         );
+
+        let mut header_mapping = mapping.clone();
+        header_mapping.range_names = vec!["表头区域".to_owned()];
+        let all_header_ranges =
+            resolve_named_ranges_for_mappings(&[header_mapping], &areas, &template_sheet_names);
+        let (data_ranges, header_ranges, fallback_ranges) = split_fallback_summary_ranges(
+            &template_sheet_names,
+            all_data_ranges,
+            all_header_ranges,
+        )?;
         ensure!(
-            !data_ranges.is_empty(),
+            !data_ranges.is_empty() || fallback_ranges.is_some(),
             "汇总功能“{}”未找到命名区域：{}",
             mapping.name,
             mapping.range_names.join("、")
         );
-
-        let mut header_mapping = mapping.clone();
-        header_mapping.range_names = vec!["表头区域".to_owned()];
-        let header_ranges =
-            resolve_named_ranges_for_mappings(&[header_mapping], &areas, &template_sheet_names);
         ensure!(
-            !header_ranges.is_empty(),
+            !header_ranges.is_empty() || fallback_ranges.is_some(),
             "汇总功能“{}”缺少命名区域“表头区域”",
             mapping.name
         );
+
+        let prepared_fallback = fallback_ranges
+            .map(|fallback| {
+                let template_sheet = template_sheets
+                    .get(&fallback.sheet_name.to_lowercase())
+                    .with_context(|| format!("模板缺少工作表：{}", fallback.sheet_name))?;
+                ensure!(
+                    template_sheet.merge_status == "read_by_calamine",
+                    "无法确认模板工作表“{}”的合并单元格，停止 S1-F02 汇总",
+                    template_sheet.name
+                );
+                let template_grid = decode_sheet_values(template_sheet)?;
+                for formula_address in template_sheet.formulas.keys() {
+                    let (formula_row, formula_column) = parse_cell(formula_address)
+                        .with_context(|| format!("模板公式坐标无效：{formula_address}"))?;
+                    ensure!(
+                        formula_row < fallback.header_bounds.top
+                            || formula_row > fallback.header_bounds.bottom
+                            || formula_column < fallback.left
+                            || formula_column > fallback.right,
+                        "S1-F02 表头区域含公式单元格 {formula_address}，需先明确公式缓存语义"
+                    );
+                }
+                let headers = read_header_values(
+                    template_sheet,
+                    &template_grid,
+                    fallback.header_bounds,
+                    fallback.left,
+                    fallback.right,
+                )?;
+                let local_fields = local_summary_fields
+                    .get(&fallback.sheet_name.to_lowercase())
+                    .cloned()
+                    .unwrap_or_default();
+                Ok(PreparedFallbackSummary {
+                    data_top: fallback.data_bounds.top,
+                    data_bottom: fallback.data_bounds.bottom,
+                    left: fallback.left,
+                    right: fallback.right,
+                    headers,
+                    local_fields,
+                })
+            })
+            .transpose()?;
 
         let mut feature_group_indices = HashMap::<String, usize>::new();
         for data_range in &data_ranges {
@@ -443,6 +506,146 @@ pub fn summarize_s1_named_regions(
                     }
                 }
                 calculation_time_ms += calculation_started.elapsed().as_millis();
+            }
+        }
+
+        if let Some(fallback) = prepared_fallback.as_ref() {
+            let configured_sheet_names = data_ranges
+                .iter()
+                .map(|range| range.sheet_name.to_lowercase())
+                .collect::<HashSet<_>>();
+            let mut fallback_group_indices = HashMap::<String, usize>::new();
+            for (source_path, source_workbook, source_extents) in &source_workbooks {
+                for source_sheet in &source_workbook.sheets {
+                    let group_key = source_sheet.name.to_lowercase();
+                    if configured_sheet_names.contains(&group_key) {
+                        continue;
+                    }
+                    let extent = source_extents
+                        .iter()
+                        .find(|extent| extent.name.eq_ignore_ascii_case(&source_sheet.name));
+                    let (first_row, last_row) = match mode {
+                        SummaryMode::FixedRows => (fallback.data_top, fallback.data_bottom),
+                        SummaryMode::UsedRange => {
+                            let Some(extent) = extent else {
+                                continue;
+                            };
+                            if extent.max_row == 0 {
+                                continue;
+                            }
+                            (fallback.data_top.max(extent.min_row), extent.max_row)
+                        }
+                    };
+                    if last_row < first_row {
+                        continue;
+                    }
+                    ensure!(
+                        last_row <= MAX_ROWS && fallback.right <= MAX_COLUMNS,
+                        "S1-F02 汇总区域超过 XLSX 的最大行列数"
+                    );
+
+                    let calculation_started = Instant::now();
+                    let source_grid = decode_sheet_values(source_sheet)?;
+                    let rows = (first_row..=last_row)
+                        .map(|row_number| {
+                            (fallback.left..=fallback.right)
+                                .map(|column| cell_value(&source_grid, row_number, column))
+                                .collect::<Vec<_>>()
+                        })
+                        .filter(|row| row.iter().any(|value| !is_empty_value(value)))
+                        .collect::<Vec<_>>();
+                    if rows.is_empty() {
+                        calculation_time_ms += calculation_started.elapsed().as_millis();
+                        continue;
+                    }
+
+                    let extra_fields = fallback_summary_fields_for_sheet(
+                        &global_summary_fields,
+                        &fallback.local_fields,
+                        &source_sheet.name,
+                    )?;
+                    let group_index =
+                        if let Some(index) = fallback_group_indices.get(&group_key).copied() {
+                            index
+                        } else {
+                            let index = groups.len();
+                            fallback_group_indices.insert(group_key.clone(), index);
+                            groups.push(RegionGroup {
+                                feature_name: mapping.name.clone(),
+                                template_sheet_name: source_sheet.name.clone(),
+                                output_sheet_name: String::new(),
+                                extra_fields: extra_fields.clone(),
+                                headers: fallback.headers.clone(),
+                                history_fields: Vec::new(),
+                                rows: Vec::new(),
+                            });
+                            index
+                        };
+                    let group = &mut groups[group_index];
+                    ensure!(
+                        group
+                            .extra_fields
+                            .iter()
+                            .map(|field| &field.name)
+                            .collect::<Vec<_>>()
+                            == extra_fields
+                                .iter()
+                                .map(|field| &field.name)
+                                .collect::<Vec<_>>(),
+                        "汇总功能“{}”的附加字段定义不一致",
+                        mapping.name
+                    );
+                    ensure!(
+                        group.headers.len() == fallback.right - fallback.left + 1,
+                        "汇总功能“{}”的表头区域列数不一致",
+                        mapping.name
+                    );
+
+                    let mut source_grids =
+                        HashMap::<String, Option<BTreeMap<(usize, usize), CellValue>>>::new();
+                    source_grids.insert(group_key, Some(source_grid));
+                    let mut extra_values = Vec::with_capacity(extra_fields.len());
+                    for field in &extra_fields {
+                        let metadata_sheet_key = field.range.sheet_name.to_lowercase();
+                        if !source_grids.contains_key(&metadata_sheet_key) {
+                            let metadata_sheet = source_workbook.sheets.iter().find(|sheet| {
+                                sheet.name.eq_ignore_ascii_case(&field.range.sheet_name)
+                            });
+                            let metadata_grid =
+                                metadata_sheet.map(decode_sheet_values).transpose()?;
+                            source_grids.insert(metadata_sheet_key.clone(), metadata_grid);
+                        }
+                        match source_grids
+                            .get(&metadata_sheet_key)
+                            .and_then(Option::as_ref)
+                        {
+                            Some(metadata_grid) => extra_values.push(cell_value(
+                                metadata_grid,
+                                field.bounds.top,
+                                field.bounds.left,
+                            )),
+                            None => {
+                                metadata_fields_left_blank += 1;
+                                extra_values.push(CellValue::Empty);
+                            }
+                        }
+                    }
+
+                    let source_stem = source_path
+                        .file_stem()
+                        .and_then(|name| name.to_str())
+                        .unwrap_or_default();
+                    let source_name = normalize_template_name(source_stem);
+                    for row in rows {
+                        let mut output_row = Vec::with_capacity(row.len() + extra_fields.len() + 2);
+                        output_row.push(CellValue::Text(source_name.clone()));
+                        output_row.push(CellValue::Text(source_sheet.name.clone()));
+                        output_row.extend(extra_values.iter().cloned());
+                        output_row.extend(row);
+                        group.rows.push(output_row);
+                    }
+                    calculation_time_ms += calculation_started.elapsed().as_millis();
+                }
             }
         }
     }
@@ -952,6 +1155,102 @@ fn summary_fields_for_sheet(
         );
     }
     Ok(fields)
+}
+
+fn fallback_summary_fields_for_sheet(
+    global_fields: &[SummaryField],
+    fallback_local_fields: &[SummaryField],
+    source_sheet_name: &str,
+) -> Result<Vec<SummaryField>> {
+    let mut fields = global_fields.to_vec();
+    fields.extend(fallback_local_fields.iter().cloned().map(|mut field| {
+        field.range.sheet_name = source_sheet_name.to_owned();
+        field
+    }));
+    let mut seen = HashSet::new();
+    for field in &fields {
+        ensure!(
+            seen.insert(field.name.trim().to_lowercase()),
+            "工作表“{}”存在重复的单元格区域字段名：{}",
+            source_sheet_name,
+            field.name
+        );
+    }
+    Ok(fields)
+}
+
+fn split_fallback_summary_ranges(
+    template_sheet_names: &[String],
+    mut data_ranges: Vec<CopyRange>,
+    mut header_ranges: Vec<CopyRange>,
+) -> Result<(
+    Vec<CopyRange>,
+    Vec<CopyRange>,
+    Option<FallbackSummaryRanges>,
+)> {
+    let Some(fallback_sheet_name) = template_sheet_names
+        .iter()
+        .find(|name| name.eq_ignore_ascii_case("兜底模板"))
+    else {
+        return Ok((data_ranges, header_ranges, None));
+    };
+    let fallback_data = data_ranges
+        .iter()
+        .filter(|range| range.sheet_name.eq_ignore_ascii_case(fallback_sheet_name))
+        .cloned()
+        .collect::<Vec<_>>();
+    ensure!(
+        fallback_data.len() == 1,
+        "模板工作表“{}”必须且只能定义一个“任意行汇总区域”",
+        fallback_sheet_name
+    );
+    let fallback_headers = header_ranges
+        .iter()
+        .filter(|range| range.sheet_name.eq_ignore_ascii_case(fallback_sheet_name))
+        .cloned()
+        .collect::<Vec<_>>();
+    ensure!(
+        fallback_headers.len() == 1,
+        "模板工作表“{}”必须且只能定义一个“表头区域”",
+        fallback_sheet_name
+    );
+
+    let data_bounds = parse_bounds(&fallback_data[0].address)
+        .with_context(|| format!("S1-F02 兜底数据命名区域无效：{}", fallback_data[0].address))?;
+    let header_bounds = parse_bounds(&fallback_headers[0].address).with_context(|| {
+        format!(
+            "S1-F02 兜底表头命名区域无效：{}",
+            fallback_headers[0].address
+        )
+    })?;
+    ensure!(
+        data_bounds.bottom <= MAX_ROWS
+            && data_bounds.right <= MAX_COLUMNS
+            && header_bounds.bottom <= MAX_ROWS
+            && header_bounds.right <= MAX_COLUMNS,
+        "S1-F02 兜底命名区域超过 XLSX 的最大行列数"
+    );
+    let left = data_bounds.left.max(header_bounds.left);
+    let right = data_bounds.right.min(header_bounds.right);
+    ensure!(
+        left <= right,
+        "模板工作表“{}”的“表头区域”与“任意行汇总区域”没有共同列",
+        fallback_sheet_name
+    );
+
+    data_ranges.retain(|range| !range.sheet_name.eq_ignore_ascii_case(fallback_sheet_name));
+    header_ranges.retain(|range| !range.sheet_name.eq_ignore_ascii_case(fallback_sheet_name));
+    Ok((
+        data_ranges,
+        header_ranges,
+        Some(FallbackSummaryRanges {
+            sheet_name: fallback_sheet_name.clone(),
+            data_bounds,
+            header_bounds,
+            left,
+            right,
+        }),
+    ))
 }
 
 fn discover_source_workbooks(input_dir: &Path, recursive: bool) -> Result<Vec<PathBuf>> {
