@@ -345,63 +345,149 @@ fn summary_used_range_cli_reads_vba_enabled_xlsm() -> Result<()> {
 }
 
 #[test]
-fn summary_used_range_cli_fails_closed_on_unknown_xlsx_error_value() -> Result<()> {
+fn summary_used_range_cli_preserves_unknown_xlsx_error_value_as_text() -> Result<()> {
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/summary_used_range/getting_data_error.xlsx");
     let original = fs::read(&fixture)?;
     let output_dir = unique_test_dir();
-    let summary_dir = output_dir.join("output");
-    let output = Command::new(env!("CARGO_BIN_EXE_pytools"))
-        .arg("summary-used-range")
-        .arg("--output-dir")
-        .arg(&summary_dir)
-        .arg("--log-dir")
-        .arg(output_dir.join("logs"))
-        .arg(&fixture)
-        .output()
-        .context("run pytools summary-used-range with an unknown XLSX error")?;
-    assert!(!output.status.success(), "unknown error should fail closed");
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    let user_dir = output_dir.join("user");
+    let (user_output, user_report) = run_unknown_error_cli(&fixture, &user_dir, None)?;
     assert!(
-        stderr.contains("Unsupported cell error value '#DATA!'"),
-        "unexpected CLI error: {stderr}"
+        user_output.status.success(),
+        "user CLI failed: {}",
+        String::from_utf8_lossy(&user_output.stderr)
     );
-    let run_logs = fs::read_dir(output_dir.join("logs"))?
-        .filter_map(std::result::Result::ok)
-        .map(|entry| entry.path())
-        .filter(|path| {
-            path.extension()
-                .is_some_and(|extension| extension == "json")
+    assert_eq!(user_report["saved"], true);
+    assert_eq!(user_report["rows"], 1);
+    assert_eq!(
+        user_report["execution"]["reader_engine"],
+        "calamine + OOXML error-token normalization"
+    );
+    assert_eq!(
+        user_report["execution"]["unknown_error_token_cells_normalized"],
+        1
+    );
+    assert_eq!(user_report["execution"]["ooxml_error_cells_patched"], 0);
+    let user_stderr = String::from_utf8_lossy(&user_output.stderr);
+    assert!(!user_stderr.contains("#DATA!"));
+    assert!(!user_stderr.contains("calamine"));
+    assert!(!user_stderr.contains("OOXML"));
+    let (user_projection, user_error_value) = summary_output_projection(&user_report)?;
+    assert_eq!(user_error_value["type"], "string");
+    assert_eq!(user_error_value["value"], "#DATA!");
+
+    let developer_dir = output_dir.join("developer");
+    let (developer_output, developer_report) =
+        run_unknown_error_cli(&fixture, &developer_dir, Some("developer"))?;
+    assert!(
+        developer_output.status.success(),
+        "developer CLI failed: {}",
+        String::from_utf8_lossy(&developer_output.stderr)
+    );
+    let developer_events = String::from_utf8_lossy(&developer_output.stderr)
+        .lines()
+        .map(serde_json::from_str::<Value>)
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .context("parse developer compatibility events")?;
+    let normalization_event = developer_events
+        .iter()
+        .find(|event| {
+            event["phase"] == "value_read_compatibility" && event["status"] == "succeeded"
         })
-        .collect::<Vec<_>>();
+        .context("unknown error-token compatibility event missing")?;
     assert_eq!(
-        run_logs.len(),
-        1,
-        "failed run should keep one structured log"
+        normalization_event["actual_engine"],
+        "calamine + OOXML error-token normalization"
     );
-    let run_log_bytes = fs::read(&run_logs[0])?;
-    let run_log_text = String::from_utf8_lossy(&run_log_bytes);
-    let run_log: Value =
-        serde_json::from_slice(&run_log_bytes).context("parse failed PT-6-1 run log")?;
-    assert_eq!(run_log["status"], "failed");
-    assert_eq!(run_log["failure"]["stage"], "value_read");
-    assert_eq!(run_log["failure"]["error_type"], "value_read_error");
+    assert!(normalization_event["stage_elapsed_ms"].is_number());
     assert_eq!(
-        run_log["events"].as_array().unwrap().last().unwrap()["status"],
-        "failed"
+        normalization_event["user_message"],
+        "已按文本兼容读取 1 个未知错误值"
     );
+    assert!(normalization_event["components"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|component| component == "OOXML error-token normalization"));
+    let developer_log_path = PathBuf::from(
+        developer_report["run_log_path"]
+            .as_str()
+            .context("developer run log path must be a string")?,
+    );
+    let developer_log_bytes = fs::read(developer_log_path)?;
+    let developer_log_text = String::from_utf8_lossy(&developer_log_bytes);
+    let developer_log: Value =
+        serde_json::from_slice(&developer_log_bytes).context("parse developer PT-6-1 log")?;
+    assert_eq!(developer_log["status"], "succeeded");
+    assert!(!developer_log_text.contains("#DATA!"));
+    assert_eq!(
+        developer_log["events"].as_array().unwrap().len(),
+        developer_events.len()
+    );
+    let (developer_projection, _) = summary_output_projection(&developer_report)?;
+    assert_eq!(user_projection, developer_projection);
+
+    let quiet_dir = output_dir.join("quiet");
+    let (quiet_output, quiet_report) = run_unknown_error_cli(&fixture, &quiet_dir, Some("off"))?;
     assert!(
-        !run_log_text.contains("#DATA!"),
-        "run log must omit cell contents"
+        quiet_output.status.success(),
+        "off CLI failed: {}",
+        String::from_utf8_lossy(&quiet_output.stderr)
     );
-    assert!(
-        fs::read_dir(&summary_dir)?.next().is_none(),
-        "failed read must not create a partial summary"
-    );
+    assert!(quiet_output.stderr.is_empty());
+    assert!(quiet_report.get("run_id").is_none());
+    assert!(quiet_report.get("run_log_path").is_none());
+    assert!(!quiet_dir.join("logs").exists());
+    let (quiet_projection, _) = summary_output_projection(&quiet_report)?;
+    assert_eq!(user_projection, quiet_projection);
+
     assert_eq!(fs::read(&fixture)?, original, "source workbook changed");
 
     fs::remove_dir_all(output_dir)?;
     Ok(())
+}
+
+fn run_unknown_error_cli(
+    fixture: &Path,
+    run_dir: &Path,
+    log_view: Option<&str>,
+) -> Result<(std::process::Output, Value)> {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_pytools"));
+    command
+        .arg("summary-used-range")
+        .arg("--output-dir")
+        .arg(run_dir.join("output"))
+        .arg("--log-dir")
+        .arg(run_dir.join("logs"));
+    if let Some(log_view) = log_view {
+        command.arg("--log-view").arg(log_view);
+    }
+    let output = command
+        .arg(fixture)
+        .output()
+        .context("run pytools summary-used-range with an unknown XLSX error")?;
+    let report = serde_json::from_slice(&output.stdout).context("parse unknown error CLI JSON")?;
+    Ok((output, report))
+}
+
+fn summary_output_projection(report: &Value) -> Result<(Value, Value)> {
+    let path = PathBuf::from(
+        report["path"]
+            .as_str()
+            .context("summary output path must be a string")?,
+    );
+    let workbook = excel_reader::read_workbook(&path)?;
+    let summary = workbook
+        .sheets
+        .iter()
+        .find(|sheet| sheet.name == "汇总")
+        .context("summary sheet missing")?;
+    let error_value = summary
+        .values
+        .get("D2")
+        .context("normalized #DATA! output cell missing")?
+        .clone();
+    Ok((serde_json::to_value(&workbook.sheets)?, error_value))
 }
 
 #[test]

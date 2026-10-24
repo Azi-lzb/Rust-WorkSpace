@@ -2,7 +2,10 @@
 
 use anyhow::{Context, Result};
 use chrono::Local;
-use excel_reader::{read_workbook, read_xlsx_worksheet_extents, SheetDump, WorksheetExtent};
+use excel_reader::{
+    read_workbook, read_workbook_with_unknown_error_tokens_as_text, read_xlsx_worksheet_extents,
+    SheetDump, WorksheetExtent,
+};
 use excel_writer::{Format, Workbook, Worksheet};
 use serde::Serialize;
 use std::{
@@ -23,6 +26,13 @@ const COMMENT_READ_COMPONENTS: &[&str] = &[
     "calamine",
     "namespace-aware OOXML supplement",
 ];
+const USED_RANGE_READ_COMPONENTS: &[&str] = &["pytools-core", "excel-reader", "calamine"];
+const USED_RANGE_COMPAT_READ_COMPONENTS: &[&str] = &[
+    "pytools-core",
+    "excel-reader",
+    "calamine",
+    "OOXML error-token normalization",
+];
 
 #[derive(Clone, Debug, Serialize)]
 pub struct SummaryResult {
@@ -42,6 +52,12 @@ pub struct SummaryExecution {
     pub write_elapsed_ms: u128,
     pub total_elapsed_ms: u128,
     pub ooxml_error_cells_patched: usize,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub unknown_error_token_cells_normalized: usize,
+}
+
+fn is_zero(value: &usize) -> bool {
+    *value == 0
 }
 
 #[derive(Clone, Debug, Default, Serialize)]
@@ -315,6 +331,7 @@ fn summarize_used_ranges_inner(
                 write_elapsed_ms: 0,
                 total_elapsed_ms: started.elapsed().as_millis(),
                 ooxml_error_cells_patched: 0,
+                unknown_error_token_cells_normalized: 0,
             }),
         };
         emitter.emit(
@@ -364,6 +381,7 @@ fn summarize_used_ranges_inner(
     sheet.set_margins(0.75, 0.75, 1.0, 1.0, 0.5, 0.5);
     let mut out_row = 1u32;
     let mut error_cells = Vec::new();
+    let mut unknown_error_token_cells_normalized = 0usize;
     let mut read_elapsed_during_write = Duration::ZERO;
     for (file_index, (path, bounds_by_sheet)) in workbooks.into_iter().enumerate() {
         let current_file = file_index + 1;
@@ -383,13 +401,13 @@ fn summarize_used_ranges_inner(
             &progress,
             Some(&path),
             None,
-            &["pytools-core", "calamine"],
+            &["pytools-core", "excel-reader", "calamine"],
             Some("calamine"),
             None,
         );
         let read_started = Instant::now();
-        let dump = match read_workbook(&path) {
-            Ok(dump) => dump,
+        let read_result = match read_workbook_with_unknown_error_tokens_as_text(&path) {
+            Ok(read_result) => read_result,
             Err(error) => {
                 progress.failed_files += 1;
                 emitter.emit(
@@ -402,7 +420,7 @@ fn summarize_used_ranges_inner(
                     &progress,
                     Some(&path),
                     Some(stage_started.elapsed()),
-                    &["pytools-core", "calamine"],
+                    USED_RANGE_READ_COMPONENTS,
                     Some("calamine"),
                     Some("value_read_error"),
                 );
@@ -410,7 +428,30 @@ fn summarize_used_ranges_inner(
                     .with_context(|| format!("read used-range summary source {}", path.display()));
             }
         };
+        let compatibility_normalization_used = read_result.compatibility_normalization_used;
+        let normalized_cell_count = read_result.normalized_cell_count;
+        let dump = read_result.workbook;
         read_elapsed_during_write += read_started.elapsed();
+        let (reader_components, reader_engine) = if compatibility_normalization_used {
+            unknown_error_token_cells_normalized += normalized_cell_count;
+            emitter.emit(
+                "value_read_compatibility",
+                "succeeded",
+                format!("已按文本兼容读取 {normalized_cell_count} 个未知错误值"),
+                &progress,
+                Some(&path),
+                Some(read_started.elapsed()),
+                USED_RANGE_COMPAT_READ_COMPONENTS,
+                Some("calamine + OOXML error-token normalization"),
+                None,
+            );
+            (
+                USED_RANGE_COMPAT_READ_COMPONENTS,
+                "calamine + OOXML error-token normalization",
+            )
+        } else {
+            (USED_RANGE_READ_COMPONENTS, "calamine")
+        };
         emitter.emit(
             "value_read",
             "succeeded",
@@ -421,8 +462,8 @@ fn summarize_used_ranges_inner(
             &progress,
             Some(&path),
             Some(stage_started.elapsed()),
-            &["pytools-core", "calamine"],
-            Some("calamine"),
+            reader_components,
+            Some(reader_engine),
             None,
         );
         let row_stage_started = Instant::now();
@@ -658,12 +699,17 @@ fn summarize_used_ranges_inner(
         files,
         path: Some(path),
         execution: Some(SummaryExecution {
-            reader_engine: Some("calamine"),
+            reader_engine: Some(if unknown_error_token_cells_normalized > 0 {
+                "calamine + OOXML error-token normalization"
+            } else {
+                "calamine"
+            }),
             writer_engine: Some("rust_xlsxwriter"),
             read_elapsed_ms,
             write_elapsed_ms,
             total_elapsed_ms: started.elapsed().as_millis(),
             ooxml_error_cells_patched: error_cells.len(),
+            unknown_error_token_cells_normalized,
         }),
     };
     emitter.emit(
@@ -1145,6 +1191,7 @@ fn summarize_by_comments_inner(
                 write_elapsed_ms: 0,
                 total_elapsed_ms: started.elapsed().as_millis(),
                 ooxml_error_cells_patched: 0,
+                unknown_error_token_cells_normalized: 0,
             }),
         };
         emitter.emit(
@@ -1338,6 +1385,7 @@ fn summarize_by_comments_inner(
             write_elapsed_ms: write_elapsed.as_millis(),
             total_elapsed_ms: started.elapsed().as_millis(),
             ooxml_error_cells_patched: 0,
+            unknown_error_token_cells_normalized: 0,
         }),
     };
     emitter.emit(
