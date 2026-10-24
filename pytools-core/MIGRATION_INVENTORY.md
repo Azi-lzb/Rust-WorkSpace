@@ -389,3 +389,9 @@ glibc 2.28 release CLI 对同一最大真实工作簿的 user、developer、off 
 使用已验证的 `x86_64-unknown-linux-gnu.2.28` release `pytools` 直接执行原 PyTools `xlsx/` 中 13 份主样本，沿用 PyCode/Rust 真实样本比较器按 4 批运行。96 张工作表、203,580 行在 4/4 批完整投影一致，覆盖值/类型、样式、工作表名称与维度、冻结窗格、表头、公式、合并、定义名称及页面属性；developer 事件数量为 26/14/27/63，均与保存历史匹配。实际引擎为 Calamine、`excel-reader::read_xlsx_worksheet_extents`、OOXML Patch 和 rust_xlsxwriter；13 份源文件的前后指纹一致。
 
 机器结果见 `probe/reports/summary_used_range_real_parity_20261024.json` 的 `additional_project_assets_20261024.platform_validation.linux_glibc_2_28_release_primary_samples`。此项验证的是 WSL glibc 2.28 ABI release 阶段，不代表麒麟/UOS 实机或 deb 验收；PT-6-1 最终验收仍未完成。
+
+### 2026-10-24 PT-6-1 glibc 2.28 release 历史测试簿对拍
+
+使用 glibc 2.28 release `pytools summary-used-range` 处理原 PyTools `xlsx/历史测试数据/` 的 4 份工作簿。448 行完整工作簿投影与只读 PyCode 一致；developer 26 条事件与保存历史逐项匹配；实际引擎为 Calamine、`excel-reader::read_xlsx_worksheet_extents` 和 rust_xlsxwriter；源文件大小与修改时间未变。此结果补充主样本及备份簿以外的历史数据目录覆盖，不代表目标发行版实机或 deb 验收。
+
+机器结果见 `probe/reports/summary_used_range_real_parity_20261024.json` 的 `additional_project_assets_20261024.platform_validation.linux_glibc_2_28_release_historical_samples`。
