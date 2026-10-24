@@ -439,10 +439,35 @@ fn check_period_audit_config(state: &AppState) -> std::result::Result<Value, Api
         .as_str()
         .unwrap_or_default()
         .to_owned();
+    let started = Instant::now();
     let report = check_s2_config(config_path);
+    let passed = report.passed;
+    let blocking_errors = report.blocking_errors;
+    let warnings = report.warnings;
+    let sheet_count = report.sheet_stats.len();
+    let indicator_count = report.indicator_count;
+    let strategy_count = report.strategy_count;
+    let elapsed_ms = started.elapsed().as_millis();
     let value = serde_json::to_value(report)
         .map_err(|error| ApiError::internal(format!("序列化配置检查结果失败：{error}")))?;
-    state.lock().value["periodConfigCheck"] = value.clone();
+    let mut ui = state.lock();
+    ui.value["periodConfigCheck"] = value.clone();
+    push_log(
+        &mut ui.value,
+        format!(
+            "S2 配置检查{}：{} 项阻断错误、{} 项警告；耗时 {} ms",
+            if passed { "通过" } else { "未通过" },
+            blocking_errors,
+            warnings,
+            elapsed_ms
+        ),
+    );
+    push_detail_log(
+        &mut ui.value,
+        format!(
+            "S2-F01 配置检查步骤：reader=calamine；工作表={sheet_count}；指标={indicator_count}；环比策略={strategy_count}；blocking_errors={blocking_errors}；warnings={warnings}；elapsed_ms={elapsed_ms}"
+        ),
+    );
     Ok(value)
 }
 
@@ -1166,6 +1191,37 @@ mod tests {
         state.lock().value["busy"] = json!(true);
         let error = dispatch_api(&state, "inspect_template_formulas", &[]).unwrap_err();
         assert_eq!(error.status, axum::http::StatusCode::CONFLICT);
+    }
+
+    #[test]
+    fn s2_config_check_logs_user_result_and_developer_reader_timing() {
+        let config = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests")
+            .join("fixtures")
+            .join("s2_config")
+            .join("check_valid.xlsx");
+        let state = AppState::new(config);
+
+        let report = dispatch_api(&state, "check_period_audit_config", &[])
+            .expect("check S2 config through the Web API");
+        assert_eq!(report["passed"], true);
+
+        let logs = state.get_state()["log"].as_array().unwrap().clone();
+        assert!(logs.iter().any(|entry| {
+            entry["detail"] == false
+                && entry["text"]
+                    .as_str()
+                    .is_some_and(|text| text.contains("S2 配置检查通过"))
+        }));
+        assert!(logs.iter().any(|entry| {
+            entry["detail"] == true
+                && entry["text"].as_str().is_some_and(|text| {
+                    text.contains("S2-F01 配置检查步骤")
+                        && text.contains("reader=calamine")
+                        && text.contains("指标=")
+                        && text.contains("elapsed_ms=")
+                })
+        }));
     }
 
     #[test]

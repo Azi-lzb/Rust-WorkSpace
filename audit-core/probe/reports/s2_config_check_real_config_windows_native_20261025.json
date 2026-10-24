@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "suite": "audit.s2_config_check_real_config",
+  "status": "passed",
+  "scope": {
+    "source": "Open-Data-Audit config-real",
+    "qualifying_config_workbooks": 1,
+    "check": "read-only S2 configuration structure and runtime-parser validation"
+  },
+  "python_baseline": {
+    "entrypoint": "base_audit.systems.s2_report_collection.config_check.check_s2_config",
+    "python": "3.12.10",
+    "openpyxl": "3.1.5"
+  },
+  "rust": {
+    "entrypoint": "open-data-audit serve /api/check_period_audit_config",
+    "platform": "Windows native x86_64-pc-windows-msvc",
+    "reader": "Calamine via excel_reader",
+    "user_log_verified": true,
+    "developer_log_verified": true
+  },
+  "parity": {
+    "report_field_mismatches": 0,
+    "passed": [true, true],
+    "blocking_errors": [0, 0],
+    "warnings": [0, 0],
+    "indicator_count": [105, 105],
+    "strategy_count": [56, 56]
+  },
+  "limitations": [
+    "Covers one real S2 configuration workbook only.",
+    "Does not cover real period reports, external cross-check data, full S2 result export, Linux, or deb packaging.",
+    "S2-F01 remains unverified overall."
+  ]
+}

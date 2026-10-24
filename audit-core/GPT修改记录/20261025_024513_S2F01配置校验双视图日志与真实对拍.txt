@@ -1,0 +1,39 @@
+时间：2026-10-25 02:45:13 +08:00
+执行者：Codex Audit 专属开发 Agent
+分支：audit-dev
+修改前提交：450e0d1
+修改后提交：本记录随功能提交；最终哈希以 Git 提交日志为准
+WIP：修改前工作树干净；未发现 Audit WIP 文件。仅修改 Audit 业务代码及对应记录/报告。
+
+修改目的：
+为现有 S2 配置校验 Web API 补充普通用户结果日志和开发者实际读取引擎/数据计数/耗时日志，并使用真实只读配置完成 Windows 原生 Rust Web API 与 Python 逐字段对拍。此切片仅覆盖配置结构和运行时解析校验，不代表 S2-F01 整体完成。
+
+变更文件：
+- audit-core/src/web_bridge.rs：`check_period_audit_config` 记录配置检查通过/失败、阻断数、警告数和耗时；开发者详情记录 Calamine reader、工作表/指标/环比策略计数及耗时。新增 Web API 双视图日志回归测试。
+- audit-core/probe/reports/s2_config_check_real_config_windows_native_20261025.json：记录 1 份真实配置工作簿的聚合对拍结果，不包含工作簿名称、路径或业务值。
+- audit-core/MIGRATION_INVENTORY.md：补充 S2 配置校验真实样本及日志证据，仍将 S2-F01 整体标为未验证。
+- 本记录。
+
+逻辑及兼容影响：
+- 真实入口为现有 loopback Web API `/api/check_period_audit_config`，报告 JSON 契约不变，只向现有 `log` 添加普通/详情两种事件。
+- 普通日志说明通过状态、阻断错误数、警告数和耗时；详情日志记录 reader=calamine、工作表数、指标数、环比策略数、阻断/警告数及耗时。
+- 配置读取只读；未修改配置工作簿，也未修改共享 crate、根 Cargo 文件或 PyTools。
+
+实际验证：
+- `rustfmt --check --edition 2021 audit-core/src/web_bridge.rs`：通过。
+- `cargo test -p audit-core --lib web_bridge::tests::s2_config_check_logs_user_result_and_developer_reader_timing --locked`：1 项通过。
+- `cargo test -p audit-core --test s2_config_check_parity --locked`：Python 合成基线对拍通过。
+- `cargo build -p audit-core --bin open-data-audit --locked`：通过，Windows 原生 MSVC 工具链。
+- 真实 Windows 原生 Web API `/api/check_period_audit_config` 与 Python 3.12.10/openpyxl 3.1.5 对拍：`config-real` 中 1 份符合必需工作表结构的配置；Rust/Python 均通过，阻断错误/警告均为 0，105 个指标、56 条环比策略，完整报告字段差异 0；普通和开发者日志均验证存在。报告见 `probe/reports/s2_config_check_real_config_windows_native_20261025.json`。
+- `cargo fmt -p audit-core --check`：未通过，原因是当前树中多个未修改的 S1/S3 文件已有 rustfmt 差异；本次改动文件按 workspace edition 2021 单独检查通过，未格式化无关文件。
+
+未执行项及已知问题：
+- 未执行真实期间报表审核、外部核对或三类结果导出的端到端对拍；S2-F01 整体仍未验证。
+- 未执行 Linux、麒麟/UOS、deb 或最终离线 runtime 验收。
+- 构建输出包含现有 `excel-editor` API deprecation warnings，本次未修改共享代码。
+
+删除清单与回滚提示：
+- 删除清单：无；临时 loopback Rust 服务已退出，输入配置只读。
+- 回滚：可通过 `git revert` 撤销本次功能提交；不涉及共享 crate、Cargo.lock、根 Cargo 配置或 PyTools。
+
+【组件版本】：audit-core 0.1.0（不升级；工作仅增加日志与真实配置验证证据）。
