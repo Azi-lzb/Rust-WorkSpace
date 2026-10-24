@@ -38,23 +38,32 @@ def wsl_path(path: Path) -> str:
     return f"/mnt/{path.drive.rstrip(':').lower()}/{path.as_posix()[2:].lstrip('/')}"
 
 
-def run_rust(command: str, arguments: list[str | Path]) -> dict:
-    workspace = wsl_path(WORKSPACE)
-    rendered = [shlex.quote(command)]
-    for argument in arguments:
-        if isinstance(argument, Path):
-            rendered.append(shlex.quote(wsl_path(argument)))
-        else:
-            rendered.append(shlex.quote(argument))
-    command_line = (
-        "cd "
-        + shlex.quote(workspace)
-        + " && cargo run --offline --locked --quiet -p pytools-core --bin pytools -- "
-        + " ".join(rendered)
-    )
-    result = subprocess.run(
-        ["wsl", "-e", "sh", "-lc", command_line], capture_output=True, check=False
-    )
+def run_rust(
+    command: str, arguments: list[str | Path], pytools_exe: Path | None
+) -> dict:
+    if pytools_exe is not None:
+        result = subprocess.run(
+            [str(pytools_exe), command, *(str(argument) for argument in arguments)],
+            capture_output=True,
+            check=False,
+        )
+    else:
+        workspace = wsl_path(WORKSPACE)
+        rendered = [shlex.quote(command)]
+        for argument in arguments:
+            if isinstance(argument, Path):
+                rendered.append(shlex.quote(wsl_path(argument)))
+            else:
+                rendered.append(shlex.quote(argument))
+        command_line = (
+            "cd "
+            + shlex.quote(workspace)
+            + " && cargo run --offline --locked -q -p pytools-core --bin pytools -- "
+            + " ".join(rendered)
+        )
+        result = subprocess.run(
+            ["wsl", "-e", "sh", "-lc", command_line], capture_output=True, check=False
+        )
     stdout = result.stdout.decode("utf-8-sig", errors="replace").replace("\x00", "")
     if result.returncode != 0:
         raise RuntimeError(
@@ -69,6 +78,19 @@ def run_rust(command: str, arguments: list[str | Path]) -> dict:
 
 def sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def redact_temporary_paths(value, temporary_root: Path):
+    if isinstance(value, str):
+        return value.replace(str(temporary_root), "<synthetic-temp>")
+    if isinstance(value, list):
+        return [redact_temporary_paths(item, temporary_root) for item in value]
+    if isinstance(value, dict):
+        return {
+            key: redact_temporary_paths(item, temporary_root)
+            for key, item in value.items()
+        }
+    return value
 
 
 def make_config(path: Path) -> None:
@@ -164,7 +186,14 @@ def main() -> int:
         ),
         help="write the machine-readable parity report to this path",
     )
+    parser.add_argument(
+        "--pytools-exe",
+        type=Path,
+        help="use an already-built native Rust CLI instead of WSL cargo run",
+    )
     args = parser.parse_args()
+    if args.pytools_exe is not None and not args.pytools_exe.is_file():
+        parser.error(f"Rust CLI executable does not exist: {args.pytools_exe}")
 
     source_hashes = {}
     baseline_hashes = {}
@@ -193,7 +222,7 @@ def main() -> int:
         baseline_hashes = {output.name: sha256(output) for output in python_outputs}
 
         plan_only = run_rust(
-            "remove-foreign-bank", ["--config", config, *sources]
+            "remove-foreign-bank", ["--config", config, *sources], args.pytools_exe
         )
         if plan_only.get("mode") != "plan_only":
             raise AssertionError(f"unexpected no-capability mode: {plan_only}")
@@ -225,6 +254,7 @@ def main() -> int:
                 TEST_PLATFORM,
                 *sources,
             ],
+            args.pytools_exe,
         )
         rust_outputs = [
             source.with_name(f"{source.stem}(金融局){source.suffix}")
@@ -255,6 +285,15 @@ def main() -> int:
         if not unchanged_copy_is_identical:
             raise AssertionError("unchanged workbook output is not a byte-identical source copy")
 
+        limitations = [
+            "No real pytools workbook or configuration was available; production acceptance remains unverified.",
+            "This probe compares business values, sheet order, counts and source safety; it does not qualify OOXML object preservation.",
+            "Formula, comment, merge, defined-name and cross-sheet reference behavior has separate synthetic Excel COM parity evidence in PT-7-3_excel_com_parity_20261023_r8.json; it does not establish real-template or production capability acceptance.",
+        ]
+        if args.pytools_exe is None:
+            limitations.append("Windows-native Rust, Kylin/UOS, glibc 2.28 and offline deb packaging were not verified.")
+        else:
+            limitations.append("Kylin/UOS, glibc 2.28 and offline deb packaging were not verified.")
         report = {
             "schema_version": 1,
             "suite": "pytools.pt_7_3_batch_execution_parity",
@@ -265,9 +304,7 @@ def main() -> int:
             "python": {
                 "version": sys.version.split()[0],
                 "openpyxl": openpyxl.__version__,
-                "baseline_module": str(
-                    SOURCE / "PyCode/core/feature_1_3_remove_foreign_bank.py"
-                ),
+                "baseline_module": "PyCode/core/feature_1_3_remove_foreign_bank.py",
                 "baseline_sha256": sha256(
                     SOURCE / "PyCode/core/feature_1_3_remove_foreign_bank.py"
                 ),
@@ -275,7 +312,8 @@ def main() -> int:
             },
             "rust": {
                 "command": "pytools remove-foreign-bank",
-                "execution": execution,
+                "runner": "windows_native_executable" if args.pytools_exe else "wsl_cargo_run",
+                "execution": redact_temporary_paths(execution, root),
                 "engine": "umya_spreadsheet",
                 "platform_capability": TEST_PLATFORM,
             },
@@ -290,12 +328,7 @@ def main() -> int:
             },
             "synthetic_source_sha256": source_hashes,
             "python_output_sha256": baseline_hashes,
-            "limitations": [
-                "No real pytools workbook or configuration was available; production acceptance remains unverified.",
-                "This probe compares business values, sheet order, counts and source safety; it does not qualify OOXML object preservation.",
-                "Formula, comment, merge and cross-sheet reference behavior remains covered only by the focused Rust integration test and must be compared with an Excel COM oracle for this feature.",
-                "Windows-native Rust, Kylin/UOS, glibc 2.28 and offline deb packaging were not verified.",
-            ],
+            "limitations": limitations,
         }
         output = args.report_path
         output.parent.mkdir(parents=True, exist_ok=True)

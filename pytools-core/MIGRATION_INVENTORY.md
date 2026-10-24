@@ -530,3 +530,13 @@ Windows 原生 `cargo fmt --manifest-path pytools-core/Cargo.toml -- --check` �
 在既有 `institution-normalize` CLI/计划实现上接入主菜单 7→2，映射从全局配置读取；默认仅生成计划，显式 capability 才能执行候选验证和安全替换。菜单拒绝未验收格式；PT-7-2 当前只允许 `.xlsx`，原 Python 的 `.xlsm`/VBA 路径仍未迁移。普通用户与开发者视图沿用现有结构化事件；新增 `off` 视图，不输出阶段事件、不写历史文件。
 
 Windows 原生验证：`batch_tools_menu_cli` 6/6、`institution_normalize_batch_cli` 5/5、`institution_normalize_plan_parity` 1/1 通过，格式检查通过。真实菜单覆盖计划只读、配置映射、`.xlsm` 跳过、user/developer/off 视图与临时 synthetic capability 的真实 CLI→ExcelModifier 执行；计划语义及执行后所有工作表的值、公式、合并区域、批注投影均与既有 PyCode 基线一致，编辑器候选校验通过计划声明的样式与未修改包部件保留项。以上均为合成 XLSX 证据；真实模板/样本、`.xlsm` 保真、生产 capability、目标平台和 deb 未验收，PT-7-2 仍为未验证。
+
+### 2026-10-24 PT-7-3 外资行删除交互菜单入口
+
+在既有 `remove-foreign-bank` Rust 批处理入口和 `batch_ops::build_remove_foreign_plan` 上接入主菜单 7→3。菜单从全局配置读取机构映射，只选择 `.xlsx`；无 capability 时保存 ExcelEditPlan 至 `output/plans/PT-7-3` 且保持源文件不变，显式提供 capability/platform 时通过 ExcelModifier 生成同目录 `(金融局)` 副本。`user`/`developer` 记录阶段、进度、耗时与实际读取/修改引擎到配置日志目录；历史报告不记录文件名、路径或单元格内容。`off` 保留最终摘要，不输出事件或写历史。
+
+新增菜单集成覆盖计划模式、无操作工作簿、手工选入 `.xls` 后跳过、源文件只读、用户/开发者/off 视图，以及以临时 synthetic capability 经真实菜单→CLI→ExcelModifier 执行。执行后检查删除行后的值和公式、原始输入不变；同一 Rust 执行端到端回归仍覆盖跨表公式、绝对定义名称、批注、合并区域、样式、行高及无操作时的字节复制。Python 基线与 Windows 原生 Rust CLI 的合成对拍结果见 `probe/reports/PT-7-3_execution_parity_windows_native_20261024.json`：2 个输入、4 张分机构表、删除 3 行、失败 0；计数、工作表顺序和值投影一致，源输入未修改，无操作输出为字节复制。合成 Excel COM 对象级对拍见 `probe/reports/PT-7-3_excel_com_parity_20261023_r8.json`。
+
+Windows 原生验证：`cargo fmt --manifest-path pytools-core/Cargo.toml -- --check` 通过；`batch_tools_menu_cli` 10/10、`foreign_bank_batch_execution` 2/2 通过。完整关联测试使用 `CARGO_TARGET_DIR=F:\pytools-dev-verify-20261024` 与 `RUSTFLAGS=-C debuginfo=0`，避开默认目标目录链接 `pytools.exe` 时既有的 MSVC PDB `LNK1318 LIMIT`。Python 3.12.10 / openpyxl 3.1.5 基线与 native Rust CLI 合成对拍通过。既有共享 `excel-editor` 弃用 API 与未使用导入警告未在本功能中修改。
+
+PT-7-3 生产验收仍为**未验证**：没有真实工作簿/配置或授权样本，没有在 Windows 桌面人工操作文件弹窗，未迁移旧 `.xls` COM 路径及 `.xlsm` VBA 保留，生产 capability 未登记；麒麟/UOS、glibc 2.28 和离线 deb 未验证。本轮对拍和执行 capability 均为合成 XLSX，不更改 ExcelModifier 默认路由。

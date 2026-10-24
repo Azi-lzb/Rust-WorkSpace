@@ -3,7 +3,7 @@ use excel_editor::{
     BackendCapability, CapabilityEvidence, CapabilityStatus, EditOperation, EngineId,
 };
 use excel_reader::read_workbook;
-use pytools_core::batch_ops::build_village_split_plan;
+use pytools_core::batch_ops::{build_remove_foreign_plan, build_village_split_plan};
 use rust_xlsxwriter::Workbook;
 use serde_json::Value;
 use std::{
@@ -364,6 +364,326 @@ fn interactive_village_split_menu_executes_capability_and_safely_commits_target(
         .iter()
         .any(|comment| comment.coordinate().to_string() == "F2"));
     Ok(())
+}
+
+#[test]
+fn interactive_foreign_bank_menu_saves_read_only_plans_and_user_history() -> Result<()> {
+    let root = TestDirectory::new()?;
+    let config = create_foreign_bank_config(root.path())?;
+    let source = root.path().join("foreign.xlsx");
+    let no_change_source = root.path().join("no-change.xlsx");
+    let unsupported = root.path().join("legacy.xls");
+    make_foreign_bank_source(&source, true)?;
+    make_foreign_bank_source(&no_change_source, false)?;
+    fs::write(&unsupported, b"synthetic legacy workbook placeholder")?;
+    let source_bytes = fs::read(&source)?;
+    let no_change_bytes = fs::read(&no_change_source)?;
+    let unsupported_bytes = fs::read(&unsupported)?;
+
+    let input = foreign_bank_menu_input(&[&source, &no_change_source, &unsupported]);
+    let output = run_menu(&config, &input)?;
+    assert!(
+        output.status.success(),
+        "foreign-bank menu failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("7-1、7-2、7-3、7-5"));
+    assert!(stdout.contains("删除分机构表中的外资行"));
+    assert!(stdout.contains("PT-7-3 当前只接受 .xlsx"));
+    assert!(stdout.contains(r#""planned_files": 2"#));
+    assert!(stdout.contains(r#""planned_branch_sheets": 4"#));
+    assert!(stdout.contains(r#""planned_deleted_rows": 3"#));
+    assert_eq!(
+        fs::read(&source)?,
+        source_bytes,
+        "planning must be read-only"
+    );
+    assert_eq!(
+        fs::read(&no_change_source)?,
+        no_change_bytes,
+        "planning must be read-only"
+    );
+    assert_eq!(fs::read(&unsupported)?, unsupported_bytes);
+    assert!(!root.path().join("foreign(金融局).xlsx").exists());
+    assert!(!root.path().join("no-change(金融局).xlsx").exists());
+
+    let output_dir = root.path().join("app/output/plans/PT-7-3");
+    let plans = fs::read_dir(&output_dir)?
+        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+        .collect::<Vec<_>>();
+    assert_eq!(plans.len(), 1, "no-op workbooks do not need an edit plan");
+    let plan: excel_editor::ExcelEditPlan = serde_json::from_slice(&fs::read(&plans[0])?)?;
+    assert_eq!(plan.operations.len(), 3);
+
+    let history_path = find_file_recursively(&root.path().join("app/logs"), ".json")?
+        .context("PT-7-3 user run history was not saved")?;
+    let history: Value = serde_json::from_slice(&fs::read(history_path)?)?;
+    assert_eq!(history["feature_id"], "PT-7-3");
+    assert_eq!(history["mode"], "plan_only");
+    assert_eq!(history["summary"]["completed_files"], 2);
+    assert_eq!(history["summary"]["planned_deleted_rows"], 3);
+    assert!(history["events"]
+        .as_array()
+        .is_some_and(|events| !events.is_empty()));
+    let history_text = serde_json::to_string(&history)?;
+    assert!(!history_text.contains("foreign.xlsx"));
+    assert!(!history_text.contains("外资甲"));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("已完成 2"));
+    Ok(())
+}
+
+#[test]
+fn interactive_foreign_bank_menu_off_view_has_no_events_or_history() -> Result<()> {
+    let root = TestDirectory::new()?;
+    let config = create_foreign_bank_config(root.path())?;
+    let source = root.path().join("foreign.xlsx");
+    make_foreign_bank_source(&source, true)?;
+    let source_bytes = fs::read(&source)?;
+
+    let output = run_menu_with_arguments(
+        &config,
+        &foreign_bank_menu_input(&[&source]),
+        &["--log-view".to_owned(), "off".to_owned()],
+    )?;
+    assert!(
+        output.status.success(),
+        "foreign-bank menu failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains(r#""planned_deleted_rows": 3"#));
+    assert!(!stdout.contains("history_report"));
+    assert!(!stdout.contains("\"events\""));
+    assert!(String::from_utf8_lossy(&output.stderr).is_empty());
+    let log_dir = root.path().join("app/logs");
+    assert!(!log_dir.exists() || fs::read_dir(log_dir)?.next().is_none());
+    assert_eq!(fs::read(&source)?, source_bytes);
+    assert!(!root.path().join("foreign(金融局).xlsx").exists());
+    Ok(())
+}
+
+#[test]
+fn interactive_foreign_bank_menu_stops_before_file_selection_when_mapping_is_empty() -> Result<()> {
+    let root = TestDirectory::new()?;
+    let config = create_config(root.path())?;
+    let output = run_menu(&config, "7\n3\n0\n0\n")?;
+    assert!(
+        output.status.success(),
+        "foreign-bank menu failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("外资行配置为空"));
+    assert!(!stdout.contains("选择要生成外发用副本的工作簿"));
+    assert!(!root.path().join("app/output").exists());
+    assert!(!root.path().join("app/logs").exists());
+    Ok(())
+}
+
+#[test]
+fn interactive_foreign_bank_menu_executes_only_with_synthetic_capability() -> Result<()> {
+    const PLATFORM: &str = "synthetic-pt-7-3-menu-test";
+    let root = TestDirectory::new()?;
+    let config = create_foreign_bank_config(root.path())?;
+    let source = root.path().join("foreign.xlsx");
+    let capability_path = root.path().join("test-capability.json");
+    make_foreign_bank_source(&source, true)?;
+    let source_bytes = fs::read(&source)?;
+    let expected_plan = build_remove_foreign_plan(
+        &source,
+        &root.path().join("foreign(金融局).xlsx"),
+        &pytools_core::config::load_foreign_banks(&config)?,
+    )?
+    .plan
+    .context("foreign-bank edit plan missing")?;
+    fs::write(
+        &capability_path,
+        serde_json::to_vec_pretty(&foreign_bank_capability(&expected_plan, PLATFORM))?,
+    )?;
+
+    let output = run_menu_with_capability(
+        &config,
+        &foreign_bank_menu_input(&[&source]),
+        &capability_path,
+        PLATFORM,
+        "developer",
+    )?;
+    assert!(
+        output.status.success(),
+        "foreign-bank menu apply failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains(r#""mode": "execute""#));
+    assert!(stdout.contains(r#""ok_files": 1"#));
+    assert!(stdout.contains(r#""failed_files": 0"#));
+    assert!(stdout.contains(r#""engine": "umya_spreadsheet""#));
+
+    let output_path = root.path().join("foreign(金融局).xlsx");
+    assert!(output_path.exists());
+    assert_eq!(fs::read(&source)?, source_bytes, "source remains unchanged");
+    let workbook = read_workbook(&output_path)?;
+    let branch = workbook
+        .sheets
+        .iter()
+        .find(|sheet| sheet.name == "甲分机构本外币")
+        .context("foreign-bank output branch sheet missing")?;
+    assert_eq!(branch.values["A2"]["value"], "普通甲");
+    assert_eq!(branch.values["A3"]["value"], "普通乙");
+    assert_eq!(branch.values["A4"]["value"], "普通丙");
+    assert_eq!(branch.values["A5"]["value"], "尾行");
+    assert_eq!(branch.formulas["H1"], "SUM(B2:B5)");
+
+    let history_path = find_file_recursively(&root.path().join("app/logs"), ".json")?
+        .context("PT-7-3 developer run history was not saved")?;
+    let history: Value = serde_json::from_slice(&fs::read(history_path)?)?;
+    assert!(history["events"].as_array().is_some_and(|events| {
+        events.iter().any(|event| {
+            event["phase"] == "engine_execution" && event["actual_engine"] == "umya_spreadsheet"
+        })
+    }));
+    Ok(())
+}
+
+fn create_foreign_bank_config(root: &Path) -> Result<PathBuf> {
+    let app = root.join("app");
+    let config = app.join("config/config.xlsx");
+    fs::create_dir_all(config.parent().context("config parent missing")?)?;
+    fs::create_dir_all(app.join("input"))?;
+    let mut workbook = Workbook::new();
+    let global = workbook.add_worksheet();
+    global.set_name("全局配置")?;
+    global.write_string(0, 0, "配置项")?;
+    global.write_string(0, 1, "值")?;
+    for (index, (name, value)) in [
+        ("输入目录", app.join("input").to_string_lossy().into_owned()),
+        (
+            "输出目录",
+            app.join("output").to_string_lossy().into_owned(),
+        ),
+        ("日志目录", app.join("logs").to_string_lossy().into_owned()),
+    ]
+    .iter()
+    .enumerate()
+    {
+        global.write_string((index + 1) as u32, 0, *name)?;
+        global.write_string((index + 1) as u32, 1, value)?;
+    }
+    let mapping = workbook.add_worksheet();
+    mapping.set_name("机构映射表")?;
+    for (column, header) in ["序号", "机构名称", "是否为外资行"].iter().enumerate() {
+        mapping.write_string(0, column as u16, *header)?;
+    }
+    for (row, (name, is_foreign)) in [("外资甲", 1.0), ("外资乙", 1.0), ("普通甲", 0.0)]
+        .iter()
+        .enumerate()
+    {
+        mapping.write_number((row + 1) as u32, 0, (row + 1) as f64)?;
+        mapping.write_string((row + 1) as u32, 1, *name)?;
+        mapping.write_number((row + 1) as u32, 2, *is_foreign)?;
+    }
+    workbook.save(&config)?;
+    Ok(config)
+}
+
+fn make_foreign_bank_source(path: &Path, include_foreign: bool) -> Result<()> {
+    let mut workbook = Workbook::new();
+    let branch = workbook.add_worksheet();
+    branch.set_name("甲分机构本外币")?;
+    branch.write_string(0, 0, "机构")?;
+    branch.write_string(0, 1, "余额")?;
+    for (row, name, amount) in [
+        (1, "普通甲", 10.0),
+        (
+            2,
+            if include_foreign {
+                "外资甲"
+            } else {
+                "普通己"
+            },
+            20.0,
+        ),
+        (3, "普通乙", 30.0),
+        (
+            4,
+            if include_foreign {
+                "外资乙"
+            } else {
+                "普通庚"
+            },
+            40.0,
+        ),
+        (5, "普通丙", 50.0),
+        (6, "尾行", 60.0),
+    ] {
+        branch.write_string(row, 0, name)?;
+        branch.write_number(row, 1, amount)?;
+    }
+    branch.write_formula(0, 7, "=SUM(B2:B7)")?;
+    branch.insert_note(2, 2, &rust_xlsxwriter::Note::new("删除行批注"))?;
+    branch.insert_note(3, 2, &rust_xlsxwriter::Note::new("保留行批注一"))?;
+    branch.insert_note(6, 2, &rust_xlsxwriter::Note::new("保留行批注二"))?;
+    branch.set_row_height(6, 24.0)?;
+    branch.merge_range(8, 4, 9, 5, "合并区域", &rust_xlsxwriter::Format::new())?;
+    let second = workbook.add_worksheet();
+    second.set_name("乙分机构人民币")?;
+    second.write_string(0, 0, "机构")?;
+    second.write_string(
+        1,
+        0,
+        if include_foreign {
+            "外资乙"
+        } else {
+            "普通戊"
+        },
+    )?;
+    second.write_string(2, 0, "普通丁")?;
+    let non_target = workbook.add_worksheet();
+    non_target.set_name("非目标工作表")?;
+    non_target.write_string(0, 0, "机构")?;
+    non_target.write_string(1, 0, "外资甲")?;
+    let formula = workbook.add_worksheet();
+    formula.set_name("公式引用")?;
+    if include_foreign {
+        formula.write_formula(0, 0, "='甲分机构本外币'!B7")?;
+        workbook.define_name("BranchValues", "'甲分机构本外币'!$B$2:$B$7")?;
+    } else {
+        formula.write_string(0, 0, "无外部公式")?;
+    }
+    workbook.save(path)?;
+    Ok(())
+}
+
+fn foreign_bank_menu_input(sources: &[&Path]) -> String {
+    let paths = sources
+        .iter()
+        .map(|path| path.to_string_lossy())
+        .collect::<Vec<_>>()
+        .join(";");
+    format!("7\n3\n1\n{paths}\n0\n0\n")
+}
+
+fn foreign_bank_capability(
+    plan: &excel_editor::ExcelEditPlan,
+    platform: &str,
+) -> BackendCapability {
+    BackendCapability {
+        engine: EngineId::UmyaSpreadsheet,
+        status: CapabilityStatus::Passed,
+        format: plan.format,
+        operations: plan.operations.iter().map(EditOperation::kind).collect(),
+        supported_features: plan.workbook.features_present.clone(),
+        preserved: plan.preserve.clone(),
+        platform: platform.to_owned(),
+        evidence: Some(CapabilityEvidence {
+            sample_id: "synthetic-pt-7-3-foreign-bank-menu".to_owned(),
+            report_path: "pytools-core/tests/batch_tools_menu_cli.rs".to_owned(),
+            adapter_version: "umya-spreadsheet-3.1.1".to_owned(),
+            engine_version: "umya-spreadsheet-3.1.1".to_owned(),
+            platform: platform.to_owned(),
+        }),
+    }
 }
 
 #[test]

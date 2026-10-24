@@ -214,7 +214,7 @@ where
         writeln!(output, "  3  打印工具（生成页面设置计划）")?;
         writeln!(output, "  4  转换与文件命名工具")?;
         writeln!(output, "  6  汇总工具")?;
-        writeln!(output, "  7  一二批处理工具（当前接入 7-1、7-2、7-5）")?;
+        writeln!(output, "  7  一二批处理工具（当前接入 7-1、7-2、7-3、7-5）")?;
         writeln!(output, "  0  退出")?;
         writeln!(output, "==============================")?;
         let Some(choice) = read_menu_choice(input, output, "主菜单选择> ")? else {
@@ -854,6 +854,10 @@ where
         writeln!(output, "------ 一二批处理工具 ------")?;
         writeln!(output, "  1  拆分村镇银行数据（Rust 计划/能力门控执行）")?;
         writeln!(output, "  2  机构名称规范化（Rust 计划/能力门控执行）")?;
+        writeln!(
+            output,
+            "  3  删除分机构表中的外资行（Rust 计划/能力门控执行）"
+        )?;
         writeln!(output, "  5  地区总分校验（读取并生成核对结果）")?;
         writeln!(output, "  0  返回")?;
         writeln!(output, "----------------------------")?;
@@ -1037,6 +1041,104 @@ where
                 run_institution_normalize_batch(arguments)?;
                 return Ok(());
             }
+            "3" => {
+                let foreign = pytools_core::config::load_foreign_banks(config_path)?;
+                if foreign.is_empty() {
+                    writeln!(
+                        output,
+                        "[已中止] 外资行配置为空，请在机构映射表 C 列将外资行标记为 1。"
+                    )?;
+                    return Ok(());
+                }
+                let Some(selected) = choose_source_files_or_folders(
+                    "选择要生成外发用副本的工作簿（删除分机构表的外资行）",
+                    NativeFileFilter::XlsxOnly,
+                    input,
+                    output,
+                    allow_native_dialog,
+                )?
+                else {
+                    writeln!(output, "[已取消]")?;
+                    return Ok(());
+                };
+                let mut targets = Vec::new();
+                for path in selected {
+                    if path
+                        .extension()
+                        .is_some_and(|extension| extension.eq_ignore_ascii_case("xlsx"))
+                    {
+                        targets.push(path);
+                    } else {
+                        writeln!(
+                            output,
+                            "[跳过] {}：PT-7-3 当前只接受 .xlsx；未验收格式请先显式转换。",
+                            path.display()
+                        )?;
+                    }
+                }
+                if targets.is_empty() {
+                    writeln!(output, "[提示] 没有可处理的 .xlsx 工作簿。")?;
+                    return Ok(());
+                }
+                if capabilities.is_none() {
+                    writeln!(output, "[计划模式] 默认只生成修改计划；原工作簿不会修改。")?;
+                } else {
+                    writeln!(
+                        output,
+                        "[执行模式] 将通过已提供的 ExcelModifier capability 生成外发副本；原工作簿不会修改。"
+                    )?;
+                }
+
+                let mut arguments = vec![
+                    "--config".to_owned(),
+                    config_path.to_string_lossy().into_owned(),
+                    "--view".to_owned(),
+                    log_view.to_owned(),
+                    "--log-dir".to_owned(),
+                    global.log_dir.to_string_lossy().into_owned(),
+                ];
+                if log_view != "off" {
+                    let nonce = SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .map(|duration| duration.as_nanos())
+                        .unwrap_or_default();
+                    let report_path = global.log_dir.join(format!(
+                        "PT-7-3_{}_{}_{}.json",
+                        Local::now().format("%Y%m%dT%H%M%S"),
+                        std::process::id(),
+                        nonce
+                    ));
+                    arguments.extend([
+                        "--report-output".to_owned(),
+                        report_path.to_string_lossy().into_owned(),
+                    ]);
+                }
+                if let (Some(capabilities), Some(platform)) = (capabilities, platform) {
+                    arguments.extend([
+                        "--capabilities".to_owned(),
+                        capabilities.to_string_lossy().into_owned(),
+                        "--platform".to_owned(),
+                        platform.to_owned(),
+                    ]);
+                } else {
+                    arguments.extend([
+                        "--plan-dir".to_owned(),
+                        global
+                            .output_dir
+                            .join("plans")
+                            .join("PT-7-3")
+                            .to_string_lossy()
+                            .into_owned(),
+                    ]);
+                }
+                arguments.extend(
+                    targets
+                        .into_iter()
+                        .map(|path| path.to_string_lossy().into_owned()),
+                );
+                run_remove_foreign_bank_batch(arguments)?;
+                return Ok(());
+            }
             "5" => {
                 let Some(selected) = choose_source_files_or_folders(
                     "选择要做地区总分校验的 Excel 文件",
@@ -1084,7 +1186,7 @@ where
                 return Ok(());
             }
             "0" => return Ok(()),
-            _ => writeln!(output, "仅接受 1、2、5 或 0")?,
+            _ => writeln!(output, "仅接受 1、2、3、5 或 0")?,
         }
     }
 }
@@ -2572,7 +2674,76 @@ fn run_remove_foreign_bank_batch(arguments: Vec<String>) -> Result<()> {
         "--capabilities and --platform must be provided together"
     );
     let execute = capabilities.is_some();
+    let view = options.values.get("view").map(String::as_str);
+    if let Some(view) = view {
+        anyhow::ensure!(
+            matches!(view, "user" | "developer" | "off"),
+            "--view must be user, developer, or off"
+        );
+    }
+    anyhow::ensure!(
+        view.is_some() || !options.values.contains_key("report-output"),
+        "--report-output requires --view user or developer"
+    );
+    let plan_dir = options.values.get("plan-dir").map(PathBuf::from);
+    anyhow::ensure!(
+        !execute || plan_dir.is_none(),
+        "--plan-dir is only supported in plan-only mode"
+    );
+    let report_output = if view == Some("off") {
+        anyhow::ensure!(
+            !options.values.contains_key("report-output"),
+            "--report-output cannot be used with --view off"
+        );
+        None
+    } else if view.is_some() {
+        let path = options
+            .values
+            .get("report-output")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| {
+                let nonce = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .map(|duration| duration.as_nanos())
+                    .unwrap_or_default();
+                let log_dir = options
+                    .values
+                    .get("log-dir")
+                    .map(PathBuf::from)
+                    .unwrap_or_else(|| PathBuf::from("logs"));
+                log_dir.join(format!(
+                    "PT-7-3_{}_{}_{}.json",
+                    Local::now().format("%Y%m%dT%H%M%S"),
+                    std::process::id(),
+                    nonce
+                ))
+            });
+        anyhow::ensure!(
+            path.extension()
+                .and_then(|extension| extension.to_str())
+                .is_some_and(|extension| extension.eq_ignore_ascii_case("json")),
+            "--report-output must use a .json extension"
+        );
+        anyhow::ensure!(
+            !path.exists(),
+            "run history file already exists; refusing to overwrite {}",
+            path.display()
+        );
+        Some(path)
+    } else {
+        None
+    };
+
+    let run_started = Instant::now();
+    let started_at = Local::now().to_rfc3339();
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or_default();
+    let run_id = format!("pytools-pt-7-3-{}-{nonce}", std::process::id());
+    let configuration_started = Instant::now();
     let foreign = pytools_core::config::load_foreign_banks(&config)?;
+    let configuration_elapsed_ms = configuration_started.elapsed().as_millis();
     let mut result = serde_json::json!({
         "files": 0,
         "ok_files": 0,
@@ -2586,55 +2757,109 @@ fn run_remove_foreign_bank_batch(arguments: Vec<String>) -> Result<()> {
         "mode": if execute { "execute" } else { "plan_only" },
         "items": [],
     });
-    if foreign.is_empty() {
-        println!("{}", serde_json::to_string_pretty(&result)?);
-        return Ok(());
+
+    let mut events = Vec::<SummaryRunEvent>::new();
+    let mut progress = SummaryProgress {
+        total_inputs: options.positional.len(),
+        total_files: options.positional.len(),
+        ..SummaryProgress::default()
+    };
+    if view.is_some() {
+        emit_foreign_bank_event(
+            &mut events,
+            view,
+            run_started,
+            "configuration_load",
+            "completed",
+            "外资行配置读取完成。",
+            &progress,
+            Some(configuration_elapsed_ms),
+            &["excel-reader", "calamine"],
+            Some("calamine"),
+            None,
+        );
     }
 
-    result["files"] = serde_json::json!(options.positional.len());
-    for input in options.positional {
-        let started = Instant::now();
-        let output = match foreign_bank_copy_path(&input) {
-            Ok(path) => path,
-            Err(error) => {
-                result["failed_files"] =
-                    serde_json::json!(result["failed_files"].as_u64().unwrap_or_default() + 1);
-                result["items"]
-                    .as_array_mut()
-                    .unwrap()
-                    .push(serde_json::json!({
-                        "input": input,
-                        "status": "failed",
-                        "error_stage": "input_validation",
-                        "error": format!("{error:#}"),
-                        "elapsed_ms": started.elapsed().as_millis(),
-                    }));
-                continue;
-            }
-        };
-        let extension_is_xlsx = input
-            .extension()
-            .and_then(|value| value.to_str())
-            .is_some_and(|value| value.eq_ignore_ascii_case("xlsx"));
-        if !extension_is_xlsx {
-            result["failed_files"] =
-                serde_json::json!(result["failed_files"].as_u64().unwrap_or_default() + 1);
-            result["items"]
-                .as_array_mut()
-                .unwrap()
-                .push(serde_json::json!({
-                    "input": input,
-                    "output": output,
-                    "status": "failed",
-                    "error_stage": "input_validation",
-                    "error": "Rust row-removal candidate currently accepts .xlsx only",
-                    "elapsed_ms": started.elapsed().as_millis(),
-                }));
-            continue;
+    if foreign.is_empty() {
+        if view.is_some() {
+            emit_foreign_bank_event(
+                &mut events,
+                view,
+                run_started,
+                "configuration_precheck",
+                "skipped",
+                "外资行配置为空，未处理工作簿。",
+                &progress,
+                None,
+                &["pytools-core::config"],
+                None,
+                Some("empty_foreign_bank_mapping"),
+            );
         }
-        let report = match build_remove_foreign_plan(&input, &output, &foreign) {
-            Ok(report) => report,
-            Err(error) => {
+    } else {
+        result["files"] = serde_json::json!(options.positional.len());
+        for (file_index, input) in options.positional.into_iter().enumerate() {
+            progress.current_file = Some(file_index + 1);
+            progress.processed_files = file_index + 1;
+            if view.is_some() {
+                emit_foreign_bank_event(
+                    &mut events,
+                    view,
+                    run_started,
+                    "file_start",
+                    "started",
+                    format!(
+                        "开始检查第 {}/{} 个工作簿。",
+                        file_index + 1,
+                        progress.total_files
+                    ),
+                    &progress,
+                    None,
+                    &[],
+                    None,
+                    None,
+                );
+            }
+            let started = Instant::now();
+            let output = match foreign_bank_copy_path(&input) {
+                Ok(path) => path,
+                Err(error) => {
+                    result["failed_files"] =
+                        serde_json::json!(result["failed_files"].as_u64().unwrap_or_default() + 1);
+                    result["items"]
+                        .as_array_mut()
+                        .unwrap()
+                        .push(serde_json::json!({
+                            "input": input,
+                            "status": "failed",
+                            "error_stage": "input_validation",
+                            "error": format!("{error:#}"),
+                            "elapsed_ms": started.elapsed().as_millis(),
+                        }));
+                    progress.failed_files += 1;
+                    if view.is_some() {
+                        emit_foreign_bank_event(
+                            &mut events,
+                            view,
+                            run_started,
+                            "input_validation",
+                            "failed",
+                            "工作簿路径不符合处理要求。",
+                            &progress,
+                            Some(started.elapsed().as_millis()),
+                            &[],
+                            None,
+                            Some("input_validation"),
+                        );
+                    }
+                    continue;
+                }
+            };
+            let extension_is_xlsx = input
+                .extension()
+                .and_then(|value| value.to_str())
+                .is_some_and(|value| value.eq_ignore_ascii_case("xlsx"));
+            if !extension_is_xlsx {
                 result["failed_files"] =
                     serde_json::json!(result["failed_files"].as_u64().unwrap_or_default() + 1);
                 result["items"]
@@ -2644,96 +2869,483 @@ fn run_remove_foreign_bank_batch(arguments: Vec<String>) -> Result<()> {
                         "input": input,
                         "output": output,
                         "status": "failed",
-                        "error_stage": "planning",
-                        "error": format!("{error:#}"),
+                        "error_stage": "input_validation",
+                        "error": "Rust row-removal candidate currently accepts .xlsx only",
                         "elapsed_ms": started.elapsed().as_millis(),
                     }));
+                progress.failed_files += 1;
+                if view.is_some() {
+                    emit_foreign_bank_event(
+                        &mut events,
+                        view,
+                        run_started,
+                        "input_validation",
+                        "failed",
+                        "输入格式尚未验收；本项只接受 .xlsx。",
+                        &progress,
+                        Some(started.elapsed().as_millis()),
+                        &[],
+                        None,
+                        Some("unsupported_format"),
+                    );
+                }
                 continue;
             }
-        };
-        let planned_deleted_rows = report
-            .plan
-            .as_ref()
-            .map(|plan| {
-                plan.operations
-                    .iter()
-                    .map(|operation| match operation {
-                        excel_editor::EditOperation::DeleteRows { count, .. } => *count as usize,
-                        _ => 0,
-                    })
-                    .sum::<usize>()
-            })
-            .unwrap_or_default();
-        result["planned_files"] =
-            serde_json::json!(result["planned_files"].as_u64().unwrap_or_default() + 1);
-        result["planned_branch_sheets"] = serde_json::json!(
-            result["planned_branch_sheets"].as_u64().unwrap_or_default()
-                + report.matched_sheets as u64
-        );
-        result["planned_deleted_rows"] = serde_json::json!(
-            result["planned_deleted_rows"].as_u64().unwrap_or_default()
-                + planned_deleted_rows as u64
-        );
-
-        let mut item = serde_json::json!({
-            "input": input,
-            "output": output,
-            "status": if execute { "pending" } else if report.plan.is_some() { "plan_only" } else { "plan_only_no_changes" },
-            "planned_branch_sheets": report.matched_sheets,
-            "planned_deleted_rows": planned_deleted_rows,
-            "branch_sheets": 0,
-            "deleted_rows": 0,
-            "plan": report.plan,
-        });
-        if !execute {
-            item["execution"] = serde_json::json!("plan_only");
-        } else {
-            let execution: Result<serde_json::Value> = if let Some(plan) =
-                item.get("plan").filter(|value| !value.is_null()).cloned()
-            {
-                let plan: excel_editor::ExcelEditPlan = serde_json::from_value(plan)?;
-                apply_plan_with_capability_file(
-                    &plan,
-                    capabilities.expect("validated capability path"),
-                    platform.expect("validated platform"),
-                )
-                .and_then(|report| serde_json::to_value(report).context("serialize edit result"))
-            } else {
-                copy_workbook_to_new_target(&input, &output).and_then(|report| {
-                    serde_json::to_value(report).context("serialize copy result")
-                })
-            };
-            match execution {
-                Ok(execution) => {
-                    result["ok_files"] =
-                        serde_json::json!(result["ok_files"].as_u64().unwrap_or_default() + 1);
-                    result["branch_sheets"] = serde_json::json!(
-                        result["branch_sheets"].as_u64().unwrap_or_default()
-                            + report.matched_sheets as u64
-                    );
-                    result["deleted_rows"] = serde_json::json!(
-                        result["deleted_rows"].as_u64().unwrap_or_default()
-                            + planned_deleted_rows as u64
-                    );
-                    item["status"] = serde_json::json!("written");
-                    item["branch_sheets"] = serde_json::json!(report.matched_sheets);
-                    item["deleted_rows"] = serde_json::json!(planned_deleted_rows);
-                    item["execution"] = execution;
-                }
+            let plan_started = Instant::now();
+            let report = match build_remove_foreign_plan(&input, &output, &foreign) {
+                Ok(report) => report,
                 Err(error) => {
                     result["failed_files"] =
                         serde_json::json!(result["failed_files"].as_u64().unwrap_or_default() + 1);
-                    item["status"] = serde_json::json!("failed");
-                    item["error_stage"] = serde_json::json!("execution");
-                    item["error"] = serde_json::json!(format!("{error:#}"));
+                    result["items"]
+                        .as_array_mut()
+                        .unwrap()
+                        .push(serde_json::json!({
+                            "input": input,
+                            "output": output,
+                            "status": "failed",
+                            "error_stage": "planning",
+                            "error": format!("{error:#}"),
+                            "elapsed_ms": started.elapsed().as_millis(),
+                        }));
+                    progress.failed_files += 1;
+                    if view.is_some() {
+                        emit_foreign_bank_event(
+                            &mut events,
+                            view,
+                            run_started,
+                            "plan_build",
+                            "failed",
+                            "工作簿检查或修改计划生成失败。",
+                            &progress,
+                            Some(plan_started.elapsed().as_millis()),
+                            &["pytools-core::batch_ops", "excel-reader"],
+                            None,
+                            Some("planning"),
+                        );
+                    }
+                    continue;
+                }
+            };
+            let plan_elapsed_ms = plan_started.elapsed().as_millis();
+            let planned_deleted_rows = report
+                .plan
+                .as_ref()
+                .map(|plan| {
+                    plan.operations
+                        .iter()
+                        .map(|operation| match operation {
+                            excel_editor::EditOperation::DeleteRows { count, .. } => {
+                                *count as usize
+                            }
+                            _ => 0,
+                        })
+                        .sum::<usize>()
+                })
+                .unwrap_or_default();
+            result["planned_files"] =
+                serde_json::json!(result["planned_files"].as_u64().unwrap_or_default() + 1);
+            result["planned_branch_sheets"] = serde_json::json!(
+                result["planned_branch_sheets"].as_u64().unwrap_or_default()
+                    + report.matched_sheets as u64
+            );
+            result["planned_deleted_rows"] = serde_json::json!(
+                result["planned_deleted_rows"].as_u64().unwrap_or_default()
+                    + planned_deleted_rows as u64
+            );
+
+            let mut item = serde_json::json!({
+                "input": input,
+                "output": output,
+                "status": if execute { "pending" } else if report.plan.is_some() { "plan_only" } else { "plan_only_no_changes" },
+                "planned_branch_sheets": report.matched_sheets,
+                "planned_deleted_rows": planned_deleted_rows,
+                "branch_sheets": 0,
+                "deleted_rows": 0,
+                "plan": report.plan.clone(),
+            });
+
+            if !execute && !(plan_dir.is_some() && report.plan.is_some()) {
+                progress.completed_files += 1;
+            }
+            if view.is_some() {
+                emit_foreign_bank_event(
+                    &mut events,
+                    view,
+                    run_started,
+                    "plan_build",
+                    "completed",
+                    format!(
+                        "修改计划已生成：{} 个目标工作表，{} 行待删除。",
+                        report.matched_sheets, planned_deleted_rows
+                    ),
+                    &progress,
+                    Some(plan_elapsed_ms),
+                    &["pytools-core::batch_ops", "excel-reader", "ExcelEditPlan"],
+                    None,
+                    None,
+                );
+            }
+
+            if let (Some(plan_dir), Some(plan)) = (plan_dir.as_deref(), report.plan.as_ref()) {
+                let plan_path = foreign_bank_plan_path(plan_dir, file_index, &input);
+                let persistence_started = Instant::now();
+                match write_json_report_create_new(&plan_path, plan) {
+                    Ok(()) => {
+                        item["plan_path"] = serde_json::json!(plan_path);
+                        progress.completed_files += 1;
+                        if view.is_some() {
+                            emit_foreign_bank_event(
+                                &mut events,
+                                view,
+                                run_started,
+                                "plan_persistence",
+                                "completed",
+                                "修改计划已保存。",
+                                &progress,
+                                Some(persistence_started.elapsed().as_millis()),
+                                &["excel-editor::ExcelEditPlan"],
+                                None,
+                                None,
+                            );
+                        }
+                    }
+                    Err(error) => {
+                        result["failed_files"] = serde_json::json!(
+                            result["failed_files"].as_u64().unwrap_or_default() + 1
+                        );
+                        item["status"] = serde_json::json!("failed");
+                        item["error_stage"] = serde_json::json!("plan_persistence");
+                        item["error"] = serde_json::json!(format!("{error:#}"));
+                        item["elapsed_ms"] = serde_json::json!(started.elapsed().as_millis());
+                        progress.failed_files += 1;
+                        if view.is_some() {
+                            emit_foreign_bank_event(
+                                &mut events,
+                                view,
+                                run_started,
+                                "plan_persistence",
+                                "failed",
+                                "修改计划保存失败。",
+                                &progress,
+                                Some(persistence_started.elapsed().as_millis()),
+                                &["excel-editor::ExcelEditPlan"],
+                                None,
+                                Some("plan_persistence"),
+                            );
+                        }
+                        result["items"].as_array_mut().unwrap().push(item);
+                        continue;
+                    }
                 }
             }
+
+            if !execute {
+                item["execution"] = serde_json::json!("plan_only");
+            } else {
+                let execution_started = Instant::now();
+                let execution: Result<serde_json::Value> = if let Some(plan) =
+                    item.get("plan").filter(|value| !value.is_null()).cloned()
+                {
+                    let plan: excel_editor::ExcelEditPlan = serde_json::from_value(plan)?;
+                    apply_plan_with_capability_file(
+                        &plan,
+                        capabilities.expect("validated capability path"),
+                        platform.expect("validated platform"),
+                    )
+                    .and_then(|report| {
+                        serde_json::to_value(report).context("serialize edit result")
+                    })
+                } else {
+                    copy_workbook_to_new_target(&input, &output).and_then(|report| {
+                        serde_json::to_value(report).context("serialize copy result")
+                    })
+                };
+                match execution {
+                    Ok(execution) => {
+                        result["ok_files"] =
+                            serde_json::json!(result["ok_files"].as_u64().unwrap_or_default() + 1);
+                        result["branch_sheets"] = serde_json::json!(
+                            result["branch_sheets"].as_u64().unwrap_or_default()
+                                + report.matched_sheets as u64
+                        );
+                        result["deleted_rows"] = serde_json::json!(
+                            result["deleted_rows"].as_u64().unwrap_or_default()
+                                + planned_deleted_rows as u64
+                        );
+                        item["status"] = serde_json::json!("written");
+                        item["branch_sheets"] = serde_json::json!(report.matched_sheets);
+                        item["deleted_rows"] = serde_json::json!(planned_deleted_rows);
+                        let actual_engine = foreign_bank_actual_engine(&execution);
+                        item["execution"] = execution;
+                        progress.completed_files += 1;
+                        if view.is_some() {
+                            emit_foreign_bank_event(
+                                &mut events,
+                                view,
+                                run_started,
+                                "engine_execution",
+                                "completed",
+                                "外发副本已生成，原工作簿保持不变。",
+                                &progress,
+                                Some(execution_started.elapsed().as_millis()),
+                                &["ExcelModifier"],
+                                actual_engine.as_deref(),
+                                None,
+                            );
+                        }
+                    }
+                    Err(error) => {
+                        result["failed_files"] = serde_json::json!(
+                            result["failed_files"].as_u64().unwrap_or_default() + 1
+                        );
+                        item["status"] = serde_json::json!("failed");
+                        item["error_stage"] = serde_json::json!("execution");
+                        item["error"] = serde_json::json!(format!("{error:#}"));
+                        progress.failed_files += 1;
+                        if view.is_some() {
+                            emit_foreign_bank_event(
+                                &mut events,
+                                view,
+                                run_started,
+                                "engine_execution",
+                                "failed",
+                                "ExcelModifier 执行失败；未发布外发副本。",
+                                &progress,
+                                Some(execution_started.elapsed().as_millis()),
+                                &["ExcelModifier"],
+                                None,
+                                Some("execution"),
+                            );
+                        }
+                    }
+                }
+            }
+            item["elapsed_ms"] = serde_json::json!(started.elapsed().as_millis());
+            result["items"].as_array_mut().unwrap().push(item);
         }
-        item["elapsed_ms"] = serde_json::json!(started.elapsed().as_millis());
-        result["items"].as_array_mut().unwrap().push(item);
     }
-    println!("{}", serde_json::to_string_pretty(&result)?);
+
+    let total_elapsed_ms = run_started.elapsed().as_millis();
+    if let Some(view) = view {
+        let user_view = foreign_bank_user_view(&result, total_elapsed_ms, Some(&events));
+        if let Some(path) = report_output.as_deref() {
+            let history = serde_json::json!({
+                "schema_version": 1,
+                "product": "pytools",
+                "feature_id": "PT-7-3",
+                "run_id": &run_id,
+                "started_at": &started_at,
+                "status": user_view["status"],
+                "mode": result["mode"],
+                "summary": user_view["summary"],
+                "events": &events,
+            });
+            write_json_report_create_new(path, &history)?;
+        }
+        let output = match view {
+            "developer" => {
+                result["elapsed_ms"] = serde_json::json!(total_elapsed_ms);
+                result["run_id"] = serde_json::json!(run_id);
+                result["started_at"] = serde_json::json!(started_at);
+                result["events"] = serde_json::to_value(&events)?;
+                if let Some(path) = report_output {
+                    result["history_report"] = serde_json::json!(path);
+                }
+                result
+            }
+            "user" => {
+                let mut output = user_view;
+                output["run_id"] = serde_json::json!(run_id);
+                output["started_at"] = serde_json::json!(started_at);
+                if let Some(path) = report_output {
+                    output["history_report"] = serde_json::json!(path);
+                }
+                output
+            }
+            "off" => foreign_bank_user_view(&result, total_elapsed_ms, None),
+            _ => unreachable!("view was validated"),
+        };
+        println!("{}", serde_json::to_string_pretty(&output)?);
+    } else {
+        println!("{}", serde_json::to_string_pretty(&result)?);
+    }
     Ok(())
+}
+
+fn emit_foreign_bank_event(
+    events: &mut Vec<SummaryRunEvent>,
+    view: Option<&str>,
+    run_started: Instant,
+    phase: &str,
+    status: &str,
+    user_message: impl Into<String>,
+    progress: &SummaryProgress,
+    stage_elapsed_ms: Option<u128>,
+    components: &[&str],
+    actual_engine: Option<&str>,
+    error_type: Option<&str>,
+) {
+    let Some(view) = view.filter(|view| *view != "off") else {
+        return;
+    };
+    let event = SummaryRunEvent {
+        sequence: events.len() + 1,
+        timestamp: Local::now().to_rfc3339(),
+        phase: phase.to_owned(),
+        status: status.to_owned(),
+        user_message: user_message.into(),
+        progress: progress.clone(),
+        file_name: None,
+        stage_elapsed_ms,
+        total_elapsed_ms: run_started.elapsed().as_millis(),
+        components: components.iter().map(|value| (*value).to_owned()).collect(),
+        actual_engine: actual_engine.map(str::to_owned),
+        error_type: error_type.map(str::to_owned),
+    };
+    if view == "developer" {
+        if let Ok(encoded) = serde_json::to_string(&event) {
+            eprintln!("{encoded}");
+        }
+    } else {
+        eprintln!(
+            "{}（进度 {}/{}, 已完成 {}，失败 {}）",
+            event.user_message,
+            event.progress.processed_files,
+            event.progress.total_files,
+            event.progress.completed_files,
+            event.progress.failed_files
+        );
+    }
+    events.push(event);
+}
+
+fn foreign_bank_plan_path(plan_dir: &Path, file_index: usize, input: &Path) -> PathBuf {
+    let stem = input
+        .file_stem()
+        .map(|stem| stem.to_string_lossy())
+        .unwrap_or_default();
+    let safe_stem = stem
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() || matches!(character, '-' | '_') {
+                character
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>();
+    plan_dir.join(format!("{:03}_{safe_stem}.json", file_index + 1))
+}
+
+fn foreign_bank_actual_engine(execution: &serde_json::Value) -> Option<String> {
+    execution
+        .get("engine")
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_owned)
+        .or_else(|| {
+            (execution
+                .get("operation")
+                .and_then(serde_json::Value::as_str)
+                == Some("copied"))
+            .then(|| "filesystem_copy".to_owned())
+        })
+}
+
+fn foreign_bank_user_view(
+    result: &serde_json::Value,
+    elapsed_ms: u128,
+    events: Option<&[SummaryRunEvent]>,
+) -> serde_json::Value {
+    let is_plan_only = result["mode"] == "plan_only";
+    let foreign_empty = result["foreign_empty"].as_bool().unwrap_or(false);
+    let failed_files = result["failed_files"].as_u64().unwrap_or_default();
+    let status = if foreign_empty {
+        "not_run"
+    } else if failed_files > 0 {
+        "completed_with_errors"
+    } else {
+        "completed"
+    };
+    let completed_files = if is_plan_only {
+        serde_json::json!(result["items"]
+            .as_array()
+            .map(|items| {
+                items
+                    .iter()
+                    .filter(|item| {
+                        matches!(
+                            item["status"].as_str(),
+                            Some("plan_only" | "plan_only_no_changes")
+                        )
+                    })
+                    .count()
+            })
+            .unwrap_or_default())
+    } else {
+        result["ok_files"].clone()
+    };
+    let mut output = serde_json::json!({
+        "schema_version": 1,
+        "product": "pytools",
+        "feature_id": "PT-7-3",
+        "status": status,
+        "mode": if is_plan_only { "plan_only" } else { "execute_copy" },
+        "summary": {
+            "total_files": result["files"],
+            "completed_files": completed_files,
+            "failed_files": result["failed_files"],
+            "planned_files": result["planned_files"],
+            "planned_branch_sheets": result["planned_branch_sheets"],
+            "planned_deleted_rows": result["planned_deleted_rows"],
+            "branch_sheets": result["branch_sheets"],
+            "deleted_rows": result["deleted_rows"],
+            "foreign_empty": foreign_empty,
+            "elapsed_ms": elapsed_ms
+        }
+    });
+    if let Some(events) = events {
+        output["events"] = serde_json::Value::Array(
+            events
+                .iter()
+                .map(|event| {
+                    serde_json::json!({
+                        "sequence": event.sequence,
+                        "timestamp": event.timestamp,
+                        "phase": foreign_bank_user_phase(&event.phase),
+                        "status": foreign_bank_user_status(&event.status),
+                        "message": event.user_message,
+                        "progress": event.progress,
+                        "elapsed_ms": event.stage_elapsed_ms,
+                        "total_elapsed_ms": event.total_elapsed_ms
+                    })
+                })
+                .collect(),
+        );
+    }
+    output
+}
+
+fn foreign_bank_user_phase(phase: &str) -> &str {
+    match phase {
+        "configuration_load" => "配置读取",
+        "configuration_precheck" => "配置检查",
+        "file_start" | "input_validation" => "输入检查",
+        "plan_build" => "修改计划",
+        "plan_persistence" => "计划保存",
+        "engine_execution" => "副本生成",
+        other => other,
+    }
+}
+
+fn foreign_bank_user_status(status: &str) -> &str {
+    match status {
+        "started" => "进行中",
+        "completed" => "完成",
+        "failed" => "失败",
+        "skipped" => "跳过",
+        other => other,
+    }
 }
 
 fn foreign_bank_copy_path(input: &Path) -> Result<PathBuf> {
@@ -4258,7 +4870,7 @@ fn print_usage() {
          village-split-plan --current <xlsx> --previous <xlsx> --input <target.xlsx> --output <candidate.xlsx> [--plan-output <json>] [--capabilities <json> --platform <id>]\n\
          village-split --current <xlsx> --previous <xlsx> [--config <config.xlsx>] [--output-dir <directory>] [--log-dir <directory>] [--log-view user|developer|off] [--capabilities <json> --platform <id> [--commit-target]] <target.xlsx>...\n\
          remove-foreign-bank-plan --config <config.xlsx> --input <xlsx> --output <candidate.xlsx> [--plan-output <json>] [--capabilities <json> --platform <id>]\n\
-         remove-foreign-bank --config <config.xlsx> [--capabilities <json> --platform <id>] <source.xlsx>...\n\
+         remove-foreign-bank --config <config.xlsx> [--plan-dir <dir>] [--view user|developer|off] [--log-dir <dir>] [--report-output <json>] [--capabilities <json> --platform <id>] <source.xlsx>...\n\
          rural-loan-plan --current <xlsx> --previous <xlsx> --output <candidate.xlsx> [--plan-output <json>] [--capabilities <json> --platform <id>]\n\
          quarterly-rural-loan-plan --current <xlsx> --previous <xlsx> --output <candidate.xlsx> [--plan-output <json>] [--capabilities <json> --platform <id>]\n\
          institution-normalize-plan --config <config.xlsx> --input <xlsx> --output <candidate.xlsx> [--plan-output <json>] [--capabilities <json> --platform <id>]\n\
