@@ -1,0 +1,28 @@
+时间：2026-10-25 07:18:21
+执行者：Codex
+修改前 commit：8716b5d
+修改后 commit：本记录随本轮专属提交；提交号由对应 git log 确认
+WIP：`DEVELOPMENT_GOAL.md` 存在用户未提交修改；未编辑、暂存或提交。源 Python 项目只读。
+
+目的：扩展 S1 目录审核对拍器，将原 Python `s1audit_configured` 校验公式扫描结果映射到统一 Issue 流，避免旧 `base_audit` 对拍基线遗漏这条生产 Issue 来源；修正详情中仅由本机模板路径导致的跨实现差异比较。
+
+修改文件：
+- `audit-core/tests/compare/compare_s1_audit_directory.py`：构造 Python 扫描 Issue 并与 Rust 当前/历史 Issue 对拍；模板路径详情按 basename 归一，来源类别和公式文本仍精确比较。
+- `audit-core/probe/reports/s1_audit_directory_explicit_mapping_personal_loan_validation_scan_windows_native_20261025.json`：保存通过的真实样本扫描集成对拍汇总，不保存原路径、公式或业务值。
+- `audit-core/probe/reports/s1_template_rule_discovery_explicit_mapping_personal_loan_windows_native_20261025.json`：保存显式配置和模板规则发现对拍摘要。
+- `audit-core/MIGRATION_INVENTORY.md`：在 S1-F01 行追加上述局部验证范围，整体仍标为未验证。
+- 本记录。
+
+逻辑/测试变化：Windows 原生 Rust `s1-audit-directory` 使用同批真实个人贷款源工作簿、保存的审核副本、实际机构映射配置和模板。Python 侧旧公式/条件格式路径产生 2 条 Issue，configured validation scan 另产生 1 条 Issue；Rust 同为 2+1。895 个模板校验公式单元格、1 个缓存错误、当前 Issue 和合并历史均与 Python 对齐，三个 Issue 的字段差异均为 0；模板规则发现字段差异为 0。源、审核副本、模板和配置工作簿均保持不变。此前第一版对拍器遗漏 configured scan，因此产生的旧失败汇总报告由本轮删除；它不是业务数据或用户输入。
+
+验证：
+- Windows 原生真实样本：`compare_s1_audit_directory.py`，status `passed`，mismatch_count 0，workbooks unchanged。
+- `cargo test --offline --locked -p audit-core --test s1_audit_directory_cli`：5 passed，0 failed。
+- `git diff --check`：通过。
+- Python 对拍脚本通过实际完整执行；未单独运行格式化器。
+
+未执行/已知限制：本轮只覆盖 1 个原始源/审核副本/模板组合和显式映射配置，不代表全部七家或 S1-F01 整体验收；公式复制和已有历史工作簿原位写回仍保持 Unverified。未执行公式重算、写入结果簿、Linux/WSL 或 deb 目标平台验收。编译显示共享 `excel-editor` 现有 umya-spreadsheet 弃用警告。
+
+【组件版本】：不升级（对拍辅助脚本/清单/记录变更，不改变产品业务行为）。
+
+删除清单：仅删除本轮生成且已被正确对拍结果替代的未跟踪失败诊断汇总；未删除源文件、模板、审核副本、配置或跟踪文件。回滚提示：反向回滚本轮提交可恢复比较脚本和清单原状；失败诊断无需恢复。

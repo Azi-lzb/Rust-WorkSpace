@@ -1,0 +1,184 @@
+{
+  "schema_version": 1,
+  "suite": "audit.s1_template_rule_discovery",
+  "baseline": "Open-Data-Audit base_audit.native.openpyxl_workbook.read_template",
+  "status": "passed",
+  "sample": {
+    "template_workbook": "redacted real S1 template",
+    "mapping_config": "provided"
+  },
+  "python": {
+    "template_mode": "named_formula_ranges",
+    "rules_total": 895,
+    "rules_enabled": 895,
+    "formula_named_ranges": 4,
+    "copy_ranges": 4,
+    "structure_ranges": 8,
+    "extraction_ranges": 4,
+    "keyword_rules": 358,
+    "error_only_rules": 537,
+    "template_health": {
+      "passed": true,
+      "enabled_rules": 895,
+      "result_rules": 358,
+      "structure_ranges": 8,
+      "broken_reference_rules": 1,
+      "items": [
+        {
+          "category": "总体",
+          "level": "提示",
+          "status": "通过",
+          "sheet_name": "",
+          "location": "",
+          "message": "模板结构可用于审核"
+        },
+        {
+          "category": "规则",
+          "level": "提示",
+          "status": "信息",
+          "sheet_name": "",
+          "location": "",
+          "message": "启用公式 895 个，其中问题规则 358 个、公式健康检查 537 个"
+        },
+        {
+          "category": "规则",
+          "level": "提示",
+          "status": "信息",
+          "sheet_name": "",
+          "location": "",
+          "message": "问题规则识别正常"
+        },
+        {
+          "category": "表结构区域",
+          "level": "提示",
+          "status": "通过",
+          "sheet_name": "",
+          "location": "",
+          "message": "已设置 8 个“表结构区域”命名区域"
+        },
+        {
+          "category": "公式",
+          "level": "警告",
+          "status": "关注",
+          "sheet_name": "",
+          "location": "存量个人贷款信息!Q62",
+          "message": "发现 1 个公式含 #REF! 引用；实际计算触发错误时会写入问题结果"
+        }
+      ]
+    },
+    "elapsed_ms": 897
+  },
+  "rust": {
+    "template_mode": "named_formula_ranges",
+    "rules_total": 895,
+    "rules_enabled": 895,
+    "formula_named_ranges": 4,
+    "copy_ranges": 4,
+    "structure_ranges": 8,
+    "extraction_ranges": 4,
+    "keyword_rules": 358,
+    "error_only_rules": 537,
+    "engine": "calamine+namespace_aware_ooxml",
+    "formula_cells": 895,
+    "rule_comments": 253,
+    "explicit_comment_ids": 0,
+    "read_time_ms": 348,
+    "elapsed_ms": 3530,
+    "template_health": {
+      "broken_reference_rules": 1,
+      "enabled_rules": 895,
+      "items": [
+        {
+          "category": "总体",
+          "level": "提示",
+          "location": "",
+          "message": "模板结构可用于审核",
+          "sheet_name": "",
+          "status": "通过"
+        },
+        {
+          "category": "规则",
+          "level": "提示",
+          "location": "",
+          "message": "启用公式 895 个，其中问题规则 358 个、公式健康检查 537 个",
+          "sheet_name": "",
+          "status": "信息"
+        },
+        {
+          "category": "规则",
+          "level": "提示",
+          "location": "",
+          "message": "问题规则识别正常",
+          "sheet_name": "",
+          "status": "信息"
+        },
+        {
+          "category": "表结构区域",
+          "level": "提示",
+          "location": "",
+          "message": "已设置 8 个“表结构区域”命名区域",
+          "sheet_name": "",
+          "status": "通过"
+        },
+        {
+          "category": "公式",
+          "level": "警告",
+          "location": "存量个人贷款信息!Q62",
+          "message": "发现 1 个公式含 #REF! 引用；实际计算触发错误时会写入问题结果",
+          "sheet_name": "",
+          "status": "关注"
+        }
+      ],
+      "passed": true,
+      "result_rules": 358,
+      "structure_ranges": 8
+    },
+    "cli_elapsed_ms": 3593
+  },
+  "comparison": {
+    "template_definition_field_difference_counts": {
+      "structured": 0,
+      "rule_count": 0,
+      "rules.rule_id": 0,
+      "rules.enabled": 0,
+      "rules.report_code": 0,
+      "rules.sheet_name": 0,
+      "rules.formula_cell": 0,
+      "rules.target_cell": 0,
+      "rules.severity": 0,
+      "rules.message": 0,
+      "rules.copy_range": 0,
+      "rules.result_mode": 0,
+      "rules.value_from_result": 0,
+      "copy_ranges": 0,
+      "structure_ranges": 0,
+      "extraction_ranges": 0
+    },
+    "summary_difference_counts": {
+      "template_mode": 0,
+      "rules_total": 0,
+      "rules_enabled": 0,
+      "formula_named_ranges": 0,
+      "copy_ranges": 0,
+      "structure_ranges": 0,
+      "extraction_ranges": 0,
+      "keyword_rules": 0,
+      "error_only_rules": 0
+    },
+    "template_health_difference_counts": {
+      "passed": 0,
+      "enabled_rules": 0,
+      "result_rules": 0,
+      "structure_ranges": 0,
+      "broken_reference_rules": 0,
+      "items": 0
+    },
+    "mismatch_count": 0
+  },
+  "verification": {
+    "template_unchanged": true,
+    "raw_rule_definitions_or_formula_text_persisted": false,
+    "formula_recalculation": "not performed",
+    "scope": "one real template; all discovered rules and mapped ranges compared in memory"
+  }
+}

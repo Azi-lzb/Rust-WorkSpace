@@ -54,6 +54,21 @@ def normalized_issue(issue: dict[str, Any]) -> dict[str, Any]:
         value = row.get(field)
         if value:
             row[field] = Path(str(value)).name.casefold()
+    # Template paths are local execution details; compare their basenames while
+    # retaining exact origin and formula text for cross-platform parity.
+    detail = row.get("detail")
+    if (
+        isinstance(detail, str)
+        and detail.startswith("来源：")
+        and "；模板：" in detail
+        and "；公式：" in detail
+    ):
+        origin, remainder = detail[len("来源：") :].split("；模板：", 1)
+        template_paths, formula = remainder.rsplit("；公式：", 1)
+        template_names = "、".join(
+            Path(path).name.casefold() for path in template_paths.split("、") if path
+        )
+        row["detail"] = f"来源：{origin}；模板：{template_names}；公式：{formula}"
     return row
 
 
@@ -83,6 +98,135 @@ def compare_issues(expected: list[Any], actual: list[dict[str, Any]]) -> dict[st
         "missing_in_python": len(right - left),
         "field_difference_counts": dict(sorted(differences.items())),
     }
+
+
+def validation_formula_scan_issues(
+    report: dict[str, Any],
+    source: Path,
+    audit: Path,
+    *,
+    period: str,
+    batch_id: str,
+    audit_time: str,
+    org_code: str,
+    org_name: str,
+    issue_type: type,
+    normalize_template_name: Any,
+) -> list[Any]:
+    """Map the configured-engine scan records into the unified S1 Issue stream.
+
+    The Python configured engine emits RuleResult records while the legacy
+    base_audit DAG emits Issue records. This adapter makes that integration
+    explicit for the Rust s1-audit-directory parity comparison.
+    """
+    if report.get("status") == "SKIPPED":
+        return []
+    if report.get("status") != "COMPLETED":
+        raise ValueError("Python validation formula scan did not complete")
+
+    source_stem = source.stem
+    normalized_source = normalize_template_name(source_stem) or "工作簿未识别"
+    source_path = str(source.resolve())
+    audit_path = str(audit.resolve())
+    issues = []
+
+    for error in report.get("errors", []):
+        sheet = str(error["sheet"])
+        cell = str(error["cell"])
+        value = str(error["value"])
+        formula = str(error["formula"])
+        origin = str(error.get("origin", "source_cached_value"))
+        if origin == "template_formula":
+            message = (
+                f"模板校验公式本身含 Excel 错误值或引用 {value}；原公式：{formula}"
+            )
+        elif origin == "template_formula_and_source_cached_value":
+            message = (
+                f"模板校验公式及源文件结果均包含 Excel 错误值 {value}；原公式：{formula}"
+            )
+        else:
+            message = (
+                f"模板校验公式在源文件中返回 Excel 错误值 {value}；原公式：{formula}"
+            )
+        issues.append(
+            issue_type(
+                issue_id="｜".join(
+                    [normalized_source, sheet, cell, "校验指标未识别"]
+                ),
+                period=period,
+                batch_id=batch_id,
+                audit_time=audit_time,
+                triggered=True,
+                status="",
+                first_seen_period="",
+                previous_seen_period="",
+                consecutive_count=1,
+                org_code=org_code,
+                org_name=org_name,
+                report_code="",
+                sheet_name=sheet,
+                rule_id=f"TEMPLATE_FORMULA_ERROR:{sheet}!{cell}",
+                severity="错误",
+                formula_cell=cell,
+                target_cell=cell,
+                target_value=value,
+                formula_result=value,
+                message=message,
+                source_file=source_path,
+                audit_file=audit_path,
+                check_field="模板校验公式结果",
+                check_type="校验公式错误",
+                comparison_value="",
+                reference_value="",
+                difference_value="",
+                detail=(
+                    f"来源：{origin}；模板：{'、'.join(error.get('template_paths', []))}；"
+                    f"公式：{formula}"
+                ),
+                institution_feedback="",
+                auditor_opinion="",
+            )
+        )
+
+    for sheet in report.get("missing_sheets", []):
+        sheet = str(sheet)
+        issues.append(
+            issue_type(
+                issue_id="｜".join(
+                    [normalized_source, sheet, "公式单元格未识别", "模板校验公式扫描失败"]
+                ),
+                period=period,
+                batch_id=batch_id,
+                audit_time=audit_time,
+                triggered=True,
+                status="",
+                first_seen_period="",
+                previous_seen_period="",
+                consecutive_count=1,
+                org_code=org_code,
+                org_name=org_name,
+                report_code="",
+                sheet_name=sheet,
+                rule_id=f"TEMPLATE_FORMULA_SCAN:{sheet}",
+                severity="错误",
+                formula_cell="",
+                target_cell="",
+                target_value="",
+                formula_result="",
+                message=f"本次源文件缺少模板校验公式所在工作表：{sheet}",
+                source_file=source_path,
+                audit_file=audit_path,
+                check_field="模板校验公式",
+                check_type="校验公式扫描失败",
+                comparison_value="",
+                reference_value="",
+                difference_value="",
+                detail=f"本次源文件缺少模板校验公式所在工作表：{sheet}",
+                institution_feedback="",
+                auditor_opinion="",
+            )
+        )
+    return issues
 
 
 def sha256_file(path: Path) -> str:
@@ -489,6 +633,9 @@ def main() -> int:
     from base_audit.history import classify_current_issues, merge_history
     from base_audit.native.result_writer import write_audit_summary
     from base_audit.native.history_io import read_history_xlsx, write_history_xlsx
+    from base_audit.models import Issue
+    from base_audit.template import normalize_template_name
+    from s1audit_configured.formula_error_scan import scan_validation_formula_errors
     from openpyxl import load_workbook
 
     mappings = load_feature_mappings(mapping_config, template)
@@ -529,15 +676,29 @@ def main() -> int:
         audit_time=args.audit_time,
         source_file=source,
     )
+    validation_scan = scan_validation_formula_errors(source, [template])
+    validation_issues = validation_formula_scan_issues(
+        validation_scan,
+        source,
+        audit,
+        period=args.period,
+        batch_id=args.batch_id,
+        audit_time=args.audit_time,
+        org_code=org_code,
+        org_name=org_name,
+        issue_type=Issue,
+        normalize_template_name=normalize_template_name,
+    )
     formula_and_conditional = formula_issues + [
         dataclasses.replace(issue, audit_file=str(audit))
         for issue in conditional_issues
     ]
+    python_current_issues = formula_and_conditional + validation_issues
     python_history_rows = read_history_xlsx(history_path) if history_path else []
-    python_merged_history = merge_history(python_history_rows, formula_and_conditional)
+    python_merged_history = merge_history(python_history_rows, python_current_issues)
     python_current, python_resolved = classify_current_issues(
         args.period,
-        formula_and_conditional,
+        python_current_issues,
         python_history_rows,
         batch_id=args.batch_id,
         audit_time=args.audit_time,
@@ -629,6 +790,12 @@ def main() -> int:
     history_comparison = compare_issues(python_merged_history, rust.get("merged_history", []))
     actual_formula_count = rust["formula_summary"]["issues"]
     actual_conditional_count = rust["conditional_summary"]["issues"]
+    rust_validation_issue_count = sum(
+        str(issue.get("rule_id", "")).startswith(
+            ("TEMPLATE_FORMULA_ERROR:", "TEMPLATE_FORMULA_SCAN:")
+        )
+        for issue in rust.get("issues", [])
+    )
     python_current_statuses = Counter(issue.status for issue in python_current)
     python_resolved_statuses = Counter(issue.status for issue in python_resolved)
     rust_history_result_summary = rust.get("summary") or {}
@@ -711,18 +878,28 @@ def main() -> int:
     report = {
         "schema_version": 1,
         "suite": "audit.s1_issue_chain",
-        "baseline": "Open-Data-Audit UOS/native DAG adapter formula/conditional Issue stages and history classifier",
+        "baseline": "Open-Data-Audit UOS/native DAG formula/conditional Issues plus s1audit_configured validation-formula scan mapped into the unified S1 Issue stream",
         "status": "passed" if mismatch_count == 0 and inputs_unchanged else "failed",
         "python": {
             "formula_issues": len(formula_issues),
             "conditional_issues": len(conditional_issues),
+            "validation_formula_scan": {
+                "status": validation_scan.get("status"),
+                "template_count": validation_scan.get("template_count", 0),
+                "formula_cells_scanned": validation_scan.get("formula_cells_scanned", 0),
+                "errors": len(validation_scan.get("errors", [])),
+                "missing_sheets": len(validation_scan.get("missing_sheets", [])),
+                "mapped_issues": len(validation_issues),
+            },
             "conditional_evaluated_cells": conditional_stats.get("evaluated_cells", 0),
-            "merged_issues": len(formula_and_conditional),
+            "legacy_formula_conditional_issues": len(formula_and_conditional),
+            "merged_issues": len(python_current_issues),
             "history_rows_read": len(python_history_rows),
         },
         "rust": {
             "formula_issues": actual_formula_count,
             "conditional_issues": actual_conditional_count,
+            "validation_formula_scan_issues": rust_validation_issue_count,
             "merged_issues": len(rust.get("issues", [])),
             "resolved_issues": len(rust.get("resolved_issues", [])),
             "readers": actual_readers,
@@ -770,6 +947,7 @@ def main() -> int:
             "history_workbook_input_provided": history_path is not None,
             "formula_recalculation": "not performed; saved audit-copy values only",
             "raw_issue_values_or_paths_persisted": False,
+            "validation_formula_scan_mapping": "Python RuleResult scan errors are normalized to the Issue fields used by Rust before history classification; formulas, values, and raw paths are not persisted.",
             "python_conditional_metadata_source": "workflow.adapters.native_audit_handlers.handle_conditional_issue_extract",
             "windows_general_handler_metadata_behavior": "workflow.adapters.audit_handlers.handle_conditional_issue_extract passes source organization fields; S1 UOS/native path intentionally leaves them empty",
             "scope": "one read-only real source/audit-copy pair and one S1 template",
