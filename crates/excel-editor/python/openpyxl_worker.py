@@ -11,6 +11,7 @@ import argparse
 import hashlib
 import json
 import os
+import posixpath
 import sys
 import time
 import traceback
@@ -58,24 +59,116 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _formula_cache_present(path: Path) -> bool:
-    """openpyxl drops cached formula results when it saves a workbook.
+def _formula_cache_cells(path: Path) -> List[Tuple[str, str]]:
+    """Return coordinates with non-empty formula caches, resolving sheet rels.
 
-    Reject a package containing a non-empty cached formula value before any
-    output is written. Formula text with no cached value can still be edited.
+    openpyxl drops cached formula results when it saves a workbook. The guard
+    therefore needs sheet names as well as cell addresses so it can distinguish
+    planned destination writes from caches that must remain untouched.
     """
-    main_ns = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
+    main_ns = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+    document_rel_ns = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+    package_rel_ns = "http://schemas.openxmlformats.org/package/2006/relationships"
     with zipfile.ZipFile(str(path), "r") as package:
-        for name in package.namelist():
-            if not (name.startswith("xl/worksheets/") and name.endswith(".xml")):
-                continue
-            root = ElementTree.fromstring(package.read(name))
-            for cell in root.iter(main_ns + "c"):
-                formula = cell.find(main_ns + "f")
-                cached = cell.find(main_ns + "v")
+        workbook = ElementTree.fromstring(package.read("xl/workbook.xml"))
+        relationships = ElementTree.fromstring(package.read("xl/_rels/workbook.xml.rels"))
+        targets = {
+            relationship.attrib["Id"]: relationship.attrib["Target"]
+            for relationship in relationships.findall("{%s}Relationship" % package_rel_ns)
+            if relationship.attrib.get("TargetMode") != "External"
+        }
+        cached_cells = []
+        sheets = workbook.find("{%s}sheets" % main_ns)
+        if sheets is None:
+            raise WorkerError("invalid_workbook", "workbook sheet list is missing", unsupported=True)
+        for sheet in sheets.findall("{%s}sheet" % main_ns):
+            sheet_name = sheet.attrib.get("name")
+            relationship_id = sheet.attrib.get("{%s}id" % document_rel_ns)
+            target = targets.get(relationship_id or "")
+            if not sheet_name or not target:
+                raise WorkerError(
+                    "unsupported_workbook_structure",
+                    "cannot resolve worksheet relationship for formula-cache inspection",
+                    unsupported=True,
+                )
+            part = posixpath.normpath(
+                target.lstrip("/") if target.startswith("/") else posixpath.join("xl", target)
+            )
+            if part.startswith("../") or not part.startswith("xl/") or part not in package.namelist():
+                raise WorkerError(
+                    "unsupported_workbook_structure",
+                    "worksheet relationship points outside the supported XLSX package layout",
+                    unsupported=True,
+                )
+            root = ElementTree.fromstring(package.read(part))
+            for cell in root.iter("{%s}c" % main_ns):
+                formula = cell.find("{%s}f" % main_ns)
+                cached = cell.find("{%s}v" % main_ns)
+                address = cell.attrib.get("r")
                 if formula is not None and cached is not None and cached.text not in (None, ""):
-                    return True
+                    if not address:
+                        raise WorkerError(
+                            "unsupported_workbook_structure",
+                            "formula cell with cached value has no coordinate",
+                            unsupported=True,
+                        )
+                    cached_cells.append((sheet_name, address.replace("$", "").upper()))
+        return cached_cells
+
+
+def _range_write_covers_cell(sheet: str, address: str, operation: Dict[str, Any]) -> bool:
+    """Check only operations that deterministically write every cell in a range."""
+    if operation.get("operation") not in ("import_range", "copy_range"):
+        return False
+    if operation.get("target_sheet") != sheet:
+        return False
+    # `_copy_cells` skips blank source cells unless materialize_blank_cells is
+    # set. Requiring both flags means even blank source cells explicitly clear
+    # the destination formula/cache; style/comment copying alone is insufficient.
+    if not operation.get("copy_values") or not operation.get("materialize_blank_cells"):
+        return False
+    try:
+        from openpyxl.utils.cell import coordinate_to_tuple, range_boundaries
+        source_min_col, source_min_row, source_max_col, source_max_row = range_boundaries(
+            operation["source_range"]
+        )
+        target_row, target_col = coordinate_to_tuple(operation["target_start"].replace("$", ""))
+        row, column = coordinate_to_tuple(address)
+    except (KeyError, TypeError, ValueError):
+        return False
+    if not all((source_min_col, source_min_row, source_max_col, source_max_row)):
+        return False
+    target_max_row = target_row + source_max_row - source_min_row
+    target_max_col = target_col + source_max_col - source_min_col
+    return target_row <= row <= target_max_row and target_col <= column <= target_max_col
+
+
+def _formula_cache_is_explicitly_replaced(
+    sheet: str, address: str, operations: List[Dict[str, Any]]
+) -> bool:
+    current_sheet = sheet
+    for operation in operations:
+        kind = operation.get("operation")
+        if kind == "delete_sheet" and operation.get("name") == current_sheet:
+            return True
+        if kind == "rename_sheet" and operation.get("old_name") == current_sheet:
+            current_sheet = operation.get("new_name", current_sheet)
+            continue
+        if kind in ("set_cell_value", "set_formula_text"):
+            target = operation.get("cell", "").replace("$", "").upper()
+            if operation.get("sheet") == current_sheet and target == address:
+                return True
+        elif _range_write_covers_cell(current_sheet, address, operation):
+            return True
     return False
+
+
+def _uncovered_formula_cache_cells(path: Path, operations: List[Dict[str, Any]]) -> List[Tuple[str, str]]:
+    return [
+        (sheet, address)
+        for sheet, address in _formula_cache_cells(path)
+        if not _formula_cache_is_explicitly_replaced(sheet, address, operations)
+    ]
 
 
 def _preflight(request: Dict[str, Any]) -> Tuple[Path, Path, List[Dict[str, Any]]]:
@@ -118,10 +211,13 @@ def _preflight(request: Dict[str, Any]) -> Tuple[Path, Path, List[Dict[str, Any]
     workbook = plan.get("workbook") or {}
     if not workbook.get("inventory_complete", False):
         raise WorkerError("unknown_package_parts", "OOXML inventory is incomplete", unsupported=True)
-    if _formula_cache_present(input_path):
+    uncovered_formula_caches = _uncovered_formula_cache_cells(input_path, operations)
+    if uncovered_formula_caches:
         raise WorkerError(
             "formula_cache_not_preserved",
-            "openpyxl would discard a non-empty formula cache; use an engine with matching cache evidence",
+            "openpyxl would discard {} non-empty formula cache(s) outside explicit value-write operations; use an engine with matching cache evidence".format(
+                len(uncovered_formula_caches)
+            ),
             unsupported=True,
         )
     for operation in operations:
