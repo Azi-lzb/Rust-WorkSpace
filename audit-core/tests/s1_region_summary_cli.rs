@@ -115,6 +115,174 @@ fn run_summary(root: &Path, output: &Path, developer_view: bool) -> Output {
         .expect("run S1-F02 named-region summary CLI")
 }
 
+fn run_summary_with_history(
+    template: &Path,
+    input_dir: &Path,
+    history: &Path,
+    output: &Path,
+    developer_view: bool,
+) -> Output {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_open-data-audit"));
+    command
+        .arg("s1-region-summary")
+        .arg("--template-workbook")
+        .arg(template)
+        .arg("--input-dir")
+        .arg(input_dir)
+        .arg("--output-workbook")
+        .arg(output)
+        .arg("--history-workbook")
+        .arg(history)
+        .arg("--feature-name")
+        .arg("任意行汇总");
+    if developer_view {
+        command.arg("--developer-view");
+    }
+    command
+        .output()
+        .expect("run S1-F02 history-enriched summary CLI")
+}
+
+fn write_history_summary_template(path: &Path) {
+    let mut workbook = Workbook::new();
+    {
+        let worksheet = workbook.add_worksheet();
+        worksheet
+            .set_name("本地校验结果")
+            .expect("set history template sheet name");
+        for (column, header) in [
+            "批次",
+            "表单名称",
+            "规则编号",
+            "规则类型",
+            "规则描述",
+            "校验字段",
+        ]
+        .iter()
+        .enumerate()
+        {
+            worksheet
+                .write_string(1, column as u16 + 1, *header)
+                .expect("write history template header");
+        }
+    }
+    workbook
+        .define_name("任意行汇总区域", "='本地校验结果'!$B$3:$G$10")
+        .expect("define history summary range");
+    workbook
+        .define_name("表头区域", "='本地校验结果'!$B$2:$G$2")
+        .expect("define history header range");
+    workbook.save(path).expect("save history summary template");
+}
+
+fn write_history_summary_source(path: &Path) {
+    let mut workbook = Workbook::new();
+    let worksheet = workbook.add_worksheet();
+    worksheet
+        .set_name("本地校验结果")
+        .expect("set history source sheet name");
+    let rows = [
+        [
+            "2026-07",
+            "存量单位贷款",
+            "1.0",
+            "阈值",
+            "不应低于",
+            "贷款余额",
+        ],
+        [
+            "2026-07",
+            "存量单位贷款",
+            "2.0",
+            "阈值",
+            "不应低于",
+            "贷款余额",
+        ],
+    ];
+    for (row_index, row) in rows.iter().enumerate() {
+        for (column_index, value) in row.iter().enumerate() {
+            let row = row_index as u32 + 2;
+            let column = column_index as u16 + 1;
+            if column_index == 2 {
+                worksheet
+                    .write_number(
+                        row,
+                        column,
+                        value.parse::<f64>().expect("parse rule identifier"),
+                    )
+                    .expect("write numeric rule identifier");
+            } else {
+                worksheet
+                    .write_string(row, column, *value)
+                    .expect("write source history key");
+            }
+        }
+    }
+    workbook.save(path).expect("save history summary source");
+}
+
+fn write_history_workbook(path: &Path, include_formula: bool) {
+    let mut workbook = Workbook::new();
+    let worksheet = workbook.add_worksheet();
+    worksheet
+        .set_name("本地校验结果")
+        .expect("set history worksheet name");
+    let headers = [
+        "来源文件",
+        "来源工作表",
+        "批次",
+        "表单名称",
+        "规则编号",
+        "规则类型",
+        "规则描述",
+        "校验字段",
+        "历史触发条数",
+        "历史分类说明",
+        "审核结果",
+    ];
+    for (column, header) in headers.iter().enumerate() {
+        worksheet
+            .write_string(0, column as u16, *header)
+            .expect("write history header");
+    }
+    for (row, count, class, result) in [
+        ("1", 10.0, "类别甲", "通过"),
+        ("1", 12.0, "类别乙", "未通过"),
+    ] {
+        let row_index = if class == "类别甲" { 1 } else { 2 };
+        let values = [
+            "Sample",
+            "本地校验结果",
+            "2026-07",
+            "存量单位贷款",
+            row,
+            "阈值",
+            "不应低于",
+            "贷款余额",
+        ];
+        for (column, value) in values.iter().enumerate() {
+            worksheet
+                .write_string(row_index, column as u16, *value)
+                .expect("write history identity value");
+        }
+        worksheet
+            .write_number(row_index, 8, count)
+            .expect("write history trigger count");
+        worksheet
+            .write_string(row_index, 9, class)
+            .expect("write history classification");
+        worksheet
+            .write_string(row_index, 10, result)
+            .expect("write history audit result");
+    }
+    if include_formula {
+        worksheet
+            .write_formula(1, 10, "=1+1")
+            .expect("write formula to history sheet");
+    }
+    workbook.save(path).expect("save history workbook");
+}
+
 fn read_text(sheet: &SheetDump, address: &str) -> String {
     match sheet
         .values
@@ -308,5 +476,96 @@ fn cli_refuses_formula_sources_without_creating_output() {
     let error = String::from_utf8_lossy(&result.stderr);
     assert!(error.contains("含公式的工作表"), "{error}");
     assert!(!output_path.exists());
+    fs::remove_dir_all(&root).expect("remove synthetic test directory");
+}
+
+#[test]
+fn cli_appends_builtin_history_fields_with_numeric_text_key_normalization() {
+    let root = temporary_root("history_append");
+    let input_dir = root.join("input");
+    fs::create_dir_all(&input_dir).expect("create history summary source directory");
+    let template = root.join("template.xlsx");
+    let source = input_dir.join("Sample.xlsx");
+    let history = root.join("history.xlsx");
+    let output_path = root.join("summary.xlsx");
+    write_history_summary_template(&template);
+    write_history_summary_source(&source);
+    write_history_workbook(&history, false);
+    let source_before = fs::read(&source).expect("read original source snapshot");
+
+    let result = run_summary_with_history(&template, &input_dir, &history, &output_path, true);
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let payload: Value = serde_json::from_slice(&result.stdout).expect("parse CLI summary");
+    assert_eq!(
+        payload["summary"]["history_reader"],
+        "calamine+namespace_aware_ooxml"
+    );
+    assert_eq!(payload["summary"]["history_rows_matched"], 1);
+    assert_eq!(payload["summary"]["sheets"][0]["column_count"], 11);
+    assert!(payload["summary"]["history_elapsed_ms"].is_number());
+
+    let events = String::from_utf8_lossy(&result.stderr)
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).expect("parse developer event"))
+        .collect::<Vec<_>>();
+    assert_eq!(events.len(), 2);
+    assert_eq!(
+        events[1]["history_reader"],
+        "calamine+namespace_aware_ooxml"
+    );
+    assert_eq!(events[1]["history_rows_matched"], 1);
+    assert!(events[1]["history_elapsed_ms"].is_number());
+
+    let output = read_workbook(&output_path).expect("read history-enriched summary");
+    let sheet = output
+        .sheets
+        .iter()
+        .find(|sheet| sheet.name == "本地校验结果")
+        .expect("find history-enriched summary sheet");
+    assert_eq!(read_text(sheet, "I1"), "历史触发条数");
+    assert_eq!(read_text(sheet, "J1"), "历史分类说明");
+    assert_eq!(read_text(sheet, "K1"), "审核结果");
+    assert_eq!(read_text(sheet, "I2"), "10|12");
+    assert_eq!(read_text(sheet, "J2"), "类别甲|类别乙");
+    assert_eq!(read_text(sheet, "K2"), "通过|未通过");
+    assert_eq!(read_value(sheet, "I3"), CellValue::Empty);
+    assert_eq!(read_value(sheet, "J3"), CellValue::Empty);
+    assert_eq!(read_value(sheet, "K3"), CellValue::Empty);
+    assert_eq!(
+        fs::read(&source).expect("read source after run"),
+        source_before
+    );
+
+    fs::remove_dir_all(&root).expect("remove synthetic test directory");
+}
+
+#[test]
+fn cli_refuses_formula_history_sheet_before_creating_output() {
+    let root = temporary_root("history_formula_guard");
+    let input_dir = root.join("input");
+    fs::create_dir_all(&input_dir).expect("create history summary source directory");
+    let template = root.join("template.xlsx");
+    let source = input_dir.join("Sample.xlsx");
+    let history = root.join("history.xlsx");
+    let output_path = root.join("summary.xlsx");
+    write_history_summary_template(&template);
+    write_history_summary_source(&source);
+    write_history_workbook(&history, true);
+    let source_before = fs::read(&source).expect("read original source snapshot");
+
+    let result = run_summary_with_history(&template, &input_dir, &history, &output_path, false);
+    assert!(!result.status.success());
+    let error = String::from_utf8_lossy(&result.stderr);
+    assert!(error.contains("包含公式"), "{error}");
+    assert!(!output_path.exists());
+    assert_eq!(
+        fs::read(&source).expect("read source after refusal"),
+        source_before
+    );
+
     fs::remove_dir_all(&root).expect("remove synthetic test directory");
 }

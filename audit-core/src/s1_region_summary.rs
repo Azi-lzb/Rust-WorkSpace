@@ -1,9 +1,9 @@
 //! S1-F02 named-range summaries for formula-free XLSX input.
 //!
 //! This migrates the ordinary `任意行汇总` and `固定行汇总` value path. It
-//! intentionally rejects fallback-template, extra metadata, history-enrichment,
-//! and formula-bearing cases until each behavior has an Audit-specific parity
-//! contract.
+//! intentionally rejects fallback-template and formula-bearing source cases
+//! until each behavior has an Audit-specific parity contract. Optional history
+//! enrichment follows the source project's built-in sheet/key rules.
 
 use crate::{
     name_config::{
@@ -49,12 +49,15 @@ pub struct S1RegionSummarySummary {
     pub data_rows: usize,
     pub skipped_missing_sheets: usize,
     pub metadata_fields_left_blank: usize,
+    pub history_rows_matched: usize,
     pub reader: &'static str,
+    pub history_reader: Option<&'static str>,
     pub writer: &'static str,
     pub discovery_time_ms: u128,
     pub template_read_time_ms: u128,
     pub source_read_time_ms: u128,
     pub calculation_time_ms: u128,
+    pub history_elapsed_ms: u128,
     pub write_time_ms: u128,
     pub validation_time_ms: u128,
     pub elapsed_ms: u128,
@@ -74,6 +77,7 @@ struct RegionGroup {
     output_sheet_name: String,
     extra_fields: Vec<SummaryField>,
     headers: Vec<String>,
+    history_fields: Vec<String>,
     rows: Vec<Vec<CellValue>>,
 }
 
@@ -103,6 +107,7 @@ pub fn summarize_s1_named_regions(
     input_dir: impl AsRef<Path>,
     output_path: impl AsRef<Path>,
     mapping_config: Option<&Path>,
+    history_workbook_path: Option<&Path>,
     feature_names: &[String],
     recursive: bool,
 ) -> Result<S1RegionSummarySummary> {
@@ -328,6 +333,7 @@ pub fn summarize_s1_named_regions(
                     output_sheet_name: String::new(),
                     extra_fields: extra_fields.clone(),
                     headers: header_values,
+                    history_fields: Vec::new(),
                     rows: Vec::new(),
                 });
                 index
@@ -442,13 +448,42 @@ pub fn summarize_s1_named_regions(
     }
     ensure!(feature_count > 0, "配置中没有可执行的任意行/固定行汇总映射");
 
+    let history_started = Instant::now();
+    let history_path = history_workbook_path.filter(|path| path.is_file());
+    let should_read_history = history_path.is_some()
+        && groups
+            .iter()
+            .any(|group| summary_history_rule(group).is_some());
+    let (history_workbook, history_reader) = match history_path.filter(|_| should_read_history) {
+        Some(path) => {
+            ensure!(
+                path.extension()
+                    .and_then(|extension| extension.to_str())
+                    .is_some_and(|extension| extension.eq_ignore_ascii_case("xlsx")),
+                "S1-F02 历史追加当前仅支持 .xlsx 工作簿"
+            );
+            let workbook = read_workbook(path)
+                .with_context(|| format!("读取 S1-F02 历史追加工作簿失败：{}", path.display()))?;
+            (Some(workbook), Some(READER_ENGINE))
+        }
+        None => (None, None),
+    };
+    let mut history_rows_matched = 0;
+    if let Some(history_workbook) = history_workbook.as_ref() {
+        for group in &mut groups {
+            history_rows_matched += enrich_summary_group_with_history(group, history_workbook)?;
+        }
+    }
+    let history_elapsed_ms = history_started.elapsed().as_millis();
+
     let mut used_sheet_names = HashSet::new();
     for group in &mut groups {
         group.output_sheet_name =
             output_sheet_name(&group.template_sheet_name, &mut used_sheet_names);
         ensure!(
             group.rows.len() + 1 <= MAX_ROWS
-                && group.headers.len() + group.extra_fields.len() + 2 <= MAX_COLUMNS,
+                && group.headers.len() + group.extra_fields.len() + group.history_fields.len() + 2
+                    <= MAX_COLUMNS,
             "S1-F02 汇总输出超过 XLSX 的最大行列数"
         );
     }
@@ -483,17 +518,7 @@ pub fn summarize_s1_named_regions(
                     .with_context(|| {
                         format!("设置 S1-F02 输出工作表名失败：{}", group.output_sheet_name)
                     })?;
-                let mut headers = vec![
-                    CellValue::Text("来源文件".to_owned()),
-                    CellValue::Text("来源工作表".to_owned()),
-                ];
-                headers.extend(
-                    group
-                        .extra_fields
-                        .iter()
-                        .map(|field| CellValue::Text(field.name.clone())),
-                );
-                headers.extend(group.headers.iter().cloned().map(CellValue::Text));
+                let headers = summary_output_headers(group);
                 write_row(worksheet, 0, &headers, &header_format)?;
                 for (row_index, row) in group.rows.iter().enumerate() {
                     write_row(worksheet, row_index as u32 + 1, row, &value_format)?;
@@ -539,7 +564,10 @@ pub fn summarize_s1_named_regions(
             feature_name: group.feature_name.clone(),
             sheet_name: group.output_sheet_name.clone(),
             row_count: group.rows.len(),
-            column_count: group.headers.len() + group.extra_fields.len() + 2,
+            column_count: group.headers.len()
+                + group.extra_fields.len()
+                + group.history_fields.len()
+                + 2,
         })
         .collect::<Vec<_>>();
     let data_rows = sheets.iter().map(|sheet| sheet.row_count).sum();
@@ -552,17 +580,286 @@ pub fn summarize_s1_named_regions(
         data_rows,
         skipped_missing_sheets,
         metadata_fields_left_blank,
+        history_rows_matched,
         reader: READER_ENGINE,
+        history_reader,
         writer: WRITER_ENGINE,
         discovery_time_ms,
         template_read_time_ms,
         source_read_time_ms,
         calculation_time_ms,
+        history_elapsed_ms,
         write_time_ms,
         validation_time_ms,
         elapsed_ms: started.elapsed().as_millis(),
         sheets,
     })
+}
+
+const LOCAL_VALIDATION_HISTORY_KEYS: &[&str] = &[
+    "来源文件",
+    "来源工作表",
+    "批次",
+    "表单名称",
+    "规则编号",
+    "规则类型",
+    "规则描述",
+    "校验字段",
+];
+const LOCAL_VALIDATION_HISTORY_FIELDS: &[&str] = &["历史触发条数", "历史分类说明", "审核结果"];
+const BUSINESS_EXPLANATION_HISTORY_KEYS: &[&str] =
+    &["来源文件", "来源工作表", "业务表单名称", "业务表单英文名称"];
+const TASK_EXPLANATION_HISTORY_KEYS: &[&str] = &[
+    "来源文件",
+    "来源工作表",
+    "社会统一信用代码",
+    "金融机构编码",
+    "任务名称",
+];
+const EXPLANATION_HISTORY_FIELDS: &[&str] = &["历史说明"];
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+enum NormalizedHistoryKeyValue {
+    Empty,
+    Number(u64),
+    Text(String),
+}
+
+fn summary_output_headers(group: &RegionGroup) -> Vec<CellValue> {
+    let mut headers = vec![
+        CellValue::Text("来源文件".to_owned()),
+        CellValue::Text("来源工作表".to_owned()),
+    ];
+    headers.extend(
+        group
+            .extra_fields
+            .iter()
+            .map(|field| CellValue::Text(field.name.clone())),
+    );
+    headers.extend(group.headers.iter().cloned().map(CellValue::Text));
+    headers.extend(group.history_fields.iter().cloned().map(CellValue::Text));
+    headers
+}
+
+fn history_append_rule(
+    sheet_name: &str,
+) -> Option<(&'static [&'static str], &'static [&'static str])> {
+    match sheet_name {
+        "本地校验结果" => Some((
+            LOCAL_VALIDATION_HISTORY_KEYS,
+            LOCAL_VALIDATION_HISTORY_FIELDS,
+        )),
+        "业务说明" => Some((
+            BUSINESS_EXPLANATION_HISTORY_KEYS,
+            EXPLANATION_HISTORY_FIELDS,
+        )),
+        "任务说明" => Some((TASK_EXPLANATION_HISTORY_KEYS, EXPLANATION_HISTORY_FIELDS)),
+        _ => None,
+    }
+}
+
+fn summary_history_rule(
+    group: &RegionGroup,
+) -> Option<(&'static [&'static str], &'static [&'static str])> {
+    let rule = history_append_rule(&group.template_sheet_name)?;
+    let base_header_keys = summary_base_headers(group)
+        .iter()
+        .map(|header| header.trim().to_lowercase())
+        .collect::<HashSet<_>>();
+    rule.0
+        .iter()
+        .all(|field| base_header_keys.contains(&field.trim().to_lowercase()))
+        .then_some(rule)
+}
+
+fn enrich_summary_group_with_history(
+    group: &mut RegionGroup,
+    history_workbook: &WorkbookDump,
+) -> Result<usize> {
+    let Some((key_fields, history_fields)) = summary_history_rule(group) else {
+        return Ok(0);
+    };
+    let base_headers = summary_base_headers(group);
+    let Some(history_sheet) = history_workbook
+        .sheets
+        .iter()
+        .find(|sheet| sheet.name == group.template_sheet_name)
+    else {
+        return Ok(0);
+    };
+    ensure!(
+        history_sheet.formulas.is_empty(),
+        "S1-F02 历史工作表“{}”包含公式；当前只迁移其普通存储值历史记录",
+        history_sheet.name
+    );
+
+    let grid = decode_sheet_values(history_sheet)?;
+    let mut max_row = 1;
+    let mut max_column = 0;
+    for (row, column) in grid.keys() {
+        max_row = max_row.max(*row);
+        max_column = max_column.max(*column);
+    }
+    let history_headers = (1..=max_column)
+        .map(|column| history_header_text(&cell_value(&grid, 1, column)))
+        .collect::<Vec<_>>();
+    let header_indexes = history_headers
+        .iter()
+        .enumerate()
+        .map(|(index, name)| (name.as_str(), index + 1))
+        .collect::<HashMap<_, _>>();
+    let base_header_indexes = base_headers
+        .iter()
+        .enumerate()
+        .map(|(index, name)| (name.as_str(), index))
+        .collect::<HashMap<_, _>>();
+    let key_indexes = key_fields
+        .iter()
+        .map(|field| header_indexes.get(field).copied())
+        .collect::<Vec<_>>();
+    let value_indexes = history_fields
+        .iter()
+        .map(|field| header_indexes.get(field).copied())
+        .collect::<Vec<_>>();
+    let mut grouped = HashMap::<Vec<NormalizedHistoryKeyValue>, Vec<Vec<String>>>::new();
+    for row in 2..=max_row {
+        let key = key_indexes
+            .iter()
+            .map(|column| {
+                column.map_or(NormalizedHistoryKeyValue::Empty, |column| {
+                    normalize_history_key_value(&cell_value(&grid, row, column))
+                })
+            })
+            .collect::<Vec<_>>();
+        let values = value_indexes
+            .iter()
+            .map(|column| {
+                column
+                    .map(|column| {
+                        history_cell_text(&cell_value(&grid, row, column))
+                            .trim()
+                            .to_owned()
+                    })
+                    .unwrap_or_default()
+            })
+            .collect::<Vec<_>>();
+        grouped.entry(key).or_default().push(values);
+    }
+    let lookup = grouped
+        .into_iter()
+        .map(|(key, rows)| {
+            let values = (0..history_fields.len())
+                .map(|field_index| {
+                    rows.iter()
+                        .filter_map(|row| row.get(field_index))
+                        .filter(|value| !value.is_empty())
+                        .cloned()
+                        .collect::<Vec<_>>()
+                        .join("|")
+                })
+                .collect::<Vec<_>>();
+            (key, values)
+        })
+        .collect::<HashMap<_, _>>();
+
+    let row_key_indexes = key_fields
+        .iter()
+        .map(|field| base_header_indexes.get(field).copied())
+        .collect::<Vec<_>>();
+    let mut matched_rows = 0;
+    for row in &mut group.rows {
+        ensure!(
+            row.len() == base_headers.len(),
+            "S1-F02 汇总行宽与历史追加键定义不一致"
+        );
+        let key = row_key_indexes
+            .iter()
+            .map(|index| {
+                index.map_or(NormalizedHistoryKeyValue::Empty, |index| {
+                    normalize_history_key_value(&row[index])
+                })
+            })
+            .collect::<Vec<_>>();
+        let values = lookup.get(&key);
+        if values.is_some() {
+            matched_rows += 1;
+        }
+        row.extend(values.map_or_else(
+            || vec![CellValue::Empty; history_fields.len()],
+            |values| {
+                values
+                    .iter()
+                    .map(|value| {
+                        if value.is_empty() {
+                            CellValue::Empty
+                        } else {
+                            CellValue::Text(value.clone())
+                        }
+                    })
+                    .collect()
+            },
+        ));
+    }
+    group.history_fields = history_fields
+        .iter()
+        .map(|field| (*field).to_owned())
+        .collect();
+    Ok(matched_rows)
+}
+
+fn summary_base_headers(group: &RegionGroup) -> Vec<String> {
+    let mut headers = vec!["来源文件".to_owned(), "来源工作表".to_owned()];
+    headers.extend(group.extra_fields.iter().map(|field| field.name.clone()));
+    headers.extend(group.headers.iter().cloned());
+    headers
+}
+
+fn history_header_text(value: &CellValue) -> String {
+    if matches!(
+        value,
+        CellValue::Empty | CellValue::Boolean(false) | CellValue::Integer(0)
+    ) || matches!(value, CellValue::Number(value) if *value == 0.0)
+    {
+        return String::new();
+    }
+    history_cell_text(value).trim().to_owned()
+}
+
+fn history_cell_text(value: &CellValue) -> String {
+    match value {
+        CellValue::Empty => String::new(),
+        CellValue::Text(value) | CellValue::Error(value) => value.clone(),
+        CellValue::Number(value) | CellValue::DateTimeSerial(value) => openpyxl_number_text(*value),
+        CellValue::Integer(value) => value.to_string(),
+        CellValue::Boolean(true) => "True".to_owned(),
+        CellValue::Boolean(false) => "False".to_owned(),
+        CellValue::DateTimeIso(value) | CellValue::DurationIso(value) => value.replace('T', " "),
+    }
+}
+
+fn openpyxl_number_text(value: f64) -> String {
+    if value.is_finite() && value.fract() == 0.0 {
+        format!("{value:.0}")
+    } else {
+        value.to_string()
+    }
+}
+
+fn normalize_history_key_value(value: &CellValue) -> NormalizedHistoryKeyValue {
+    let text = history_cell_text(value);
+    let text = text.trim();
+    if text.is_empty() {
+        return NormalizedHistoryKeyValue::Empty;
+    }
+    if let Ok(number) = text.parse::<f64>() {
+        let bits = if number == 0.0 {
+            0.0_f64.to_bits()
+        } else {
+            number.to_bits()
+        };
+        return NormalizedHistoryKeyValue::Number(bits);
+    }
+    NormalizedHistoryKeyValue::Text(text.to_owned())
 }
 
 fn parse_summary_fields(
@@ -900,17 +1197,7 @@ fn validate_summary_workbook(path: &Path, groups: &[RegionGroup]) -> Result<()> 
 
     for (sheet, group) in actual.sheets.iter().zip(groups.iter().rev()) {
         let mut expected = BTreeMap::<(usize, usize), CellValue>::new();
-        let mut headers = vec![
-            CellValue::Text("来源文件".to_owned()),
-            CellValue::Text("来源工作表".to_owned()),
-        ];
-        headers.extend(
-            group
-                .extra_fields
-                .iter()
-                .map(|field| CellValue::Text(field.name.clone())),
-        );
-        headers.extend(group.headers.iter().cloned().map(CellValue::Text));
+        let headers = summary_output_headers(group);
         for (column, value) in headers.iter().enumerate() {
             if !is_empty_value(value) {
                 expected.insert((1, column + 1), value.clone());
@@ -1066,6 +1353,29 @@ mod tests {
         );
         let error = parse_summary_fields(&[record]).unwrap_err().to_string();
         assert!(error.contains("必须只定位一个单元格"), "{error}");
+    }
+
+    #[test]
+    fn summary_history_uses_only_the_three_builtin_source_rules() {
+        assert_eq!(
+            history_append_rule("本地校验结果"),
+            Some((
+                LOCAL_VALIDATION_HISTORY_KEYS,
+                LOCAL_VALIDATION_HISTORY_FIELDS
+            ))
+        );
+        assert_eq!(
+            history_append_rule("业务说明"),
+            Some((
+                BUSINESS_EXPLANATION_HISTORY_KEYS,
+                EXPLANATION_HISTORY_FIELDS
+            ))
+        );
+        assert_eq!(
+            history_append_rule("任务说明"),
+            Some((TASK_EXPLANATION_HISTORY_KEYS, EXPLANATION_HISTORY_FIELDS))
+        );
+        assert_eq!(history_append_rule("其他结果"), None);
     }
 
     #[test]

@@ -422,6 +422,10 @@ struct S1RegionSummaryArgs {
     #[arg(long)]
     mapping_config: Option<PathBuf>,
 
+    /// Optional XLSX workbook containing built-in S1 summary history sheets.
+    #[arg(long)]
+    history_workbook: Option<PathBuf>,
+
     /// Feature name from the mapping workbook; repeat to run multiple summaries.
     #[arg(long = "feature-name", required = true)]
     feature_names: Vec<String>,
@@ -870,6 +874,7 @@ fn run_s1_region_summary(arguments: S1RegionSummaryArgs) -> Result<()> {
         &arguments.input_dir,
         &arguments.output_workbook,
         arguments.mapping_config.as_deref(),
+        arguments.history_workbook.as_deref(),
         &arguments.feature_names,
         arguments.recursive,
     ) {
@@ -916,21 +921,28 @@ fn run_s1_region_summary(arguments: S1RegionSummaryArgs) -> Result<()> {
                 "data_rows": summary.data_rows,
                 "skipped_missing_sheets": summary.skipped_missing_sheets,
                 "metadata_fields_left_blank": summary.metadata_fields_left_blank,
+                "history_reader": summary.history_reader,
+                "history_rows_matched": summary.history_rows_matched,
                 "discovery_time_ms": summary.discovery_time_ms,
                 "template_read_time_ms": summary.template_read_time_ms,
                 "source_read_time_ms": summary.source_read_time_ms,
                 "calculation_time_ms": summary.calculation_time_ms,
+                "history_elapsed_ms": summary.history_elapsed_ms,
                 "write_time_ms": summary.write_time_ms,
                 "validation_time_ms": summary.validation_time_ms,
                 "elapsed_ms": started.elapsed().as_millis()
             }))?
         );
     } else {
+        let history_message = summary.history_reader.map_or_else(String::new, |_| {
+            format!("；历史追加匹配 {} 行", summary.history_rows_matched)
+        });
         eprintln!(
-            "汇总完成：{} 个工作簿，{} 张结果表，{} 行；耗时 {} ms；输出：{}",
+            "汇总完成：{} 个工作簿，{} 张结果表，{} 行{}；耗时 {} ms；输出：{}",
             summary.source_workbooks,
             summary.output_sheets,
             summary.data_rows,
+            history_message,
             started.elapsed().as_millis(),
             summary.output_path.display()
         );
@@ -940,6 +952,7 @@ fn run_s1_region_summary(arguments: S1RegionSummaryArgs) -> Result<()> {
     if !arguments.developer_view {
         if let Some(object) = summary_output.as_object_mut() {
             object.remove("reader");
+            object.remove("history_reader");
             object.remove("writer");
         }
     }

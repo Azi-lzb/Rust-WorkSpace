@@ -26,6 +26,7 @@ from base_audit.name_config import (  # noqa: E402
 )
 from base_audit.region_summary import run_region_summaries  # noqa: E402
 from openpyxl import Workbook, load_workbook  # noqa: E402
+from openpyxl.workbook.defined_name import DefinedName  # noqa: E402
 
 
 def digest(path: Path) -> str:
@@ -146,6 +147,84 @@ def compare_workbooks(python_path: Path, rust_path: Path) -> dict[str, Any]:
         rust.close()
 
 
+def write_history_case(root: Path) -> tuple[Path, Path, Path, Path]:
+    template_path = root / "history_template.xlsx"
+    template = Workbook()
+    template_sheet = template.active
+    template_sheet.title = "本地校验结果"
+    for column, header in enumerate(
+        (
+            "批次",
+            "表单名称",
+            "规则编号",
+            "规则类型",
+            "规则描述",
+            "校验字段",
+        ),
+        start=2,
+    ):
+        template_sheet.cell(2, column, header)
+    template.defined_names.add(
+        DefinedName("任意行汇总区域", attr_text="'本地校验结果'!$B$3:$G$10")
+    )
+    template.defined_names.add(
+        DefinedName("表头区域", attr_text="'本地校验结果'!$B$2:$G$2")
+    )
+    template.save(template_path)
+    template.close()
+
+    input_dir = root / "history_input"
+    input_dir.mkdir()
+    source_path = input_dir / "Sample.xlsx"
+    source = Workbook()
+    source_sheet = source.active
+    source_sheet.title = "本地校验结果"
+    source_rows = (
+        ("2026-07", "存量单位贷款", 1.0, "阈值", "不应低于", "贷款余额"),
+        ("2026-07", "存量单位贷款", 2.0, "阈值", "不应低于", "贷款余额"),
+    )
+    for row_number, values in enumerate(source_rows, start=3):
+        for column, value in enumerate(values, start=2):
+            source_sheet.cell(row_number, column, value)
+    source.save(source_path)
+    source.close()
+
+    history_path = root / "history.xlsx"
+    history = Workbook()
+    history_sheet = history.active
+    history_sheet.title = "本地校验结果"
+    history_sheet.append(
+        (
+            "来源文件",
+            "来源工作表",
+            "批次",
+            "表单名称",
+            "规则编号",
+            "规则类型",
+            "规则描述",
+            "校验字段",
+            "历史触发条数",
+            "历史分类说明",
+            "审核结果",
+        )
+    )
+    identity = (
+        "Sample",
+        "本地校验结果",
+        "2026-07",
+        "存量单位贷款",
+        "1",
+        "阈值",
+        "不应低于",
+        "贷款余额",
+    )
+    history_sheet.append((*identity, 10, "类别甲", "通过"))
+    history_sheet.append((*identity, 12, "类别乙", "未通过"))
+    history.save(history_path)
+    history.close()
+    return template_path, input_dir, history_path, source_path
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--audit-binary", type=Path, required=True)
@@ -239,9 +318,91 @@ def main() -> int:
         ]
 
         comparison = compare_workbooks(result.output_path, rust_path)
-        width_exact = comparison["column_widths_exact"]
-        status = comparison["status"]
-        if status == "passed" and not width_exact:
+
+        history_root = root / "history_case"
+        history_root.mkdir()
+        (
+            history_template,
+            history_input_dir,
+            history_path,
+            history_source,
+        ) = write_history_case(history_root)
+        history_inputs = [history_template, history_path, history_source]
+        history_before = {path: digest(path) for path in history_inputs}
+        history_feature = FeatureMapping(
+            "任意行汇总",
+            USED_RANGE_SUMMARY_FUNCTION,
+            ("任意行汇总区域",),
+            False,
+            "",
+            "",
+        )
+        history_progress: list[str] = []
+        history_python = run_region_summaries(
+            template_path=history_template,
+            input_dir=history_input_dir,
+            output_dir=history_root / "python",
+            config_path=history_template,
+            summary_features=(history_feature,),
+            history_config_path=history_path,
+            on_step=history_progress.append,
+            engine_preference="自动",
+        )
+        history_rust_path = history_root / "rust.xlsx"
+        history_command = [
+            str(binary),
+            "s1-region-summary",
+            "--template-workbook",
+            str(history_template),
+            "--input-dir",
+            str(history_input_dir),
+            "--output-workbook",
+            str(history_rust_path),
+            "--history-workbook",
+            str(history_path),
+            "--feature-name",
+            "任意行汇总",
+            "--developer-view",
+        ]
+        history_completed = subprocess.run(
+            history_command,
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+        )
+        if history_completed.returncode:
+            raise RuntimeError(f"Rust history CLI failed: {history_completed.stderr.strip()}")
+        history_payload = json.loads(history_completed.stdout)
+        history_events = [
+            json.loads(line)
+            for line in history_completed.stderr.splitlines()
+            if line.strip().startswith("{")
+        ]
+        history_comparison = compare_workbooks(
+            history_python.output_path, history_rust_path
+        )
+        history_unchanged = all(
+            digest(path) == value for path, value in history_before.items()
+        )
+        history_status = (
+            "passed"
+            if history_comparison["status"] == "passed"
+            and history_payload["summary"]["history_rows_matched"] == 1
+            and history_unchanged
+            else "failed"
+        )
+
+        status = (
+            "passed"
+            if comparison["status"] == "passed" and history_status == "passed"
+            else "failed"
+        )
+        if status == "passed" and (
+            not comparison["column_widths_exact"]
+            or not history_comparison["column_widths_exact"]
+        ):
             status = "passed_with_column_width_variance"
         report = {
             "feature": "S1-F02 named-region summary",
@@ -265,7 +426,25 @@ def main() -> int:
             "data_rows": rust_payload["summary"]["data_rows"],
             "input_files_unchanged": all(digest(path) == value for path, value in before.items()),
             "comparison": comparison,
-            "scope": "Windows synthetic formula-free XLSX; named arbitrary/fixed rows; global/local single-cell metadata fields; missing source metadata sheet leaves the global field blank; merged multi-row header; values, types, sheet order, dimensions, number formats, header style, filter and freeze compared; no fallback template, history enrichment, real template or Linux runtime",
+            "history_enrichment": {
+                "status": history_status,
+                "python_engine": next(
+                    (
+                        line.split("：", 1)[1]
+                        for line in history_progress
+                        if line.startswith("已连接表格引擎：")
+                    ),
+                    "not_reported",
+                ),
+                "rust_history_reader": history_payload["summary"]["history_reader"],
+                "rust_history_rows_matched": history_payload["summary"]["history_rows_matched"],
+                "rust_history_elapsed_ms": history_payload["summary"]["history_elapsed_ms"],
+                "rust_events": len(history_events),
+                "input_files_unchanged": history_unchanged,
+                "comparison": history_comparison,
+                "scope": "synthetic local-validation history sheet; eight-column composite key; numeric 1.0 to text '1' key normalization; duplicate history rows joined in source order; unmatched source row remains blank",
+            },
+            "scope": "Windows synthetic formula-free XLSX; named arbitrary/fixed rows; global/local single-cell metadata fields; missing source metadata sheet leaves the global field blank; merged multi-row header; value/type, sheet order, dimensions, number format, header style, filter and freeze comparison; additional built-in local-validation history append comparison; no fallback template, real template or Linux runtime",
         }
         encoded = json.dumps(report, ensure_ascii=False, indent=2) + "\n"
         if args.report:
