@@ -1,5 +1,5 @@
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "suite": "audit.s1_formula_copy_candidate_real_batch",
   "status": "object_comparison_mismatch",
   "sample_scope": {
@@ -8,8 +8,11 @@
     "mapping": "source_project_default",
     "operation": "four cross-workbook ImportRange operations plus calculation flags",
     "formula_recalculation": "not requested",
+    "python_structure_preflight_discovered": 68,
     "python_structure_preflight_accepted": 17,
-    "candidate_pairs_selected": 7
+    "candidate_pairs_selected": 7,
+    "cache_comparison": "outside target formulas only when formula text matches in the Rust candidate",
+    "style_comparison": "cell number format plus full OpenPyXL serialized font/fill/border/alignment/protection semantics and named style; no style IDs"
   },
   "candidate": [
     {
@@ -24,7 +27,6 @@
         "input_unchanged": true
       },
       "object_level_comparison": {
-        "status": "mismatch",
         "range_cells": 5487,
         "range_value_type_mismatches": 0,
         "range_formula_text_mismatches": 0,
@@ -38,24 +40,20 @@
         "outside_style_mismatches": 0,
         "outside_comment_mismatches": 0,
         "outside_hyperlink_mismatches": 0,
+        "outside_formula_cache_cells": 0,
+        "outside_formula_cache_mismatches": 0,
+        "outside_formula_cache_nonempty_mismatches": 0,
         "outside_mismatches": 216,
-        "python_vs_rust_metadata_mismatch": 0,
-        "target_vs_rust_metadata_mismatch": 0,
-        "calc_flags_mismatch": 0,
-        "readback_failed": false,
-        "readback_failure_category": null,
-        "python_baseline_invalid_style_components": {
-          "font": 1012,
-          "fill": 0,
-          "border": 0,
-          "custom_number_format": 0
-        },
-        "candidate_invalid_style_components": {
-          "font": 0,
-          "fill": 0,
-          "border": 0,
-          "custom_number_format": 0
-        }
+        "python_vs_rust_workbook_metadata_mismatch_count": 0,
+        "target_vs_rust_workbook_metadata_mismatch_count": 0,
+        "calculation_flags_mismatch_count": 0,
+        "output_readback_failed": false
+      },
+      "python_baseline_invalid_style_components": {
+        "font": 1012,
+        "fill": 0,
+        "border": 0,
+        "custom_number_format": 0
       },
       "package_level_comparison": {
         "python_vs_rust_part_name_difference_count": 17,
@@ -73,7 +71,8 @@
           "workbook": 1,
           "worksheets": 10
         }
-      }
+      },
+      "formula_recalculation": "not requested"
     },
     {
       "sample_ordinal": 2,
@@ -87,7 +86,6 @@
         "input_unchanged": true
       },
       "object_level_comparison": {
-        "status": "mismatch",
         "range_cells": 5487,
         "range_value_type_mismatches": 0,
         "range_formula_text_mismatches": 0,
@@ -101,24 +99,20 @@
         "outside_style_mismatches": 0,
         "outside_comment_mismatches": 0,
         "outside_hyperlink_mismatches": 0,
+        "outside_formula_cache_cells": 0,
+        "outside_formula_cache_mismatches": 0,
+        "outside_formula_cache_nonempty_mismatches": 0,
         "outside_mismatches": 211,
-        "python_vs_rust_metadata_mismatch": 0,
-        "target_vs_rust_metadata_mismatch": 0,
-        "calc_flags_mismatch": 0,
-        "readback_failed": false,
-        "readback_failure_category": null,
-        "python_baseline_invalid_style_components": {
-          "font": 1011,
-          "fill": 0,
-          "border": 0,
-          "custom_number_format": 0
-        },
-        "candidate_invalid_style_components": {
-          "font": 0,
-          "fill": 0,
-          "border": 0,
-          "custom_number_format": 0
-        }
+        "python_vs_rust_workbook_metadata_mismatch_count": 0,
+        "target_vs_rust_workbook_metadata_mismatch_count": 0,
+        "calculation_flags_mismatch_count": 0,
+        "output_readback_failed": false
+      },
+      "python_baseline_invalid_style_components": {
+        "font": 1011,
+        "fill": 0,
+        "border": 0,
+        "custom_number_format": 0
       },
       "package_level_comparison": {
         "python_vs_rust_part_name_difference_count": 17,
@@ -136,7 +130,8 @@
           "workbook": 1,
           "worksheets": 10
         }
-      }
+      },
+      "formula_recalculation": "not requested"
     },
     {
       "sample_ordinal": 3,
@@ -150,7 +145,6 @@
         "input_unchanged": true
       },
       "object_level_comparison": {
-        "status": "mismatch",
         "range_cells": 5487,
         "range_value_type_mismatches": 0,
         "range_formula_text_mismatches": 0,
@@ -164,24 +158,20 @@
         "outside_style_mismatches": 0,
         "outside_comment_mismatches": 0,
         "outside_hyperlink_mismatches": 0,
+        "outside_formula_cache_cells": 0,
+        "outside_formula_cache_mismatches": 0,
+        "outside_formula_cache_nonempty_mismatches": 0,
         "outside_mismatches": 207,
-        "python_vs_rust_metadata_mismatch": 0,
-        "target_vs_rust_metadata_mismatch": 0,
-        "calc_flags_mismatch": 0,
-        "readback_failed": false,
-        "readback_failure_category": null,
-        "python_baseline_invalid_style_components": {
-          "font": 1011,
-          "fill": 0,
-          "border": 0,
-          "custom_number_format": 0
-        },
-        "candidate_invalid_style_components": {
-          "font": 0,
-          "fill": 0,
-          "border": 0,
-          "custom_number_format": 0
-        }
+        "python_vs_rust_workbook_metadata_mismatch_count": 0,
+        "target_vs_rust_workbook_metadata_mismatch_count": 0,
+        "calculation_flags_mismatch_count": 0,
+        "output_readback_failed": false
+      },
+      "python_baseline_invalid_style_components": {
+        "font": 1011,
+        "fill": 0,
+        "border": 0,
+        "custom_number_format": 0
       },
       "package_level_comparison": {
         "python_vs_rust_part_name_difference_count": 17,
@@ -199,7 +189,8 @@
           "workbook": 1,
           "worksheets": 10
         }
-      }
+      },
+      "formula_recalculation": "not requested"
     },
     {
       "sample_ordinal": 4,
@@ -213,7 +204,6 @@
         "input_unchanged": true
       },
       "object_level_comparison": {
-        "status": "mismatch",
         "range_cells": 5487,
         "range_value_type_mismatches": 0,
         "range_formula_text_mismatches": 0,
@@ -227,24 +217,20 @@
         "outside_style_mismatches": 0,
         "outside_comment_mismatches": 0,
         "outside_hyperlink_mismatches": 0,
+        "outside_formula_cache_cells": 0,
+        "outside_formula_cache_mismatches": 0,
+        "outside_formula_cache_nonempty_mismatches": 0,
         "outside_mismatches": 211,
-        "python_vs_rust_metadata_mismatch": 0,
-        "target_vs_rust_metadata_mismatch": 0,
-        "calc_flags_mismatch": 0,
-        "readback_failed": false,
-        "readback_failure_category": null,
-        "python_baseline_invalid_style_components": {
-          "font": 1011,
-          "fill": 0,
-          "border": 0,
-          "custom_number_format": 0
-        },
-        "candidate_invalid_style_components": {
-          "font": 0,
-          "fill": 0,
-          "border": 0,
-          "custom_number_format": 0
-        }
+        "python_vs_rust_workbook_metadata_mismatch_count": 0,
+        "target_vs_rust_workbook_metadata_mismatch_count": 0,
+        "calculation_flags_mismatch_count": 0,
+        "output_readback_failed": false
+      },
+      "python_baseline_invalid_style_components": {
+        "font": 1011,
+        "fill": 0,
+        "border": 0,
+        "custom_number_format": 0
       },
       "package_level_comparison": {
         "python_vs_rust_part_name_difference_count": 17,
@@ -262,7 +248,8 @@
           "workbook": 1,
           "worksheets": 10
         }
-      }
+      },
+      "formula_recalculation": "not requested"
     },
     {
       "sample_ordinal": 5,
@@ -276,7 +263,6 @@
         "input_unchanged": true
       },
       "object_level_comparison": {
-        "status": "mismatch",
         "range_cells": 5487,
         "range_value_type_mismatches": 0,
         "range_formula_text_mismatches": 0,
@@ -290,24 +276,20 @@
         "outside_style_mismatches": 0,
         "outside_comment_mismatches": 0,
         "outside_hyperlink_mismatches": 0,
+        "outside_formula_cache_cells": 0,
+        "outside_formula_cache_mismatches": 0,
+        "outside_formula_cache_nonempty_mismatches": 0,
         "outside_mismatches": 219,
-        "python_vs_rust_metadata_mismatch": 0,
-        "target_vs_rust_metadata_mismatch": 0,
-        "calc_flags_mismatch": 0,
-        "readback_failed": false,
-        "readback_failure_category": null,
-        "python_baseline_invalid_style_components": {
-          "font": 1011,
-          "fill": 0,
-          "border": 0,
-          "custom_number_format": 0
-        },
-        "candidate_invalid_style_components": {
-          "font": 0,
-          "fill": 0,
-          "border": 0,
-          "custom_number_format": 0
-        }
+        "python_vs_rust_workbook_metadata_mismatch_count": 0,
+        "target_vs_rust_workbook_metadata_mismatch_count": 0,
+        "calculation_flags_mismatch_count": 0,
+        "output_readback_failed": false
+      },
+      "python_baseline_invalid_style_components": {
+        "font": 1011,
+        "fill": 0,
+        "border": 0,
+        "custom_number_format": 0
       },
       "package_level_comparison": {
         "python_vs_rust_part_name_difference_count": 17,
@@ -325,7 +307,8 @@
           "workbook": 1,
           "worksheets": 10
         }
-      }
+      },
+      "formula_recalculation": "not requested"
     },
     {
       "sample_ordinal": 6,
@@ -339,7 +322,6 @@
         "input_unchanged": true
       },
       "object_level_comparison": {
-        "status": "mismatch",
         "range_cells": 5487,
         "range_value_type_mismatches": 0,
         "range_formula_text_mismatches": 0,
@@ -353,24 +335,20 @@
         "outside_style_mismatches": 0,
         "outside_comment_mismatches": 0,
         "outside_hyperlink_mismatches": 0,
+        "outside_formula_cache_cells": 0,
+        "outside_formula_cache_mismatches": 0,
+        "outside_formula_cache_nonempty_mismatches": 0,
         "outside_mismatches": 209,
-        "python_vs_rust_metadata_mismatch": 0,
-        "target_vs_rust_metadata_mismatch": 0,
-        "calc_flags_mismatch": 0,
-        "readback_failed": false,
-        "readback_failure_category": null,
-        "python_baseline_invalid_style_components": {
-          "font": 1011,
-          "fill": 0,
-          "border": 0,
-          "custom_number_format": 0
-        },
-        "candidate_invalid_style_components": {
-          "font": 0,
-          "fill": 0,
-          "border": 0,
-          "custom_number_format": 0
-        }
+        "python_vs_rust_workbook_metadata_mismatch_count": 0,
+        "target_vs_rust_workbook_metadata_mismatch_count": 0,
+        "calculation_flags_mismatch_count": 0,
+        "output_readback_failed": false
+      },
+      "python_baseline_invalid_style_components": {
+        "font": 1011,
+        "fill": 0,
+        "border": 0,
+        "custom_number_format": 0
       },
       "package_level_comparison": {
         "python_vs_rust_part_name_difference_count": 17,
@@ -388,7 +366,8 @@
           "workbook": 1,
           "worksheets": 10
         }
-      }
+      },
+      "formula_recalculation": "not requested"
     },
     {
       "sample_ordinal": 7,
@@ -402,7 +381,6 @@
         "input_unchanged": true
       },
       "object_level_comparison": {
-        "status": "mismatch",
         "range_cells": 5487,
         "range_value_type_mismatches": 0,
         "range_formula_text_mismatches": 0,
@@ -416,24 +394,20 @@
         "outside_style_mismatches": 0,
         "outside_comment_mismatches": 0,
         "outside_hyperlink_mismatches": 0,
+        "outside_formula_cache_cells": 0,
+        "outside_formula_cache_mismatches": 0,
+        "outside_formula_cache_nonempty_mismatches": 0,
         "outside_mismatches": 223,
-        "python_vs_rust_metadata_mismatch": 0,
-        "target_vs_rust_metadata_mismatch": 0,
-        "calc_flags_mismatch": 0,
-        "readback_failed": false,
-        "readback_failure_category": null,
-        "python_baseline_invalid_style_components": {
-          "font": 1011,
-          "fill": 0,
-          "border": 0,
-          "custom_number_format": 0
-        },
-        "candidate_invalid_style_components": {
-          "font": 0,
-          "fill": 0,
-          "border": 0,
-          "custom_number_format": 0
-        }
+        "python_vs_rust_workbook_metadata_mismatch_count": 0,
+        "target_vs_rust_workbook_metadata_mismatch_count": 0,
+        "calculation_flags_mismatch_count": 0,
+        "output_readback_failed": false
+      },
+      "python_baseline_invalid_style_components": {
+        "font": 1011,
+        "fill": 0,
+        "border": 0,
+        "custom_number_format": 0
       },
       "package_level_comparison": {
         "python_vs_rust_part_name_difference_count": 17,
@@ -451,18 +425,24 @@
           "workbook": 1,
           "worksheets": 10
         }
-      }
+      },
+      "formula_recalculation": "not requested"
     }
   ],
   "conclusion": {
     "capability_status": "unverified",
     "production_route_eligible": false,
-    "candidate_execution_and_input_safety": "all 7 candidates wrote temporary output; all 7 input pairs remained unchanged",
+    "candidate_execution_and_input_safety": "all selected candidates wrote temporary output; all source/template inputs remained unchanged",
     "object_level_comparison": "completed_with_mismatches",
-    "package_level_comparison": "part-name and byte differences observed; see each sample",
     "formula_recalculation": "not performed",
-    "python_baseline_style_limitation": "The old cross-workbook copier output has invalid font component references; copied-range styles are therefore compared to the source template, while values/formulas/comments/hyperlinks are compared to the Python baseline.",
+    "python_baseline_style_limitation": "invalid Python font component references are reported separately; template styles remain the copied-range style oracle",
     "raw_values_paths_or_hashes_persisted": false,
     "target_linux_validation": "not performed"
+  },
+  "verification": {
+    "copied_range_styles_compared_to": "source template",
+    "other_cell_styles_and_values_compared_to": "original target workbook",
+    "outside_formula_caches_compared_to": "original target workbook where formula text matches",
+    "capability_route": "Unverified; no production route change"
   }
 }

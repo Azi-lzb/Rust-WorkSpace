@@ -89,6 +89,7 @@ def make_synthetic_pair(directory: Path) -> tuple[Path, Path, list[dict[str, str
                 destination.cell(row, column).value = f"old-{index}-{row}-{column}"
     untouched = audit.create_sheet("Untouched")
     untouched["A1"] = "preserve-sheet"
+    untouched["B1"] = "=2+3"
     untouched["A1"].font = Font(italic=True)
     audit.save(audit_path)
     audit.close()
@@ -121,38 +122,30 @@ def resolve_real_ranges(source_root: Path, template_path: Path, mapping_path: Pa
     return definition
 
 
-def color_signature(color):
-    if color is None:
-        return None
-    return (color.type, color.rgb, color.indexed, color.theme, color.tint, color.auto)
+def style_component_signature(component, tag):
+    """Return an ID-free semantic signature for an OpenPyXL style component."""
+    node = component.to_tree(tagname=tag)
+
+    def normalize(element):
+        return (
+            element.tag,
+            tuple(sorted(element.attrib.items())),
+            element.text,
+            tuple(normalize(child) for child in element),
+        )
+
+    return normalize(node)
 
 
 def style_signature(cell):
-    font = cell.font
-    fill = cell.fill
-    border = cell.border
-    alignment = cell.alignment
-    protection = cell.protection
     return (
+        cell.style,
         cell.number_format,
-        (font.name, font.sz, font.b, font.i, font.u, font.strike, color_signature(font.color)),
-        (fill.fill_type, color_signature(fill.fgColor), color_signature(fill.bgColor)),
-        tuple(
-            (name, getattr(getattr(border, name), "style", None), color_signature(getattr(getattr(border, name), "color", None)))
-            for name in ("left", "right", "top", "bottom", "diagonal", "vertical", "horizontal")
-        ),
-        (
-            alignment.horizontal,
-            alignment.vertical,
-            alignment.textRotation,
-            alignment.wrapText,
-            alignment.shrinkToFit,
-            alignment.indent,
-            alignment.relativeIndent,
-            alignment.justifyLastLine,
-            alignment.readingOrder,
-        ),
-        (protection.locked, protection.hidden),
+        style_component_signature(cell.font, "font"),
+        style_component_signature(cell.fill, "fill"),
+        style_component_signature(cell.border, "border"),
+        style_component_signature(cell.alignment, "alignment"),
+        style_component_signature(cell.protection, "protection"),
     )
 
 
@@ -195,6 +188,8 @@ def cell_mismatch_counts(
     rust_book = load_workbook(rust_path, data_only=False, keep_links=True)
     template_book = load_workbook(template_path, data_only=False, keep_links=True)
     target_book = load_workbook(target_path, data_only=False, keep_links=True)
+    target_cache_book = load_workbook(target_path, data_only=True, keep_links=True)
+    rust_cache_book = load_workbook(rust_path, data_only=True, keep_links=True)
     counts = {
         "range_cells": 0,
         "range_value_type_mismatches": 0,
@@ -209,6 +204,9 @@ def cell_mismatch_counts(
         "outside_style_mismatches": 0,
         "outside_comment_mismatches": 0,
         "outside_hyperlink_mismatches": 0,
+        "outside_formula_cache_cells": 0,
+        "outside_formula_cache_mismatches": 0,
+        "outside_formula_cache_nonempty_mismatches": 0,
         "outside_mismatches": 0,
         "outside_sheet_mismatches": 0,
     }
@@ -260,26 +258,42 @@ def cell_mismatch_counts(
             continue
         target_sheet = target_book[sheet_name]
         rust_sheet = rust_book[sheet_name]
+        target_cache_sheet = target_cache_book[sheet_name]
+        rust_cache_sheet = rust_cache_book[sheet_name]
         coordinates = set(target_sheet._cells) | set(rust_sheet._cells)
         for row, col in coordinates:
             if (row, col) in range_cells.get(sheet_name, set()):
                 continue
             counts["outside_cells"] += 1
+            target_cell = target_sheet.cell(row, col)
+            rust_cell = rust_sheet.cell(row, col)
             record_cell(
                 "outside",
-                target_sheet.cell(row, col),
-                rust_sheet.cell(row, col),
-                target_sheet.cell(row, col),
-                rust_sheet.cell(row, col),
+                target_cell,
+                rust_cell,
+                target_cell,
+                rust_cell,
             )
+            target_formula = formula_text_signature(target_cell)
+            if target_formula is not None and formula_text_signature(rust_cell) == target_formula:
+                target_cache = target_cache_sheet.cell(row, col).value
+                rust_cache = rust_cache_sheet.cell(row, col).value
+                counts["outside_formula_cache_cells"] += 1
+                counts["outside_formula_cache_mismatches"] += int(
+                    not cached_value_equal(target_cache, rust_cache)
+                )
+                counts["outside_formula_cache_nonempty_mismatches"] += int(
+                    (target_cache is None) != (rust_cache is None)
+                )
 
     for prefix in ("range", "outside"):
         counts[f"{prefix}_mismatches"] = sum(
             counts[f"{prefix}_{kind}_mismatches"]
             for kind in ("value_type", "formula_text", "style", "comment", "hyperlink")
         )
+    counts["outside_mismatches"] += counts["outside_formula_cache_mismatches"]
     counts["outside_mismatches"] += counts["outside_sheet_mismatches"]
-    for book in (python_book, rust_book, template_book, target_book):
+    for book in (python_book, rust_book, template_book, target_book, target_cache_book, rust_cache_book):
         book.close()
     return counts
 
@@ -748,6 +762,7 @@ def main() -> int:
             candidate_paths["AUDIT_S1_COPY_CANDIDATE_MAPPING"] = mapping_path
         rust_exit = invoke_candidate(workspace, candidate_paths, args.wsl_distribution)
         rust_elapsed_ms = round((time.perf_counter() - rust_started) * 1000)
+        output_created = rust_output.is_file()
         candidate = json.loads(rust_report_path.read_text(encoding="utf-8")) if rust_report_path.exists() else {
             "status": "candidate_invocation_failed",
             "production_route_eligible": False,
@@ -827,6 +842,9 @@ def main() -> int:
                 cell_comparison = {
                     "range_cells": 0, "range_mismatches": 0,
                     "outside_cells": 0, "outside_mismatches": 0,
+                    "outside_formula_cache_cells": 0,
+                    "outside_formula_cache_mismatches": 0,
+                    "outside_formula_cache_nonempty_mismatches": 0,
                 }
             try:
                 python_metadata = workbook_metadata(python_output)
@@ -845,6 +863,9 @@ def main() -> int:
             cell_comparison = {
                 "range_cells": 0, "range_mismatches": 0,
                 "outside_cells": 0, "outside_mismatches": 0,
+                "outside_formula_cache_cells": 0,
+                "outside_formula_cache_mismatches": 0,
+                "outside_formula_cache_nonempty_mismatches": 0,
             }
             metadata_mismatch = 1
             target_metadata_mismatch = 1
@@ -893,7 +914,7 @@ def main() -> int:
         else:
             candidate_status = "candidate_match_unverified"
         report = {
-            "schema_version": 1,
+            "schema_version": 2,
             "suite": "audit.s1_formula_copy_candidate",
             "status": candidate_status,
             "sample_kind": sample_kind,
@@ -914,6 +935,9 @@ def main() -> int:
                 **cell_comparison,
                 "python_vs_rust_workbook_metadata_mismatch_count": metadata_mismatch,
                 "target_vs_rust_workbook_metadata_mismatch_count": target_metadata_mismatch,
+                "outside_formula_cache_cells": cell_comparison["outside_formula_cache_cells"],
+                "outside_formula_cache_mismatches": cell_comparison["outside_formula_cache_mismatches"],
+                "outside_formula_cache_nonempty_mismatches": cell_comparison["outside_formula_cache_nonempty_mismatches"],
                 "calculation_flags_mismatch_count": calc_mismatch,
                 "python_calculation_flags": python_calc,
                 "rust_calculation_flags": rust_calc,
@@ -938,6 +962,7 @@ def main() -> int:
                 "scope": "four cross-workbook ImportRange operations plus calculation flags; direct candidate only",
                 "copied_range_styles_compared_to": "source template",
                 "other_cell_styles_and_values_compared_to": "original target workbook",
+                "outside_formula_caches_compared_to": "original target workbook where formula text matches",
                 "python_baseline_style_integrity": (
                     "reported separately; not used as copied-range style oracle "
                     "when component references are invalid"

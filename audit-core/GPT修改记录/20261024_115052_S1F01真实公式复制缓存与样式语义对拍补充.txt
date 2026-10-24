@@ -1,0 +1,45 @@
+# S1-F01 真实公式复制缓存与样式语义对拍补充
+
+## 修改信息
+
+- 日期：2026-10-24 11:50:52（Asia/Shanghai）
+- 修改前 commit：`c2d8baf5a1c6ed85a17fdbef422793b0893a198e`
+- 修改后 commit：本记录随本次审查提交；以 Git 历史为准。
+- WIP：开始时确认位于 `audit-dev` worktree，工作区干净且与 `origin/audit-dev` 同步；未发现 `audit-core/GPT修改记录/WIP.md`。未修改 `DEVELOPMENT_GOAL.md`、源 Python、用户工作簿、`pytools-core/**`、公共 crates、根 Cargo 文件或 `Cargo.lock`。
+
+## 目的与结果
+
+继续验证 S1-F01 公式范围复制的 Umya 候选，细化未修改区公式缓存和样式语义对拍，以判断既有差异是否由公式缓存造成。候选仍只在临时目录执行，不进入生产路由；公式重算未触发。
+
+修改 `audit-core/tests/compare/compare_s1_formula_copy_candidate.py`：
+
+- 样式比较改为 OpenPyXL 的字体、填充、边框、对齐和保护对象序列化语义，加样式名称和数字格式，不比较内部样式 ID。
+- 对未修改区中公式文本在原始目标与 Rust 候选间相同的单元格，读取 `data_only` 缓存并比较值及空值状态。
+- 修复比较驱动在候选完成后未初始化 `output_created` 的状态收集缺陷。
+
+更新 `audit-core/probe/reports/s1_formula_copy_candidate_real_batch.json` 至 schema 3，并在 `audit-core/MIGRATION_INVENTORY.md` 记录补充证据。报告只含脱敏计数，不包含输入路径、单元格值、公式文本或哈希。
+
+## 对拍证据
+
+- 合成候选：加入一个未修改区公式以覆盖缓存比较路径；Umya 写入成功、目标 inventory 完整、输入未变；复制区和未修改区对象差异均为 0；公式缓存比较覆盖 1 格，差异为 0。
+- 真实样本：使用同一 S1 模板与源项目内置映射。目录发现 68 本工作簿，17 本通过 Python 表结构预检；对其中前 7 本逐一运行候选。7/7 Rust 测试退出码为 0、目标 inventory 完整、生成临时输出，源输入及模板均未改变。
+- 真实复制区共 5,487 格；值/类型、公式文本、批注和超链接差异均为 0。完整样式语义对照模板差异为 100（第 1 本）及 802（第 2–7 本）。
+- 每本未修改区比较 3,047 格，原始目标对 Rust 的值/类型差异为 207、211、207、211、219、209、223；公式文本、样式、批注、超链接差异均为 0。7 本未修改区公式缓存可比单元格均为 0，因此缓存值变化不是这些值/类型差异的原因。
+- 工作簿元数据与计算标志差异均为 0。每本仍观察到 17 个 ZIP 部件名差异和 19 个共同部件字节差异；不据此推断特定 OOXML 对象损坏。旧 Python 基线的无效字体组件引用单独报告，不作为复制样式 oracle。
+
+## 验证
+
+- Windows Python 3.12：`python -m py_compile audit-core/tests/compare/compare_s1_formula_copy_candidate.py` 通过。
+- Windows 驱动 WSL Ubuntu：合成候选一次及 7 个真实候选逐本运行 `cargo test -p audit-core --test s1_formula_copy_candidate --locked -- --ignored --nocapture`，所有候选测试退出码均为 0；真实候选对象对拍因上述样式与未修改区值/类型差异未通过。
+- 本轮本地检查：报告 schema 3、7 个样本、输入未变；报告无绝对路径或 64 位哈希；`git diff --check` 待提交前执行。
+
+## 未执行项与已知问题
+
+- 公式复制仍未通过真实保留契约，Umya `ImportRange` capability 为 Unverified，生产路由资格为 false。
+- 七个真实目标的未修改区没有公式，故没有覆盖含未修改公式的缓存保留样本。
+- 当前环境未配置 `RUST_WORKSPACE_OPENPYXL_PYTHON` 隔离 runtime；未以系统 Python 冒充 worker，未运行 openpyxl worker 候选。
+- 未执行公式重算、Windows 原生 Rust Excel 应用验收、麒麟 V10/UOS V20、glibc 2.28、deb 或离线交付验证；S1-F01 整体仍未验收。
+
+## 回滚
+
+若需撤回本次比较器和证据更新，使用本次审查提交的普通 `git revert` 创建回滚提交；不改写历史或清理其他工作。
