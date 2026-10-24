@@ -4,15 +4,14 @@
 //! candidate. The capability is Unverified and this test must never be treated
 //! as a production route or as feature acceptance.
 
-use audit_core::s1_template_rules::load_s1_template_rule_plan;
+use audit_core::s1_formula_copy::build_s1_formula_copy_edit_plan;
 use excel_editor::{
-    inspect_xlsx_profile, BackendCapability, BackendErrorKind, CapabilityStatus, EditBackend,
-    EditOperation, EditOperationKind, EngineId, ExcelEditPlan, OpenpyxlWorkerConfig,
-    OpenpyxlXlsxBackend, OpenpyxlXlsxValidator, OutputValidator, PreservationRequirement,
-    RangeStyleMode, UmyaXlsxBackend, WorkbookFeature, WorkbookFormat,
+    BackendCapability, BackendErrorKind, CapabilityStatus, EditBackend, EditOperation,
+    EditOperationKind, EngineId, OpenpyxlWorkerConfig, OpenpyxlXlsxBackend, OpenpyxlXlsxValidator,
+    OutputValidator, UmyaXlsxBackend, WorkbookFeature, WorkbookFormat,
 };
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::BTreeSet,
     fs,
     path::{Path, PathBuf},
     time::Instant,
@@ -22,12 +21,6 @@ fn required_path(variable: &str) -> PathBuf {
     std::env::var_os(variable)
         .map(PathBuf::from)
         .unwrap_or_else(|| panic!("required candidate input {variable} is missing"))
-}
-
-fn target_start(address: &str) -> Option<String> {
-    let address = address.rsplit('!').next()?.trim();
-    let first_cell = address.split(':').next()?.replace('$', "");
-    (!first_cell.is_empty()).then_some(first_cell)
 }
 
 fn openpyxl_worker_path() -> PathBuf {
@@ -52,61 +45,40 @@ fn probes_s1_formula_copy_import_ranges_without_claiming_capability() {
     );
     assert!(!output.exists(), "candidate output path must be new");
     let mapping_config = std::env::var_os("AUDIT_S1_COPY_CANDIDATE_MAPPING").map(PathBuf::from);
-    let template_plan = load_s1_template_rule_plan(&template, mapping_config.as_deref())
-        .expect("resolve formula-copy ranges through Rust S1 template rules");
-    let ranges = template_plan.definition.copy_ranges;
-    assert_eq!(ranges.len(), 4, "candidate scope requires four ranges");
-    let range_import_count = ranges.len();
-
-    let mut operations: Vec<EditOperation> = ranges
-        .into_iter()
-        .map(|range| {
-            let start = target_start(&range.address)
-                .expect("copy range must begin with a valid cell address");
-            EditOperation::ImportRange {
-                source_workbook: template.clone(),
-                source_sheet: range.sheet_name.clone(),
-                source_range: range.address,
-                target_sheet: range.sheet_name,
-                target_start: start,
-                copy_values: true,
-                copy_formulas: true,
-                style_mode: RangeStyleMode::Full,
-                copy_comments: true,
-                copy_merges: false,
-                copy_row_heights: false,
-                copy_column_widths: false,
-                copy_row_hidden: false,
-                copy_column_hidden: false,
-                copy_outline_levels: false,
-                copy_all_row_dimensions: false,
-                copy_all_column_dimensions: false,
-                materialize_blank_cells: true,
-                hide_zero: false,
-            }
-        })
-        .collect();
+    let prepared =
+        build_s1_formula_copy_edit_plan(&target, &template, &output, mapping_config.as_deref())
+            .expect("build S1 formula-copy business plan from template rules");
+    let template_profile = prepared.template_profile;
+    let mut plan = prepared.edit_plan;
+    let range_import_count = plan
+        .operations
+        .iter()
+        .filter(|operation| operation.kind() == EditOperationKind::ImportRange)
+        .count();
+    assert_eq!(
+        range_import_count, 4,
+        "candidate scope requires four ranges"
+    );
     let include_calculation_properties = std::env::var("AUDIT_S1_COPY_CANDIDATE_CALC_PROPERTIES")
         .map(|value| value != "0")
         .unwrap_or(true);
-    if include_calculation_properties {
-        operations.push(EditOperation::SetWorkbookCalculationProperties {
-            full_calc_on_load: Some(true),
-            force_full_calc: Some(true),
+    if !include_calculation_properties {
+        plan.operations.retain(|operation| {
+            !matches!(
+                operation,
+                EditOperation::SetWorkbookCalculationProperties { .. }
+            )
         });
     }
-
-    let workbook_profile = inspect_xlsx_profile(&target).expect("inspect candidate target profile");
+    let workbook_profile = plan.workbook.clone();
     let candidate_engine =
         std::env::var("AUDIT_S1_COPY_CANDIDATE_ENGINE").unwrap_or_else(|_| "umya".to_owned());
     let (engine, supported_features) = match candidate_engine.as_str() {
         "umya" => (EngineId::UmyaSpreadsheet, BTreeSet::new()),
         "openpyxl-worker" => {
-            let source_profile =
-                inspect_xlsx_profile(&template).expect("inspect formula template profile");
             let supported_features = workbook_profile
                 .features_present
-                .union(&source_profile.features_present)
+                .union(&template_profile.features_present)
                 .copied()
                 .collect::<BTreeSet<WorkbookFeature>>();
             (EngineId::OpenpyxlWorker, supported_features)
@@ -128,34 +100,6 @@ fn probes_s1_formula_copy_import_ranges_without_claiming_capability() {
         platform: "audit-s1-manual-candidate".to_owned(),
         evidence: None,
     };
-    let plan = ExcelEditPlan {
-        request_id: "audit-s1-formula-copy-candidate".to_owned(),
-        input: target.clone(),
-        output: output.clone(),
-        format: WorkbookFormat::Xlsx,
-        workbook: workbook_profile.clone(),
-        operations,
-        preserve: [
-            PreservationRequirement::CellValuesAndTypes,
-            PreservationRequirement::FormulaText,
-            PreservationRequirement::CommentsAndPositions,
-            PreservationRequirement::Styles,
-            PreservationRequirement::MergedRanges,
-            PreservationRequirement::ConditionalFormatting,
-            PreservationRequirement::DataValidations,
-            PreservationRequirement::DefinedNames,
-            PreservationRequirement::RowAndColumnDimensions,
-            PreservationRequirement::PageSettings,
-            PreservationRequirement::HeaderFooterText,
-            PreservationRequirement::Relationships,
-            PreservationRequirement::UnmodifiedPackageParts,
-            PreservationRequirement::SheetIdentityAndOrder,
-        ]
-        .into_iter()
-        .collect(),
-        drop_allowed: BTreeMap::new(),
-    };
-
     // This is intentionally a direct candidate invocation. ExcelModifier must
     // continue rejecting this Unverified capability until real-template and
     // target-platform preservation evidence is reviewed and registered.

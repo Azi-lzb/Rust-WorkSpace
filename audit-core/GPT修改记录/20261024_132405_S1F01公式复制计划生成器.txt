@@ -1,0 +1,36 @@
+时间：2026-10-24 13:24:05 +08:00
+执行者：Codex Audit 专属开发 Agent
+修改前 commit：bcae779；修改后：本地提交（见 Git 历史）
+WIP：修改前 audit-dev 工作区干净；未覆盖已有工作。
+
+修改目的：
+将 S1 公式复制所需的 Audit 模板业务解析和 workbook 级 ExcelEditPlan 生成集中到 audit-core，令真实后端候选 probe 复用同一计划，减少候选实现与后续业务入口之间的语义漂移。
+
+修改文件：
+- audit-core/src/s1_formula_copy.rs（新增 S1 公式复制计划生成器及合成测试）
+- audit-core/src/lib.rs（导出模块）
+- audit-core/tests/s1_formula_copy_candidate.rs（候选 probe 改用业务计划生成器）
+- audit-core/GPT修改记录/20261024_132405_S1F01公式复制计划生成器.txt（本记录）
+
+逻辑变化：
+- 只接受 XLSX 目标、模板和新输出路径；拒绝已有输出，防止覆盖用户文件。
+- 从 S1 模板/映射解析复制范围，生成整批 ImportRange 与“下次打开时重算”工作簿属性操作，并要求保留未修改工作簿属性。
+- ImportRange 使用完整样式、批注、公式和值复制，并物化源范围中的空坐标；该写入范围契约已同步 main，等待共享缓存保护提交后进行真实复验。
+- 计划生成只读输入、不写输出；不选择未验收后端、不执行公式重算。
+
+实际测试：
+- Windows 原生 `cargo test -p audit-core s1_formula_copy:: --locked`：2 项通过。
+- 测试覆盖命名公式范围计划生成、整格/空白覆盖标志、计算属性标记、保护项及拒绝覆盖已有输出。
+- 初次测试发现合成样本把结构规则的“定位单元格”误当范围；已将夹具改为原业务支持的命名公式范围，最终两项通过。
+- 编译期间仅见 crates/excel-editor 已有 umya-spreadsheet 弃用 API 警告；本次未修改共享 crate。
+
+未执行项与已知问题：
+- 真实 7 样本候选输出、Python/Rust 对拍与缓存范围读回尚未执行；需先在 audit-dev 安全 cherry-pick main 提供的共享缓存保护提交并确认 Windows test-only worker。
+- 本次尚未接入 GUI/CLI 生产入口，未登记任何 Passed capability；S1-F01 仍未完成，公式复制生产路由继续 Unverified。
+- 未触发 LibreOffice/COM sidecar，未刷新任何公式缓存；Windows 测试 worker、WSL 对拍 Python 和最终 deb runtime 仍分别验收。
+- 未修改 DEVELOPMENT_GOAL.md、共享 crates、根 Cargo 配置、源 Python 项目、业务样本或 pytools-core；无用户版日志/版本升级。
+
+回滚：
+- 回滚本地提交即可删除本次计划生成器和 probe 接线；不涉及数据迁移或用户文件修改。
+
+【组件版本】：不升级。

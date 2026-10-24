@@ -13,6 +13,7 @@ pub mod period_pairs;
 pub mod report_source;
 pub mod s1_conditional_audit;
 pub mod s1_formula_audit;
+pub mod s1_formula_copy;
 pub mod s1_history;
 pub mod s1_issue_chain;
 pub mod s1_result_workbook;
