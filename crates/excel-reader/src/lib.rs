@@ -684,7 +684,10 @@ pub fn read_workbook(path: impl AsRef<Path>) -> Result<WorkbookDump> {
                 (
                     range
                         .cells()
-                        .map(|(r, c, v)| (coord(fr as usize + r, fc as usize + c), v.to_owned()))
+                        .filter_map(|(r, c, v)| {
+                            (!v.trim().is_empty())
+                                .then(|| (coord(fr as usize + r, fc as usize + c), v.to_owned()))
+                        })
                         .collect(),
                     "read_by_calamine".to_owned(),
                 )
