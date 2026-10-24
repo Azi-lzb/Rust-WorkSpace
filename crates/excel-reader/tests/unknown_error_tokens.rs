@@ -55,7 +55,10 @@ fn opt_in_reader_normalizes_only_unsupported_literal_error_tokens() {
 
     let dump =
         read_workbook_with_unknown_error_tokens_as_text(&path).expect("opt-in compatibility read");
+    assert!(dump.compatibility_normalization_used);
+    assert_eq!(dump.normalized_cell_count, 1);
     let errors = dump
+        .workbook
         .sheets
         .iter()
         .find(|sheet| sheet.name == "Errors")

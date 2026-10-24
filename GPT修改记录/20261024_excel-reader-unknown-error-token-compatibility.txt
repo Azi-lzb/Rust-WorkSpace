@@ -1,7 +1,7 @@
 日期：2026-10-24
 
 变更：
-- crates/excel-reader/src/lib.rs：新增显式 API `read_workbook_with_unknown_error_tokens_as_text`。默认 `read_workbook` 行为不变；仅在 Calamine 报告不支持的 cell error token 时，针对 XLSX/XLSM 将不认识的字面错误值在临时副本中归一为 inline string，再由 Calamine 读取工作簿其余数据。公式错误单元格和结构异常单元格拒绝归一。临时包完成后删除，源工作簿不变。
+- crates/excel-reader/src/lib.rs：新增显式 API `read_workbook_with_unknown_error_tokens_as_text`。默认 `read_workbook` 行为不变；仅在 Calamine 报告不支持的 cell error token 时，针对 XLSX/XLSM 将不认识的字面错误值在临时副本中归一为 inline string，再由 Calamine 读取工作簿其余数据。公式错误单元格和结构异常单元格拒绝归一。返回值附带 `compatibility_normalization_used` 与 `normalized_cell_count`，供调用方按实际执行记录日志；不返回敏感单元格值。临时包完成后删除，源工作簿不变。
 - crates/excel-reader/tests/unknown_error_tokens.rs：运行时构造小型合成 `#DATA!` 错误值 XLSX；验证默认读取仍 fail-closed，显式 API 返回普通字符串 `#DATA!` 且源文件字节未改变。未将 pytools-dev 工作树的 fixture 拷入 main。
 
 目的：给需要按旧 Python 行为把未知错误 token 当普通文本的调用方提供窄共享能力，不改变 reader 全局错误值契约；调用产品仍需自行显式选择该 API，并对拍业务输出。
