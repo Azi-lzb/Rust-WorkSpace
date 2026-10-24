@@ -1,0 +1,39 @@
+时间：2026-10-25 01:06:13 +08:00
+执行者：Codex
+分支：pytools-dev
+修改前 commit：664547f9f5cb3999414134c9057b4b704b136931
+实现代码与测试 commit：da5f136（提交信息：feat(pytools): integrate rural loan menus）
+WIP 情况：修改前工作区干净；本轮只修改 PyTools 业务入口、对应测试和迁移留痕。
+
+修改目的：将既有 PT-7-7 和 PT-7-8 Rust 计划能力接入真实交互菜单，补齐能力门控写回、运行事件及 Windows 原生 Python/Rust 合成对拍。
+
+修改文件：
+- `pytools-core/src/bin/pytools.rs`
+- `pytools-core/tests/batch_tools_menu_cli.rs`
+- `pytools-core/MIGRATION_INVENTORY.md`
+- `pytools-core/probe/reports/PT-7-7_PT-7-8_menu_parity_windows_native_20261025.json`
+- 本记录
+
+逻辑及配置变化：
+- 接入主菜单 7→7、8；分别选择本期和上期 `.xlsx` 工作簿。
+- 默认只保存 ExcelEditPlan；只有同时提供匹配的 capability 和 platform 时，才经 ExcelModifier 校验候选并按规划快照安全替换本期工作簿。
+- 增加 user/developer/off 运行视图及脱敏 JSON 历史，记录阶段、计数、耗时和实际使用的引擎，不保存路径、文件名或单元格值。
+- 未修改全局配置结构、VBA、共享 crate、根 Cargo 文件或默认修改引擎路由。
+- 临时 synthetic umya_spreadsheet capability 仅用于集成测试，不登记为生产 Passed capability。
+
+实际验证：
+- Windows 原生 Rust：`cargo fmt --manifest-path pytools-core/Cargo.toml -- --check` 通过。
+- `cargo test --manifest-path Cargo.toml -p pytools-core --test batch_tools_menu_cli --test rural_loan_regressions --offline --locked -j 1`：菜单集成 15/15，涉农贷款回归 2/2 通过。
+- 只读 PyCode 基线与 Windows native Rust CLI 合成对拍：PT-7-7、PT-7-8 正常摘要及工作簿值投影一致；PT-7-8 缺少上期地区、重复机构、缺少地区统计行的错误摘要和输出投影一致。运行结果见 `pytools-core/probe/reports/PT-7-7_PT-7-8_menu_parity_windows_native_20261025.json`。
+- PT-7-7/7-8 菜单临时 capability 写回均通过安全替换；测试检查计划外数据、公式、样式、合并、批注及未改工作表/地区保留。
+- `git diff --check` 通过。
+
+未执行项及已知问题：
+- 未使用真实业务模板/样本；未手动操作 Windows 原生文件选择弹窗。
+- 未执行麒麟 V10、统信 V20、glibc 2.28、目标机安装或离线 deb 验收；未运行全量 workspace 测试。
+- 共享 `excel-editor` 仍有既有 umya 弃用 API 警告；PyTools 仍有既有未使用导入警告，本轮未改共享 crate 或无关模块。
+- PT-7-7/PT-7-8 产品生产验收仍为未验证。
+
+删除清单：无。
+回滚提示：实现代码与测试可通过 `git revert da5f136` 回滚；报告和迁移记录为证据文件，如单独回滚需同时移除对应文件及清单段落。
+【组件版本】：不升级（未修改 Cargo.toml 组件版本）。
