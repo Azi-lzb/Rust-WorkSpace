@@ -43,7 +43,7 @@
 - 机构名称规范化计划 API 新增后，2026-10-23 再次执行 `cargo fmt --all -- --check`、`cargo test -p pytools-core --test institution_normalize_plan_parity --locked` 和 `cargo test --workspace --locked -q`；格式检查通过，专项 1/1 通过，全 workspace 命令退出码为 0。该轮只验证计划与合成 Python baseline 一致，不代表 ExcelModifier 有可用的 umya backend，也不验证计划执行后的文件保真。
 - pytools `region_sum::run_region_sum_check` 是地区总分校验普通非 COM 路径，已接入独立 Rust 命令 `pytools region-sum-check`：用共享 Calamine 读取 XLSX，并通过 rust_xlsxwriter 从零生成“核对结果”工作簿；为匹配 Python 基线的无缓存公式标记，在保存后调用一项 namespace-aware OOXML 空缓存补丁。它是新建输出，不是既有工作簿编辑或 ExcelModifier 路由；CLI 可显式传入工作簿列表并沿用全局输出/日志配置。CLI 对拍覆盖 5 个合成 XLSX 场景；原 GUI 菜单、非 XLSX、真实模板、性能及目标平台仍未验证，Python 原功能保留。
 - pytools `institution_normalize::build_institution_normalize_plan` 已改用共享 `excel-reader` 读取工作簿值，并将合成夹具上的 3 个变更编译成 `SetCellValue` 操作；与 Python 基线统计和变更格对拍见 `pytools-core/probe/reports/institution_normalize_plan_parity.json`。该计划明确保留 `inventory_complete=false`，所以不能被 ExcelModifier 路由执行；测试只验证计划，不验证实际引擎输出。原 `run_normalize_institution` 仍是直接调用 umya 的候选执行路径，未接入统一路由，也不是生产默认。后续须先补齐可审计的 workbook inventory，再实现共享 backend/validator 并用真实模板复验；在完成前不得删除旧候选或宣称该功能已迁移。
-- sidecar/lo-convert 已通过 `pytools-core/src/conversion.rs::invoke_sidecar` 显式子进程接入同类格式转换；CLI 为 convert，含输出校验。公式重算尚未实现，真实 .xls/.et/.doc 转换及目标平台仍未验收。
+- sidecar/lo-convert 已通过 `pytools-core/src/conversion.rs::invoke_sidecar` 显式子进程接入同类格式转换；CLI 为 convert，含输出校验。现新增 `recalculate` XLSX 候选命令，含公式文本与缓存节点结构校验；尚未在 LibreOffice、Office/WPS COM 或目标 Linux 平台执行验收。真实 .xls/.et/.doc 转换及目标平台仍未验收。
 - workspace 中没有 Go module 或 Go worker。audit-core/core-go 只有预留说明，不是已实现的 Excelize 引擎。
 - 当前 workspace Git 状态为“尚无首次提交，已有文件均未跟踪”。后续变更不得清理、覆盖或假定这些文件已提交。
 
