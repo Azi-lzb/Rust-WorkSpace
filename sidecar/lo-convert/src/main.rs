@@ -14,6 +14,11 @@ use std::{
     process::{Command, Stdio},
     time::{SystemTime, UNIX_EPOCH},
 };
+use zip::ZipArchive;
+
+const MAIN_NS: &str = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
+const REL_NS: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+const PACKAGE_REL_NS: &str = "http://schemas.openxmlformats.org/package/2006/relationships";
 
 fn main() {
     if let Err(error) = run() {
@@ -31,6 +36,9 @@ fn run() -> Result<()> {
     if command == "--help" || command == "-h" {
         print_usage();
         return Ok(());
+    }
+    if command == "recalculate" {
+        return run_recalculate(args.collect());
     }
     ensure!(command == "convert", "unsupported command {command:?}");
     let mut values = BTreeMap::new();
@@ -117,6 +125,352 @@ fn run() -> Result<()> {
         .with_context(|| format!("commit validated output {}", output.display()))?;
     println!("{{\"status\":\"converted\",\"engine\":\"{selected}\",\"input\":{},\"output\":{},\"validation\":{}}}", json_string(&input.display().to_string()), json_string(&output.display().to_string()), validation);
     Ok(())
+}
+
+fn run_recalculate(arguments: Vec<String>) -> Result<()> {
+    if arguments
+        .iter()
+        .any(|argument| argument == "--help" || argument == "-h")
+    {
+        eprintln!("Usage: lo-convert recalculate --input <xlsx> --output <new.xlsx> [--engine auto|lo|com]");
+        return Ok(());
+    }
+    let mut values = BTreeMap::new();
+    let mut args = arguments.into_iter();
+    while let Some(key) = args.next() {
+        ensure!(key.starts_with("--"), "expected an option, got {key:?}");
+        let name = key.trim_start_matches('-').to_owned();
+        ensure!(
+            matches!(name.as_str(), "input" | "output" | "engine"),
+            "unknown recalculate option --{name}"
+        );
+        let value = args
+            .next()
+            .with_context(|| format!("{key} requires a value"))?;
+        values.insert(name, value);
+    }
+    let input = PathBuf::from(values.get("input").context("--input is required")?);
+    let output = PathBuf::from(values.get("output").context("--output is required")?);
+    ensure!(
+        input.is_file(),
+        "input workbook does not exist: {}",
+        input.display()
+    );
+    ensure!(
+        input
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("xlsx")),
+        "formula recalculation currently supports .xlsx only"
+    );
+    ensure!(
+        output
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("xlsx")),
+        "formula recalculation output must be .xlsx"
+    );
+    let canonical_input = fs::canonicalize(&input).context("resolve recalculation input")?;
+    ensure!(
+        output != input && (!output.exists() || fs::canonicalize(&output)? != canonical_input),
+        "recalculation requires a distinct output path"
+    );
+    if let Some(parent) = output
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        fs::create_dir_all(parent)?;
+    }
+    ensure!(
+        !output.exists(),
+        "refusing to overwrite existing recalculation output: {}",
+        output.display()
+    );
+    let engine = values.get("engine").map(String::as_str).unwrap_or("auto");
+    ensure!(
+        engine == "auto" || engine == "lo" || engine == "com",
+        "--engine must be auto, lo or com"
+    );
+    let selected = if engine == "auto" {
+        if cfg!(windows) {
+            "com"
+        } else {
+            "lo"
+        }
+    } else {
+        engine
+    };
+    if selected == "com" && !cfg!(windows) {
+        bail!("COM recalculation is only available on Windows; use --engine lo");
+    }
+
+    let guard = TempDirGuard(unique_temp_dir(
+        output.parent().unwrap_or_else(|| Path::new(".")),
+    )?);
+    let candidate = guard.0.join("recalculated.xlsx");
+    let recalc_input = guard.0.join("recalculation-request.xlsx");
+    ooxml_patch::patch_workbook_calculation_properties(
+        &input,
+        &recalc_input,
+        ooxml_patch::WorkbookCalculationProperties {
+            full_calc_on_load: Some(true),
+            force_full_calc: Some(true),
+        },
+    )
+    .context("prepare explicit full recalculation request")?;
+    let actual_engine = match selected {
+        "lo" => run_libreoffice_recalculate(&recalc_input, &guard.0)?,
+        "com" => run_com_recalculate(&recalc_input, &candidate)?,
+        _ => unreachable!(),
+    };
+    let candidate = if candidate.exists() {
+        candidate
+    } else {
+        locate_converted(&guard.0, "xlsx")?
+    };
+    ensure!(
+        candidate.is_file() && fs::metadata(&candidate)?.len() > 0,
+        "calculation engine did not create a non-empty output workbook"
+    );
+    let validation = validate_recalculated_workbook(&input, &candidate)?;
+    fs::rename(&candidate, &output)
+        .with_context(|| format!("publish recalculated workbook {}", output.display()))?;
+    println!("{{\"status\":\"recalculated\",\"engine\":{},\"input\":{},\"output\":{},\"validation\":{}}}", json_string(&actual_engine), json_string(&input.display().to_string()), json_string(&output.display().to_string()), validation);
+    Ok(())
+}
+
+fn run_libreoffice_recalculate(input: &Path, temp_dir: &Path) -> Result<String> {
+    let profile = temp_dir.join("lo-profile");
+    let command = Command::new("soffice")
+        .arg("--headless")
+        .arg("--nologo")
+        .arg("--nodefault")
+        .arg("--nolockcheck")
+        .arg(format!(
+            "-env:UserInstallation={}",
+            profile.to_string_lossy()
+        ))
+        .arg("--convert-to")
+        .arg("xlsx:Calc MS Excel 2007 XML")
+        .arg("--outdir")
+        .arg(temp_dir)
+        .arg(input)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .with_context(|| {
+            "LibreOffice sidecar is unavailable; install soffice to recalculate formulas"
+        })?;
+    ensure!(
+        command.status.success(),
+        "LibreOffice recalculation failed ({}): {}",
+        command.status,
+        String::from_utf8_lossy(&command.stderr)
+    );
+    Ok("LibreOffice".to_owned())
+}
+
+fn run_com_recalculate(input: &Path, output: &Path) -> Result<String> {
+    let script_path = output.with_extension("recalculate.ps1");
+    let script = format!(
+        "$ErrorActionPreference='Stop';\n$app=$null; $appName=''; $lastError='';\nforeach ($name in @('Excel.Application','ket.Application','KET.Application','kwps.Application','KWPS.Application','wps.Application')) {{ if ($null -eq $app) {{ try {{ $app=New-Object -ComObject $name; $appName=$name }} catch {{ $lastError=$_.Exception.Message }} }} }}\nif ($null -eq $app) {{ throw \"No supported spreadsheet COM engine is available: $lastError\" }}\n$book=$null;\ntry {{ $app.Visible=$false; $app.DisplayAlerts=$false; $book=$app.Workbooks.Open('{}',$false,$false); $app.CalculateFullRebuild(); $book.SaveAs('{}',51); $book.Close($true) }} finally {{ if ($null -ne $book) {{ $book.Close($false) }}; if ($null -ne $app) {{ $app.Quit() }} }}\nWrite-Output $appName\n",
+        ps_quote(&input.to_string_lossy()),
+        ps_quote(&output.to_string_lossy())
+    );
+    fs::write(&script_path, script)?;
+    let result = Command::new("powershell.exe")
+        .args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+        ])
+        .arg(&script_path)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .with_context(|| "start spreadsheet COM recalculation")?;
+    let _ = fs::remove_file(&script_path);
+    ensure!(
+        result.status.success(),
+        "spreadsheet COM recalculation failed: {}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let engine = String::from_utf8_lossy(&result.stdout).trim().to_owned();
+    ensure!(
+        !engine.is_empty(),
+        "COM recalculation did not report the selected application"
+    );
+    Ok(engine)
+}
+
+fn validate_recalculated_workbook(input: &Path, output: &Path) -> Result<String> {
+    let source = excel_reader::read_workbook_with_unknown_error_tokens_as_text(input)
+        .context("read source workbook before recalculation")?
+        .workbook;
+    let result = excel_reader::read_workbook_with_unknown_error_tokens_as_text(output)
+        .context("read recalculated workbook")?
+        .workbook;
+    let source_sheets = source
+        .sheets
+        .iter()
+        .map(|sheet| &sheet.name)
+        .collect::<Vec<_>>();
+    let output_sheets = result
+        .sheets
+        .iter()
+        .map(|sheet| &sheet.name)
+        .collect::<Vec<_>>();
+    ensure!(
+        source_sheets == output_sheets,
+        "recalculation changed worksheet identity/order"
+    );
+    let mut formula_count = 0usize;
+    for (before, after) in source.sheets.iter().zip(&result.sheets) {
+        ensure!(
+            before.formulas == after.formulas,
+            "recalculation changed formulas in worksheet {:?}",
+            before.name
+        );
+        formula_count += before.formulas.len();
+    }
+    ensure!(
+        formula_count > 0,
+        "workbook contains no formulas to recalculate"
+    );
+    let cache_count = formula_cache_cell_count(output)?;
+    ensure!(cache_count == formula_count, "recalculated workbook has formula/cache count mismatch: {formula_count} formulas, {cache_count} cached formula cells");
+    Ok(format!("{{\"formula_text_preserved\":true,\"formula_count\":{formula_count},\"formula_cache_cells\":{cache_count},\"cache_nodes_complete\":true,\"scope\":\"cache_presence_and_formula_preservation; result correctness requires parity comparison\"}}"))
+}
+
+fn formula_cache_cell_count(path: &Path) -> Result<usize> {
+    let mut zip =
+        ZipArchive::new(fs::File::open(path).context("open recalculated OOXML package")?)?;
+    let root_rels = zip_text(&mut zip, "_rels/.rels")?;
+    let rels = roxmltree::Document::parse(&root_rels)?;
+    let target = rels
+        .descendants()
+        .find(|node| {
+            node.is_element()
+                && node.tag_name().namespace() == Some(PACKAGE_REL_NS)
+                && node.tag_name().name() == "Relationship"
+                && node
+                    .attribute("Type")
+                    .is_some_and(|kind| kind.ends_with("/officeDocument"))
+                && !node
+                    .attribute("TargetMode")
+                    .is_some_and(|mode| mode.eq_ignore_ascii_case("External"))
+        })
+        .and_then(|node| node.attribute("Target"))
+        .context("package has no internal workbook relationship")?;
+    let workbook_part = normalize_part("", target);
+    let workbook_xml = zip_text(&mut zip, &workbook_part)?;
+    let workbook = roxmltree::Document::parse(&workbook_xml)?;
+    let workbook_rels_part = relationships_part(&workbook_part);
+    let workbook_rels_xml = zip_text(&mut zip, &workbook_rels_part)?;
+    let workbook_rels = roxmltree::Document::parse(&workbook_rels_xml)?;
+    let targets = workbook_rels
+        .descendants()
+        .filter(|node| {
+            node.is_element()
+                && node.tag_name().namespace() == Some(PACKAGE_REL_NS)
+                && node.tag_name().name() == "Relationship"
+        })
+        .filter_map(|node| {
+            Some((
+                node.attribute("Id")?.to_owned(),
+                (
+                    node.attribute("Type")?.to_owned(),
+                    node.attribute("Target")?.to_owned(),
+                ),
+            ))
+        })
+        .collect::<BTreeMap<_, _>>();
+    let parent = workbook_part
+        .rsplit_once('/')
+        .map(|(parent, _)| parent)
+        .unwrap_or("");
+    let mut formula_cells = 0usize;
+    for sheet in workbook.descendants().filter(|node| {
+        node.is_element()
+            && node.tag_name().namespace() == Some(MAIN_NS)
+            && node.tag_name().name() == "sheet"
+    }) {
+        let relationship_id = sheet
+            .attribute((REL_NS, "id"))
+            .context("sheet has no relationship id")?;
+        let (kind, target) = targets
+            .get(relationship_id)
+            .context("sheet relationship is unresolved")?;
+        if !kind.ends_with("/worksheet") {
+            continue;
+        }
+        let part = normalize_part(parent, target);
+        let xml = zip_text(&mut zip, &part)?;
+        let document = roxmltree::Document::parse(&xml)?;
+        for cell in document.descendants().filter(|node| {
+            node.is_element()
+                && node.tag_name().namespace() == Some(MAIN_NS)
+                && node.tag_name().name() == "c"
+                && node.children().any(|child| {
+                    child.is_element()
+                        && child.tag_name().namespace() == Some(MAIN_NS)
+                        && child.tag_name().name() == "f"
+                })
+        }) {
+            ensure!(
+                cell.children().any(|child| child.is_element()
+                    && child.tag_name().namespace() == Some(MAIN_NS)
+                    && child.tag_name().name() == "v"),
+                "formula cell {:?} on sheet {:?} has no cached value node after recalculation",
+                cell.attribute("r"),
+                sheet.attribute("name")
+            );
+            formula_cells += 1;
+        }
+    }
+    Ok(formula_cells)
+}
+
+fn zip_text(zip: &mut ZipArchive<fs::File>, name: &str) -> Result<String> {
+    let mut entry = zip
+        .by_name(name)
+        .with_context(|| format!("missing OOXML part {name}"))?;
+    let mut text = String::new();
+    use std::io::Read;
+    entry.read_to_string(&mut text)?;
+    Ok(text)
+}
+
+fn normalize_part(base: &str, target: &str) -> String {
+    let combined = if target.starts_with('/') {
+        target.trim_start_matches('/').to_owned()
+    } else if base.is_empty() {
+        target.to_owned()
+    } else {
+        format!("{base}/{target}")
+    };
+    let mut parts = Vec::new();
+    for part in combined.split('/') {
+        match part {
+            "" | "." => {}
+            ".." => {
+                parts.pop();
+            }
+            _ => parts.push(part),
+        }
+    }
+    parts.join("/")
+}
+
+fn relationships_part(part: &str) -> String {
+    let (parent, file) = part.rsplit_once('/').unwrap_or(("", part));
+    if parent.is_empty() {
+        format!("_rels/{file}.rels")
+    } else {
+        format!("{parent}/_rels/{file}.rels")
+    }
 }
 
 fn run_libreoffice(input: &Path, temp_dir: &Path, target: &str) -> Result<()> {
@@ -688,7 +1042,7 @@ fn json_string(value: &str) -> String {
     serde_json::to_string(value).unwrap_or_else(|_| "\"\"".into())
 }
 fn print_usage() {
-    eprintln!("Usage: lo-convert convert --input <file> --output <file> --to <xlsx|docx> [--mode fidelity] [--engine auto|lo|com]");
+    eprintln!("Usage: lo-convert convert --input <file> --output <file> --to <xlsx|docx> [--mode fidelity] [--engine auto|lo|com]\n       lo-convert recalculate --input <xlsx> --output <new.xlsx> [--engine auto|lo|com]");
 }
 
 struct TempDirGuard(PathBuf);
@@ -696,5 +1050,68 @@ struct TempDirGuard(PathBuf);
 impl Drop for TempDirGuard {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
+#[cfg(test)]
+mod recalculation_tests {
+    use super::{formula_cache_cell_count, MAIN_NS, PACKAGE_REL_NS, REL_NS};
+    use anyhow::Result;
+    use std::{
+        env,
+        fs::{self, File},
+        io::Write,
+        path::PathBuf,
+        time::{SystemTime, UNIX_EPOCH},
+    };
+    use zip::{write::SimpleFileOptions, ZipWriter};
+
+    fn fixture(with_cache: bool) -> Result<PathBuf> {
+        let nonce = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
+        let path = env::temp_dir().join(format!(
+            "lo_recalc_fixture_{}_{}.xlsx",
+            std::process::id(),
+            nonce
+        ));
+        let zip = ZipWriter::new(File::create(&path)?);
+        let workbook = format!(
+            r#"<workbook xmlns="{MAIN_NS}" xmlns:r="{REL_NS}"><sheets><sheet name="Formula" sheetId="1" r:id="rId1"/></sheets></workbook>"#
+        );
+        let rels = format!(
+            r#"<Relationships xmlns="{PACKAGE_REL_NS}"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>"#
+        );
+        let root_rels = format!(
+            r#"<Relationships xmlns="{PACKAGE_REL_NS}"><Relationship Id="rId0" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>"#
+        );
+        let cache = if with_cache { "<v>2</v>" } else { "" };
+        let sheet = format!(
+            r#"<worksheet xmlns="{MAIN_NS}"><sheetData><row r="1"><c r="A1"><f>1+1</f>{cache}</c></row></sheetData></worksheet>"#
+        );
+        let mut writer = zip;
+        for (name, content) in [
+            ("_rels/.rels", root_rels),
+            ("xl/workbook.xml", workbook),
+            ("xl/_rels/workbook.xml.rels", rels),
+            ("xl/worksheets/sheet1.xml", sheet),
+        ] {
+            writer.start_file(name, SimpleFileOptions::default())?;
+            writer.write_all(content.as_bytes())?;
+        }
+        writer.finish()?;
+        Ok(path)
+    }
+
+    #[test]
+    fn formula_cache_counter_requires_a_value_node_for_every_formula() -> Result<()> {
+        let valid = fixture(true)?;
+        assert_eq!(formula_cache_cell_count(&valid)?, 1);
+        fs::remove_file(valid)?;
+
+        let invalid = fixture(false)?;
+        let error =
+            formula_cache_cell_count(&invalid).expect_err("formula without cache must fail");
+        assert!(error.to_string().contains("has no cached value node"));
+        fs::remove_file(invalid)?;
+        Ok(())
     }
 }
