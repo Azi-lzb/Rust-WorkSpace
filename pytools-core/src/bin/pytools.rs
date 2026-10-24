@@ -203,6 +203,7 @@ where
         writeln!(output, "  3  打印工具（生成页面设置计划）")?;
         writeln!(output, "  4  转换与文件命名工具")?;
         writeln!(output, "  6  汇总工具")?;
+        writeln!(output, "  7  一二批处理工具（当前接入 7-5）")?;
         writeln!(output, "  0  退出")?;
         writeln!(output, "==============================")?;
         let Some(choice) = read_menu_choice(input, output, "主菜单选择> ")? else {
@@ -227,11 +228,14 @@ where
             "6" => {
                 run_interactive_summary_menu(input, output, global, log_view, allow_native_dialog)?
             }
+            "7" => {
+                run_interactive_batch_menu(input, output, config_path, global, allow_native_dialog)?
+            }
             "0" => {
                 writeln!(output, "再见。")?;
                 return Ok(());
             }
-            _ => writeln!(output, "仅接受 1、2、3、4、6 或 0")?,
+            _ => writeln!(output, "仅接受 1、2、3、4、6、7 或 0")?,
         }
     }
 }
@@ -810,6 +814,78 @@ where
             }
             "0" => return Ok(()),
             _ => writeln!(output, "输入无效，请重试。")?,
+        }
+    }
+}
+
+fn run_interactive_batch_menu<R, W>(
+    input: &mut R,
+    output: &mut W,
+    config_path: &Path,
+    global: &GlobalConfig,
+    allow_native_dialog: bool,
+) -> Result<()>
+where
+    R: BufRead,
+    W: Write,
+{
+    loop {
+        writeln!(output, "------ 一二批处理工具 ------")?;
+        writeln!(output, "  5  地区总分校验（读取并生成核对结果）")?;
+        writeln!(output, "  0  返回")?;
+        writeln!(output, "----------------------------")?;
+        let Some(choice) = read_menu_choice(input, output, "子菜单选择> ")? else {
+            return Ok(());
+        };
+        match choice.as_str() {
+            "5" => {
+                let Some(selected) = choose_source_files_or_folders(
+                    "选择要做地区总分校验的 Excel 文件",
+                    NativeFileFilter::XlsxOrXlsm,
+                    input,
+                    output,
+                    allow_native_dialog,
+                )?
+                else {
+                    writeln!(output, "[已取消]")?;
+                    return Ok(());
+                };
+                let mut sources = Vec::new();
+                for path in selected {
+                    if path.extension().is_some_and(|extension| {
+                        extension.eq_ignore_ascii_case("xlsx")
+                            || extension.eq_ignore_ascii_case("xlsm")
+                    }) {
+                        sources.push(path);
+                    } else {
+                        writeln!(
+                            output,
+                            "[跳过] {}：当前 Rust 核对入口只支持 .xlsx/.xlsm；请先显式转换为 .xlsx",
+                            path.display()
+                        )?;
+                    }
+                }
+                if sources.is_empty() {
+                    writeln!(output, "[提示] 没有可处理的 .xlsx/.xlsm 文件。")?;
+                    return Ok(());
+                }
+                let mut arguments = config_cli_arguments(config_path);
+                arguments.extend([
+                    "--output-dir".to_owned(),
+                    global.output_dir.to_string_lossy().into_owned(),
+                    "--log-dir".to_owned(),
+                    global.log_dir.to_string_lossy().into_owned(),
+                ]);
+                arguments.extend(
+                    sources
+                        .into_iter()
+                        .map(|path| path.to_string_lossy().into_owned()),
+                );
+                run_region_sum(arguments)?;
+                return Ok(());
+            }
+            "0" => return Ok(()),
+            _ => writeln!(output, "仅接受 5 或 0")?,
         }
     }
 }
@@ -3458,7 +3534,7 @@ fn print_usage() {
     eprintln!(
         "Usage:\n\
          pytools [menu] [--config <config.xlsx>] [--log-view user|developer|off]\n\
-         no command opens the migrated menu; available categories: 1 (timeline 1/3/4/5), 2 (dedup 1-6), 3 (print 1-4), 4 (conversion and file naming 1-10), and 6 (summary 1/2)\n\
+         no command opens the migrated menu; available categories: 1 (timeline 1/3/4/5), 2 (dedup 1-6), 3 (print 1-4), 4 (conversion and file naming 1-10), 6 (summary 1/2), and 7 (batch 7-5)\n\
          timeline-precheck --config <workbook.xlsx>\n\
          timeline-compare --config <workbook.xlsx> --template <workbook.xlsx> <source.xlsx>...\n\
          wide-summary --config <workbook.xlsx> <source.xlsx>...\n\

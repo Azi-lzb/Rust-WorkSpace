@@ -506,3 +506,11 @@ Windows 原生验证：`cargo fmt --manifest-path pytools-core/Cargo.toml -- --c
 最后补入 Windows 目录弹窗的 OLE STA 初始化后，原生 `cargo check` 和格式检查再次通过；真实菜单与提交检查 CLI 测试在 F 盘独立验证目标中 2/2 通过。默认 MSVC 调试链接曾因 PDB `LNK1318 LIMIT` 失败，独立无调试符号验证成功；之前 28/28 的完整关联回归发生在此次弹窗初始化之前。
 
 真实业务文件、用户实际原生文件/目录对话框操作、有效 sidecar 对 `.xls/.et/.doc` 的转换结果、隔离运行打包、麒麟/UOS、glibc 2.28 与 deb 均未验收。此更新证明菜单路由及合成对拍，不将转换/文件操作整组标为已验收。
+
+### 2026-10-24 PT-7-5 地区总分校验交互入口
+
+主菜单新增类别 7，并接入原 PyCode 菜单 7-5 地区总分校验：文件多选、当前层/递归文件夹扫描和手工路径均进入既有 `region-sum-check` Rust CLI；输出目录和日志目录读取全局配置。当前入口只接受 `.xlsx/.xlsm`；手工指定 `.xls` 会明确提示先显式转换，避免在业务路径使用未批准的 COM 读取。核对仍为只读输入并新建结果工作簿。
+
+新增 `tests/batch_tools_menu_cli.rs` 启动真实 `pytools menu`，通过 7→5 对五个地区核对合成夹具（正常、不一致、无目标、非数值/缺项、损坏文件）验证统计、结果表、日志和输入不变；额外的合成 `.xls` 路径被跳过并提示显式转换。与既有 `region_sum_parity` 的 PyCode 基线逐值/格式对拍一并回归通过。该证据仅覆盖 PT-7-5 合成样本，不代表 7-1 至 7-4、7-6 至 7-8 或整个类别已接入。
+
+Windows 原生 Rust：格式检查通过；`batch_tools_menu_cli`、`region_sum_parity`、`timeline_menu_cli`、`conversion_menu_cli`、`summary_menu_cli` 共 11/11 通过。为消除 Windows 并行测试时纳秒临时目录名可能碰撞，`region_sum_parity` 测试目录追加进程内原子序号。真实业务模板、Windows 原生弹窗手动操作、目标平台和 deb 仍未验收；未运行全量 PyTools 测试。

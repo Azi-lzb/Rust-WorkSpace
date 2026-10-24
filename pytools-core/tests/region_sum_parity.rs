@@ -7,9 +7,11 @@ use std::fs::{self, File};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::atomic::{AtomicU64, Ordering};
 use zip::ZipArchive;
 
 const MAIN_NS: &str = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
+static NEXT_TEST_DIRECTORY_ID: AtomicU64 = AtomicU64::new(0);
 
 #[test]
 fn region_sum_workflow_matches_python_values_stats_and_output_presentation() -> Result<()> {
@@ -314,10 +316,12 @@ fn unique_test_dir() -> PathBuf {
         .duration_since(std::time::UNIX_EPOCH)
         .expect("clock after epoch")
         .as_nanos();
+    let serial = NEXT_TEST_DIRECTORY_ID.fetch_add(1, Ordering::Relaxed);
     std::env::temp_dir().join(format!(
-        "pytools_region_sum_{}_{}",
+        "pytools_region_sum_{}_{}_{}",
         std::process::id(),
-        nonce
+        nonce,
+        serial
     ))
 }
 
