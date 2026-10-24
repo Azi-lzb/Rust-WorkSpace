@@ -45,6 +45,14 @@ Audit Agent 复验确认 probe 将实际 `unmodified merged-cell border readback
 - 最终提交后应由 Audit 按 ID-free 样式组件语义复验；不同 workbook-local style_id 不作为样式损坏依据。
 - 定向测试：`cargo test -p excel-editor implicit_xf_zero_properties_are_visible_to_umya_expected_style_reader` 通过，1 项通过；格式检查和 workspace 全测未执行。
 
+## ImportRange 缺失单元格 XF0 探针（本轮）
+
+- Audit 的 sample-6 `ImportRange` 源单元格 H10 在 OOXML 中完全不存在；为在临时只读副本中读取 cellXfs[0]，校验器现按工作表关系定位 worksheet part，并在临时 `sheetData` 中加入一个未占用行的 `s="0"` 探针单元格。原始文件和候选文件均不修改。
+- 源范围内单元格若存在则仍读取其自身样式；若不存在则使用本工作表 XF0 探针作为预期样式。若工作表含行级/列级样式，缺失单元格的继承关系目前不能安全推断，校验器明确拒绝该预期样式计算，不假设其等于 XF0。
+- 回归测试扩展为验证显式样式单元格与整格缺失单元格均能从临时副本读取 XF0 的垂直居中属性。
+- 尚未请求 Audit 重跑真实样本；sample-1 的非空 shared-string 在普通 openpyxl 中被归一为空值，是独立保真差异，worker 能力仍为 Unverified。Audit 可在共享提交安全同步后按其流程决定是否进行一次最终复验。
+- 定向测试：`cargo test -p excel-editor openpyxl_backend::tests::`：6 项通过。`cargo fmt --package excel-editor` 已执行。完整 workspace 测试、目标 Linux 验证未执行。
+
 ## 删除、回滚与版本
 
 - 无删除项。可通过普通 `git revert <commit>` 回滚本次共享校验器修正和测试。
