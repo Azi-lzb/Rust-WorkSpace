@@ -8063,6 +8063,7 @@ fn run_extract_sheets(arguments: Vec<String>) -> Result<()> {
     let mut log_view = None::<String>;
     let mut capability_path = None::<PathBuf>;
     let mut platform = None::<String>;
+    let mut append_existing = false;
     let mut source_workbooks = Vec::new();
     while let Some(argument) = arguments.next() {
         match argument.as_str() {
@@ -8092,6 +8093,7 @@ fn run_extract_sheets(arguments: Vec<String>) -> Result<()> {
             "--platform" => {
                 platform = Some(arguments.next().context("--platform requires an id")?);
             }
+            "--append-existing" => append_existing = true,
             "--help" | "-h" => {
                 print_usage();
                 return Ok(());
@@ -8156,7 +8158,7 @@ fn run_extract_sheets(arguments: Vec<String>) -> Result<()> {
             &source_workbooks,
             &tasks,
             &output_dir,
-            false,
+            append_existing,
             None,
             capability_path.as_deref(),
             platform.as_deref(),
@@ -8167,7 +8169,7 @@ fn run_extract_sheets(arguments: Vec<String>) -> Result<()> {
             &source_workbooks,
             &tasks,
             &output_dir,
-            false,
+            append_existing,
             None,
             capability_path.as_deref(),
             platform.as_deref(),
@@ -8543,7 +8545,7 @@ fn print_usage() {
          convert-word --config <config.xlsx> [--to docx] [--engine auto|lo] [--output-dir <dir>] <file>...\n\
          convert-file --input <file> --to <extension> [--output <file>] [--engine auto|lo|native]\n\
          native = 按值重建（C01，丢弃样式/公式缓存）；Excel 公式文本保留但不重算，CSV 按文本写入\n\
-         pytools extract-sheets --config <workbook.xlsx> [--output-dir <dir>] [--log-dir <dir>] [--log-view user|developer|off] [--capabilities <json> --platform <id>] <source.xlsx>...\n\
+         pytools extract-sheets --config <workbook.xlsx> [--output-dir <dir>] [--log-dir <dir>] [--log-view user|developer|off] [--append-existing] [--capabilities <json> --platform <id>] <source.xlsx>...\n\
          pytools region-sum-check [--config <workbook.xlsx>] [--output-dir <dir>] [--log-dir <dir>] [--log-view user|developer|off] <source.xlsx>...\n\
          pytools file-sort-prefix --config <workbook.xlsx> [--output-dir <dir>] [--log-dir <dir>] [--log-view user|developer|off] <file>...\n\
          pytools remove-file-sort-prefix --config <workbook.xlsx> [--output-dir <dir>] [--log-dir <dir>] [--log-view user|developer|off] [<file>...]\n\

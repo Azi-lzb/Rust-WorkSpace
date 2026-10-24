@@ -6,6 +6,7 @@
 
 use crate::config::ExtractTask;
 use crate::edit_plan::apply_plan_with_capability_file;
+use crate::file_commit::{replace_target_from_candidate, sha256_file, verify_planning_snapshot};
 use crate::summary_ops::{SummaryProgress, SummaryRunEvent};
 use anyhow::{bail, ensure, Context, Result};
 use chrono::Local;
@@ -51,14 +52,23 @@ struct ExpectedSheet {
     max_row: usize,
     max_column: usize,
     non_empty_cells: usize,
+    full_sheet: bool,
 }
 
 struct PendingWorkbook {
     path: PathBuf,
+    existing_sha256: Option<String>,
     workbook: Workbook,
     sheets: Vec<ExpectedSheet>,
+    existing_sheet_names: Vec<String>,
     sheet_names: Vec<String>,
     import_operations: Vec<EditOperation>,
+}
+
+struct StagedWorkbook {
+    stage_path: PathBuf,
+    output_path: PathBuf,
+    existing_sha256: Option<String>,
 }
 
 struct ExtractSheetsProgressEmitter<'a> {
@@ -527,9 +537,10 @@ pub fn output_path_for_task(task: &ExtractTask, output_dir: &Path, default_name:
     }
 }
 
-/// Run extraction against new XLSX outputs. Full-sheet tasks use one
-/// evidence-gated `ImportRange` batch per output workbook; area-only tasks use
-/// the Rust reader/writer path. Existing output workbooks are not appended.
+/// Run extraction against XLSX outputs. Full-sheet tasks use an evidence-gated
+/// `ImportRange` batch per output workbook; area-only tasks use the Rust
+/// reader/writer path. Existing outputs are appended only when requested and
+/// when an ExcelModifier capability matches the workbook and operation batch.
 pub fn run_extract_sheets_area_candidate(
     source_workbooks: &[PathBuf],
     tasks: &[ExtractTask],
@@ -622,9 +633,6 @@ where
             None,
         );
         return Ok(result);
-    }
-    if append_existing {
-        bail!("unsupported: worksheet extraction append mode requires an accepted editor route");
     }
     ensure!(
         capability_path.is_some() == platform.is_some(),
@@ -857,13 +865,57 @@ where
                 let output_index = match output_indexes.get(&key).copied() {
                     Some(index) => index,
                     None => {
+                        let (existing_sha256, existing_sheet_names) = if append_existing
+                            && output_path.exists()
+                        {
+                            ensure!(
+                                    capability_path.is_some() && platform.is_some(),
+                                    "appending to an existing extraction output requires --capabilities and --platform"
+                                );
+                            let expected_sha256 = sha256_file(&output_path).with_context(|| {
+                                format!(
+                                    "snapshot existing extraction output {}",
+                                    output_path.display()
+                                )
+                            })?;
+                            let profile =
+                                inspect_xlsx_profile(&output_path).with_context(|| {
+                                    format!(
+                                        "inventory existing extraction output {}",
+                                        output_path.display()
+                                    )
+                                })?;
+                            ensure!(
+                                profile.format == WorkbookFormat::Xlsx
+                                    && profile.inventory_complete,
+                                "existing extraction output has an incomplete XLSX inventory: {}",
+                                output_path.display()
+                            );
+                            let sheets =
+                                read_value_columns_with_iso_dates(&output_path, EXCEL_MAX_COLUMNS)
+                                    .with_context(|| {
+                                        format!(
+                                            "read existing extraction output {}",
+                                            output_path.display()
+                                        )
+                                    })?;
+                            verify_planning_snapshot(&output_path, Some(expected_sha256.as_str()))?;
+                            (
+                                Some(expected_sha256),
+                                sheets.into_iter().map(|sheet| sheet.name).collect(),
+                            )
+                        } else {
+                            (None, Vec::new())
+                        };
                         let index = outputs.len();
                         output_indexes.insert(key, index);
                         outputs.push(PendingWorkbook {
                             path: output_path,
+                            existing_sha256,
                             workbook: Workbook::new(),
                             sheets: Vec::new(),
-                            sheet_names: Vec::new(),
+                            sheet_names: existing_sheet_names.clone(),
+                            existing_sheet_names,
                             import_operations: Vec::new(),
                         });
                         index
@@ -960,6 +1012,7 @@ where
                     max_row,
                     max_column,
                     non_empty_cells,
+                    full_sheet,
                 });
                 result.extracted_sheets += 1;
             }
@@ -983,7 +1036,7 @@ where
         );
     }
 
-    let mut staged = Vec::<(PathBuf, PathBuf)>::new();
+    let mut staged = Vec::<StagedWorkbook>::new();
     let mut temporary_files = Vec::<PathBuf>::new();
     let stage_result = (|| -> Result<()> {
         for pending in &mut outputs {
@@ -998,18 +1051,165 @@ where
                 None,
                 None,
             );
-            ensure!(
-                !pending.path.exists(),
-                "refuse to overwrite existing extraction output {}",
-                pending.path.display()
-            );
+            if pending.existing_sha256.is_none() {
+                ensure!(
+                    !pending.path.exists(),
+                    "refuse to overwrite existing extraction output {}",
+                    pending.path.display()
+                );
+            }
             let parent = pending.path.parent().unwrap_or(output_dir);
             fs::create_dir_all(parent)
                 .with_context(|| format!("create output directory {}", parent.display()))?;
             let stage_path = unique_stage_path(&pending.path)?;
-            staged.push((stage_path.clone(), pending.path.clone()));
+            staged.push(StagedWorkbook {
+                stage_path: stage_path.clone(),
+                output_path: pending.path.clone(),
+                existing_sha256: pending.existing_sha256.clone(),
+            });
             temporary_files.push(stage_path.clone());
-            if pending.import_operations.is_empty() {
+            if let Some(expected_sha256) = pending.existing_sha256.as_deref() {
+                let capability_path = capability_path.context(
+                    "appending to an existing extraction output requires a capability file",
+                )?;
+                let platform = platform
+                    .context("appending to an existing extraction output requires a platform id")?;
+                let skeleton_path = unique_stage_path(&pending.path)?;
+                temporary_files.push(skeleton_path.clone());
+                let skeleton_write_started = Instant::now();
+                if let Err(error) = pending.workbook.save(&skeleton_path) {
+                    emitter.emit(
+                        "skeleton_write",
+                        "failed",
+                        format!("待追加工作表写入失败：{error}"),
+                        Some(&pending.path),
+                        Some(skeleton_write_started.elapsed()),
+                        &["pytools-core", "excel-writer", "rust_xlsxwriter"],
+                        Some("rust_xlsxwriter"),
+                        Some("skeleton_write_error"),
+                    );
+                    return Err(error).with_context(|| {
+                        format!("save extraction skeleton {}", skeleton_path.display())
+                    });
+                }
+                emitter.emit(
+                    "skeleton_write",
+                    "succeeded",
+                    "待追加工作表已写入临时簿",
+                    Some(&pending.path),
+                    Some(skeleton_write_started.elapsed()),
+                    &["pytools-core", "excel-writer", "rust_xlsxwriter"],
+                    Some("rust_xlsxwriter"),
+                    None,
+                );
+
+                let ready_path = if pending.import_operations.is_empty() {
+                    skeleton_path.clone()
+                } else {
+                    let ready_path = unique_stage_path(&pending.path)?;
+                    temporary_files.push(ready_path.clone());
+                    let modifier_started = Instant::now();
+                    let engine = match apply_full_sheet_imports(
+                        &skeleton_path,
+                        &ready_path,
+                        &pending.import_operations,
+                        capability_path,
+                        platform,
+                    ) {
+                        Ok(engine) => engine,
+                        Err(error) => {
+                            emitter.emit(
+                                "excel_modifier",
+                                "failed",
+                                format!("整表导入修改失败：{error:#}"),
+                                Some(&pending.path),
+                                Some(modifier_started.elapsed()),
+                                &["pytools-core", "excel-editor"],
+                                None,
+                                Some("excel_modifier_error"),
+                            );
+                            return Err(error);
+                        }
+                    };
+                    emitter.emit(
+                        "excel_modifier",
+                        "succeeded",
+                        "ExcelModifier 已完成整表导入",
+                        Some(&pending.path),
+                        Some(modifier_started.elapsed()),
+                        &["pytools-core", "excel-editor"],
+                        Some(&engine),
+                        None,
+                    );
+                    fs::remove_file(&skeleton_path).with_context(|| {
+                        format!("remove extraction skeleton {}", skeleton_path.display())
+                    })?;
+                    ready_path
+                };
+
+                let modifier_started = Instant::now();
+                let (modifier_engine, append_operations) = match apply_append_imports(
+                    &pending.path,
+                    &ready_path,
+                    &stage_path,
+                    expected_sha256,
+                    &pending.sheets,
+                    capability_path,
+                    platform,
+                ) {
+                    Ok(execution) => execution,
+                    Err(error) => {
+                        emitter.emit(
+                            "excel_modifier",
+                            "failed",
+                            format!("追加提取工作表失败：{error:#}"),
+                            Some(&pending.path),
+                            Some(modifier_started.elapsed()),
+                            &["pytools-core", "excel-editor"],
+                            None,
+                            Some("excel_modifier_error"),
+                        );
+                        return Err(error);
+                    }
+                };
+                emitter.emit(
+                    "excel_modifier",
+                    "succeeded",
+                    "ExcelModifier 已把提取工作表追加到既有输出簿候选",
+                    Some(&pending.path),
+                    Some(modifier_started.elapsed()),
+                    &["pytools-core", "excel-editor"],
+                    Some(&modifier_engine),
+                    None,
+                );
+                let validation_started = Instant::now();
+                if let Err(error) = validate_full_sheet_imports(&append_operations, &stage_path) {
+                    emitter.emit(
+                        "append_validation",
+                        "failed",
+                        format!("追加工作表验证失败：{error:#}"),
+                        Some(&pending.path),
+                        Some(validation_started.elapsed()),
+                        &["pytools-core", "excel-editor", "excel-reader"],
+                        Some("calamine"),
+                        Some("append_validation_error"),
+                    );
+                    return Err(error);
+                }
+                fs::remove_file(&ready_path).with_context(|| {
+                    format!("remove appended extraction source {}", ready_path.display())
+                })?;
+                emitter.emit(
+                    "append_validation",
+                    "succeeded",
+                    "追加工作表的值和类型验证通过",
+                    Some(&pending.path),
+                    Some(validation_started.elapsed()),
+                    &["pytools-core", "excel-editor", "excel-reader"],
+                    Some("calamine"),
+                    None,
+                );
+            } else if pending.import_operations.is_empty() {
                 if let Err(error) = pending.workbook.save(&stage_path) {
                     emitter.emit(
                         "output_write",
@@ -1183,7 +1383,11 @@ where
                 })?;
             }
             let validation_started = Instant::now();
-            if let Err(error) = validate_staged_workbook(&stage_path, &pending.sheets) {
+            if let Err(error) = validate_staged_workbook_with_prefix(
+                &stage_path,
+                &pending.existing_sheet_names,
+                &pending.sheets,
+            ) {
                 emitter.emit(
                     "output_validation",
                     "failed",
@@ -1215,51 +1419,95 @@ where
         return Err(error);
     }
 
-    let mut committed = Vec::<PathBuf>::new();
-    for (stage_path, output_path) in &staged {
-        if output_path.exists() {
-            remove_staged_files(&staged);
-            remove_temp_files(&temporary_files);
-            for committed_path in &committed {
-                let _ = fs::remove_file(committed_path);
+    let mut committed_new_outputs = Vec::<PathBuf>::new();
+    for workbook in &staged {
+        let stage_path = &workbook.stage_path;
+        let output_path = &workbook.output_path;
+        let commit_elapsed = if let Some(expected_sha256) = workbook.existing_sha256.as_deref() {
+            let commit = replace_target_from_candidate(stage_path, output_path, expected_sha256);
+            let commit = match commit {
+                Ok(commit) => commit,
+                Err(error) => {
+                    remove_staged_files(&staged);
+                    remove_temp_files(&temporary_files);
+                    for committed_path in &committed_new_outputs {
+                        let _ = fs::remove_file(committed_path);
+                    }
+                    return Err(error).with_context(|| {
+                        format!(
+                            "safely append extracted worksheets to {}",
+                            output_path.display()
+                        )
+                    });
+                }
+            };
+            if let Err(error) = fs::remove_file(stage_path) {
+                emitter.emit(
+                    "output_cleanup",
+                    "warning",
+                    format!("追加结果已提交；临时候选清理失败：{error}"),
+                    Some(stage_path),
+                    None,
+                    &["pytools-core", "filesystem"],
+                    None,
+                    Some("temporary_cleanup_error"),
+                );
             }
-            bail!(
-                "refuse to overwrite extraction output created during run: {}",
-                output_path.display()
-            );
-        }
-        if let Err(error) = fs::hard_link(stage_path, output_path) {
-            remove_staged_files(&staged);
-            remove_temp_files(&temporary_files);
-            for committed_path in &committed {
-                let _ = fs::remove_file(committed_path);
-            }
-            return Err(error).with_context(|| {
-                format!(
-                    "commit extraction output without replacing an existing file {}",
+            commit.elapsed_ms
+        } else {
+            if output_path.exists() {
+                remove_staged_files(&staged);
+                remove_temp_files(&temporary_files);
+                for committed_path in &committed_new_outputs {
+                    let _ = fs::remove_file(committed_path);
+                }
+                bail!(
+                    "refuse to overwrite extraction output created during run: {}",
                     output_path.display()
-                )
-            });
-        }
-        if let Err(error) = fs::remove_file(stage_path) {
-            let _ = fs::remove_file(output_path);
-            remove_staged_files(&staged);
-            remove_temp_files(&temporary_files);
-            for committed_path in &committed {
-                let _ = fs::remove_file(committed_path);
+                );
             }
-            return Err(error)
-                .with_context(|| format!("remove staged workbook {}", stage_path.display()));
-        }
-        committed.push(output_path.clone());
+            if let Err(error) = fs::hard_link(stage_path, output_path) {
+                remove_staged_files(&staged);
+                remove_temp_files(&temporary_files);
+                for committed_path in &committed_new_outputs {
+                    let _ = fs::remove_file(committed_path);
+                }
+                return Err(error).with_context(|| {
+                    format!(
+                        "commit extraction output without replacing an existing file {}",
+                        output_path.display()
+                    )
+                });
+            }
+            if let Err(error) = fs::remove_file(stage_path) {
+                let _ = fs::remove_file(output_path);
+                remove_staged_files(&staged);
+                remove_temp_files(&temporary_files);
+                for committed_path in &committed_new_outputs {
+                    let _ = fs::remove_file(committed_path);
+                }
+                return Err(error)
+                    .with_context(|| format!("remove staged workbook {}", stage_path.display()));
+            }
+            committed_new_outputs.push(output_path.clone());
+            0
+        };
         emitter.emit(
             "output_commit",
             "succeeded",
-            "提取结果已安全提交到目标路径",
+            if workbook.existing_sha256.is_some() {
+                "提取工作表已追加并安全替换既有输出簿"
+            } else {
+                "提取结果已安全提交到目标路径"
+            },
             Some(output_path),
-            None,
-            &["pytools-core", "filesystem"],
-            None,
+            Some(Duration::from_millis(commit_elapsed as u64)),
+            &["pytools-core", "file_commit"],
+            if workbook.existing_sha256.is_some() {
+                Some("file_commit atomic replacement")
+            } else {
+                Some("hard_link create-only publication")
+            },
             None,
         );
         result
@@ -1380,24 +1628,38 @@ fn write_extracted_value(
     Ok(())
 }
 
-fn validate_staged_workbook(path: &Path, expected_sheets: &[ExpectedSheet]) -> Result<()> {
+fn validate_staged_workbook_with_prefix(
+    path: &Path,
+    existing_sheet_names: &[String],
+    expected_sheets: &[ExpectedSheet],
+) -> Result<()> {
     let actual_sheets = read_value_columns_with_iso_dates(path, EXCEL_MAX_COLUMNS)
         .with_context(|| format!("reopen staged workbook {}", path.display()))?;
     let actual_extents = read_xlsx_worksheet_extents(path)
         .with_context(|| format!("read staged worksheet extents {}", path.display()))?;
     ensure!(
-        actual_sheets.len() == expected_sheets.len(),
+        actual_sheets.len() == existing_sheet_names.len() + expected_sheets.len(),
         "staged workbook has an unexpected worksheet count"
     );
     ensure!(
-        actual_extents.len() == expected_sheets.len(),
+        actual_extents.len() == existing_sheet_names.len() + expected_sheets.len(),
         "staged workbook has an unexpected worksheet extent count"
     );
-    for ((actual, extent), expected) in actual_sheets
+    for ((actual, extent), expected_name) in actual_sheets
         .iter()
         .zip(&actual_extents)
-        .zip(expected_sheets)
+        .zip(existing_sheet_names)
     {
+        ensure!(
+            actual.name == *expected_name && extent.name == *expected_name,
+            "staged workbook changed an existing worksheet identity or order"
+        );
+    }
+    let appended_sheets = actual_sheets
+        .iter()
+        .skip(existing_sheet_names.len())
+        .zip(actual_extents.iter().skip(existing_sheet_names.len()));
+    for ((actual, extent), expected) in appended_sheets.zip(expected_sheets) {
         ensure!(
             actual.name == expected.name && extent.name == expected.name,
             "staged worksheet name changed"
@@ -1423,6 +1685,181 @@ fn validate_staged_workbook(path: &Path, expected_sheets: &[ExpectedSheet]) -> R
         );
     }
     Ok(())
+}
+
+fn apply_full_sheet_imports(
+    skeleton_path: &Path,
+    output_path: &Path,
+    operations: &[EditOperation],
+    capability_path: &Path,
+    platform: &str,
+) -> Result<String> {
+    let mut workbook_profile = inspect_xlsx_profile(skeleton_path)?;
+    let mut imported_source_profiles = BTreeMap::<String, excel_editor::WorkbookProfile>::new();
+    for operation in operations {
+        if let EditOperation::ImportRange {
+            source_workbook, ..
+        } = operation
+        {
+            let source_key = normalized_path_key(source_workbook)?;
+            let source_profile = if let Some(profile) = imported_source_profiles.get(&source_key) {
+                profile.clone()
+            } else {
+                let profile = inspect_xlsx_profile(source_workbook).with_context(|| {
+                    format!(
+                        "inventory full-sheet extraction source {}",
+                        source_workbook.display()
+                    )
+                })?;
+                imported_source_profiles.insert(source_key, profile.clone());
+                profile
+            };
+            ensure!(
+                source_profile.inventory_complete,
+                "full-sheet extraction source has an incomplete OOXML inventory: {}",
+                source_workbook.display()
+            );
+            workbook_profile
+                .features_present
+                .extend(source_profile.features_present);
+        }
+    }
+    let plan = ExcelEditPlan {
+        request_id: format!(
+            "pytools-extract-sheets-{}",
+            Local::now().format("%Y%m%d%H%M%S%f")
+        ),
+        input: skeleton_path.to_path_buf(),
+        output: output_path.to_path_buf(),
+        format: WorkbookFormat::Xlsx,
+        workbook: workbook_profile,
+        operations: operations.to_vec(),
+        preserve: [
+            PreservationRequirement::CellValuesAndTypes,
+            PreservationRequirement::Styles,
+            PreservationRequirement::MergedRanges,
+            PreservationRequirement::RowAndColumnDimensions,
+            PreservationRequirement::UnmodifiedPackageParts,
+            PreservationRequirement::SheetIdentityAndOrder,
+        ]
+        .into_iter()
+        .collect(),
+        drop_allowed: Default::default(),
+    };
+    plan.validate()?;
+    let execution = apply_plan_with_capability_file(&plan, capability_path, platform)
+        .context("apply full-sheet extraction through ExcelModifier")?;
+    validate_full_sheet_imports(operations, output_path)?;
+    Ok(execution.engine.to_string())
+}
+
+fn append_import_operations(source_path: &Path, sheets: &[ExpectedSheet]) -> Vec<EditOperation> {
+    let mut operations = Vec::with_capacity(sheets.len() * 2);
+    for sheet in sheets {
+        operations.push(EditOperation::CreateSheet {
+            name: sheet.name.clone(),
+        });
+        operations.push(EditOperation::ImportRange {
+            source_workbook: source_path.to_path_buf(),
+            source_sheet: sheet.name.clone(),
+            source_range: format!(
+                "A1:{}{}",
+                column_name(sheet.max_column.max(1)),
+                sheet.max_row.max(1)
+            ),
+            target_sheet: sheet.name.clone(),
+            target_start: "A1".to_owned(),
+            copy_values: true,
+            copy_formulas: false,
+            style_mode: if sheet.full_sheet {
+                RangeStyleMode::Full
+            } else {
+                RangeStyleMode::None
+            },
+            copy_comments: false,
+            copy_merges: sheet.full_sheet,
+            copy_row_heights: sheet.full_sheet,
+            copy_column_widths: sheet.full_sheet,
+            copy_row_hidden: sheet.full_sheet,
+            copy_column_hidden: sheet.full_sheet,
+            copy_outline_levels: sheet.full_sheet,
+            copy_all_row_dimensions: sheet.full_sheet,
+            copy_all_column_dimensions: sheet.full_sheet,
+            materialize_blank_cells: sheet.full_sheet,
+            hide_zero: false,
+        });
+    }
+    operations
+}
+
+fn apply_append_imports(
+    existing_path: &Path,
+    source_path: &Path,
+    output_path: &Path,
+    expected_sha256: &str,
+    sheets: &[ExpectedSheet],
+    capability_path: &Path,
+    platform: &str,
+) -> Result<(String, Vec<EditOperation>)> {
+    verify_planning_snapshot(existing_path, Some(expected_sha256))?;
+    let mut workbook_profile = inspect_xlsx_profile(existing_path).with_context(|| {
+        format!(
+            "inventory existing extraction output {}",
+            existing_path.display()
+        )
+    })?;
+    ensure!(
+        workbook_profile.format == WorkbookFormat::Xlsx && workbook_profile.inventory_complete,
+        "existing extraction output has an incomplete XLSX inventory: {}",
+        existing_path.display()
+    );
+    let source_profile = inspect_xlsx_profile(source_path)
+        .with_context(|| format!("inventory new extraction sheets {}", source_path.display()))?;
+    ensure!(
+        source_profile.inventory_complete,
+        "new extraction sheets have an incomplete OOXML inventory: {}",
+        source_path.display()
+    );
+    workbook_profile
+        .features_present
+        .extend(source_profile.features_present);
+    let operations = append_import_operations(source_path, sheets);
+    let plan = ExcelEditPlan {
+        request_id: format!(
+            "pytools-extract-sheets-append-{}",
+            Local::now().format("%Y%m%d%H%M%S%f")
+        ),
+        input: existing_path.to_path_buf(),
+        output: output_path.to_path_buf(),
+        format: WorkbookFormat::Xlsx,
+        workbook: workbook_profile,
+        operations: operations.clone(),
+        preserve: [
+            PreservationRequirement::CellValuesAndTypes,
+            PreservationRequirement::FormulaText,
+            PreservationRequirement::CommentsAndPositions,
+            PreservationRequirement::Styles,
+            PreservationRequirement::MergedRanges,
+            PreservationRequirement::ConditionalFormatting,
+            PreservationRequirement::DataValidations,
+            PreservationRequirement::DefinedNames,
+            PreservationRequirement::RowAndColumnDimensions,
+            PreservationRequirement::PageSettings,
+            PreservationRequirement::HeaderFooterText,
+            PreservationRequirement::Relationships,
+            PreservationRequirement::UnmodifiedPackageParts,
+            PreservationRequirement::SheetIdentityAndOrder,
+            PreservationRequirement::FreezePanes,
+            PreservationRequirement::AutoFilter,
+        ]
+        .into_iter()
+        .collect(),
+        drop_allowed: Default::default(),
+    };
+    plan.validate()?;
+    let execution = apply_plan_with_capability_file(&plan, capability_path, platform)
+        .context("append extracted worksheets through ExcelModifier")?;
+    Ok((execution.engine.to_string(), operations))
 }
 
 fn validate_full_sheet_imports(operations: &[EditOperation], output: &Path) -> Result<()> {
@@ -1562,9 +1999,9 @@ fn unique_stage_path(output_path: &Path) -> Result<PathBuf> {
     )))
 }
 
-fn remove_staged_files(staged: &[(PathBuf, PathBuf)]) {
-    for (stage_path, _) in staged {
-        let _ = fs::remove_file(stage_path);
+fn remove_staged_files(staged: &[StagedWorkbook]) {
+    for workbook in staged {
+        let _ = fs::remove_file(&workbook.stage_path);
     }
 }
 

@@ -4,7 +4,8 @@ use excel_editor::{
     EditOperationKind, EngineId, PreservationRequirement, WorkbookFormat,
 };
 use excel_reader::{
-    read_ooxml_comments, read_value_columns_with_iso_dates, read_xlsx_worksheet_extents, CellValue,
+    read_ooxml_comments, read_value_columns_with_iso_dates, read_workbook,
+    read_xlsx_worksheet_extents, CellValue,
 };
 use pytools_core::config::ExtractTask;
 use pytools_core::sheet_extract::run_extract_sheets_area_candidate;
@@ -237,10 +238,147 @@ fn write_full_sheet_test_capability(
     Ok(capability_path)
 }
 
+fn write_append_test_capability(
+    root: &Path,
+    existing: &Path,
+    incoming_source: &Path,
+    platform: &str,
+) -> anyhow::Result<PathBuf> {
+    let mut supported_features = inspect_xlsx_profile(existing)?.features_present;
+    supported_features.extend(inspect_xlsx_profile(incoming_source)?.features_present);
+    let skeleton_path = root.join("append-capability-skeleton.xlsx");
+    let mut skeleton = rust_xlsxwriter::Workbook::new();
+    for sheet in read_value_columns_with_iso_dates(incoming_source, 16_384)? {
+        skeleton.add_worksheet().set_name(&sheet.name)?;
+    }
+    skeleton.save(&skeleton_path)?;
+    supported_features.extend(inspect_xlsx_profile(&skeleton_path)?.features_present);
+    let capability = BackendCapability {
+        engine: EngineId::UmyaSpreadsheet,
+        status: CapabilityStatus::Passed,
+        format: WorkbookFormat::Xlsx,
+        operations: [
+            EditOperationKind::CreateSheet,
+            EditOperationKind::ImportRange,
+        ]
+        .into_iter()
+        .collect(),
+        supported_features,
+        preserved: [
+            PreservationRequirement::CellValuesAndTypes,
+            PreservationRequirement::FormulaText,
+            PreservationRequirement::CommentsAndPositions,
+            PreservationRequirement::Styles,
+            PreservationRequirement::MergedRanges,
+            PreservationRequirement::ConditionalFormatting,
+            PreservationRequirement::DataValidations,
+            PreservationRequirement::DefinedNames,
+            PreservationRequirement::RowAndColumnDimensions,
+            PreservationRequirement::PageSettings,
+            PreservationRequirement::HeaderFooterText,
+            PreservationRequirement::Relationships,
+            PreservationRequirement::UnmodifiedPackageParts,
+            PreservationRequirement::SheetIdentityAndOrder,
+            PreservationRequirement::FreezePanes,
+            PreservationRequirement::AutoFilter,
+        ]
+        .into_iter()
+        .collect(),
+        platform: platform.to_owned(),
+        evidence: Some(CapabilityEvidence {
+            sample_id: "synthetic-pt-7-6-append-cli".to_owned(),
+            report_path: "pytools-core/tests/sheet_extract_area_operation_parity.rs".to_owned(),
+            adapter_version: "pytools-core fixture-scoped test capability".to_owned(),
+            engine_version: "umya-spreadsheet 3.1.1".to_owned(),
+            platform: platform.to_owned(),
+        }),
+    };
+    let capability_path = root.join("temporary-append-test-capability.json");
+    fs::write(&capability_path, serde_json::to_vec_pretty(&capability)?)?;
+    Ok(capability_path)
+}
+
+fn write_append_source(path: &Path, sheet_name: &str) -> anyhow::Result<()> {
+    let mut workbook = rust_xlsxwriter::Workbook::new();
+    let sheet = workbook.add_worksheet();
+    sheet.set_name(sheet_name)?;
+    sheet.write_string(0, 0, "R1C1")?;
+    sheet.write_string(0, 1, "R1C2")?;
+    workbook.save(path)?;
+    Ok(())
+}
+
+fn write_append_full_sheet_source(path: &Path, sheet_name: &str) -> anyhow::Result<()> {
+    let mut workbook = rust_xlsxwriter::Workbook::new();
+    let sheet = workbook.add_worksheet();
+    sheet.set_name(sheet_name)?;
+    let title_format = rust_xlsxwriter::Format::new().set_bold();
+    sheet.merge_range(0, 0, 0, 1, "标题", &title_format)?;
+    sheet.write_number(1, 0, 2)?;
+    sheet.write_number(1, 1, 3)?;
+    sheet.write_formula(1, 2, "=A2+B2")?;
+    sheet.set_row_height(0, 30.0)?;
+    sheet.set_column_width(0, 20.0)?;
+    workbook.save(path)?;
+    Ok(())
+}
+
+fn write_existing_full_sheet_output(path: &Path) -> anyhow::Result<()> {
+    let mut workbook = rust_xlsxwriter::Workbook::new();
+    let sheet = workbook.add_worksheet();
+    sheet.set_name("第一张表")?;
+    let retained_format = rust_xlsxwriter::Format::new().set_bold();
+    sheet.write_string_with_format(0, 0, "保留值", &retained_format)?;
+    sheet.write_formula(0, 1, "=1+1")?;
+    sheet.insert_note(0, 0, &rust_xlsxwriter::Note::new("保留批注"))?;
+    sheet.merge_range(1, 0, 1, 1, "保留合并", &retained_format)?;
+    sheet.set_row_height(0, 24.0)?;
+    sheet.set_column_width(0, 18.0)?;
+    workbook.save(path)?;
+    Ok(())
+}
+
+fn run_extract_cli(
+    config: &Path,
+    output_dir: &Path,
+    log_dir: &Path,
+    append_existing: bool,
+    capability: Option<&Path>,
+    platform: Option<&str>,
+    source: &Path,
+) -> std::process::Output {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_pytools"));
+    command
+        .arg("extract-sheets")
+        .arg("--config")
+        .arg(config)
+        .arg("--output-dir")
+        .arg(output_dir)
+        .arg("--log-dir")
+        .arg(log_dir)
+        .arg("--log-view")
+        .arg("developer");
+    if append_existing {
+        command.arg("--append-existing");
+    }
+    if let Some(capability) = capability {
+        command.arg("--capabilities").arg(capability);
+    }
+    if let Some(platform) = platform {
+        command.arg("--platform").arg(platform);
+    }
+    command.arg(source).output().unwrap()
+}
+
 fn worksheet_xml(path: &Path) -> anyhow::Result<String> {
+    worksheet_xml_at(path, 1)
+}
+
+fn worksheet_xml_at(path: &Path, sheet_index: usize) -> anyhow::Result<String> {
     let file = fs::File::open(path)?;
     let mut archive = zip::ZipArchive::new(file)?;
-    let mut part = archive.by_name("xl/worksheets/sheet1.xml")?;
+    let part_name = format!("xl/worksheets/sheet{sheet_index}.xml");
+    let mut part = archive.by_name(&part_name)?;
     let mut xml = String::new();
     part.read_to_string(&mut xml)?;
     Ok(xml)
@@ -641,7 +779,17 @@ fn interactive_menu_routes_area_extraction_matches_python_and_records_engines() 
     assert_eq!(history["status"], "partial");
     assert_eq!(history["total_inputs"], 3);
     assert_eq!(history["result"]["extracted_sheets"], 4);
-    assert_eq!(history["actual_engines"].as_array().unwrap().len(), 2);
+    let actual_engines = history["actual_engines"].as_array().unwrap();
+    for engine in [
+        "calamine",
+        "rust_xlsxwriter",
+        "hard_link create-only publication",
+    ] {
+        assert!(
+            actual_engines.iter().any(|actual| actual == engine),
+            "run history is missing actual engine {engine:?}: {actual_engines:?}"
+        );
+    }
     let sample_cell_value = expected_sheets
         .iter()
         .flat_map(|sheet| sheet["values"].as_array().unwrap())
@@ -1081,23 +1229,256 @@ fn interactive_menu_supports_user_and_off_log_views() {
 }
 
 #[test]
-fn unsupported_operations_and_existing_outputs_are_rejected_safely() {
+fn append_cli_keeps_previous_python_extraction_sheets() -> anyhow::Result<()> {
+    const PLATFORM: &str = "synthetic-pt-7-6-append-cli";
+    let root = temporary_directory("sheet-extract-append-cli");
+    let source_first = root.join("2026第一批.xlsx");
+    let source_second = root.join("2026第二批.xlsx");
+    write_append_source(&source_first, "第一张表")?;
+    write_append_source(&source_second, "第二张表")?;
+
+    let task = ExtractTask {
+        row_no: 2,
+        workbook_keywords: "2026".to_owned(),
+        sheet_keywords: String::new(),
+        exclude_keywords: String::new(),
+        area_spec: "A1:B1".to_owned(),
+        stitch_mode: String::new(),
+        output_folder: String::new(),
+        output_name: "合并结果".to_owned(),
+        remark: String::new(),
+    };
+    let config = create_menu_config(&root, &[task]);
+    let output_dir = root.join("app/output");
+    let log_dir = root.join("app/logs");
+    let output_path = output_dir.join("合并结果.xlsx");
+
+    let first_run = run_extract_cli(
+        &config,
+        &output_dir,
+        &log_dir,
+        false,
+        None,
+        None,
+        &source_first,
+    );
+    assert!(
+        first_run.status.success(),
+        "first extraction failed: {}",
+        String::from_utf8_lossy(&first_run.stderr)
+    );
+    let first_report: Value = serde_json::from_slice(&first_run.stdout)?;
+    assert_eq!(first_report["extracted_sheets"], 1);
+    let original_target = fs::read(&output_path)?;
+    let original_sheets = read_value_columns_with_iso_dates(&output_path, 16_384)?;
+    assert_eq!(original_sheets.len(), 1);
+    assert_eq!(original_sheets[0].name, "第一张表");
+    assert_eq!(
+        original_sheets[0].values.get("A1"),
+        Some(&CellValue::Text("R1C1".to_owned()))
+    );
+
+    let without_capability = run_extract_cli(
+        &config,
+        &output_dir,
+        &log_dir,
+        true,
+        None,
+        None,
+        &source_second,
+    );
+    assert!(!without_capability.status.success());
+    assert!(String::from_utf8_lossy(&without_capability.stderr)
+        .contains("requires --capabilities and --platform"));
+    assert_eq!(fs::read(&output_path)?, original_target);
+
+    let capability = write_append_test_capability(&root, &output_path, &source_second, PLATFORM)?;
+    let mismatched_platform = run_extract_cli(
+        &config,
+        &output_dir,
+        &log_dir,
+        true,
+        Some(&capability),
+        Some("different-synthetic-platform"),
+        &source_second,
+    );
+    assert!(!mismatched_platform.status.success());
+    assert_eq!(fs::read(&output_path)?, original_target);
+
+    let append_run = run_extract_cli(
+        &config,
+        &output_dir,
+        &log_dir,
+        true,
+        Some(&capability),
+        Some(PLATFORM),
+        &source_second,
+    );
+    assert!(
+        append_run.status.success(),
+        "append extraction failed: {}",
+        String::from_utf8_lossy(&append_run.stderr)
+    );
+    let append_report: Value = serde_json::from_slice(&append_run.stdout)?;
+    assert_eq!(append_report["extracted_sheets"], 1);
+    assert_eq!(append_report["output_files"], 1);
+    let events = String::from_utf8_lossy(&append_run.stderr);
+    assert!(events.contains("\"actual_engine\":\"umya_spreadsheet\""));
+    assert!(events.contains("\"phase\":\"output_commit\""));
+
+    let history_path = fs::read_dir(&log_dir)?
+        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+        .find(|path| {
+            fs::read_to_string(path)
+                .map(|history| {
+                    history.contains("umya_spreadsheet") && history.contains("output_commit")
+                })
+                .unwrap_or(false)
+        })
+        .context("successful append run history was not saved")?;
+    let history_bytes = fs::read(&history_path)?;
+    let history_text = String::from_utf8_lossy(&history_bytes);
+    let history: Value = serde_json::from_slice(&history_bytes)?;
+    assert_eq!(history["feature_id"], "PT-7-6");
+    assert_eq!(history["status"], "succeeded");
+    assert_eq!(history["result"]["extracted_sheets"], 1);
+    assert!(history["actual_engines"]
+        .as_array()
+        .is_some_and(|engines| engines.iter().any(|engine| engine == "umya_spreadsheet")));
+    assert!(history["events"]
+        .as_array()
+        .is_some_and(|events| events.iter().any(|event| event["phase"] == "output_commit")));
+    assert!(
+        !history_text.contains("R1C1"),
+        "run history must not contain raw cell values"
+    );
+
+    let appended_sheets = read_value_columns_with_iso_dates(&output_path, 16_384)?;
+    assert_eq!(
+        appended_sheets
+            .iter()
+            .map(|sheet| sheet.name.as_str())
+            .collect::<Vec<_>>(),
+        ["第一张表", "第二张表"]
+    );
+    for sheet in &appended_sheets {
+        assert_eq!(
+            sheet.values.get("A1"),
+            Some(&CellValue::Text("R1C1".to_owned()))
+        );
+        assert_eq!(
+            sheet.values.get("B1"),
+            Some(&CellValue::Text("R1C2".to_owned()))
+        );
+    }
+    fs::remove_dir_all(root)?;
+    Ok(())
+}
+
+#[test]
+fn append_cli_preserves_existing_workbook_properties_and_imports_full_sheet_layout(
+) -> anyhow::Result<()> {
+    const PLATFORM: &str = "synthetic-pt-7-6-full-sheet-append";
+    let root = temporary_directory("sheet-extract-full-sheet-append");
+    let source = root.join("2026第二批.xlsx");
+    write_append_full_sheet_source(&source, "第二张表")?;
+    let output_dir = root.join("app/output");
+    fs::create_dir_all(&output_dir)?;
+    let output_path = output_dir.join("合并结果.xlsx");
+    write_existing_full_sheet_output(&output_path)?;
+
+    let task = ExtractTask {
+        row_no: 2,
+        workbook_keywords: "2026".to_owned(),
+        sheet_keywords: String::new(),
+        exclude_keywords: String::new(),
+        area_spec: "整表".to_owned(),
+        stitch_mode: String::new(),
+        output_folder: String::new(),
+        output_name: "合并结果".to_owned(),
+        remark: String::new(),
+    };
+    let config = create_menu_config(&root, &[task]);
+    let before = read_workbook(&output_path)?;
+    assert_eq!(before.sheets[0].name, "第一张表");
+    assert_eq!(before.sheets[0].values["A1"]["value"], "保留值");
+    assert!(before.sheets[0].formulas["B1"].contains("1+1"));
+    assert_eq!(before.sheets[0].merges, ["A2:B2"]);
+    assert!(before.sheets[0].comments["A1"].contains("保留批注"));
+
+    let capability = write_append_test_capability(&root, &output_path, &source, PLATFORM)?;
+    let append_run = run_extract_cli(
+        &config,
+        &output_dir,
+        &root.join("app/logs"),
+        true,
+        Some(&capability),
+        Some(PLATFORM),
+        &source,
+    );
+    assert!(
+        append_run.status.success(),
+        "full-sheet append failed: {}",
+        String::from_utf8_lossy(&append_run.stderr)
+    );
+    let append_report: Value = serde_json::from_slice(&append_run.stdout)?;
+    assert_eq!(append_report["extracted_sheets"], 1);
+    let events = String::from_utf8_lossy(&append_run.stderr);
+    assert!(events.contains("\"actual_engine\":\"umya_spreadsheet\""));
+    assert!(events.contains("\"actual_engine\":\"rust_xlsxwriter\""));
+
+    let after = read_workbook(&output_path)?;
+    assert_eq!(
+        after
+            .sheets
+            .iter()
+            .map(|sheet| sheet.name.as_str())
+            .collect::<Vec<_>>(),
+        ["第一张表", "第二张表"]
+    );
+    assert_eq!(after.sheets[0].values["A1"]["value"], "保留值");
+    assert!(after.sheets[0].formulas["B1"].contains("1+1"));
+    assert_eq!(after.sheets[0].merges, ["A2:B2"]);
+    assert!(after.sheets[0].comments["A1"].contains("保留批注"));
+    assert_eq!(after.sheets[1].merges, ["A1:B1"]);
+    assert!(after.sheets[1].formulas.is_empty());
+    assert!(after.sheets[1].comments.is_empty());
+
+    let workbook = open_xlsx(&output_path)?;
+    assert!(style_bold(&workbook, "第一张表", "A1")?);
+    assert!(style_bold(&workbook, "第二张表", "A1")?);
+    let first_sheet_xml = worksheet_xml_at(&output_path, 1)?;
+    let second_sheet_xml = worksheet_xml_at(&output_path, 2)?;
+    assert!(first_sheet_xml.contains("ht=\"24\""));
+    assert!(first_sheet_xml.contains("width=\"18.7109375\""));
+    assert!(second_sheet_xml.contains("ht=\"30\""));
+    assert!(second_sheet_xml.contains("width=\"20.7109375\""));
+
+    fs::remove_dir_all(root)?;
+    Ok(())
+}
+
+#[test]
+fn append_mode_creates_a_missing_output_and_unsupported_operations_are_rejected_safely() {
     let cases = cases();
     let source = fixture_path("省级月度报表_A.xlsx");
     let root = temporary_directory("sheet-extract-reject");
     let output_dir = root.join("output");
     let mut loaded_tasks = load_tasks(&cases);
 
-    let append_error = run_extract_sheets_area_candidate(
+    let append_new_output_dir = root.join("append-new-output");
+    let append_result = run_extract_sheets_area_candidate(
         std::slice::from_ref(&source),
         &loaded_tasks,
-        &output_dir,
+        &append_new_output_dir,
         true,
         Some("unused.xlsx"),
     )
-    .unwrap_err();
-    assert!(append_error.to_string().contains("append mode"));
-    assert!(!output_dir.exists());
+    .unwrap();
+    assert_eq!(append_result.output_files, 1);
+    assert!(append_new_output_dir
+        .join("区域提取/area-result.xlsx")
+        .is_file());
 
     loaded_tasks[0].area_spec.clear();
     let full_sheet_error = run_extract_sheets_area_candidate(

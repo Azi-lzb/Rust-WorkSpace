@@ -40,7 +40,7 @@
 
 普通版工作表提取除 `sheet_extract` 纯逻辑（Python helper 11/11，`probe/reports/sheet_extract_parity.json`）外，现有 area-only 文件流程候选 `run_extract_sheets_area_candidate`，并通过 `pytools extract-sheets-area --config <配置簿> [--output-dir <目录>] <源工作簿>...` 接入 Rust CLI。它加载现有“工作表提取”任务配置，使用共享 `excel-reader`/Calamine 读取值，以 rust_xlsxwriter 新建输出簿；支持文件/工作表关键字匹配与排除、A1 多区域横向/纵向拼接、空行列压缩、输出路径和工作表重名处理。写出后重开校验工作表数量、名称、尺寸和非空格数量；输出先写临时文件，经校验后用不覆盖目标的硬链接提交，提交失败时撤销本轮输出。合成 XLSX 对拍覆盖两个有效源工作簿和一个损坏输入，输出 4 张表至 1 个新工作簿，统计 files=2、extracted_sheets=4、output_files=1、failed_files=1；值、表名、尺寸与只读 PyCode 基线一致，输入文件字节未变。Python 基线和 Rust 对拍报告分别为 `probe/reports/sheet_extract_area_python_baseline.json`、`probe/reports/sheet_extract_area_parity.json`，人工记录见 `GPT修改记录/20261023_081520_pytools工作表区域提取Rust候选与CLI对拍.txt`。
 
-此候选仅覆盖新建 XLSX 的区域值提取：源 Python 同样以 `data_only=True` 读取；本候选不复制公式文本。整表模式（样式、合并、行列尺寸等保真）和追加既有输出簿会显式拒绝；日期、时长、错误值及非有限数目前显式拒绝。夹具不含公式，日期拒绝仅作候选安全边界测试。源文件由调用方显式列出，不含目录扫描、现有产品菜单接入、日志等价、真实模板或非 XLSX 格式验证。因此仅有一个 CLI 候选切片通过合成对拍，不能将工作表提取菜单或完整功能标为已迁移。
+此候选仅覆盖 XLSX：区域值由 Calamine 读取并以 rust_xlsxwriter 新建输出，区域模式沿用 Python data_only=True 且不复制公式文本；整表模式需通过 ExcelModifier capability。extract-sheets --append-existing 现支持对既有 XLSX 区域或整表结果追加新工作表，但仅在提供匹配 --capabilities、--platform 且目标簿 inventory 完整时执行；默认 CLI/菜单仍拒绝覆盖既有输出。日期、时长、错误值及非有限数目前显式拒绝。其他格式、真实模板及文件弹窗尚未验证。
 
 机构名称规范化已有 `.xlsx` Rust CLI（`pytools institution-normalize --config ... <workbook>...`），默认只生成计划；执行须显式 `--apply` 并提供匹配的 ExcelModifier capability。候选按原规则在“分机构”工作表统一选择 A 列或 B 列，精确映射优先，其次按映射顺序不区分大小写做子串映射；多文件用 Rayon 并行，同一路径重复出现时退回顺序处理。原 `run_normalize_institution` 候选与 Python `_process_sheet` 在一份四工作表合成簿上对拍，Rust probe 的 sheet 名、20 个值、1 条公式、1 个合并区域和 1 条批注均保留；文件统计与 Python 一致（3 个匹配工作表、2 个改动工作表、3 行改动）。openpyxl 元数据检查还验证了该夹具的样式、行列尺寸、批注、合并区域、页面设置和页眉页脚。`build_institution_normalize_plan` 通过共享 `excel-reader` 构造 3 个 `SetCellValue` 操作，并与 Python 基线的统计及变更格一致，计划对拍报告为 `probe/reports/institution_normalize_plan_parity.json`，该单独报告未执行修改引擎。另有显式忽略的集成测试在合成四工作表夹具上临时登记 fixture-scoped capability，实际执行 CLI → ExcelModifier → `openpyxl_worker`，并对拍值、公式、批注、合并、样式、行列尺寸、页面设置、页眉页脚和源文件安全性；执行报告为 `probe/reports/institution_normalize_openpyxl_execution_20261024.json`，状态明确为 `synthetic_passed_not_production_acceptance`。worker 修复了 openpyxl 写出时遗漏的 `xml:space="preserve"`，并由 Rust 读取候选临时文件完成保留项验证。该 capability 仅为测试临时文件，不产生生产 Passed 登记，也不改变默认路由。以上仅为合成 XLSX 证据；无经授权真实样本，`.xlsm`、真实模板、Windows 原生执行、目标 Linux/glibc 2.28 和 deb 尚未验证；PT-7-2 生产状态仍为未验证。旧直接 umya 候选未改为 ExcelModifier 默认路由。
 
@@ -71,7 +71,7 @@ Python 基线由源 `run_batch_rename_33` 对同一合成配置及路径场景�
 - 对比 PyCode 与 NoComPyTools，列出共享与独有行为。
 - 为尚未覆盖的配置表、业务工作簿及各迁移功能建立 pytools 专属 fixtures、probe config、对拍输出和日期报告。
 - 时序抽取目前没有批量目录调度、CSV 输入、结果工作簿写入或向目标簿追加；日期单元格序列值、xlsb 合并区域和真实模板仍未验证。
-- 普通版工作表区域值提取已有配置加载、显式文件列表批处理、Rust CLI、Python 基线和新建 XLSX 输出候选；尚缺现有产品菜单/dispatcher 接入、目录发现、日志等价、真实模板/多格式验证。整表提取现已有 XLSX `ImportRange` 编辑计划与 umya 候选实现，可复制值/公式缓存、样式、合并、批注开关、行列尺寸/隐藏/outline 及 A1 矩形内空白格。一个合成样本上，Rust 输出与源工作表属性（值、样式、合并、行列尺寸/隐藏/outline）0 项差异；输入哈希不变。旧 Python `_copy_full_sheet_with_style` 生成的跨簿输出在同一带样式样本上被 openpyxl 读取样式时触发 `IndexError`，因此此次以源工作表属性作为语义基准，不宣称旧输出文件级保真。没有已验收的生产 capability，完整整表 CLI 仍要求匹配的 `--capabilities` 和 `--platform`。追加既有输出簿和其他格式仍未实现或验证。
+- 普通版工作表提取已有 Rust CLI 与 7→6 主菜单入口；extract-sheets --append-existing 仅作为显式 CLI 选项追加既有 XLSX 输出，需精确 capability/platform。区域及整表追加已有合成执行与既有簿属性回归；生产 capability 未登记。真实模板、其他格式、Windows 文件弹窗及麒麟/UOS glibc 2.28/deb 未验证。
 - 机构名称规范化已有显式文件列表和配置 CLI；仍未接入原 GUI 菜单/dispatcher 或目录发现，当前候选只接受 `.xlsx`。合成夹具已有通过临时测试 capability 的 ExcelModifier/openpyxl worker/validator 执行证据，但未形成生产 capability；计划报告与执行测试覆盖范围不同。源实现支持的 `.xlsm` 保留行为、真实模板中的全部 OOXML 部件、真实样本、Windows 原生执行及目标平台仍需验收。
 - 地区总分校验 `region_sum::run_region_sum_check` 现已接入 `pytools region-sum-check` CLI，并通过合成 XLSX 对拍；原 GUI 菜单、真实模板和非 XLSX 格式、执行性能/峰值内存、Windows 原生与目标 Linux/deb 均未验证，现有 Python 功能仍保留。
 - 4-6/4-7、4-8、4-9 和 4-10 均已接入显式文件列表 Rust CLI；只有 4-9/4-10 写操作日志。4-6/4-7 CLI 对拍仅覆盖合成 `.xlsx/.xlsm`，源 `.xls/.xlt` COM 读取未迁移，真实宏、数字/日期/公式缓存单元格和不同文件系统仍未验证；CLI 不等于原 GUI 菜单/dispatcher 集成。4-9/4-10 日志时间、并发及重复运行行为尚未逐项与 Python logger 对拍；4-8 尚未验证真实配置、目标平台和非 UTF-8 文件名。上述操作的真实目录、Windows 原生 Rust 构建和目标 Linux 包均未验收。4-10 的 `.xls/.xlt` 内容读取、多单元格规格及真实文件仍未验证，源 COM 内容读取仅作基线，不进入 Rust 主路径。旧 COM 业务读取未迁入 sidecar。
@@ -643,3 +643,11 @@ Windows 原生验证：`cargo fmt --manifest-path pytools-core/Cargo.toml -- --c
 在 Windows Python 3.12.10/openpyxl 3.1.5 环境下，直接运行现成的 `compare_real_used_range_sample()`，以原 PyTools 只读 `xlsx/` 目录的 13 份真实 XLSX 与 Windows 上运行的 `target/debug/pytools.exe` 按四批对拍。96 张工作表、203,580 行的完整输出投影均一致；行数/文件数和开发者事件流/保存历史断言通过，源文件前后指纹一致，输出只在临时目录。机器报告：`probe/reports/summary_used_range_real_parity_20261025.json`。
 
 完整组合 `compare_summary_tools.py` 未能完成，因为当前 PyTools Python venv 缺少 NoComPyTools 对拍所需的 `python_calamine`；本次已隔离运行 PyCode/Rust PT-6-1 主样本对拍，不安装依赖、不修改源项目。此结果补充 Windows 上运行现有 Rust CLI 的阶段证据，不代表 Windows 原生 Cargo 构建、原 PyTools 业务 VBA XLSM、麒麟 V10/UOS V20、glibc 2.28、deb 或离线交付验收；PT-6-1 整体仍未完成最终验收。
+
+### 2026-10-25 PT-7-6 显式追加既有输出簿
+
+新增 pytools extract-sheets --append-existing，映射原 PyCode run_extract_sheets(..., append_existing=True) 的显式追加参数。对已存在的目标，仅支持 XLSX；读取并验证目标 workbook inventory，保存目标 SHA-256 快照，要求匹配的 --capabilities 与 --platform。Rust 先以 rust_xlsxwriter 生成待追加工作表，再经 ExcelModifier 按 CreateSheet + ImportRange 对既有簿执行整批修改；Calamine 校验新表，最终仅在目标快照未变化时安全替换。缺少/不匹配 capability、目标 inventory 不完整或输出冲突时失败关闭，目标不被覆盖。目标路径尚不存在时，沿用新建输出行为。
+
+Python 只读基线测试 test_extract_sheets_append_existing_output_keeps_previous_sheets（区域提取）通过 1/1。Rust 真实 CLI 合成回归验证首次新建后再次追加，表名/顺序和值正确；无 capability 与平台不匹配时原目标字节不变；运行历史包含实际引擎/提交阶段且不含单元格值。整表追加另验证既有值、公式、批注、合并、粗体样式和行列尺寸保留；新表缓存值、合并、样式、行高/列宽复制，普通无批注版不复制公式文本与批注。sheet_extract_area_operation_parity 10/10、cargo fmt --check 与 git diff --check 通过。完整机器报告：probe/reports/sheet_extract_append_existing_parity_20261025.json。
+
+本次使用的 Umya CreateSheet + ImportRange capability 仅由测试临时生成，未登记生产 Passed capability。Python 既有测试只覆盖区域追加；整表 Python helper 生成文件的样式重开问题仍按前节记录，本次不宣称整表输出文件级 Python 对拍通过。追加未接入交互菜单，仍是显式 CLI 能力；真实模板、未列举 OOXML 对象、非 XLSX、目标 Linux/glibc 2.28 与 deb 未验证，PT-7-6 整体验收仍未完成。
