@@ -1140,6 +1140,7 @@ dependencies = [
  "excel-reader",
  "ooxml-patch",
  "roxmltree",
+ "rust_xlsxwriter",
  "serde_json",
  "zip 6.0.0",
 ]

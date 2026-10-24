@@ -211,9 +211,13 @@ fn run_recalculate(arguments: Vec<String>) -> Result<()> {
     let engine_output_dir = guard.0.join("engine-output");
     fs::create_dir_all(&input_dir)?;
     fs::create_dir_all(&engine_output_dir)?;
+    let cacheless_input = input_dir.join("formula-cache-cleared.xlsx");
     let recalc_input = input_dir.join("recalculation-request.xlsx");
+    let cache_report =
+        ooxml_patch::clear_formula_caches_for_recalculation(&input, &cacheless_input)
+            .context("remove prior formula caches from the recalculation request copy")?;
     ooxml_patch::patch_workbook_calculation_properties(
-        &input,
+        &cacheless_input,
         &recalc_input,
         ooxml_patch::WorkbookCalculationProperties {
             full_calc_on_load: Some(true),
@@ -246,26 +250,26 @@ fn run_recalculate(arguments: Vec<String>) -> Result<()> {
     let validation = validate_recalculated_workbook(&input, &candidate)?;
     fs::rename(&candidate, &output)
         .with_context(|| format!("publish recalculated workbook {}", output.display()))?;
-    println!("{{\"status\":\"recalculated\",\"engine\":{},\"input\":{},\"output\":{},\"validation\":{}}}", json_string(&actual_engine), json_string(&input.display().to_string()), json_string(&output.display().to_string()), validation);
+    println!("{{\"status\":\"recalculated\",\"engine\":{},\"input\":{},\"output\":{},\"formula_cache_values_cleared_before_engine\":{},\"validation\":{}}}", json_string(&actual_engine), json_string(&input.display().to_string()), json_string(&output.display().to_string()), cache_report.cache_values_removed, validation);
     Ok(())
 }
 
 fn run_libreoffice_recalculate(input: &Path, temp_dir: &Path) -> Result<String> {
     let profile = temp_dir.join("lo-profile");
+    fs::create_dir_all(&profile).context("create LibreOffice isolated profile directory")?;
+    let profile_uri = file_uri(&profile)?;
     let command = Command::new("soffice")
         .arg("--headless")
         .arg("--nologo")
         .arg("--nodefault")
         .arg("--nolockcheck")
-        .arg(format!(
-            "-env:UserInstallation={}",
-            profile.to_string_lossy()
-        ))
+        .arg("--nofirststartwizard")
+        .arg(format!("-env:UserInstallation={profile_uri}"))
         .arg("--convert-to")
         .arg("xlsx:Calc MS Excel 2007 XML")
         .arg("--outdir")
         .arg(temp_dir)
-        .arg(input)
+        .arg(file_uri(input)?)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .output()
@@ -279,6 +283,29 @@ fn run_libreoffice_recalculate(input: &Path, temp_dir: &Path) -> Result<String> 
         String::from_utf8_lossy(&command.stderr)
     );
     Ok("LibreOffice".to_owned())
+}
+
+fn file_uri(path: &Path) -> Result<String> {
+    ensure!(
+        path.is_absolute(),
+        "LibreOffice profile path must be absolute"
+    );
+    let path = path.to_string_lossy().replace('\\', "/");
+    #[cfg(windows)]
+    let path = if path.starts_with('/') {
+        path
+    } else {
+        format!("/{path}")
+    };
+    let mut encoded = String::with_capacity(path.len());
+    for byte in path.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'/' | b':' | b'-' | b'.' | b'_' | b'~') {
+            encoded.push(byte as char);
+        } else {
+            encoded.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    Ok(format!("file://{encoded}"))
 }
 
 fn require_engine_output(path: &Path) -> Result<()> {
@@ -1075,7 +1102,9 @@ impl Drop for TempDirGuard {
 
 #[cfg(test)]
 mod recalculation_tests {
-    use super::{formula_cache_cell_count, require_engine_output, MAIN_NS, PACKAGE_REL_NS, REL_NS};
+    use super::{
+        file_uri, formula_cache_cell_count, require_engine_output, MAIN_NS, PACKAGE_REL_NS, REL_NS,
+    };
     use anyhow::Result;
     use std::{
         env,
@@ -1155,6 +1184,18 @@ mod recalculation_tests {
         assert!(!expected_output.exists());
 
         fs::remove_dir_all(root)?;
+        Ok(())
+    }
+
+    #[test]
+    fn libreoffice_profile_path_is_encoded_as_a_file_uri() -> Result<()> {
+        let root = env::temp_dir().join("lo profile # 中文");
+        let uri = file_uri(&root)?;
+        assert!(uri.starts_with("file://"));
+        assert!(uri.contains("%20"));
+        assert!(uri.contains("%23"));
+        assert!(!uri.contains(' '));
+        assert!(!uri.contains('中'));
         Ok(())
     }
 }
