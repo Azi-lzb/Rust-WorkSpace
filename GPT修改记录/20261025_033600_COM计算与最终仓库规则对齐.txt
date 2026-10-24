@@ -1,0 +1,27 @@
+时间：2026-10-25 03:36 Asia/Shanghai
+执行者：Codex main
+修改前 commit：6924e4b85dd2e1c09881431e8c8c67dc947bad57
+修改后 commit：本记录与规则变更由同一文档提交承载；提交 ID 见本轮汇报。
+WIP 情况：main 原有未提交 `crates/excel-editor/src/openpyxl_backend.rs` 修改；本轮未改动、暂存或纳入提交。Audit 活动工作树有未跟踪的 S1 诊断报告和记录；未触碰开发工作树。
+
+目的：把用户已确定的未来 COM 修改/计算、LibreOffice Calc 计算及迁移完成后的 Excel-Core/Audit/PyTools 三仓方向落实到长期目标与冲突子规则，保持现有读取、新建和业务迁移路线。
+
+修改文件：
+- `DEVELOPMENT_GOAL.md`：将第十章中“未来是否拆分待定”改为按第十七章执行三仓拆分。
+- `AGENTS.md`：补充联合迁移 Workspace 的临时性质及迁移验收后的 Excel-Core、Audit、PyTools 三仓要求。
+- `audit-core/rules/07_测试与发布.md`：允许对经 capability 验收的 Windows Excel/WPS COM 修改后端进行专门保真与语义验收，并要求经 ExcelEditPlan/ExcelModifier 显式路由。
+- `audit-core/rules/09_技术实现参考.md`：区分 ExcelModifier 的 COM 修改与独立 ExcelCalculator 的重算，避免把旧 COM 工作流整体带入生产路径或把计算限定为现有 sidecar。
+- 本记录。
+
+核查结论：根 `rules/13_Rust_Excel读写修改与引擎路由规范.md`、`audit-core/AGENTS.md`、`pytools-core/AGENTS.md` 已含本轮确定的 COM/LibreOffice 边界，本轮未重复修改。COM Reader/Writer 未加入；读取、新建默认和 JSON IPC 协议未改。Audit/PyTools 活动 `/goal` 均读取确认，均要求遵循各自工作树当前 `DEVELOPMENT_GOAL.md` 并将共享接口问题交 main；未发现需要重启或改写长期 Goal 的冲突。
+
+组件版本：不升级。
+
+测试与检查：检查 main 分支、工作区状态、Git 远端和三分支状态；检查两份活动 `/goal`、根目标与相关规则。文档变更不运行 Rust 测试；提交前执行 `git diff --check`。
+
+未执行项：未实现或验收 COM Worker / ExcelCalculator；未执行 COM/LibreOffice 工作簿测试；未重跑 Audit S1 真实样本、业务测试或全量测试；本记录不构成路由或功能验收。
+
+已知问题：Audit 活动工作树存在未跟踪的 S1 DefinedNames 诊断报告和记录，需由 Audit Agent 在自己的安全节点处理。此前 main 到 `origin/main` 无超前提交；Audit 远端在本轮 fetch 时已前进到 `eb50796`，本地正式 audit-dev 工作树落后且活动副本有未跟踪内容，故本轮不向 Audit 分支同步。开发分支更新待其安全节点处理。
+
+删除清单：无。
+回滚：回退本次文档提交即可撤销目标和规则修改；不回滚 main 上原有的 openpyxl_backend.rs WIP，也不重写既有历史。
