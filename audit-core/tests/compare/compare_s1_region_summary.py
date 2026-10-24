@@ -100,6 +100,52 @@ def equal_value(left: Any, right: Any) -> bool:
     return left == right
 
 
+def _color_signature(color: Any) -> tuple[Any, ...] | None:
+    if color is None:
+        return None
+    color_type = color.type
+    value = (
+        color.rgb
+        if color_type == "rgb"
+        else color.indexed
+        if color_type == "indexed"
+        else color.theme
+        if color_type == "theme"
+        else None
+    )
+    return color_type, str(value), float(color.tint or 0)
+
+
+def _font_signature(font: Any) -> tuple[Any, ...]:
+    return (
+        font.name,
+        font.sz,
+        font.bold,
+        font.italic,
+        font.underline,
+        font.strike,
+        font.vertAlign,
+        _color_signature(font.color),
+        font.charset,
+        font.family,
+    )
+
+
+def _alignment_signature(alignment: Any) -> tuple[Any, ...]:
+    canonical = lambda value: None if value == "general" else value
+    return (
+        canonical(alignment.horizontal),
+        canonical(alignment.vertical),
+        alignment.textRotation,
+        alignment.wrapText,
+        alignment.shrinkToFit,
+        alignment.indent,
+        alignment.relativeIndent,
+        alignment.justifyLastLine,
+        alignment.readingOrder,
+    )
+
+
 def compare_workbooks(python_path: Path, rust_path: Path) -> dict[str, Any]:
     python = load_workbook(python_path, data_only=False, read_only=False)
     rust = load_workbook(rust_path, data_only=False, read_only=False)
@@ -107,6 +153,23 @@ def compare_workbooks(python_path: Path, rust_path: Path) -> dict[str, Any]:
         sheet_name_mismatches = python.sheetnames != rust.sheetnames
         value_mismatches = 0
         format_mismatches = 0
+        font_mismatches = 0
+        alignment_mismatches = 0
+        alignment_header_mismatches = 0
+        alignment_body_mismatches = 0
+        alignment_property_mismatches = {
+            "horizontal": 0,
+            "vertical": 0,
+            "textRotation": 0,
+            "wrapText": 0,
+            "shrinkToFit": 0,
+            "indent": 0,
+            "relativeIndent": 0,
+            "justifyLastLine": 0,
+            "readingOrder": 0,
+        }
+        alignment_type_pairs: dict[str, int] = {}
+        alignment_horizontal_pairs: dict[str, int] = {}
         header_style_mismatches = 0
         filter_mismatches = 0
         freeze_mismatches = 0
@@ -127,6 +190,30 @@ def compare_workbooks(python_path: Path, rust_path: Path) -> dict[str, Any]:
                         value_mismatches += 1
                     if left.number_format != right.number_format:
                         format_mismatches += 1
+                    if _font_signature(left.font) != _font_signature(right.font):
+                        font_mismatches += 1
+                    if _alignment_signature(left.alignment) != _alignment_signature(right.alignment):
+                        alignment_mismatches += 1
+                        if row == 1:
+                            alignment_header_mismatches += 1
+                        else:
+                            alignment_body_mismatches += 1
+                        alignment_type = f"{left.data_type}->{right.data_type}"
+                        alignment_type_pairs[alignment_type] = (
+                            alignment_type_pairs.get(alignment_type, 0) + 1
+                        )
+                        horizontal_pair = (
+                            f"{left.data_type}:{left.alignment.horizontal!r}"
+                            f"->{right.alignment.horizontal!r}"
+                        )
+                        alignment_horizontal_pairs[horizontal_pair] = (
+                            alignment_horizontal_pairs.get(horizontal_pair, 0) + 1
+                        )
+                        for property_name in alignment_property_mismatches:
+                            if getattr(left.alignment, property_name) != getattr(
+                                right.alignment, property_name
+                            ):
+                                alignment_property_mismatches[property_name] += 1
                     if row == 1:
                         left_color = str(left.fill.fgColor.rgb)[-6:]
                         right_color = str(right.fill.fgColor.rgb)[-6:]
@@ -152,6 +239,8 @@ def compare_workbooks(python_path: Path, rust_path: Path) -> dict[str, Any]:
                     sheet_name_mismatches,
                     value_mismatches,
                     format_mismatches,
+                    font_mismatches,
+                    alignment_mismatches,
                     header_style_mismatches,
                     filter_mismatches,
                     freeze_mismatches,
@@ -165,6 +254,13 @@ def compare_workbooks(python_path: Path, rust_path: Path) -> dict[str, Any]:
             "dimension_mismatches": dimension_mismatches,
             "value_mismatches": value_mismatches,
             "number_format_mismatches": format_mismatches,
+            "font_mismatches": font_mismatches,
+            "alignment_mismatches": alignment_mismatches,
+            "alignment_header_mismatches": alignment_header_mismatches,
+            "alignment_body_mismatches": alignment_body_mismatches,
+            "alignment_property_mismatches": alignment_property_mismatches,
+            "alignment_type_pairs": alignment_type_pairs,
+            "alignment_horizontal_pairs": alignment_horizontal_pairs,
             "header_style_mismatches": header_style_mismatches,
             "filter_mismatches": filter_mismatches,
             "freeze_mismatches": freeze_mismatches,

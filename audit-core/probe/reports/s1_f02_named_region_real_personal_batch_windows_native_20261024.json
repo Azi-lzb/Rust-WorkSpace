@@ -82,5 +82,40 @@
     "This run used source built-in mappings; it does not verify custom mapping workbooks.",
     "Font, alignment, and column-width variance prevent claiming full output-format parity.",
     "The result covers this real sample and does not complete S1-F02 or validate Linux, target systems, or deb packaging."
-  ]
+  ],
+  "follow_up_20261025": {
+    "status": "partial",
+    "scope": "same sanitized 2026-07-31 personal-loan batch; reused the previously recorded Python baseline; no workbook paths, names, formulas, or values added",
+    "rust": {
+      "entrypoint": "open-data-audit s1-region-summary",
+      "platform": "Windows native x86_64-pc-windows-msvc",
+      "reader": "calamine+namespace_aware_ooxml",
+      "writer": "rust_xlsxwriter 0.101.0",
+      "elapsed_ms": 212,
+      "source_workbooks": 7,
+      "source_sheets": 27,
+      "output_sheets": 4,
+      "data_rows": 44,
+      "developer_log_events": 2,
+      "input_and_template_hashes_unchanged": true
+    },
+    "comparison": {
+      "python_baseline_engine": "Microsoft Excel; previously recorded baseline",
+      "sheet_name_mismatches": 0,
+      "dimension_mismatches": 0,
+      "value_mismatches": 0,
+      "number_format_mismatches": 0,
+      "font_mismatches": 0,
+      "alignment_mismatches": 0,
+      "header_style_mismatches": 0,
+      "filter_mismatches": 0,
+      "freeze_mismatches": 0,
+      "column_widths_exact": false,
+      "column_width_max_delta_characters": 12.92578125
+    },
+    "limitations": [
+      "Column widths still differ; complete output-format parity remains unverified.",
+      "This follow-up does not validate custom mapping workbooks, Linux, target systems, or deb packaging."
+    ]
+  }
 }

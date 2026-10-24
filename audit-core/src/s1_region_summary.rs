@@ -19,7 +19,7 @@ use excel_reader::{
     CellValue, DefinedNameParseStatus, DefinedNameRecord, SheetDump, WorkbookDump, WorksheetExtent,
     read_defined_names, read_workbook, read_xlsx_worksheet_extents,
 };
-use excel_writer::{Color, Format, Workbook};
+use excel_writer::{Color, Format, FormatAlign, Workbook};
 use serde::Serialize;
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
@@ -30,6 +30,8 @@ use std::{
 
 const READER_ENGINE: &str = "calamine+namespace_aware_ooxml";
 const WRITER_ENGINE: &str = "rust_xlsxwriter 0.101.0";
+const SUMMARY_OUTPUT_FONT_NAME: &str = "等线";
+const SUMMARY_OUTPUT_FONT_CHARSET: u8 = 134;
 const MAX_ROWS: usize = 1_048_576;
 const MAX_COLUMNS: usize = 16_384;
 
@@ -701,11 +703,19 @@ pub fn summarize_s1_named_regions(
     let write_started = Instant::now();
     let write_result = (|| -> Result<()> {
         let mut workbook = Workbook::new();
-        let value_format = Format::new().set_num_format("@");
+        let value_format = Format::new()
+            .set_num_format("@")
+            .set_font_name(SUMMARY_OUTPUT_FONT_NAME)
+            .set_font_charset(SUMMARY_OUTPUT_FONT_CHARSET)
+            .set_align(FormatAlign::VerticalCenter);
         let header_format = Format::new()
             .set_num_format("@")
+            .set_font_name(SUMMARY_OUTPUT_FONT_NAME)
+            .set_font_charset(SUMMARY_OUTPUT_FONT_CHARSET)
+            .set_font_family(3)
             .set_bold()
-            .set_background_color(Color::RGB(0xD3_EA_D9));
+            .set_background_color(Color::RGB(0xD3_EA_D9))
+            .set_align(FormatAlign::VerticalCenter);
         if groups.is_empty() {
             workbook
                 .add_worksheet()
@@ -1454,7 +1464,12 @@ fn write_row(
                 worksheet.write_blank(row, column, format)?;
             }
             CellValue::Text(value) => {
-                worksheet.write_string_with_format(row, column, value, format)?;
+                if value.contains('\n') || value.contains('\r') {
+                    let wrapped_format = format.clone().set_text_wrap();
+                    worksheet.write_string_with_format(row, column, value, &wrapped_format)?;
+                } else {
+                    worksheet.write_string_with_format(row, column, value, format)?;
+                }
             }
             CellValue::Number(value) | CellValue::DateTimeSerial(value) => {
                 worksheet.write_number_with_format(row, column, *value, format)?;

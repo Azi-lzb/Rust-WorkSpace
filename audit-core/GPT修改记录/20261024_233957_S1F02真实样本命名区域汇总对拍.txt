@@ -12,6 +12,8 @@ WIP：开始时工作树干净；真实工作簿、源 Python 和源项目均只
 
 - `audit-core/probe/reports/s1_f02_named_region_real_personal_batch_windows_native_20261024.json`：保存脱敏汇总证据，不包含样本路径、文件名、单元格值或机构配置名称。
 - `audit-core/MIGRATION_INVENTORY.md`：记录真实数据/结构对拍结果及仍未验证的格式偏差，S1-F02 整体保持未验证。
+- `audit-core/src/s1_region_summary.rs`：按真实模板默认字体/垂直对齐生成结果；含换行文本启用自动换行。
+- `audit-core/tests/compare/compare_s1_region_summary.py`：对拍字体与对齐属性。
 - 本记录。
 
 ## 行为与边界
@@ -36,3 +38,11 @@ WIP：开始时工作树干净；真实工作簿、源 Python 和源项目均只
 ## 回滚
 
 - 本次仅添加脱敏证据并更新迁移清单；可用 `git revert <本次提交>` 回滚，无需恢复任何用户工作簿。
+
+
+## 2026-10-25 后续格式复核
+
+- Windows 原生 Rust CLI 再次处理同批 7 个输入工作簿（27 张工作表），输出 4 张工作表、44 行；模板与输入 SHA-256 前后相同。Rust 总耗时 212 ms，日志报告 Calamine + namespace-aware OOXML reader 和 rust_xlsxwriter 0.101.0 writer。
+- 复用已记录的 Python/Microsoft Excel 输出，用测试比较器逐项比较：工作表名、尺寸、值、数字格式、字体、对齐、表头强调、筛选和冻结均为 0 项差异；字体、对齐（含换行属性）差异已清零。
+- 列宽仍有偏差，最大绝对差 12.92578125 字符；比较器的本次字段覆盖不等于完整 Excel 样式/结构契约验收。因此报告状态为 partial，S1-F02 整体继续 Unverified。未重跑 Python 基线、未写回真实样本。
+- 回归：`cargo test --offline --locked -p audit-core --test s1_region_summary_cli -j 1` 5/5 通过；`compare_s1_region_summary.py` 合成用例状态为 `passed_with_column_width_variance`，所有值、字体和对齐比较差异为 0。
