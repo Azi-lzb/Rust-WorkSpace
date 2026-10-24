@@ -146,6 +146,16 @@ def _alignment_signature(alignment: Any) -> tuple[Any, ...]:
     )
 
 
+def _column_width(sheet: Any, column: int) -> float:
+    """Resolve OOXML column spans instead of treating a shared span as column A only."""
+    for dimension in sheet.column_dimensions.values():
+        if dimension.min is not None and dimension.max is not None:
+            if dimension.min <= column <= dimension.max:
+                return float(dimension.width)
+    default_width = sheet.sheet_format.defaultColWidth
+    return float(default_width) if default_width is not None else 13.0
+
+
 def compare_workbooks(python_path: Path, rust_path: Path) -> dict[str, Any]:
     python = load_workbook(python_path, data_only=False, read_only=False)
     rust = load_workbook(rust_path, data_only=False, read_only=False)
@@ -228,9 +238,8 @@ def compare_workbooks(python_path: Path, rust_path: Path) -> dict[str, Any]:
             if expected.freeze_panes != actual.freeze_panes:
                 freeze_mismatches += 1
             for column in range(1, columns + 1):
-                letter = expected.cell(1, column).column_letter
-                left = expected.column_dimensions[letter].width
-                right = actual.column_dimensions[letter].width
+                left = _column_width(expected, column)
+                right = _column_width(actual, column)
                 width_deltas.append(abs(left - right))
         return {
             "status": "passed"

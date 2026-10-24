@@ -1,0 +1,31 @@
+时间：2026-10-25（Windows 原生环境）
+执行者：Codex
+修改前 commit：96f821a
+修改后 commit：本轮局部提交
+WIP：保留用户已有的 DEVELOPMENT_GOAL.md 未提交修改；未覆盖、暂存或提交该文件。
+
+目的：
+- 依据原 S1-F02 Python Excel COM 路径“AutoFit 后列宽超过 40 则限制为 40”的业务行为，修正 Rust 新建汇总簿的最大自动列宽。
+- 修正对拍器对 OOXML 合并列宽范围的读取方式，按每个实际列解析 min/max 覆盖关系。
+
+修改文件：
+- audit-core/src/s1_region_summary.rs
+- audit-core/tests/compare/compare_s1_region_summary.py
+- audit-core/probe/reports/s1_f02_named_region_summary_synthetic_parity_windows_native_20261025.json
+- audit-core/MIGRATION_INVENTORY.md
+- 本记录
+
+测试：
+- Windows 原生 cargo test --offline --locked -p audit-core --test s1_region_summary_cli：5/5 通过。
+- Windows Microsoft Excel/Python 与 Rust s1-region-summary 合成对拍：主结果、内置历史追加、任意行/固定行兜底的值和结构比较通过；输入未变。列宽不完全一致，主结果最大差 6.859375 字符、历史结果最大差 8.7890625 字符，报告状态 passed_with_column_width_variance。
+- 报告：audit-core/probe/reports/s1_f02_named_region_summary_synthetic_parity_windows_native_20261025.json。
+
+未执行/已知问题：
+- 未重跑真实 2026-07-31 样本；既有真实样本复核列宽最大差 12.92578125 字符。本次只验证合成工作簿。
+- Rust writer 的自动宽度估算与 Excel COM AutoFit 不同，完整格式契约及 S1-F02 整体仍未验证。
+- Linux、麒麟/UOS、deb 未验证。
+
+组件版本：不升级；workspace crate 版本保持不变。
+配置/VBA 影响：无。
+删除清单：无。
+回滚：如需撤销本次局部修正，回滚本记录及本次提交；不要覆盖用户未提交的 DEVELOPMENT_GOAL.md。
