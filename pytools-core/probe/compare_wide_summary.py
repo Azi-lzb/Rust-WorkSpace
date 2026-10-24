@@ -819,7 +819,7 @@ def main() -> int:
         summary_report = {
             "schema_version": 1,
             "suite": "pytools.timeline.wide_summary_python_rust_parity",
-            "date": "2026-10-24",
+            "date": date.today().isoformat(),
             "status": "passed_synthetic_parity",
             "source_python_files": [
                 "PyCode/core/wide_397_398.py",

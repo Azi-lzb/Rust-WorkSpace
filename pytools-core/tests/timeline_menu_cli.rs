@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use excel_reader::read_workbook;
+use serde_json::Value;
 use std::{
     fs,
     io::Write,
@@ -143,6 +144,181 @@ fn interactive_timeline_menu_routes_compare_wide_modes_and_precheck() -> Result<
     assert!(precheck_stdout.contains(r#""errors": 0"#));
     assert!(precheck_stdout.contains(r#""warnings": 0"#));
     Ok(())
+}
+
+#[test]
+fn wide_summary_menu_logging_views_record_progress_and_respect_off() -> Result<()> {
+    let root = TestDirectory::new()?;
+    let config = create_timeline_config(root.path())?;
+    let source = root.path().join("sample wide source.xlsx");
+    create_wide_source(&source, "宽表甲", 17.5)?;
+
+    let user = run_menu_with_view(&config, "user", &format!("1\n3\n{}\n0\n", source.display()))?;
+    assert!(
+        user.status.success(),
+        "user-view wide summary failed: {}",
+        String::from_utf8_lossy(&user.stderr)
+    );
+    let user_stderr = String::from_utf8_lossy(&user.stderr);
+    assert!(user_stderr.contains("正在读取第 1/1 个工作簿"));
+    assert!(!user_stderr.contains("\"phase\""));
+
+    let log_dir = root.path().join("app").join("logs");
+    let row_suffix_history = read_single_run_history(&log_dir, "PT-1-3")?;
+    assert_eq!(row_suffix_history["status"], "succeeded");
+    assert_eq!(row_suffix_history["completed_inputs"], 1);
+    assert_eq!(row_suffix_history["failed_inputs"], 0);
+    assert!(row_suffix_history["actual_engines"]
+        .as_array()
+        .is_some_and(|engines| engines.iter().any(|engine| engine == "calamine")
+            && engines.iter().any(|engine| engine == "rust_xlsxwriter")));
+    assert_history_has_phase(&row_suffix_history, "source_read", "completed", "calamine")?;
+    assert_history_has_phase(&row_suffix_history, "rule_aggregation", "completed", "")?;
+    assert_history_has_phase(
+        &row_suffix_history,
+        "summary_write",
+        "completed",
+        "rust_xlsxwriter",
+    )?;
+    let append_plan_event = row_suffix_history["events"]
+        .as_array()
+        .context("run history events must be an array")?
+        .iter()
+        .find(|event| event["phase"] == "target_append_plan" && event["status"] == "completed")
+        .context("target append-plan completion event missing")?;
+    assert!(append_plan_event["progress"]["current_input"].is_null());
+    let history_text = serde_json::to_string(&row_suffix_history)?;
+    assert!(!history_text.contains(&source.display().to_string()));
+    assert!(!history_text.contains("宽表甲"));
+
+    let developer = run_menu_with_view(
+        &config,
+        "developer",
+        &format!("1\n4\n{}\n0\n", source.display()),
+    )?;
+    assert!(
+        developer.status.success(),
+        "developer-view wide summary failed: {}",
+        String::from_utf8_lossy(&developer.stderr)
+    );
+    let developer_events = String::from_utf8_lossy(&developer.stderr)
+        .lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .collect::<Vec<_>>();
+    assert!(developer_events.iter().any(|event| {
+        event["phase"] == "summary_write"
+            && event["status"] == "completed"
+            && event["actual_engine"] == "rust_xlsxwriter"
+            && event["components"]
+                .as_array()
+                .is_some_and(|components| components.iter().any(|value| value == "Rust"))
+    }));
+    assert!(developer_events.iter().all(|event| {
+        let text = event.to_string();
+        !text.contains(&source.display().to_string()) && !text.contains("宽表甲")
+    }));
+    assert!(developer_events.windows(2).all(|pair| {
+        pair[0]["total_elapsed_ms"]
+            .as_u64()
+            .zip(pair[1]["total_elapsed_ms"].as_u64())
+            .is_some_and(|(previous, next)| previous <= next)
+    }));
+    let no_suffix_history = read_single_run_history(&log_dir, "PT-1-4")?;
+    assert_eq!(no_suffix_history["status"], "succeeded");
+    assert_history_has_phase(&no_suffix_history, "source_read", "completed", "calamine")?;
+
+    let history_count_before_off = run_history_paths(&log_dir)?.len();
+    let off = run_menu_with_view(&config, "off", &format!("1\n3\n{}\n0\n", source.display()))?;
+    assert!(
+        off.status.success(),
+        "off-view wide summary failed: {}",
+        String::from_utf8_lossy(&off.stderr)
+    );
+    let off_stdout = String::from_utf8_lossy(&off.stdout);
+    let off_stderr = String::from_utf8_lossy(&off.stderr);
+    assert!(!off_stdout.contains("run_log_path"));
+    assert!(!off_stdout.contains("run_id"));
+    assert!(!off_stderr.contains("正在读取第"));
+    assert_eq!(run_history_paths(&log_dir)?.len(), history_count_before_off);
+    Ok(())
+}
+
+#[test]
+fn wide_summary_menu_failure_history_identifies_read_stage_without_source_data() -> Result<()> {
+    let root = TestDirectory::new()?;
+    let config = create_timeline_config(root.path())?;
+    let source = root.path().join("broken source.xlsx");
+    fs::write(&source, b"not an xlsx workbook")?;
+
+    let failure = run_menu_with_view(&config, "user", &format!("1\n3\n{}\n0\n", source.display()))?;
+    assert!(!failure.status.success());
+    let user_stderr = String::from_utf8_lossy(&failure.stderr);
+    assert!(user_stderr.contains("读取失败"));
+    assert!(user_stderr.contains("宽表汇总失败"));
+    assert!(!user_stderr.contains(&source.display().to_string()));
+    assert!(!user_stderr.contains("calamine"));
+
+    let log_dir = root.path().join("app").join("logs");
+    let history = read_single_run_history(&log_dir, "PT-1-3")?;
+    assert_eq!(history["status"], "failed");
+    assert_eq!(history["failure"]["stage"], "source_read");
+    assert_eq!(history["failure"]["input_index"], 1);
+    assert_eq!(history["failure"]["error_type"], "workbook_read_error");
+    assert_history_has_phase(&history, "source_read", "failed", "calamine")?;
+    let history_text = serde_json::to_string(&history)?;
+    assert!(!history_text.contains(&source.display().to_string()));
+    assert!(!history_text.contains("not an xlsx workbook"));
+    Ok(())
+}
+
+fn assert_history_has_phase(
+    history: &Value,
+    phase: &str,
+    status: &str,
+    actual_engine: &str,
+) -> Result<()> {
+    let events = history["events"]
+        .as_array()
+        .context("run history events must be an array")?;
+    assert!(
+        events.iter().any(|event| {
+            event["phase"] == phase
+                && event["status"] == status
+                && (actual_engine.is_empty() || event["actual_engine"] == actual_engine)
+        }),
+        "missing {phase}/{status} history event"
+    );
+    Ok(())
+}
+
+fn run_history_paths(log_dir: &Path) -> Result<Vec<PathBuf>> {
+    let paths = fs::read_dir(log_dir)?
+        .map(|entry| entry.map(|entry| entry.path()))
+        .collect::<std::io::Result<Vec<_>>>()?;
+    Ok(paths
+        .into_iter()
+        .filter(|path| {
+            path.extension()
+                .is_some_and(|extension| extension == "json")
+        })
+        .collect())
+}
+
+fn read_single_run_history(log_dir: &Path, feature_id: &str) -> Result<Value> {
+    let prefix = format!("{feature_id}_");
+    let paths = run_history_paths(log_dir)?
+        .into_iter()
+        .filter(|path| {
+            path.file_name()
+                .is_some_and(|name| name.to_string_lossy().starts_with(&prefix))
+        })
+        .collect::<Vec<_>>();
+    anyhow::ensure!(
+        paths.len() == 1,
+        "expected one {feature_id} history file, found {}",
+        paths.len()
+    );
+    serde_json::from_slice(&fs::read(&paths[0])?).context("parse wide summary run history")
 }
 
 fn create_timeline_config(root: &Path) -> Result<PathBuf> {
@@ -292,12 +468,16 @@ fn find_output(output_dir: &Path, stem_contains: &str) -> Result<PathBuf> {
 }
 
 fn run_menu(config: &Path, input: &str) -> Result<Output> {
+    run_menu_with_view(config, "user", input)
+}
+
+fn run_menu_with_view(config: &Path, log_view: &str, input: &str) -> Result<Output> {
     let mut child = Command::new(env!("CARGO_BIN_EXE_pytools"))
         .arg("menu")
         .arg("--config")
         .arg(config)
         .arg("--log-view")
-        .arg("user")
+        .arg(log_view)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

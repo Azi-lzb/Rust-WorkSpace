@@ -24,6 +24,7 @@ use std::{
     collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     fs,
     path::{Path, PathBuf},
+    time::{Duration, Instant},
 };
 
 #[derive(Clone, Debug, Serialize)]
@@ -38,6 +39,88 @@ pub struct PrecheckReport {
     pub errors: usize,
     pub warnings: usize,
     pub issues: Vec<PrecheckIssue>,
+}
+
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct WideSummaryProgress {
+    pub total_inputs: usize,
+    pub processed_inputs: usize,
+    pub completed_inputs: usize,
+    pub failed_inputs: usize,
+    pub current_input: Option<usize>,
+    pub matched_rule_sheets: usize,
+    pub extracted_cells: usize,
+    pub output_rows: usize,
+    pub target_append_plans: usize,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct WideSummaryRunEvent {
+    pub sequence: usize,
+    pub timestamp: String,
+    pub feature_id: String,
+    pub phase: String,
+    pub status: String,
+    pub user_message: String,
+    pub progress: WideSummaryProgress,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub input_index: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stage_elapsed_ms: Option<u128>,
+    pub total_elapsed_ms: u128,
+    pub components: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub actual_engine: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_type: Option<String>,
+}
+
+struct WideSummaryProgressEmitter<'a> {
+    started: Instant,
+    sequence: usize,
+    feature_id: String,
+    progress: WideSummaryProgress,
+    callback: Option<&'a mut dyn FnMut(WideSummaryRunEvent)>,
+}
+
+impl WideSummaryProgressEmitter<'_> {
+    fn emit(
+        &mut self,
+        phase: &str,
+        status: &str,
+        user_message: impl Into<String>,
+        input_index: Option<usize>,
+        stage_elapsed: Option<Duration>,
+        components: &[&str],
+        actual_engine: Option<&str>,
+        error_type: Option<&str>,
+    ) {
+        if self.callback.is_none() {
+            return;
+        }
+        self.sequence += 1;
+        let mut recorded_components = Vec::with_capacity(components.len() + 1);
+        recorded_components.push("Rust".to_owned());
+        recorded_components.extend(components.iter().map(|component| (*component).to_owned()));
+        let event = WideSummaryRunEvent {
+            sequence: self.sequence,
+            timestamp: Local::now().to_rfc3339(),
+            feature_id: self.feature_id.clone(),
+            phase: phase.to_owned(),
+            status: status.to_owned(),
+            user_message: user_message.into(),
+            progress: self.progress.clone(),
+            input_index,
+            stage_elapsed_ms: stage_elapsed.map(|elapsed| elapsed.as_millis()),
+            total_elapsed_ms: self.started.elapsed().as_millis(),
+            components: recorded_components,
+            actual_engine: actual_engine.map(str::to_owned),
+            error_type: error_type.map(str::to_owned),
+        };
+        if let Some(callback) = self.callback.as_mut() {
+            callback(event);
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -705,18 +788,136 @@ pub fn run_wide_summary(
     global: &GlobalConfig,
     row_suffix_enabled: bool,
 ) -> Result<Option<PathBuf>> {
+    run_wide_summary_inner(
+        source_paths,
+        rules,
+        path_maps,
+        global,
+        row_suffix_enabled,
+        None,
+    )
+}
+
+pub fn run_wide_summary_with_progress<F>(
+    source_paths: &[PathBuf],
+    rules: &[TimelineRule],
+    path_maps: &[PathMapRule],
+    global: &GlobalConfig,
+    row_suffix_enabled: bool,
+    mut on_event: F,
+) -> Result<Option<PathBuf>>
+where
+    F: FnMut(WideSummaryRunEvent),
+{
+    run_wide_summary_inner(
+        source_paths,
+        rules,
+        path_maps,
+        global,
+        row_suffix_enabled,
+        Some(&mut on_event),
+    )
+}
+
+fn run_wide_summary_inner(
+    source_paths: &[PathBuf],
+    rules: &[TimelineRule],
+    path_maps: &[PathMapRule],
+    global: &GlobalConfig,
+    row_suffix_enabled: bool,
+    callback: Option<&mut dyn FnMut(WideSummaryRunEvent)>,
+) -> Result<Option<PathBuf>> {
+    let feature_id = if row_suffix_enabled {
+        "PT-1-3"
+    } else {
+        "PT-1-4"
+    };
+    let mut emitter = WideSummaryProgressEmitter {
+        started: Instant::now(),
+        sequence: 0,
+        feature_id: feature_id.to_owned(),
+        progress: WideSummaryProgress {
+            total_inputs: source_paths.len(),
+            ..WideSummaryProgress::default()
+        },
+        callback,
+    };
     let mut rule_states = HashMap::<String, WideRuleState>::new();
     let mut rule_order = Vec::<String>::new();
-    for path in source_paths {
+    for (source_index, path) in source_paths.iter().enumerate() {
+        let input_index = source_index + 1;
+        emitter.progress.processed_inputs += 1;
+        emitter.progress.current_input = Some(input_index);
+        let read_started = Instant::now();
+        emitter.emit(
+            "source_read",
+            "started",
+            format!("正在读取第 {input_index}/{} 个工作簿", source_paths.len()),
+            Some(input_index),
+            None,
+            &["pytools-core", "excel-reader", "calamine"],
+            None,
+            None,
+        );
         let filename = file_name(path);
         let workbook = match read_workbook(path) {
-            Ok(value) => value,
+            Ok(value) => {
+                emitter.emit(
+                    "source_read",
+                    "completed",
+                    format!("已读取第 {input_index}/{} 个工作簿", source_paths.len()),
+                    Some(input_index),
+                    Some(read_started.elapsed()),
+                    &["pytools-core", "excel-reader", "calamine"],
+                    Some("calamine"),
+                    None,
+                );
+                value
+            }
             Err(error) if global.error_policy == "continue" => {
+                emitter.progress.failed_inputs += 1;
+                emitter.emit(
+                    "source_read",
+                    "failed",
+                    format!(
+                        "第 {input_index}/{} 个工作簿读取失败，继续处理",
+                        source_paths.len()
+                    ),
+                    Some(input_index),
+                    Some(read_started.elapsed()),
+                    &["pytools-core", "excel-reader", "calamine"],
+                    Some("calamine"),
+                    Some("workbook_read_error"),
+                );
                 let _ = error;
                 continue;
             }
-            Err(error) => return Err(error).with_context(|| format!("read {}", path.display())),
+            Err(error) => {
+                emitter.progress.failed_inputs += 1;
+                emitter.emit(
+                    "source_read",
+                    "failed",
+                    format!("第 {input_index}/{} 个工作簿读取失败", source_paths.len()),
+                    Some(input_index),
+                    Some(read_started.elapsed()),
+                    &["pytools-core", "excel-reader", "calamine"],
+                    Some("calamine"),
+                    Some("workbook_read_error"),
+                );
+                return Err(error).with_context(|| format!("read {}", path.display()));
+            }
         };
+        let aggregation_started = Instant::now();
+        emitter.emit(
+            "rule_aggregation",
+            "started",
+            format!("正在汇总第 {input_index}/{} 个工作簿", source_paths.len()),
+            Some(input_index),
+            None,
+            &["pytools-core", "rule_engine"],
+            None,
+            None,
+        );
         for rule in pick_rules_for_workbook(rules, &filename, &global.timeline_rule_match_mode) {
             if !rule.set_parse_error.is_empty() {
                 continue;
@@ -729,7 +930,26 @@ pub fn run_wide_summary(
                 .iter()
                 .filter(|sheet| keyword_match(&sheet.name, &rule.sheet_keyword))
             {
-                let (matrix, merges) = matrix_from_dump(sheet)?;
+                emitter.progress.matched_rule_sheets += 1;
+                let (matrix, merges) = match matrix_from_dump(sheet) {
+                    Ok(value) => value,
+                    Err(error) => {
+                        emitter.progress.failed_inputs += 1;
+                        emitter.emit(
+                            "rule_aggregation",
+                            "failed",
+                            format!("第 {input_index}/{} 个工作簿汇总失败", source_paths.len()),
+                            Some(input_index),
+                            Some(aggregation_started.elapsed()),
+                            &["pytools-core", "rule_engine"],
+                            None,
+                            Some("worksheet_projection_error"),
+                        );
+                        return Err(error).with_context(|| {
+                            format!("project worksheet {:?} in input {input_index}", sheet.name)
+                        });
+                    }
+                };
                 let rule_name = if rule.name.trim().is_empty() {
                     "未命名规则".to_owned()
                 } else {
@@ -813,7 +1033,7 @@ pub fn run_wide_summary(
                         }
                     }
                 }
-                let cells = crate::rule_engine::extract_cells_from_matrix(
+                let cells = match crate::rule_engine::extract_cells_from_matrix(
                     &matrix,
                     &merges,
                     &filename,
@@ -822,8 +1042,29 @@ pub fn run_wide_summary(
                     path_maps,
                     row_suffix_enabled,
                     &HashMap::new(),
-                )
-                .map_err(|error| anyhow!(error))?;
+                ) {
+                    Ok(cells) => cells,
+                    Err(error) => {
+                        emitter.progress.failed_inputs += 1;
+                        emitter.emit(
+                            "rule_aggregation",
+                            "failed",
+                            format!("第 {input_index}/{} 个工作簿汇总失败", source_paths.len()),
+                            Some(input_index),
+                            Some(aggregation_started.elapsed()),
+                            &["pytools-core", "rule_engine"],
+                            None,
+                            Some("wide_rule_error"),
+                        );
+                        return Err(anyhow!(error)).with_context(|| {
+                            format!(
+                                "aggregate worksheet {:?} from input {input_index}",
+                                sheet.name
+                            )
+                        });
+                    }
+                };
+                emitter.progress.extracted_cells += cells.len();
                 for cell in cells {
                     let row_number = cell
                         .cell_addr
@@ -883,77 +1124,163 @@ pub fn run_wide_summary(
                 }
             }
         }
+        emitter.progress.completed_inputs += 1;
+        emitter.emit(
+            "rule_aggregation",
+            "completed",
+            format!(
+                "已处理 {}/{} 个工作簿，匹配 {} 个工作表",
+                emitter.progress.completed_inputs,
+                source_paths.len(),
+                emitter.progress.matched_rule_sheets
+            ),
+            Some(input_index),
+            Some(aggregation_started.elapsed()),
+            &["pytools-core", "rule_engine"],
+            None,
+            None,
+        );
     }
     if rule_order.is_empty() {
+        emitter.emit(
+            "summary_write",
+            "skipped",
+            "没有匹配的宽表数据，未生成汇总工作簿",
+            None,
+            None,
+            &["pytools-core"],
+            None,
+            None,
+        );
         return Ok(None);
     }
+    emitter.progress.output_rows = rule_order
+        .iter()
+        .filter_map(|rule_name| rule_states.get(rule_name))
+        .map(|state| state.buckets.len())
+        .sum();
     let stamp = Local::now().format("%Y%m%d_%H%M%S");
     let label = if row_suffix_enabled {
         "宽表规则汇总（行头加后缀）"
     } else {
         "宽表规则汇总（行头不加后缀）"
     };
-    let path = unique_output(&global.output_dir, &format!("{stamp}_{label}"), "xlsx")?;
-    let mut workbook = Workbook::new();
-    let mut used_sheet_names = HashSet::new();
-    for rule_name in &rule_order {
-        let state = rule_states
-            .get(rule_name)
-            .expect("ordered wide rule state exists");
-        let mut headers = vec![
-            "工作簿名".to_owned(),
-            "工作表名".to_owned(),
-            "数据日期".to_owned(),
-        ];
-        headers.extend(state.set_headers.iter().cloned());
-        if state.include_row_path {
-            headers.push("行头路径".into());
+    let path = match unique_output(&global.output_dir, &format!("{stamp}_{label}"), "xlsx") {
+        Ok(path) => path,
+        Err(error) => {
+            emitter.emit(
+                "summary_write",
+                "failed",
+                "无法准备宽表汇总输出文件",
+                None,
+                None,
+                &["pytools-core", "excel-writer"],
+                Some("rust_xlsxwriter"),
+                Some("output_path_error"),
+            );
+            return Err(error);
         }
-        if state.include_row_number {
-            headers.push("行序号".into());
-        }
-        headers.extend(state.columns.iter().cloned());
-        let sheet = workbook.add_worksheet();
-        sheet.set_name(&unique_wide_sheet_name(rule_name, &mut used_sheet_names))?;
-        let header_format = Format::new()
-            .set_bold()
-            .set_border(FormatBorder::Thin)
-            .set_align(FormatAlign::Center)
-            .set_align(FormatAlign::Top);
-        for (column, header) in headers.iter().enumerate() {
-            sheet.write_string_with_format(0, column as u16, header, &header_format)?;
-        }
-        for (row_index, bucket) in state.buckets.iter().enumerate() {
-            let key = bucket.key.as_ref().expect("wide bucket has a row key");
-            let row = (row_index + 1) as u32;
-            let mut column = 0u16;
-            sheet.write_string(row, column, &key.workbook)?;
-            column += 1;
-            sheet.write_string(row, column, &key.sheet)?;
-            column += 1;
-            write_wide_data_date(sheet, row, column, &key.data_date)?;
-            column += 1;
-            for value in &bucket.set_values {
-                write_wide_cell(sheet, row, column, value.as_ref())?;
-                column += 1;
-            }
+    };
+    emitter.emit(
+        "summary_write",
+        "started",
+        "正在写入宽表汇总工作簿",
+        None,
+        None,
+        &["pytools-core", "excel-writer", "rust_xlsxwriter"],
+        None,
+        None,
+    );
+    let write_started = Instant::now();
+    let write_result = (|| -> Result<()> {
+        let mut workbook = Workbook::new();
+        let mut used_sheet_names = HashSet::new();
+        for rule_name in &rule_order {
+            let state = rule_states
+                .get(rule_name)
+                .expect("ordered wide rule state exists");
+            let mut headers = vec![
+                "工作簿名".to_owned(),
+                "工作表名".to_owned(),
+                "数据日期".to_owned(),
+            ];
+            headers.extend(state.set_headers.iter().cloned());
             if state.include_row_path {
-                sheet.write_string(row, column, &key.row_path)?;
-                column += 1;
+                headers.push("行头路径".into());
             }
             if state.include_row_number {
-                sheet.write_string(row, column, &bucket.row_number)?;
-                column += 1;
+                headers.push("行序号".into());
             }
-            for path in &state.columns {
-                write_wide_cell(sheet, row, column, bucket.values.get(path))?;
+            headers.extend(state.columns.iter().cloned());
+            let sheet = workbook.add_worksheet();
+            sheet.set_name(&unique_wide_sheet_name(rule_name, &mut used_sheet_names))?;
+            let header_format = Format::new()
+                .set_bold()
+                .set_border(FormatBorder::Thin)
+                .set_align(FormatAlign::Center)
+                .set_align(FormatAlign::Top);
+            for (column, header) in headers.iter().enumerate() {
+                sheet.write_string_with_format(0, column as u16, header, &header_format)?;
+            }
+            for (row_index, bucket) in state.buckets.iter().enumerate() {
+                let key = bucket.key.as_ref().expect("wide bucket has a row key");
+                let row = (row_index + 1) as u32;
+                let mut column = 0u16;
+                sheet.write_string(row, column, &key.workbook)?;
                 column += 1;
+                sheet.write_string(row, column, &key.sheet)?;
+                column += 1;
+                write_wide_data_date(sheet, row, column, &key.data_date)?;
+                column += 1;
+                for value in &bucket.set_values {
+                    write_wide_cell(sheet, row, column, value.as_ref())?;
+                    column += 1;
+                }
+                if state.include_row_path {
+                    sheet.write_string(row, column, &key.row_path)?;
+                    column += 1;
+                }
+                if state.include_row_number {
+                    sheet.write_string(row, column, &bucket.row_number)?;
+                    column += 1;
+                }
+                for path in &state.columns {
+                    write_wide_cell(sheet, row, column, bucket.values.get(path))?;
+                    column += 1;
+                }
             }
         }
+        workbook
+            .save(&path)
+            .with_context(|| format!("save wide summary {}", path.display()))?;
+        Ok(())
+    })();
+    if let Err(error) = write_result {
+        emitter.emit(
+            "summary_write",
+            "failed",
+            "写入宽表汇总工作簿失败",
+            None,
+            Some(write_started.elapsed()),
+            &["pytools-core", "excel-writer", "rust_xlsxwriter"],
+            Some("rust_xlsxwriter"),
+            Some("summary_write_error"),
+        );
+        return Err(error);
     }
-    workbook
-        .save(&path)
-        .with_context(|| format!("save wide summary {}", path.display()))?;
+    emitter.emit(
+        "summary_write",
+        "completed",
+        format!(
+            "宽表汇总工作簿已写入，共 {} 行",
+            emitter.progress.output_rows
+        ),
+        None,
+        Some(write_started.elapsed()),
+        &["pytools-core", "excel-writer", "rust_xlsxwriter"],
+        Some("rust_xlsxwriter"),
+        None,
+    );
     Ok(Some(path))
 }
 

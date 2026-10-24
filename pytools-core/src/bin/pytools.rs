@@ -45,7 +45,8 @@ use pytools_core::summary_ops::{
 use pytools_core::timeline_ops::{
     build_wide_target_append_plans, prepare_wide_target_replacement_source,
     run_header_path_compare, run_timeline_precheck, run_wide_summary,
-    validate_wide_target_replacement_candidate,
+    run_wide_summary_with_progress, validate_wide_target_replacement_candidate,
+    WideSummaryProgress, WideSummaryRunEvent,
 };
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, BufRead, IsTerminal, Write};
@@ -223,7 +224,14 @@ where
             return Ok(());
         };
         match choice.as_str() {
-            "1" => run_interactive_timeline_menu(input, output, config_path, allow_native_dialog)?,
+            "1" => run_interactive_timeline_menu(
+                input,
+                output,
+                config_path,
+                global,
+                log_view,
+                allow_native_dialog,
+            )?,
             "2" => {
                 run_interactive_dedup_menu(input, output, config_path, global, allow_native_dialog)?
             }
@@ -270,6 +278,8 @@ fn run_interactive_timeline_menu<R, W>(
     input: &mut R,
     output: &mut W,
     config_path: &Path,
+    global: &GlobalConfig,
+    log_view: &str,
     allow_native_dialog: bool,
 ) -> Result<()>
 where
@@ -339,6 +349,7 @@ where
                     return Ok(());
                 };
                 let mut arguments = config_cli_arguments(config_path);
+                arguments.extend(summary_cli_arguments(global, log_view));
                 arguments.extend(
                     sources
                         .into_iter()
@@ -4637,34 +4648,323 @@ fn run_timeline_compare_cli(arguments: Vec<String>) -> Result<()> {
 
 fn run_wide_summary_cli(arguments: Vec<String>, row_suffix: bool) -> Result<()> {
     let options = parse_cli_arguments(arguments)?;
+    let run_started = Instant::now();
+    let started_at = Local::now().to_rfc3339();
     let config = required_path(&options, "config")?;
     let global = load_global(&config)?;
+    let log_view = options
+        .values
+        .get("log-view")
+        .map(String::as_str)
+        .unwrap_or("user");
+    anyhow::ensure!(
+        matches!(log_view, "user" | "developer" | "off"),
+        "--log-view must be user, developer, or off"
+    );
+    let log_dir = options
+        .values
+        .get("log-dir")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| global.log_dir.clone());
     let rules = pytools_core::config::load_timeline_rules(&config)?;
     let maps = pytools_core::config::load_path_maps(&config)?;
-    let output = run_wide_summary(&options.positional, &rules, &maps, &global, row_suffix)?;
+    let feature_id = if row_suffix { "PT-1-3" } else { "PT-1-4" };
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or_default();
+    let run_id = format!(
+        "pytools-{}-{}-{nonce}",
+        feature_id.to_lowercase(),
+        std::process::id()
+    );
+    let mut events = Vec::<WideSummaryRunEvent>::new();
+    let wide_result = if log_view == "off" {
+        run_wide_summary(&options.positional, &rules, &maps, &global, row_suffix)
+    } else {
+        run_wide_summary_with_progress(
+            &options.positional,
+            &rules,
+            &maps,
+            &global,
+            row_suffix,
+            |mut event| {
+                event.total_elapsed_ms = run_started.elapsed().as_millis();
+                emit_wide_summary_event(log_view, &mut events, event);
+            },
+        )
+    };
+    let mut output = None;
     let mut append_plans = Vec::new();
-    if let Some(summary_path) = output.as_deref() {
-        for (index, plan) in
-            build_wide_target_append_plans(summary_path, &rules, &global.output_dir)?
-                .into_iter()
-                .enumerate()
+    let result = match wide_result {
+        Err(error) => Err(error),
+        Ok(summary_output) => {
+            output = summary_output;
+            if let Some(summary_path) = output.as_deref() {
+                if log_view != "off" {
+                    let event = new_wide_summary_cli_event(
+                        &events,
+                        &run_started,
+                        feature_id,
+                        options.positional.len(),
+                        "target_append_plan",
+                        "started",
+                        "正在准备既有目标的追加计划",
+                        None,
+                        0,
+                        &["pytools-core", "excel-reader", "calamine", "excel-editor"],
+                        None,
+                        None,
+                    );
+                    emit_wide_summary_event(log_view, &mut events, event);
+                }
+                let plan_started = Instant::now();
+                let plan_result = (|| -> Result<()> {
+                    for (index, plan) in
+                        build_wide_target_append_plans(summary_path, &rules, &global.output_dir)?
+                            .into_iter()
+                            .enumerate()
+                    {
+                        let stem = summary_path
+                            .file_stem()
+                            .unwrap_or_default()
+                            .to_string_lossy();
+                        let plan_path = global
+                            .output_dir
+                            .join(format!("{stem}_target_append_{}.json", index + 1));
+                        fs::write(&plan_path, serde_json::to_vec_pretty(&plan)?)?;
+                        append_plans.push(plan_path);
+                    }
+                    Ok(())
+                })();
+                if log_view != "off" {
+                    let status = if plan_result.is_ok() {
+                        "completed"
+                    } else {
+                        "failed"
+                    };
+                    let message = if plan_result.is_ok() {
+                        format!("追加计划已准备，共 {} 项", append_plans.len())
+                    } else {
+                        "准备追加计划失败".to_owned()
+                    };
+                    let event = new_wide_summary_cli_event(
+                        &events,
+                        &run_started,
+                        feature_id,
+                        options.positional.len(),
+                        "target_append_plan",
+                        status,
+                        message,
+                        Some(plan_started.elapsed().as_millis()),
+                        append_plans.len(),
+                        &["pytools-core", "excel-reader", "calamine", "excel-editor"],
+                        Some("calamine"),
+                        plan_result.as_ref().err().map(|_| "append_plan_error"),
+                    );
+                    emit_wide_summary_event(log_view, &mut events, event);
+                }
+                plan_result
+            } else {
+                if log_view != "off" {
+                    let event = new_wide_summary_cli_event(
+                        &events,
+                        &run_started,
+                        feature_id,
+                        options.positional.len(),
+                        "target_append_plan",
+                        "skipped",
+                        "没有汇总工作簿，跳过目标追加计划",
+                        None,
+                        0,
+                        &["pytools-core"],
+                        None,
+                        None,
+                    );
+                    emit_wide_summary_event(log_view, &mut events, event);
+                }
+                Ok(())
+            }
+        }
+    };
+
+    if result.is_err()
+        && log_view != "off"
+        && !events.last().is_some_and(|event| event.status == "failed")
+    {
+        let event = new_wide_summary_cli_event(
+            &events,
+            &run_started,
+            feature_id,
+            options.positional.len(),
+            "wide_summary",
+            "failed",
+            "宽表汇总失败",
+            None,
+            append_plans.len(),
+            &["pytools-core"],
+            None,
+            Some("wide_summary_error"),
+        );
+        emit_wide_summary_event(log_view, &mut events, event);
+    }
+
+    let run_log_path = if log_view == "off" {
+        None
+    } else {
+        let progress = events
+            .last()
+            .map(|event| event.progress.clone())
+            .unwrap_or_else(|| WideSummaryProgress {
+                total_inputs: options.positional.len(),
+                ..WideSummaryProgress::default()
+            });
+        let status = if result.is_err() {
+            "failed"
+        } else if progress.failed_inputs > 0 {
+            "partial"
+        } else if output.is_some() {
+            "succeeded"
+        } else {
+            "skipped"
+        };
+        let mut actual_engines = Vec::<String>::new();
+        for engine in events
+            .iter()
+            .filter_map(|event| event.actual_engine.as_ref())
         {
-            let stem = summary_path
-                .file_stem()
-                .unwrap_or_default()
-                .to_string_lossy();
-            let plan_path = global
-                .output_dir
-                .join(format!("{stem}_target_append_{}.json", index + 1));
-            fs::write(&plan_path, serde_json::to_vec_pretty(&plan)?)?;
-            append_plans.push(plan_path);
+            if !actual_engines.contains(engine) {
+                actual_engines.push(engine.clone());
+            }
+        }
+        let failure = result.as_ref().err().map(|_| {
+            let event = events.last();
+            serde_json::json!({
+                "stage": event.map(|event| event.phase.as_str()).unwrap_or("wide_summary"),
+                "input_index": event.and_then(|event| event.input_index),
+                "error_type": event.and_then(|event| event.error_type.as_deref()).unwrap_or("wide_summary_error")
+            })
+        });
+        let path = log_dir.join(format!("{feature_id}_{run_id}.json"));
+        let report = serde_json::json!({
+            "schema_version": 1,
+            "product": "pytools",
+            "feature_id": feature_id,
+            "function": if row_suffix { "wide-summary-row-suffix" } else { "wide-summary" },
+            "run_id": &run_id,
+            "started_at": &started_at,
+            "status": status,
+            "total_inputs": options.positional.len(),
+            "completed_inputs": progress.completed_inputs,
+            "failed_inputs": progress.failed_inputs,
+            "matched_rule_sheets": progress.matched_rule_sheets,
+            "extracted_cells": progress.extracted_cells,
+            "output_rows": progress.output_rows,
+            "output": &output,
+            "target_append_plans": &append_plans,
+            "actual_engines": actual_engines,
+            "failure": failure,
+            "elapsed_ms": run_started.elapsed().as_millis(),
+            "events": &events,
+        });
+        match write_json_report_create_new(&path, &report) {
+            Ok(()) => Some(path),
+            Err(error) => {
+                eprintln!("pytools: warning: could not save {feature_id} run history: {error:#}");
+                None
+            }
+        }
+    };
+
+    match result {
+        Ok(()) => {
+            let mut result = serde_json::json!({
+                "output": output,
+                "target_append_plans": append_plans
+            });
+            if log_view != "off" {
+                result["run_id"] = serde_json::Value::String(run_id);
+                if let Some(path) = run_log_path {
+                    result["run_log_path"] = serde_json::Value::String(path.display().to_string());
+                    if log_view == "user" {
+                        eprintln!("运行记录已保存：{}", path.display());
+                    }
+                }
+            }
+            println!("{}", serde_json::to_string(&result)?);
+            Ok(())
+        }
+        Err(error) => {
+            if log_view == "user" {
+                if let Some(path) = run_log_path {
+                    eprintln!("运行记录已保存：{}", path.display());
+                }
+                Err(anyhow::anyhow!(
+                    "宽表汇总失败；请查看运行记录中的错误阶段。"
+                ))
+            } else {
+                Err(error)
+            }
         }
     }
-    println!(
-        "{}",
-        serde_json::json!({"output": output, "target_append_plans": append_plans})
-    );
-    Ok(())
+}
+
+fn new_wide_summary_cli_event(
+    events: &[WideSummaryRunEvent],
+    run_started: &Instant,
+    feature_id: &str,
+    total_inputs: usize,
+    phase: &str,
+    status: &str,
+    user_message: impl Into<String>,
+    stage_elapsed_ms: Option<u128>,
+    target_append_plans: usize,
+    components: &[&str],
+    actual_engine: Option<&str>,
+    error_type: Option<&str>,
+) -> WideSummaryRunEvent {
+    let mut progress = events
+        .last()
+        .map(|event| event.progress.clone())
+        .unwrap_or_default();
+    progress.total_inputs = total_inputs;
+    progress.current_input = None;
+    progress.target_append_plans = target_append_plans;
+    let mut recorded_components = vec!["Rust".to_owned()];
+    recorded_components.extend(components.iter().map(|component| (*component).to_owned()));
+    WideSummaryRunEvent {
+        sequence: events.len() + 1,
+        timestamp: Local::now().to_rfc3339(),
+        feature_id: feature_id.to_owned(),
+        phase: phase.to_owned(),
+        status: status.to_owned(),
+        user_message: user_message.into(),
+        progress,
+        input_index: None,
+        stage_elapsed_ms,
+        total_elapsed_ms: run_started.elapsed().as_millis(),
+        components: recorded_components,
+        actual_engine: actual_engine.map(str::to_owned),
+        error_type: error_type.map(str::to_owned),
+    }
+}
+
+fn emit_wide_summary_event(
+    log_view: &str,
+    events: &mut Vec<WideSummaryRunEvent>,
+    event: WideSummaryRunEvent,
+) {
+    match log_view {
+        "developer" => match serde_json::to_string(&event) {
+            Ok(encoded) => eprintln!("{encoded}"),
+            Err(_) => {
+                eprintln!("{{\"phase\":\"progress_event\",\"status\":\"serialization_failed\"}}")
+            }
+        },
+        "user" => eprintln!("{}", event.user_message),
+        _ => return,
+    }
+    events.push(event);
 }
 
 fn run_summary_used_range_cli(arguments: Vec<String>) -> Result<()> {

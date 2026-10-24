@@ -241,6 +241,14 @@ Windows Python 3.12.10 的临时对拍环境使用 NumPy 2.1.3、pandas 2.2.3、
 
 范围仍为合成 XLSX；没有可用脱敏真实业务样本。临时 capability 仅用于测试，没有登记生产路由；PT-1-3/1-4 整体仍为**未验证**。真实工作簿、完整 OOXML 保留、麒麟/UOS、glibc 2.28 和离线 deb 未验收。此轮没有共享 crate、根 Cargo 配置、Cargo.lock、Audit 或长期 Goal 变更。
 
+### 2026-10-25 PT-1-3/PT-1-4 交互日志视图与回归对拍
+
+保留 `run_wide_summary` 原调用接口，增加 `run_wide_summary_with_progress`、`WideSummaryProgress` 和 `WideSummaryRunEvent`。真实交互入口为 `pytools menu --log-view <user|developer|off>` → 时序工具 1 → 宽表汇总 3/4；阶段事件覆盖源工作簿读取、规则汇总、汇总簿写入及目标追加计划，标记实际 Rust 组件并记录数量、阶段/总耗时和实际 Calamine、rust_xlsxwriter 引擎。user 视图打印业务步骤，developer 视图将结构化事件写到 stderr 并写入配置日志目录下的历史 JSON，off 保持原调用且不输出进度或创建历史。运行历史仅记录输入序号和处理统计，不记录源路径或单元格内容；CLI stdout 保持单行 JSON。
+
+Windows 原生验证：`cargo check --manifest-path Cargo.toml -p pytools-core --bin pytools` 通过；`cargo test --manifest-path Cargo.toml -p pytools-core --test timeline_menu_cli` 3/3、`--test dedup_append_execution` 6/6 通过；`cargo fmt --manifest-path pytools-core/Cargo.toml -- --check` 和 `git diff --check` 通过。使用原 PyTools Python 3.12.10 venv 与原只读 PyCode 基线运行 `probe/compare_wide_summary.py`，两种行头模式的新建汇总和既有目标替换共 4 个合成场景通过；两个汇总结果各比较 36 个单元格且样式精确，既有目标替换样式差异为 0，源输入和配置未变化。报告：`probe/reports/wide_summary_parity_20261023.json`、`probe/reports/wide_summary_existing_target_parity_20261023.json`。
+
+该结果仍仅覆盖合成 XLSX 和菜单管道输入，不包含原生文件选择弹窗实测或脱敏真实业务样本；公式保留、生产 capability、完整真实模板保真、麒麟/UOS glibc 2.28 与离线 deb 未验收，PT-1-3/1-4 整体保持**未验证**。
+
 ### 2026-10-23 汇总工具 6-1/6-2 合成对拍
 
 新增 `probe/compare_summary_tools.py`，分别对比旧 `summary_321_322.py` 与 Rust `summary-used-range`、`summary-comments`。6-1 覆盖多个工作表、格式定义的 used-range 尾部、日期/布尔/数值/文本；12 行一致。6-2 覆盖行/列区域批注、`set(name)` 批注、重复列头和“模板”回退；6 行一致。两个输出的 sheet 名、单元格值/类型、维度、冻结窗格和表头加粗一致。机器报告见 `probe/reports/summary_tools_parity_20261023.json`。

@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "suite": "pytools.timeline.wide_summary_python_rust_parity",
-  "date": "2026-10-24",
+  "date": "2026-10-25",
   "status": "passed_synthetic_parity",
   "source_python_files": [
     "PyCode/core/wide_397_398.py",
@@ -57,17 +57,17 @@
       "execution_summary": {
         "appended_rows": 2,
         "duplicate_rows_filtered": 1,
-        "elapsed_ms": 49,
+        "elapsed_ms": 41,
         "function": "append_target_execute",
         "stages": [
           {
-            "elapsed_ms": 29,
+            "elapsed_ms": 25,
             "engine": "rust_xlsxwriter",
             "name": "new_workbook_write_and_reopen",
             "status": "succeeded"
           },
           {
-            "elapsed_ms": 18,
+            "elapsed_ms": 15,
             "name": "target_commit",
             "status": "succeeded"
           }
@@ -96,17 +96,17 @@
       "execution_summary": {
         "appended_rows": 3,
         "duplicate_rows_filtered": 0,
-        "elapsed_ms": 49,
+        "elapsed_ms": 42,
         "function": "append_target_execute",
         "stages": [
           {
-            "elapsed_ms": 28,
+            "elapsed_ms": 25,
             "engine": "rust_xlsxwriter",
             "name": "new_workbook_write_and_reopen",
             "status": "succeeded"
           },
           {
-            "elapsed_ms": 19,
+            "elapsed_ms": 16,
             "name": "target_commit",
             "status": "succeeded"
           }
