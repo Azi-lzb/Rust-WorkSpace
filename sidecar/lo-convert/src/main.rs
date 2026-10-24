@@ -207,8 +207,11 @@ fn run_recalculate(arguments: Vec<String>) -> Result<()> {
     let guard = TempDirGuard(unique_temp_dir(
         output.parent().unwrap_or_else(|| Path::new(".")),
     )?);
-    let candidate = guard.0.join("recalculated.xlsx");
-    let recalc_input = guard.0.join("recalculation-request.xlsx");
+    let input_dir = guard.0.join("input");
+    let engine_output_dir = guard.0.join("engine-output");
+    fs::create_dir_all(&input_dir)?;
+    fs::create_dir_all(&engine_output_dir)?;
+    let recalc_input = input_dir.join("recalculation-request.xlsx");
     ooxml_patch::patch_workbook_calculation_properties(
         &input,
         &recalc_input,
@@ -218,20 +221,28 @@ fn run_recalculate(arguments: Vec<String>) -> Result<()> {
         },
     )
     .context("prepare explicit full recalculation request")?;
-    let actual_engine = match selected {
-        "lo" => run_libreoffice_recalculate(&recalc_input, &guard.0)?,
-        "com" => run_com_recalculate(&recalc_input, &candidate)?,
+    let (actual_engine, candidate) = match selected {
+        "lo" => {
+            let expected = engine_output_dir.join("recalculation-request.xlsx");
+            ensure!(
+                !expected.exists(),
+                "refusing to accept a pre-existing recalculation output"
+            );
+            let actual_engine = run_libreoffice_recalculate(&recalc_input, &engine_output_dir)?;
+            (actual_engine, expected)
+        }
+        "com" => {
+            let expected = engine_output_dir.join("recalculated.xlsx");
+            ensure!(
+                !expected.exists(),
+                "refusing to accept a pre-existing recalculation output"
+            );
+            let actual_engine = run_com_recalculate(&recalc_input, &expected)?;
+            (actual_engine, expected)
+        }
         _ => unreachable!(),
     };
-    let candidate = if candidate.exists() {
-        candidate
-    } else {
-        locate_converted(&guard.0, "xlsx")?
-    };
-    ensure!(
-        candidate.is_file() && fs::metadata(&candidate)?.len() > 0,
-        "calculation engine did not create a non-empty output workbook"
-    );
+    require_engine_output(&candidate)?;
     let validation = validate_recalculated_workbook(&input, &candidate)?;
     fs::rename(&candidate, &output)
         .with_context(|| format!("publish recalculated workbook {}", output.display()))?;
@@ -268,6 +279,15 @@ fn run_libreoffice_recalculate(input: &Path, temp_dir: &Path) -> Result<String> 
         String::from_utf8_lossy(&command.stderr)
     );
     Ok("LibreOffice".to_owned())
+}
+
+fn require_engine_output(path: &Path) -> Result<()> {
+    ensure!(
+        path.is_file() && fs::metadata(path)?.len() > 0,
+        "calculation engine did not create its expected non-empty output workbook: {}",
+        path.display()
+    );
+    Ok(())
 }
 
 fn run_com_recalculate(input: &Path, output: &Path) -> Result<String> {
@@ -1055,7 +1075,7 @@ impl Drop for TempDirGuard {
 
 #[cfg(test)]
 mod recalculation_tests {
-    use super::{formula_cache_cell_count, MAIN_NS, PACKAGE_REL_NS, REL_NS};
+    use super::{formula_cache_cell_count, require_engine_output, MAIN_NS, PACKAGE_REL_NS, REL_NS};
     use anyhow::Result;
     use std::{
         env,
@@ -1112,6 +1132,29 @@ mod recalculation_tests {
             formula_cache_cell_count(&invalid).expect_err("formula without cache must fail");
         assert!(error.to_string().contains("has no cached value node"));
         fs::remove_file(invalid)?;
+        Ok(())
+    }
+
+    #[test]
+    fn missing_engine_output_is_rejected_even_when_request_copy_exists() -> Result<()> {
+        let nonce = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
+        let root =
+            env::temp_dir().join(format!("lo_recalc_output_{}_{}", std::process::id(), nonce));
+        let input_dir = root.join("input");
+        let output_dir = root.join("engine-output");
+        fs::create_dir_all(&input_dir)?;
+        fs::create_dir_all(&output_dir)?;
+        let request_copy = input_dir.join("recalculation-request.xlsx");
+        fs::write(&request_copy, b"input copy")?;
+        let expected_output = output_dir.join("recalculation-request.xlsx");
+
+        let error = require_engine_output(&expected_output)
+            .expect_err("missing engine output must not select the input copy");
+        assert!(error.to_string().contains("did not create"));
+        assert!(request_copy.is_file());
+        assert!(!expected_output.exists());
+
+        fs::remove_dir_all(root)?;
         Ok(())
     }
 }
