@@ -1,0 +1,41 @@
+{
+  "feature": "S1-F02 named-region summary",
+  "status": "passed_with_column_width_variance",
+  "fixture": "synthetic",
+  "python_engine": "Microsoft Excel",
+  "rust_reader": "calamine+namespace_aware_ooxml",
+  "rust_writer": "rust_xlsxwriter 0.101.0",
+  "python_elapsed_ms": 4360,
+  "rust_cli_elapsed_ms": 91,
+  "rust_events": 2,
+  "source_workbooks": 2,
+  "source_sheets": 2,
+  "output_sheets": 2,
+  "data_rows": 9,
+  "input_files_unchanged": true,
+  "comparison": {
+    "status": "passed",
+    "sheet_name_mismatches": 0,
+    "python_sheet_names": [
+      "Data_2",
+      "Data"
+    ],
+    "rust_sheet_names": [
+      "Data_2",
+      "Data"
+    ],
+    "dimension_mismatches": 0,
+    "value_mismatches": 0,
+    "number_format_mismatches": 0,
+    "header_style_mismatches": 0,
+    "filter_mismatches": 0,
+    "freeze_mismatches": 0,
+    "column_width_max_delta": 3.5703125,
+    "column_widths_exact": false,
+    "data_rows_by_sheet": {
+      "Data_2": 4,
+      "Data": 5
+    }
+  },
+  "scope": "Windows synthetic formula-free XLSX; named arbitrary/fixed rows; merged multi-row header; values, types, sheet order, dimensions, number formats, header style, filter and freeze compared; no fallback template, extra metadata, history enrichment, real template or Linux runtime"
+}

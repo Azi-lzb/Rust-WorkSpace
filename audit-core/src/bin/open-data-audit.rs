@@ -21,6 +21,7 @@ use audit_core::{
         S1HistoryWorkbookReadSummary,
     },
     s1_issue_chain::{merge_s1_issue_sources, S1IssueFilePair},
+    s1_region_summary::summarize_s1_named_regions,
     s1_result_workbook::write_s1_result_workbook,
     s1_structure_compare::{
         compare_s1_source_structure, read_s1_structure_template_with_required_sheets,
@@ -76,6 +77,8 @@ enum Command {
     S1HistoryClassify(S1HistoryClassifyArgs),
     /// Merge XLSX worksheet tables with matching first-row headers for S1-F02.
     S1MergeWorkbookTables(S1MergeWorkbookTablesArgs),
+    /// Summarize S1-F02 configured arbitrary-row or fixed-row named regions.
+    S1RegionSummary(S1RegionSummaryArgs),
     /// Serve the bundled Audit frontend through the Rust API bridge on localhost.
     Serve(ServeArgs),
 }
@@ -401,6 +404,37 @@ struct S1MergeWorkbookTablesArgs {
     developer_view: bool,
 }
 
+#[derive(Debug, Args)]
+struct S1RegionSummaryArgs {
+    /// S1 template workbook containing named summary and header ranges.
+    #[arg(long)]
+    template_workbook: PathBuf,
+
+    /// Directory containing source .xlsx workbooks.
+    #[arg(long)]
+    input_dir: PathBuf,
+
+    /// New XLSX output path. Existing files are never overwritten.
+    #[arg(long)]
+    output_workbook: PathBuf,
+
+    /// Optional workbook containing the “模块化功能” feature mappings.
+    #[arg(long)]
+    mapping_config: Option<PathBuf>,
+
+    /// Feature name from the mapping workbook; repeat to run multiple summaries.
+    #[arg(long = "feature-name", required = true)]
+    feature_names: Vec<String>,
+
+    /// Search child directories; when nested workbooks exist, root-level files are treated as prior summaries.
+    #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
+    recursive: bool,
+
+    /// Emit developer-view JSON progress events with actual engines and timings.
+    #[arg(long, default_value_t = false)]
+    developer_view: bool,
+}
+
 #[derive(Debug, Deserialize)]
 struct S1AuditCopyManifest {
     files: Vec<S1AuditCopyManifestFile>,
@@ -705,6 +739,9 @@ fn run() -> Result<()> {
         Command::S1MergeWorkbookTables(arguments) => {
             run_s1_merge_workbook_tables(arguments)?;
         }
+        Command::S1RegionSummary(arguments) => {
+            run_s1_region_summary(arguments)?;
+        }
     }
     Ok(())
 }
@@ -792,6 +829,112 @@ fn run_s1_merge_workbook_tables(arguments: S1MergeWorkbookTablesArgs) -> Result<
             summary.output_path.display()
         );
     }
+    let mut summary_output = serde_json::to_value(&summary)?;
+    if !arguments.developer_view {
+        if let Some(object) = summary_output.as_object_mut() {
+            object.remove("reader");
+            object.remove("writer");
+        }
+    }
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&serde_json::json!({
+            "status": "completed",
+            "summary": summary_output
+        }))?
+    );
+    Ok(())
+}
+
+fn run_s1_region_summary(arguments: S1RegionSummaryArgs) -> Result<()> {
+    let started = Instant::now();
+    let started_at = chrono::Local::now().to_rfc3339();
+    if arguments.developer_view {
+        eprintln!(
+            "{}",
+            serde_json::to_string(&serde_json::json!({
+                "type": "progress",
+                "product": "open-data-audit",
+                "feature": "S1-F02",
+                "step": "named_region_summary",
+                "status": "started",
+                "started_at": started_at
+            }))?
+        );
+    } else {
+        eprintln!("正在读取汇总模板并汇总选定区域…");
+    }
+
+    let summary = match summarize_s1_named_regions(
+        &arguments.template_workbook,
+        &arguments.input_dir,
+        &arguments.output_workbook,
+        arguments.mapping_config.as_deref(),
+        &arguments.feature_names,
+        arguments.recursive,
+    ) {
+        Ok(summary) => summary,
+        Err(error) => {
+            if arguments.developer_view {
+                eprintln!(
+                    "{}",
+                    serde_json::to_string(&serde_json::json!({
+                        "type": "progress",
+                        "product": "open-data-audit",
+                        "feature": "S1-F02",
+                        "step": "named_region_summary",
+                        "status": "failed",
+                        "finished_at": chrono::Local::now().to_rfc3339(),
+                        "elapsed_ms": started.elapsed().as_millis(),
+                        "error": format!("{error:#}")
+                    }))?
+                );
+            } else {
+                eprintln!("汇总失败，未生成结果工作簿。");
+            }
+            return Err(error);
+        }
+    };
+
+    if arguments.developer_view {
+        eprintln!(
+            "{}",
+            serde_json::to_string(&serde_json::json!({
+                "type": "progress",
+                "product": "open-data-audit",
+                "feature": "S1-F02",
+                "step": "named_region_summary",
+                "status": "completed",
+                "started_at": started_at,
+                "finished_at": chrono::Local::now().to_rfc3339(),
+                "reader": summary.reader,
+                "writer": summary.writer,
+                "features": summary.features,
+                "source_workbooks": summary.source_workbooks,
+                "source_sheets": summary.source_sheets,
+                "output_sheets": summary.output_sheets,
+                "data_rows": summary.data_rows,
+                "skipped_missing_sheets": summary.skipped_missing_sheets,
+                "discovery_time_ms": summary.discovery_time_ms,
+                "template_read_time_ms": summary.template_read_time_ms,
+                "source_read_time_ms": summary.source_read_time_ms,
+                "calculation_time_ms": summary.calculation_time_ms,
+                "write_time_ms": summary.write_time_ms,
+                "validation_time_ms": summary.validation_time_ms,
+                "elapsed_ms": started.elapsed().as_millis()
+            }))?
+        );
+    } else {
+        eprintln!(
+            "汇总完成：{} 个工作簿，{} 张结果表，{} 行；耗时 {} ms；输出：{}",
+            summary.source_workbooks,
+            summary.output_sheets,
+            summary.data_rows,
+            started.elapsed().as_millis(),
+            summary.output_path.display()
+        );
+    }
+
     let mut summary_output = serde_json::to_value(&summary)?;
     if !arguments.developer_view {
         if let Some(object) = summary_output.as_object_mut() {

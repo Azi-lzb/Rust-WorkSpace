@@ -2,8 +2,8 @@ use audit_core::{
     conditional_format::evaluate_xlsx_workbook,
     models::CopyRange,
     name_config::{
-        load_s1_conditional_mappings, load_s1_formula_mappings, resolve_s1_conditional_area_plan,
-        NamedRangeArea,
+        load_s1_conditional_mappings, load_s1_formula_mappings, load_s1_region_summary_mappings,
+        resolve_s1_conditional_area_plan, NamedRangeArea,
     },
 };
 use excel_writer::Workbook;
@@ -186,6 +186,62 @@ fn loads_formula_copy_and_issue_extraction_mappings() {
     assert_eq!(mappings[1].feature_type, "汇总_公式校验结果提取");
     assert!(mappings[0].input_note.is_empty());
     assert!(mappings[0].output.is_empty());
+}
+
+#[test]
+fn loads_s1_region_summary_mappings_and_uses_source_defaults() {
+    let defaults = load_s1_region_summary_mappings(None, Path::new("template.xlsx"))
+        .expect("load default S1 region-summary mappings");
+    assert_eq!(defaults.len(), 2);
+    assert_eq!(defaults[0].name, "任意行汇总");
+    assert_eq!(defaults[0].feature_type, "汇总_任意行汇总");
+    assert_eq!(defaults[0].range_names, vec!["任意行汇总区域".to_owned()]);
+    assert_eq!(defaults[1].name, "固定行汇总");
+    assert_eq!(defaults[1].feature_type, "汇总_固定行汇总");
+    assert_eq!(defaults[1].range_names, vec!["固定行汇总区域".to_owned()]);
+
+    let rows = vec![
+        vec![
+            "功能名",
+            "执行模块",
+            "命名区域名",
+            "输入",
+            "输出",
+            "备注",
+            "是否限定工作簿",
+            "工作簿关键字",
+        ],
+        vec![
+            "说明汇总",
+            "汇总_任意行汇总",
+            "本期说明区、附加说明区",
+            "源目录",
+            "说明簿",
+            "定向映射",
+            "否",
+            "",
+        ],
+        vec![
+            "其他模块",
+            "汇总_条件格式结果提取",
+            "条件区域",
+            "源目录",
+            "结果",
+            "不应返回",
+            "否",
+            "",
+        ],
+    ];
+    let config = write_mapping_config(&rows, "模块化功能");
+    let mappings = load_s1_region_summary_mappings(Some(&config), Path::new("template.xlsx"))
+        .expect("load configured S1 region-summary mapping");
+    fs::remove_file(config).expect("remove temporary configuration");
+    assert_eq!(mappings.len(), 1);
+    assert_eq!(mappings[0].name, "说明汇总");
+    assert_eq!(
+        mappings[0].range_names,
+        vec!["本期说明区".to_owned(), "附加说明区".to_owned()]
+    );
 }
 
 #[test]

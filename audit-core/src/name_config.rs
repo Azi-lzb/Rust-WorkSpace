@@ -36,6 +36,8 @@ pub const STRUCTURE_COMPARE_FUNCTION: &str = "核对_表结构比对";
 pub const FORMULA_COPY_FUNCTION: &str = "修改_公式校验复制";
 pub const FORMULA_ISSUE_EXTRACT_FUNCTION: &str = "汇总_公式校验结果提取";
 pub const DEFAULT_CONDITIONAL_FEATURE_NAME: &str = "条件格式结果提取";
+pub const USED_RANGE_SUMMARY_FUNCTION: &str = "汇总_任意行汇总";
+pub const FIXED_ROW_SUMMARY_FUNCTION: &str = "汇总_固定行汇总";
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FeatureMapping {
@@ -333,6 +335,42 @@ pub fn load_s1_formula_mappings(
     )
 }
 
+/// Load the S1 named-range summary mappings used by the source project's
+/// ordinary region-summary path. Missing configuration falls back to the two
+/// built-in range mappings; an applicable configuration with no summary row
+/// remains empty, matching `load_feature_mappings` selection semantics.
+pub fn load_s1_region_summary_mappings(
+    config_path: Option<&Path>,
+    template_path: &Path,
+) -> Result<Vec<FeatureMapping>> {
+    let Some(config_path) = config_path.filter(|path| path.is_file()) else {
+        return Ok(default_s1_region_summary_mappings());
+    };
+
+    let workbook = excel_reader::read_workbook(config_path)
+        .with_context(|| format!("读取 Audit 功能映射配置 {}", config_path.display()))?;
+    let Some(sheet) = workbook
+        .sheets
+        .iter()
+        .find(|sheet| sheet.name == MAPPING_SHEET)
+    else {
+        return Ok(default_s1_region_summary_mappings());
+    };
+
+    let rows = mapping_sheet_rows(sheet)?;
+    let template_name = template_path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    parse_s1_mappings(
+        &rows,
+        &template_name,
+        &[USED_RANGE_SUMMARY_FUNCTION, FIXED_ROW_SUMMARY_FUNCTION],
+        !has_applicable_audit_mapping(&rows, &template_name),
+        default_s1_region_summary_mappings(),
+    )
+}
+
 fn has_applicable_audit_mapping(rows: &[Vec<String>], template_name: &str) -> bool {
     let Some(headers) = rows.first() else {
         return false;
@@ -567,6 +605,31 @@ fn default_s1_formula_mappings() -> Vec<FeatureMapping> {
             remark: "重算后提取错误、核实、提示等结果".to_owned(),
             output: "审核结果集".to_owned(),
             input_note: "已计算的审核副本".to_owned(),
+        },
+    ]
+}
+
+fn default_s1_region_summary_mappings() -> Vec<FeatureMapping> {
+    vec![
+        FeatureMapping {
+            name: "任意行汇总".to_owned(),
+            feature_type: USED_RANGE_SUMMARY_FUNCTION.to_owned(),
+            range_names: vec!["任意行汇总区域".to_owned()],
+            workbook_limited: false,
+            workbook_keyword: String::new(),
+            remark: "按任意行汇总区域汇总源工作簿数据".to_owned(),
+            output: "汇总工作簿".to_owned(),
+            input_note: "源数据目录、表头区域".to_owned(),
+        },
+        FeatureMapping {
+            name: "固定行汇总".to_owned(),
+            feature_type: FIXED_ROW_SUMMARY_FUNCTION.to_owned(),
+            range_names: vec!["固定行汇总区域".to_owned()],
+            workbook_limited: false,
+            workbook_keyword: String::new(),
+            remark: "严格按固定行汇总区域汇总源工作簿数据".to_owned(),
+            output: "汇总工作簿".to_owned(),
+            input_note: "源数据目录、表头区域".to_owned(),
         },
     ]
 }
