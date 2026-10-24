@@ -1,0 +1,36 @@
+时间：2026-10-24 15:44 +08:00
+执行者：Codex Audit 专属开发 Agent
+分支：audit-dev
+修改前提交：1b7c5db（main 的 `788afe1` XF0 共享修复已 cherry-pick 并推送到 origin/audit-dev）
+WIP：修改前无 Audit WIP。仅改手动候选探针和脱敏报告；原始 Python 与用户工作簿只读。
+
+修改目的：
+为共享 XF0 读回修正后的 S1-F01 真实模板候选失败补充阶段与坐标诊断；核对旧 Python 公式复制的直接单元格样式契约，并把真实样本上剩余的继承维度边界证据交回 main 协调。
+
+变更文件：
+- audit-core/tests/s1_formula_copy_candidate.rs：手动 Unverified 候选诊断增加缺失 ImportRange 单元格继承样式解析阶段，以及未修改样式/复制样式阶段的坐标分类。输出仅含样本序号、工作表序号、单元格坐标、错误类别与阶段；不输出单元格值、公式、批注、工作簿名/路径或原始错误文本。
+- audit-core/probe/reports/s1_f01_formula_copy_xf0_targeted_recheck_20261024.json：保存两个定向真实样本的脱敏候选复验结果。
+- 本记录：记录旧 Python 操作映射、OOXML 结构证据、测试和剩余问题。
+- 本轮未修改 Audit 生产 Rust 代码、共享 crate、根 Cargo、DEVELOPMENT_GOAL.md、pytools-core 或源 Python。
+
+业务语义与模板结构：
+- 只读核对源 `core/src/base_audit/native/openpyxl_workbook.py`：`copy_formula_ranges_from_template` 按公式范围的行列循环逐 cell 赋值，`source.has_style` 时复制 `_style`，再分别复制 number_format、alignment、protection、comment；该路径不复制行列维度。`_copy_sheet` 的行列维度复制属于另一个结构化整表复制流程。因此当前四个 ImportRange 的公式复制操作按直接单元格样式验证，不把 worksheet row/column dimension.style 合并进 cell 样式。
+- 使用 namespace-aware XML 对同一模板的首工作表 AB4 检查：`<c r="AB4">` 缺失；row 4 存在但无 `s`、无 `customFormat`；覆盖 AB 的列定义为 min=max=28 且有 style 属性。由 OOXML 关系解析后的 cellXfs[0] ID-free 属性摘要为 General、vertical=center、默认保护、无填充图案/颜色、无边框；行维度无样式，列维度有独立样式。完整脱敏属性已通过跨会话消息发送 main；报告不存字体名或业务值。
+
+验证：
+- Windows 原生 Cargo 1.99.1 / rustc 1.99.1 MSVC。
+- `cargo fmt -p audit-core -- --check`：通过。
+- `cargo test -p audit-core --test s1_formula_copy_candidate --locked --no-run`：通过。
+- main 共享提交 `788afe19e8e00db53c6e4738402b1ce2d25a7991` cherry-pick 后，`cargo test -p excel-editor openpyxl_backend::tests:: --locked`：6 项通过；`cargo fmt -p excel-editor -- --check` 通过。
+- Windows CPython 3.12.10 + openpyxl 3.1.5 隔离 worker 候选针对 sample 1、6 各做定向复验；最终诊断版输出位于 Python `TemporaryDirectory`，上下文退出后自动清理。两份输入的大小与修改时间复核未变；候选均写出但 Rust readback 失败，脱敏错误为 `implicit_import_source_style_unresolved`，阶段 `resolve_implicit_import_source_style`，模板工作表序号 1、坐标 AB4。能力保持 Unverified、生产路由不合格；未公式重算。
+- WSL Python 未使用，最终 deb runtime 未测试；本轮未重跑七样本全批或 S1 全链。
+
+未完成与已知问题：
+- `788afe1` 的共享样式读回修正处理了 XF0 元数据，但真实模板仍触发行/列维度保护。该失败已证明模板 AB4 单元格不存在、行无 style、列有 style；旧 Audit 公式复制只按直接单元格样式，所以不能把列维度样式当作该 ImportRange 单元格的直接样式。main 已提交进一步共享修正 `ab95e07b2db06de315e10203ac2f1f906f8582c9`；本记录形成安全提交点并推送后再按协调流程同步，然后只做一次针对性 AB4 复验。
+- sample 1 的非空 shared-string 值未保真是先前复验已发现的独立问题；本次 readback 在 AB4 样式阶段先失败，未再次到达值保真校验，待样式阻断解除后单独复验。
+- 本轮首次探索性候选曾在 `%TEMP%` 写入两份候选工作簿及报告；对这些明确临时文件的清理命令被执行策略拒绝。未绕过策略。随后最终诊断使用自动清理的 TemporaryDirectory。首次运行的临时目录不在工作区或提交中，需按最终沟通提示手动清理。
+
+回滚：
+- 本记录、脱敏报告和探针代码可随本地 Audit 证据提交撤销；共享修复是独立提交。未修改组件版本。
+
+【组件版本】：audit-core 0.1.0（不升级）

@@ -1,0 +1,64 @@
+{
+  "schema_version": 1,
+  "suite": "audit.s1_formula_copy.shared_xf0_targeted_real_sample_recheck",
+  "created_at": "2026-10-24T15:43:50+08:00",
+  "shared_fix_commit": "788afe19e8e00db53c6e4738402b1ce2d25a7991",
+  "sample_count": 2,
+  "runtime": {
+    "rust": "Windows native Cargo/rustc",
+    "python": "Windows CPython 3.12.10 + openpyxl 3.1.5 (isolated worker test)",
+    "wsl_python_used": false,
+    "deb_runtime_tested": false
+  },
+  "engine": "openpyxl-worker candidate with Rust S1 template plan and Rust readback validator",
+  "formula_recalculation_performed": false,
+  "mapping_config": "built-in defaults",
+  "samples": [
+    {
+      "sample_index": 1,
+      "runner_exit_code": 0,
+      "status": "written_unverified_candidate",
+      "output_readback_failed": true,
+      "readback_failure_category": "style_preservation_mismatch",
+      "readback_diagnostic": {
+        "cell": "AB4",
+        "diagnostic_status": "failure_location_available",
+        "kind": "implicit_import_source_style_unresolved",
+        "phase": "resolve_implicit_import_source_style",
+        "template_sheet_ordinal": 1
+      },
+      "apply_failure_category": null,
+      "output_created": true,
+      "capability_status": "unverified",
+      "production_route_eligible": false,
+      "formula_recalculation_performed": false,
+      "input_unchanged_by_size_and_mtime": true
+    },
+    {
+      "sample_index": 6,
+      "runner_exit_code": 0,
+      "status": "written_unverified_candidate",
+      "output_readback_failed": true,
+      "readback_failure_category": "style_preservation_mismatch",
+      "readback_diagnostic": {
+        "cell": "AB4",
+        "diagnostic_status": "failure_location_available",
+        "kind": "implicit_import_source_style_unresolved",
+        "phase": "resolve_implicit_import_source_style",
+        "template_sheet_ordinal": 1
+      },
+      "apply_failure_category": null,
+      "output_created": true,
+      "capability_status": "unverified",
+      "production_route_eligible": false,
+      "formula_recalculation_performed": false,
+      "input_unchanged_by_size_and_mtime": true
+    }
+  ],
+  "aggregate": {
+    "readback_failure_count": 2,
+    "all_inputs_unchanged_by_size_and_mtime": true,
+    "all_capabilities_unverified": true,
+    "all_production_routes_ineligible": true
+  }
+}

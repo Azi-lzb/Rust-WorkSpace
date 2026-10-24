@@ -1,8 +1,8 @@
 //! Manual, direct-backend candidate probe for the first S1 formula-copy scope.
 //!
-//! This deliberately bypasses ExcelModifier only to measure the Umya ImportRange
-//! candidate. The capability is Unverified and this test must never be treated
-//! as a production route or as feature acceptance.
+//! This deliberately probes an Unverified range-import candidate directly,
+//! without routing it through ExcelModifier. It must never be treated as a
+//! production route or as feature acceptance.
 
 use audit_core::s1_formula_copy::build_s1_formula_copy_edit_plan;
 use excel_editor::{
@@ -61,6 +61,17 @@ fn readback_failure_location<'a>(message: &'a str, marker: &str) -> Option<(&'a 
     location.rsplit_once('!')
 }
 
+fn readback_failure_location_token<'a>(
+    message: &'a str,
+    marker: &str,
+) -> Option<(&'a str, &'a str)> {
+    let failure = message.rsplit_once(marker)?.1;
+    let location = failure.split_whitespace().next()?;
+    let (sheet, cell) = location.rsplit_once('!')?;
+    let cell = cell.trim_end_matches(|character: char| matches!(character, ':' | ',' | ';'));
+    Some((sheet, cell))
+}
+
 fn rust_cell_value_diagnostic(value: Option<&serde_json::Value>) -> serde_json::Value {
     let Some(value) = value else {
         return serde_json::json!({
@@ -100,6 +111,7 @@ fn rust_cell_value_diagnostic(value: Option<&serde_json::Value>) -> serde_json::
 fn safe_readback_diagnostic(
     message: &str,
     input: &Path,
+    template: &Path,
     output: &Path,
 ) -> Option<serde_json::Value> {
     if let Some((sheet_name, cell)) =
@@ -181,7 +193,93 @@ fn safe_readback_diagnostic(
             "rust_actual_style": style_pair.map(|(_, actual)| actual.trim()),
         }));
     }
-    None
+
+    if let Some((sheet_name, cell)) = readback_failure_location_token(
+        message,
+        "cannot determine inherited row/column style for absent ImportRange source cell ",
+    ) {
+        let template_sheet_ordinal =
+            excel_reader::read_workbook(template)
+                .ok()
+                .and_then(|workbook| {
+                    workbook
+                        .sheets
+                        .iter()
+                        .position(|sheet| sheet.name == sheet_name)
+                        .map(|index| index + 1)
+                });
+        return Some(serde_json::json!({
+            "kind": "implicit_import_source_style_unresolved",
+            "diagnostic_status": "failure_location_available",
+            "phase": "resolve_implicit_import_source_style",
+            "template_sheet_ordinal": template_sheet_ordinal,
+            "cell": cell.trim().replace('$', "").to_ascii_uppercase(),
+        }));
+    }
+
+    let style_failure = [
+        (
+            "Rust unmodified-style readback mismatch at ",
+            "unmodified_style_semantic_mismatch",
+            "unmodified_workbook_style_readback",
+        ),
+        (
+            "Rust unmodified merged-cell border readback mismatch at ",
+            "unmodified_merged_border_mismatch",
+            "unmodified_merged_border_readback",
+        ),
+        (
+            "Rust CopyRange style readback mismatch at ",
+            "copied_style_semantic_mismatch",
+            "copy_range_style_readback",
+        ),
+    ]
+    .into_iter()
+    .find_map(|(marker, kind, phase)| {
+        readback_failure_location_token(message, marker).map(|location| (location, kind, phase))
+    });
+    if let Some(((sheet_name, cell), kind, phase)) = style_failure {
+        let sheet_ordinal = excel_reader::read_workbook(input)
+            .ok()
+            .and_then(|workbook| {
+                workbook
+                    .sheets
+                    .iter()
+                    .position(|sheet| sheet.name == sheet_name)
+                    .map(|index| index + 1)
+            });
+        return Some(serde_json::json!({
+            "kind": kind,
+            "diagnostic_status": "failure_location_available",
+            "phase": phase,
+            "sheet_ordinal": sheet_ordinal,
+            "cell": cell.trim().replace('$', "").to_ascii_uppercase(),
+        }));
+    }
+
+    let lower_message = message.to_ascii_lowercase();
+    let phase = if lower_message.contains("open source workbook for style readback") {
+        "open_source_for_style_readback"
+    } else if lower_message.contains("open openpyxl output with umya for independent rust readback")
+    {
+        "open_candidate_for_independent_style_readback"
+    } else if lower_message.contains("style-preservation output sheet") {
+        "find_output_sheet_for_style_preservation"
+    } else if lower_message.contains("cannot determine inherited row/column style") {
+        "resolve_implicit_import_source_style"
+    } else if lower_message.contains("open importrange styles from") {
+        "open_import_range_source_styles"
+    } else if lower_message.contains("style") {
+        "other_style_preservation_validation"
+    } else {
+        return None;
+    };
+    Some(serde_json::json!({
+        "kind": "style_preservation_mismatch",
+        "diagnostic_status": "safe_failure_phase_available",
+        "phase": phase,
+        "failure_category": readback_failure_category(message),
+    }))
 }
 
 #[test]
@@ -301,7 +399,9 @@ fn probes_s1_formula_copy_import_ranges_without_claiming_capability() {
                             let message = format!("{error:#}");
                             let category = readback_failure_category(&message);
                             let diagnostic = include_safe_diagnostics
-                                .then(|| safe_readback_diagnostic(&message, &target, &output))
+                                .then(|| {
+                                    safe_readback_diagnostic(&message, &target, &template, &output)
+                                })
                                 .flatten();
                             (category, diagnostic)
                         })
