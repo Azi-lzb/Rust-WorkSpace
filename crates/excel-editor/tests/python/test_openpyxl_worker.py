@@ -223,6 +223,64 @@ class OpenpyxlWorkerTests(unittest.TestCase):
         self.assertEqual(response["error"]["kind"], "formula_cache_not_preserved")
         self.assertFalse(output.exists())
 
+    def test_formula_cache_inside_materialized_import_range_can_be_replaced(self):
+        cached = self.root / "cached-target.xlsx"
+        openpyxl.Workbook().save(cached)
+        workbook = openpyxl.load_workbook(cached)
+        workbook.active.title = "Data"
+        workbook["Data"]["C2"] = "=1+1"
+        workbook.save(cached)
+        self._add_formula_cache(cached, "xl/worksheets/sheet1.xml", "C2", "2")
+
+        output = self.root / "cached-target-output.xlsx"
+        plan = self.base_plan(output, [operation(
+            "import_range",
+            source_workbook=str(self.import_source), source_sheet="Source",
+            source_range="A1:C2", target_sheet="Data", target_start="A1",
+            copy_values=True, copy_formulas=True, style_mode="full", copy_comments=True,
+            copy_merges=True, copy_row_heights=False, copy_column_widths=False,
+            copy_row_hidden=False, copy_column_hidden=False, copy_outline_levels=False,
+            copy_all_row_dimensions=False, copy_all_column_dimensions=False,
+            materialize_blank_cells=True, hide_zero=False,
+        )])
+        plan["input"] = str(cached)
+        process, response = run_worker(plan, output)
+        self.assertEqual(process.returncode, 0, process.stderr)
+        self.assertEqual(response["status"], "applied", response)
+        saved_values = openpyxl.load_workbook(output, data_only=True)
+        self.assertIsNone(saved_values["Data"]["C2"].value)
+        saved_values.close()
+        saved_formulas = openpyxl.load_workbook(output, data_only=False)
+        self.assertIsNone(saved_formulas["Data"]["C2"].value)
+        saved_formulas.close()
+
+    def test_materialized_import_range_does_not_cover_formula_cache_outside_target(self):
+        cached = self.root / "cached-target-outside.xlsx"
+        openpyxl.Workbook().save(cached)
+        workbook = openpyxl.load_workbook(cached)
+        workbook.active.title = "Data"
+        workbook["Data"]["C2"] = "=1+1"
+        workbook.save(cached)
+        self._add_formula_cache(cached, "xl/worksheets/sheet1.xml", "C2", "2")
+
+        output = self.root / "cached-target-outside-output.xlsx"
+        plan = self.base_plan(output, [operation(
+            "import_range",
+            source_workbook=str(self.import_source), source_sheet="Source",
+            source_range="A1:B2", target_sheet="Data", target_start="A1",
+            copy_values=True, copy_formulas=True, style_mode="full", copy_comments=True,
+            copy_merges=True, copy_row_heights=False, copy_column_widths=False,
+            copy_row_hidden=False, copy_column_hidden=False, copy_outline_levels=False,
+            copy_all_row_dimensions=False, copy_all_column_dimensions=False,
+            materialize_blank_cells=True, hide_zero=False,
+        )])
+        plan["input"] = str(cached)
+        process, response = run_worker(plan, output)
+        self.assertEqual(process.returncode, 0, process.stderr)
+        self.assertEqual(response["status"], "unsupported_before_write")
+        self.assertEqual(response["error"]["kind"], "formula_cache_not_preserved")
+        self.assertFalse(output.exists())
+
     def test_operation_error_is_structured_and_does_not_publish_output(self):
         output = self.root / "failed.xlsx"
         plan = self.base_plan(output, [operation("set_cell_value", sheet="Missing", cell="A1", value={"type": "text", "value": "x"})])
