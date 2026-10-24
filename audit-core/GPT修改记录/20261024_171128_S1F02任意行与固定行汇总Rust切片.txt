@@ -1,0 +1,47 @@
+时间：2026-10-24 17:11:28 +08:00
+执行者：Codex Audit 专属开发 Agent
+分支：audit-dev
+修改前提交：4dfed20（docs(audit): finalize S1-F02 change record）
+修改后提交：984ac1b（feat(audit): add S1-F02 named region summary）
+WIP：开始时 worktree clean；未发现 Audit WIP 文件。源 Python 项目与业务工作簿只读。
+
+修改目的：
+继续 S1-F02 未完成的“任意行汇总/固定行汇总”Rust 迁移切片。原 S1-F01 公式复制仍受共享 Excel 编辑器真实模板保真门禁约束，本次不修改共享 crate 或生产路由。
+
+变更文件：
+- audit-core/src/s1_region_summary.rs：实现命名区域汇总；读取 Rust 功能映射和模板命名区域，按表头/数据范围交集提取值，支持任意行 UsedRange 边界、固定行边界、多行合并表头展开、来源文件名规范化、分组输出、临时写入、Rust 回读校验。含公式源工作簿、兜底模板及“全局单元格区域.”/“单元格区域.”额外字段明确拒绝，避免旧缓存或未迁移逻辑被静默遗漏。
+- audit-core/src/name_config.rs：新增任意行/固定行映射类型与读取器，保留源项目默认映射及配置工作簿映射筛选语义。
+- audit-core/src/bin/open-data-audit.rs：新增 `s1-region-summary` CLI，支持选择一个或多个已配置功能、模板、源目录、配置工作簿和输出路径，并提供普通用户/开发者日志。
+- audit-core/src/lib.rs：导出 Audit 汇总模块。
+- audit-core/tests/s1_feature_mapping_config.rs、audit-core/tests/s1_region_summary_cli.rs：覆盖默认/配置映射、任意/固定行输出、多行合并表头、文件名规范化、来源未修改、双视图日志和公式源拒绝。
+- audit-core/tests/fixtures/s1_region_summary_template.xlsx：新增无业务数据的合成模板夹具。
+- audit-core/tests/compare/compare_s1_region_summary.py：Windows Python/Excel 只读基线对拍辅助脚本，不进入产品运行路径。
+- audit-core/probe/reports/s1_f02_named_region_summary_synthetic_parity_20261024.json：记录合成对拍计数和差异，不含用户样本或真实文件名。
+- audit-core/MIGRATION_INVENTORY.md：更新 S1-F02 局部迁移状态，保持整体未验证。
+- 本记录。
+
+逻辑及兼容影响：
+- 新 CLI 使用源配置名称“任意行汇总”“固定行汇总”，缺少配置时采用源项目内置映射；有可用 S1 映射配置时只返回相应配置中的汇总功能。
+- 输出是 Rust 新建 XLSX，不修改源工作簿。计算和普通值读取由 Rust 完成；Python 仅用于开发期对拍。
+- 输出顺序和表头颜色按 Windows Excel COM 基线对拍修正。列宽使用 Rust autofit，和 Excel 最大差异为 3.5703125 字符。
+
+实际验证：
+- `cargo fmt -p audit-core --check`：通过。
+- `cargo test -p audit-core --locked`：通过；包含 83 项 lib 单测及全部 Audit integration/parity 测试。公式复制候选手工探针仍按现状标记 ignored。
+- `cargo test -p audit-core --test s1_region_summary_cli --locked`：2 项通过。
+- `cargo test -p audit-core --test s1_feature_mapping_config --locked`：6 项通过。
+- Windows `py -3 audit-core/tests/compare/compare_s1_region_summary.py --audit-binary target/debug/open-data-audit.exe --report audit-core/probe/reports/s1_f02_named_region_summary_synthetic_parity_20261024.json`：Microsoft Excel/Python 与 Rust 对拍通过（passed_with_column_width_variance）；2 个源簿、2 张输出表、9 行；值/类型、表序、尺寸、数字格式、表头样式、筛选和冻结差异为 0；列宽最大差异 3.5703125 字符；输入文件未变化。
+- Rust 实际引擎：calamine + namespace-aware OOXML、rust_xlsxwriter 0.101.0。开发日志包含实际读写引擎及发现、模板读取、源读取、计算、写出、验证阶段耗时。
+
+未执行项及已知问题：
+- 本次仅为合成 XLSX/Windows Excel 证据；没有 F02 真实模板或真实配置对拍，也没有 Linux、麒麟/UOS、deb、资源预算验收。
+- 公式源工作簿当前拒绝；兜底模板、额外元数据字段和历史说明追加仍未迁移。此切片不代表 S1-F02 整体通过。
+- 来源文件含公式时，拒绝粒度为整个工作簿；未实现公式重算或缓存时效契约。
+- 自动列宽最大差异 3.5703125 字符，未宣称列宽完全一致。
+- S1-F01 整体仍未验证；公式复制生产路由保持 Unverified，未重跑已完成的真实样本。
+
+删除清单与回滚提示：
+- 删除清单：无。新模板为合成夹具；Python/Rust 对拍样本在临时目录生成并清理；源项目与业务样本均未写入。
+- 回滚：可使用 `git revert 984ac1b` 撤销本次业务代码、测试、夹具、对拍报告和迁移记录；不涉及共享 crate、Cargo.lock、根 Cargo 配置或 pytools-core。
+
+【组件版本】：audit-core 0.1.0（不升级；遵循 workspace 版本治理）
