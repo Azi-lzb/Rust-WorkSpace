@@ -112,6 +112,7 @@ fn run() -> Result<()> {
         "quarterly-rural-loan-plan" => run_quarterly_rural_loan_plan(arguments),
         "institution-normalize-plan" => run_institution_normalize_plan(arguments),
         "institution-normalize" => run_institution_normalize_batch(arguments),
+        "fx-header" => run_fx_header_batch(arguments),
         "fx-header-plan" => run_fx_header_plan(arguments),
         "rename-sheets-plan" => run_rename_sheets_plan(arguments),
         "rename-sheets" => run_rename_sheets(arguments),
@@ -214,7 +215,7 @@ where
         writeln!(output, "  3  打印工具（生成页面设置计划）")?;
         writeln!(output, "  4  转换与文件命名工具")?;
         writeln!(output, "  6  汇总工具")?;
-        writeln!(output, "  7  一二批处理工具（当前接入 7-1、7-2、7-3、7-5）")?;
+        writeln!(output, "  7  一二批处理工具（当前接入 7-1 至 7-5）")?;
         writeln!(output, "  0  退出")?;
         writeln!(output, "==============================")?;
         let Some(choice) = read_menu_choice(input, output, "主菜单选择> ")? else {
@@ -858,6 +859,10 @@ where
             output,
             "  3  删除分机构表中的外资行（Rust 计划/能力门控执行）"
         )?;
+        writeln!(
+            output,
+            "  4  修改外汇工作表页眉单位（Rust 计划/能力门控提交）"
+        )?;
         writeln!(output, "  5  地区总分校验（读取并生成核对结果）")?;
         writeln!(output, "  0  返回")?;
         writeln!(output, "----------------------------")?;
@@ -1139,6 +1144,73 @@ where
                 run_remove_foreign_bank_batch(arguments)?;
                 return Ok(());
             }
+            "4" => {
+                let Some(selected) = choose_workbooks(
+                    "选择要修改外汇页眉的 Excel 文件（可多选）",
+                    true,
+                    input,
+                    output,
+                    allow_native_dialog,
+                )?
+                else {
+                    writeln!(output, "[已取消] 未选择外汇工作簿。")?;
+                    return Ok(());
+                };
+                let mut targets = Vec::new();
+                for path in selected {
+                    if path
+                        .extension()
+                        .is_some_and(|extension| extension.eq_ignore_ascii_case("xlsx"))
+                    {
+                        targets.push(path);
+                    } else {
+                        writeln!(
+                            output,
+                            "[跳过] {}：PT-7-4 当前仅验收 .xlsx；.xls 请先显式转换，含 VBA 的 .xlsm 暂不修改。",
+                            path.display()
+                        )?;
+                    }
+                }
+                if targets.is_empty() {
+                    writeln!(output, "[提示] 没有可处理的 .xlsx 工作簿。")?;
+                    return Ok(());
+                }
+                if capabilities.is_none() {
+                    writeln!(
+                        output,
+                        "[计划模式] 默认只保存页眉修改计划；原工作簿不会修改。"
+                    )?;
+                } else {
+                    writeln!(
+                        output,
+                        "[执行模式] 将通过匹配的 ExcelModifier 验证候选后安全替换原工作簿；失败时使用临时备份回滚。"
+                    )?;
+                }
+                let mut arguments = vec![
+                    "--output-dir".to_owned(),
+                    global.output_dir.to_string_lossy().into_owned(),
+                    "--log-dir".to_owned(),
+                    global.log_dir.to_string_lossy().into_owned(),
+                    "--view".to_owned(),
+                    log_view.to_owned(),
+                ];
+                if let (Some(capabilities), Some(platform)) = (capabilities, platform) {
+                    arguments.extend([
+                        "--commit-target".to_owned(),
+                        "--capabilities".to_owned(),
+                        capabilities.to_string_lossy().into_owned(),
+                        "--platform".to_owned(),
+                        platform.to_owned(),
+                    ]);
+                }
+                arguments.extend(
+                    targets
+                        .into_iter()
+                        .map(|path| path.to_string_lossy().into_owned()),
+                );
+                run_fx_header_batch(arguments)?;
+                return Ok(());
+            }
             "5" => {
                 let Some(selected) = choose_source_files_or_folders(
                     "选择要做地区总分校验的 Excel 文件",
@@ -1186,7 +1258,7 @@ where
                 return Ok(());
             }
             "0" => return Ok(()),
-            _ => writeln!(output, "仅接受 1、2、3、5 或 0")?,
+            _ => writeln!(output, "仅接受 1、2、3、4、5 或 0")?,
         }
     }
 }
@@ -3693,6 +3765,600 @@ fn write_json_report_create_new<T: serde::Serialize>(path: &Path, report: &T) ->
     Ok(())
 }
 
+fn run_fx_header_batch(arguments: Vec<String>) -> Result<()> {
+    let (commit_target, arguments) = extract_boolean_flag(arguments, "commit-target")?;
+    let options = parse_cli_arguments(arguments)?;
+    anyhow::ensure!(
+        !options.positional.is_empty(),
+        "provide at least one FX header workbook"
+    );
+    let capabilities = options.values.get("capabilities");
+    let platform = options.values.get("platform");
+    anyhow::ensure!(
+        capabilities.is_some() == platform.is_some(),
+        "--capabilities and --platform must be provided together"
+    );
+    anyhow::ensure!(
+        !capabilities.is_some() || commit_target,
+        "FX header execution requires --commit-target with matching capability evidence"
+    );
+    anyhow::ensure!(
+        !commit_target || capabilities.is_some(),
+        "--commit-target requires --capabilities and --platform"
+    );
+    let view = options
+        .values
+        .get("view")
+        .map(String::as_str)
+        .unwrap_or("user");
+    anyhow::ensure!(
+        matches!(view, "user" | "developer" | "off"),
+        "--view must be user, developer, or off"
+    );
+    anyhow::ensure!(
+        view != "off" || !options.values.contains_key("report-output"),
+        "--report-output cannot be used with --view off"
+    );
+
+    let output_dir = options
+        .values
+        .get("output-dir")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("output"));
+    let log_dir = options
+        .values
+        .get("log-dir")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("logs"));
+    let plan_dir = options
+        .values
+        .get("plan-dir")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| unique_menu_action_dir(&output_dir.join("plans").join("PT-7-4"), "run"));
+    fs::create_dir_all(&output_dir)
+        .with_context(|| format!("create output directory {}", output_dir.display()))?;
+    fs::create_dir_all(&plan_dir)
+        .with_context(|| format!("create plan directory {}", plan_dir.display()))?;
+
+    let run_started = Instant::now();
+    let started_at = Local::now().to_rfc3339();
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or_default();
+    let run_id = format!("pytools-pt-7-4-{}-{nonce}", std::process::id());
+    let report_output = if view == "off" {
+        None
+    } else {
+        let path = options
+            .values
+            .get("report-output")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| {
+                log_dir.join(format!(
+                    "PT-7-4_{}_{}_{}.json",
+                    Local::now().format("%Y%m%dT%H%M%S"),
+                    std::process::id(),
+                    nonce
+                ))
+            });
+        anyhow::ensure!(
+            path.extension()
+                .and_then(|extension| extension.to_str())
+                .is_some_and(|extension| extension.eq_ignore_ascii_case("json")),
+            "--report-output must use a .json extension"
+        );
+        anyhow::ensure!(
+            !path.exists(),
+            "run history file already exists; refusing to overwrite {}",
+            path.display()
+        );
+        Some(path)
+    };
+
+    let mut events = Vec::<SummaryRunEvent>::new();
+    let mut progress = SummaryProgress {
+        total_inputs: options.positional.len(),
+        total_files: options.positional.len(),
+        ..SummaryProgress::default()
+    };
+    let mut items = Vec::with_capacity(options.positional.len());
+    let mut completed_files = 0usize;
+    let mut failed_files = 0usize;
+    let mut planned_files = 0usize;
+    let mut committed_files = 0usize;
+    let mut fx_sheets = 0usize;
+    let mut modified_sheets = 0usize;
+
+    for (index, input) in options.positional.iter().enumerate() {
+        progress.current_file = Some(index + 1);
+        progress.processed_files = index;
+        progress.completed_files = completed_files;
+        progress.failed_files = failed_files;
+        if view == "user" {
+            eprintln!(
+                "[处理中] {}/{} 检查外汇页眉",
+                index + 1,
+                options.positional.len()
+            );
+        }
+        emit_fx_header_event(
+            &mut events,
+            view,
+            run_started,
+            "input_validation",
+            "started",
+            format!(
+                "开始处理第 {}/{} 个工作簿",
+                index + 1,
+                options.positional.len()
+            ),
+            &progress,
+            None,
+            &["pytools-core"],
+            None,
+            None,
+        );
+
+        let file_started = Instant::now();
+        let mut current_stage = "input_validation";
+        let item_result = (|| -> Result<serde_json::Value> {
+            anyhow::ensure!(
+                input
+                    .extension()
+                    .is_some_and(|extension| extension.eq_ignore_ascii_case("xlsx")),
+                "PT-7-4 currently accepts .xlsx only"
+            );
+            let metadata = fs::symlink_metadata(input)
+                .with_context(|| format!("inspect input workbook {}", input.display()))?;
+            anyhow::ensure!(
+                metadata.is_file() && !metadata.file_type().is_symlink(),
+                "input workbook must be a regular, non-symlink file: {}",
+                input.display()
+            );
+            let expected_target_hash = if commit_target {
+                Some(sha256_file(input)?)
+            } else {
+                None
+            };
+            let candidate = unique_workbook_candidate(input, &output_dir, "fx_header");
+            current_stage = "profile_inspection";
+            let profile_started = Instant::now();
+            let profile = excel_editor::inspect_xlsx_profile(input)?;
+            emit_fx_header_event(
+                &mut events,
+                view,
+                run_started,
+                "profile_inspection",
+                "completed",
+                "已检查工作簿格式与对象特征",
+                &progress,
+                Some(profile_started),
+                &["excel-editor", "excel-reader"],
+                Some("inspect_xlsx_profile"),
+                None,
+            );
+
+            current_stage = "plan_build";
+            let plan_started = Instant::now();
+            let inspection = pytools_core::fx_header::build_fx_header_plan(
+                input,
+                &candidate,
+                profile,
+                format!("{run_id}-{:04}", index + 1),
+            )?;
+            if let Some(expected_hash) = expected_target_hash.as_deref() {
+                verify_planning_snapshot(input, Some(expected_hash))?;
+            }
+            emit_fx_header_event(
+                &mut events,
+                view,
+                run_started,
+                "plan_build",
+                if inspection.plan.is_some() {
+                    "completed"
+                } else {
+                    "no_changes"
+                },
+                if inspection.plan.is_some() {
+                    "已完成页眉检查并生成修改计划"
+                } else {
+                    "没有需要修改的外汇页眉"
+                },
+                &progress,
+                Some(plan_started),
+                &["pytools-core", "excel-reader"],
+                Some("read_header_inventory"),
+                None,
+            );
+
+            let plan_file = if let Some(plan) = inspection.plan.as_ref() {
+                current_stage = "plan_persistence";
+                let path = plan_dir.join(format!("target-{:04}.plan.json", index + 1));
+                let persistence_started = Instant::now();
+                write_json_report_create_new(&path, plan)?;
+                emit_fx_header_event(
+                    &mut events,
+                    view,
+                    run_started,
+                    "plan_persistence",
+                    "completed",
+                    "已保存页眉修改计划",
+                    &progress,
+                    Some(persistence_started),
+                    &["pytools-core"],
+                    None,
+                    None,
+                );
+                Some(path)
+            } else {
+                None
+            };
+
+            let execution = if let Some(plan) = inspection.plan.as_ref() {
+                current_stage = "engine_execution";
+                let execution_started = Instant::now();
+                let execution = execute_optional_plan(&options, Some(plan))?;
+                let engine = execution.get("engine").and_then(serde_json::Value::as_str);
+                emit_fx_header_event(
+                    &mut events,
+                    view,
+                    run_started,
+                    "engine_execution",
+                    "completed",
+                    "已通过 ExcelModifier 修改并验证候选工作簿",
+                    &progress,
+                    Some(execution_started),
+                    &["pytools-core", "excel-editor", "ooxml-patch"],
+                    engine,
+                    None,
+                );
+                execution
+            } else {
+                serde_json::Value::String("no_changes".to_owned())
+            };
+
+            let commit = if commit_target && inspection.plan.is_some() {
+                current_stage = "safe_commit";
+                let commit_started = Instant::now();
+                let commit = replace_target_from_candidate(
+                    &candidate,
+                    input,
+                    expected_target_hash
+                        .as_deref()
+                        .context("target snapshot missing before commit")?,
+                )?;
+                emit_fx_header_event(
+                    &mut events,
+                    view,
+                    run_started,
+                    "safe_commit",
+                    "completed",
+                    "已验证候选并安全提交到原工作簿",
+                    &progress,
+                    Some(commit_started),
+                    &["pytools-core", "file-commit", "excel-reader", "calamine"],
+                    execution.get("engine").and_then(serde_json::Value::as_str),
+                    None,
+                );
+                Some(commit)
+            } else {
+                None
+            };
+
+            Ok(serde_json::json!({
+                "input": input,
+                "candidate": if inspection.plan.is_some() { Some(&candidate) } else { None },
+                "plan_file": plan_file,
+                "status": if commit.is_some() {
+                    "committed"
+                } else if inspection.plan.is_none() {
+                    "no_changes"
+                } else {
+                    "planned"
+                },
+                "fx_sheets": inspection.fx_sheets,
+                "modified_sheets": inspection.modified_sheets,
+                "execution": if inspection.plan.is_some() { execution } else { serde_json::Value::String("no_changes".to_owned()) },
+                "target_commit": commit,
+                "elapsed_ms": file_started.elapsed().as_millis(),
+            }))
+        })();
+
+        match item_result {
+            Ok(item) => {
+                if item["plan_file"].is_string() {
+                    planned_files += 1;
+                }
+                if item["status"] == "committed" {
+                    committed_files += 1;
+                }
+                completed_files += 1;
+                fx_sheets += item["fx_sheets"].as_u64().unwrap_or_default() as usize;
+                modified_sheets += item["modified_sheets"].as_u64().unwrap_or_default() as usize;
+                progress.processed_files = index + 1;
+                progress.completed_files = completed_files;
+                items.push(item);
+                let item = items.last().expect("successful item was just appended");
+                let (status, message) = match item["status"].as_str().unwrap_or_default() {
+                    "committed" => ("completed", "当前工作簿的页眉修改已安全提交"),
+                    "planned" => ("planned", "当前工作簿的页眉修改计划已保存，原文件未修改"),
+                    _ => ("no_changes", "当前工作簿无需修改"),
+                };
+                emit_fx_header_event(
+                    &mut events,
+                    view,
+                    run_started,
+                    "file_summary",
+                    status,
+                    message,
+                    &progress,
+                    Some(file_started),
+                    &["pytools-core"],
+                    None,
+                    None,
+                );
+            }
+            Err(error) => {
+                failed_files += 1;
+                progress.processed_files = index + 1;
+                progress.failed_files = failed_files;
+                emit_fx_header_event(
+                    &mut events,
+                    view,
+                    run_started,
+                    current_stage,
+                    "failed",
+                    "当前工作簿处理失败；请查看开发者运行记录中的失败阶段",
+                    &progress,
+                    Some(file_started),
+                    &["pytools-core"],
+                    None,
+                    Some("fx_header_stage_error"),
+                );
+                items.push(serde_json::json!({
+                    "input": input,
+                    "status": "failed",
+                    "error_stage": current_stage,
+                    "error": format!("{error:#}"),
+                    "elapsed_ms": file_started.elapsed().as_millis(),
+                }));
+            }
+        }
+    }
+
+    let total_files = options.positional.len();
+    let status = if failed_files == 0 {
+        "succeeded"
+    } else if completed_files == 0 {
+        "failed"
+    } else {
+        "partial"
+    };
+    progress.current_file = None;
+    progress.processed_files = total_files;
+    progress.completed_files = completed_files;
+    progress.failed_files = failed_files;
+    emit_fx_header_event(
+        &mut events,
+        view,
+        run_started,
+        "run_summary",
+        status,
+        format!("外汇页眉处理完成：成功 {completed_files}，失败 {failed_files}"),
+        &progress,
+        None,
+        &["pytools-core"],
+        None,
+        None,
+    );
+
+    let mut result = serde_json::json!({
+        "schema_version": 1,
+        "product": "pytools",
+        "feature_id": "PT-7-4",
+        "function": "fx-header",
+        "run_id": run_id,
+        "started_at": started_at,
+        "status": status,
+        "mode": if commit_target { "commit_target" } else { "plan_only" },
+        "files": total_files,
+        "completed_files": completed_files,
+        "failed_files": failed_files,
+        "planned_files": planned_files,
+        "committed_files": committed_files,
+        "saved_files": committed_files,
+        "fx_sheets": fx_sheets,
+        "modified_sheets": modified_sheets,
+        "elapsed_ms": run_started.elapsed().as_millis(),
+        "plan_dir": plan_dir,
+        "items": items,
+    });
+
+    let mut history_warning = None::<String>;
+    if let Some(path) = report_output.as_deref() {
+        let safe_items = result["items"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|item| {
+                serde_json::json!({
+                    "status": item["status"],
+                    "error_stage": item.get("error_stage"),
+                    "error_type": if item["status"] == "failed" { Some("fx_header_stage_error") } else { None },
+                    "fx_sheets": item.get("fx_sheets"),
+                    "modified_sheets": item.get("modified_sheets"),
+                    "elapsed_ms": item.get("elapsed_ms"),
+                })
+            })
+            .collect::<Vec<_>>();
+        let history = serde_json::json!({
+            "schema_version": 1,
+            "product": "pytools",
+            "feature_id": "PT-7-4",
+            "function": "fx-header",
+            "run_id": result["run_id"],
+            "started_at": result["started_at"],
+            "status": result["status"],
+            "mode": result["mode"],
+            "summary": {
+                "total_files": total_files,
+                "completed_files": completed_files,
+                "failed_files": failed_files,
+                "planned_files": planned_files,
+                "committed_files": committed_files,
+                "fx_sheets": fx_sheets,
+                "modified_sheets": modified_sheets,
+                "elapsed_ms": run_started.elapsed().as_millis(),
+            },
+            "items": safe_items,
+            "events": events,
+        });
+        match write_json_report_create_new(path, &history) {
+            Ok(()) => result["history_report"] = serde_json::json!(path),
+            Err(error) => {
+                let warning = format!("could not save PT-7-4 run history: {error:#}");
+                eprintln!("pytools: warning: {warning}");
+                history_warning = Some(warning);
+            }
+        }
+    }
+
+    let output = match view {
+        "developer" => {
+            result["events"] = serde_json::to_value(&events)?;
+            if let Some(warning) = history_warning {
+                result["history_warning"] = serde_json::json!(warning);
+            }
+            result
+        }
+        "user" | "off" => {
+            let mut user = fx_header_user_view(
+                &result,
+                run_started.elapsed().as_millis(),
+                if view == "user" { Some(&events) } else { None },
+            );
+            user["run_id"] = result["run_id"].clone();
+            user["started_at"] = result["started_at"].clone();
+            if let Some(path) = result.get("history_report") {
+                user["history_report"] = path.clone();
+            }
+            if let Some(warning) = history_warning {
+                user["history_warning"] = serde_json::json!(warning);
+            }
+            user
+        }
+        _ => unreachable!("view was validated"),
+    };
+    println!("{}", serde_json::to_string_pretty(&output)?);
+    Ok(())
+}
+
+fn emit_fx_header_event(
+    events: &mut Vec<SummaryRunEvent>,
+    view: &str,
+    run_started: Instant,
+    phase: &str,
+    status: &str,
+    user_message: impl Into<String>,
+    progress: &SummaryProgress,
+    stage_started: Option<Instant>,
+    components: &[&str],
+    actual_engine: Option<&str>,
+    error_type: Option<&str>,
+) {
+    if view == "off" {
+        return;
+    }
+    let event = SummaryRunEvent {
+        sequence: events.len() + 1,
+        timestamp: Local::now().to_rfc3339(),
+        phase: phase.to_owned(),
+        status: status.to_owned(),
+        user_message: user_message.into(),
+        progress: progress.clone(),
+        file_name: None,
+        stage_elapsed_ms: stage_started.map(|started| started.elapsed().as_millis()),
+        total_elapsed_ms: run_started.elapsed().as_millis(),
+        components: components.iter().map(|value| (*value).to_owned()).collect(),
+        actual_engine: actual_engine.map(str::to_owned),
+        error_type: error_type.map(str::to_owned),
+    };
+    if view == "developer" {
+        if let Ok(encoded) = serde_json::to_string(&event) {
+            eprintln!("{encoded}");
+        }
+    } else {
+        eprintln!(
+            "{}（进度 {}/{}, 已完成 {}，失败 {}，已耗时 {} ms）",
+            event.user_message,
+            event.progress.processed_files,
+            event.progress.total_files,
+            event.progress.completed_files,
+            event.progress.failed_files,
+            event.total_elapsed_ms
+        );
+    }
+    events.push(event);
+}
+
+fn fx_header_user_view(
+    result: &serde_json::Value,
+    elapsed_ms: u128,
+    events: Option<&[SummaryRunEvent]>,
+) -> serde_json::Value {
+    let mut user = serde_json::json!({
+        "schema_version": 1,
+        "product": "pytools",
+        "feature_id": "PT-7-4",
+        "status": result["status"],
+        "mode": result["mode"],
+        "summary": {
+            "total_files": result["files"],
+            "completed_files": result["completed_files"],
+            "failed_files": result["failed_files"],
+            "planned_files": result["planned_files"],
+            "committed_files": result["committed_files"],
+            "fx_sheets": result["fx_sheets"],
+            "modified_sheets": result["modified_sheets"],
+            "elapsed_ms": elapsed_ms,
+        }
+    });
+    if let Some(events) = events {
+        user["events"] = serde_json::Value::Array(
+            events
+                .iter()
+                .map(|event| {
+                    serde_json::json!({
+                        "sequence": event.sequence,
+                        "timestamp": event.timestamp,
+                        "phase": fx_header_user_phase(&event.phase),
+                        "status": event.status,
+                        "message": event.user_message,
+                        "progress": event.progress,
+                        "elapsed_ms": event.stage_elapsed_ms,
+                        "total_elapsed_ms": event.total_elapsed_ms,
+                    })
+                })
+                .collect(),
+        );
+    }
+    user
+}
+
+fn fx_header_user_phase(phase: &str) -> &str {
+    match phase {
+        "input_validation" | "profile_inspection" => "输入检查",
+        "plan_build" => "页眉检查",
+        "plan_persistence" => "计划保存",
+        "engine_execution" => "页眉修改",
+        "safe_commit" => "文件提交",
+        "file_summary" => "文件完成",
+        "run_summary" => "任务汇总",
+        other => other,
+    }
+}
+
 fn run_fx_header_plan(arguments: Vec<String>) -> Result<()> {
     let options = parse_cli_arguments(arguments)?;
     let input = required_path(&options, "input")?;
@@ -4876,6 +5542,7 @@ fn print_usage() {
          institution-normalize-plan --config <config.xlsx> --input <xlsx> --output <candidate.xlsx> [--plan-output <json>] [--capabilities <json> --platform <id>]\n\
          institution-normalize --config <config.xlsx> --plan-dir <dir> [--view user|developer|off] [--report-output <json>] <workbook.xlsx>...\n\
          institution-normalize --config <config.xlsx> --apply --capabilities <json> --platform <id> [--view user|developer|off] [--report-output <json>] <workbook.xlsx>...\n\
+         fx-header <xlsx>... [--output-dir <dir>] [--log-dir <dir>] [--plan-dir <dir>] [--view user|developer|off] [--commit-target --capabilities <json> --platform <id>]\n\
          fx-header-plan --input <xlsx> --output <candidate.xlsx> [--plan-output <json>] [--capabilities <json> --platform <id>]\n\
          rename-sheets-plan --config <config.xlsx> --input <xlsx> --output <candidate.xlsx> [--plan-output <json>] [--capabilities <json> --platform <id>]\n\
          rename-sheets --config <config.xlsx> --capabilities <json> --platform <id> [--recursive] <file-or-directory>...\n\
