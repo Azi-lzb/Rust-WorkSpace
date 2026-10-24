@@ -1,0 +1,36 @@
+# S1-F01 Windows 原生历史簿回放复验
+
+- 日期：2026-10-24 13:10:48 +08:00
+- 修改前 commit：8545aed（audit-dev 与 origin/audit-dev 同步，工作区干净）。
+- 修改后 commit：本记录随本轮提交，提交号由 Git 历史追溯。
+- 【组件版本】：不升级。
+- WIP：DEVELOPMENT_GOAL.md、源 Python 项目、真实工作簿、pytools-core、公共 crates、Cargo.lock 均未修改。报告仅保存计数、样本序号、耗时和引擎；临时工作簿与原始 CLI 输出留在系统临时目录。
+
+## 目的与修改文件
+
+继续验证 S1-F01 的历史读取、同期间重复分类及独立历史结果簿写入。初次尝试把普通“本期结果簿”作为历史输入时，历史读取器读到 0 行；该文件不符合独立历史簿契约，不作为本次证据。随后通过 Rust `--history-result-workbook` 生成正式历史输出结构，再以该临时簿做回放。
+
+- 新增 `audit-core/probe/reports/s1_audit_directory_history_replay_real_batch.json`。
+- 更新 `audit-core/MIGRATION_INVENTORY.md` 的 S1-F01 实样本证据。
+- 新增本记录。
+
+历史输入为同批首跑的 Rust 专用历史 writer 生成，不是用户已有历史档案，因此不据此宣称任意既有历史簿或版本格式已验收。
+
+## Rust 入口和对拍结果
+
+- 平台：Windows 11 x64，`x86_64-pc-windows-msvc` 原生 `open-data-audit s1-audit-directory`；同批 7 本源工作簿，使用已保存的 Python 公式结果副本、既有 S1 模板和源项目默认映射。
+- Rust 首跑 `--history-result-workbook` 写出 322 行独立历史簿，由 Rust `rust_xlsxwriter 0.101.0` 写入。
+- Python/Rust 逐本同期间回放：7/7 `passed`，每次两侧读取历史 322 行、合并历史 322 行；当前 Issue 为 322/322，全部分类为“再次出现”（新增 0、连续 0）；当前 Issue、合并历史、当前结果簿和历史结果簿比较差异均为 0；每次历史输出 322 行，7/7 比较输入未变。
+- 完整目录历史回放：状态 `completed`；读取历史 322 行，合并 322 行，当前 322 条全为“再次出现”。本期结果簿读回 322 行、322 个超链接、13 列；独立历史结果簿读回 322 行、0 个超链接、13 列。完整 CLI 耗时 3,146 ms，Developer-view 记录 36 个事件；阶段耗时和引擎明细见机器报告。
+- 逐本 Rust CLI 观察耗时为 1,730–2,910 ms，均值 1,945 ms，仅代表此 Windows 样本。
+
+## 验证边界
+
+- 公式值来自之前保存的缓存；本轮未执行公式复制、公式重算或 sidecar。公式复制能力及目标缓存保护仍 Unverified，生产路由未改变。
+- 未使用用户提供的既有历史档案；历史簿兼容性结论限于本次 Rust 首跑生成的独立历史簿格式。
+- 未验证麒麟/UOS、glibc 2.28 deb 或离线交付。S1-F01 整体仍未验收。
+
+## 回滚与版本
+
+- 无文件删除；报告、清单和本记录可通过 `git revert <本轮提交>` 回滚。
+- 未修改 main 分支。
