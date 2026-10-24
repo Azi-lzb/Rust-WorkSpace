@@ -237,6 +237,19 @@ impl EditBackend for OpenpyxlXlsxBackend {
                 "ExcelEditPlan workbook profile differs from the source package inventory",
             ));
         }
+        match find_non_anchor_merged_payload(&plan.input) {
+            Ok(Some((sheet, cell))) => {
+                return Err(BackendFailure::unsupported_before_write(format!(
+                    "openpyxl cannot preserve stored content in merged non-anchor cell {sheet}!{cell}"
+                )))
+            }
+            Ok(None) => {}
+            Err(error) => {
+                return Err(BackendFailure::failed(format!(
+                    "inspect merged-cell payloads before openpyxl: {error:#}"
+                )))
+            }
+        }
         if !plan
             .operations
             .iter()
@@ -262,6 +275,19 @@ impl EditBackend for OpenpyxlXlsxBackend {
                     return Err(BackendFailure::unsupported_before_write(
                         "ImportRange source contains workbook features outside the openpyxl capability evidence",
                     ));
+                }
+                match find_non_anchor_merged_payload(source_workbook) {
+                    Ok(Some((sheet, cell))) => {
+                        return Err(BackendFailure::unsupported_before_write(format!(
+                            "openpyxl cannot preserve ImportRange source content in merged non-anchor cell {sheet}!{cell}"
+                        )))
+                    }
+                    Ok(None) => {}
+                    Err(error) => {
+                        return Err(BackendFailure::failed(format!(
+                            "inspect ImportRange merged-cell payloads before openpyxl: {error:#}"
+                        )))
+                    }
                 }
             }
             if let EditOperation::ImportRange {
@@ -1830,6 +1856,113 @@ fn worksheet_parts_by_name(source: &Path) -> Result<BTreeMap<String, String>> {
     Ok(parts)
 }
 
+/// Openpyxl's normal worksheet loader removes every non-anchor cell in a
+/// merged range. Refuse these workbooks before launching the worker when such
+/// a cell has a stored value or formula, since saving would lose that content.
+fn find_non_anchor_merged_payload(source: &Path) -> Result<Option<(String, String)>> {
+    let parts = worksheet_parts_by_name(source)?;
+    let mut archive = zip::ZipArchive::new(File::open(source)?)?;
+    let mut candidates = Vec::new();
+    for (sheet, part) in parts {
+        let xml = read_zip_part(&mut archive, &part)?;
+        candidates.extend(non_anchor_payload_cells(&sheet, &xml)?);
+    }
+    if candidates.is_empty() {
+        return Ok(None);
+    }
+
+    // Use the Rust reader to distinguish actual values from empty styled cells
+    // that happen to contain an empty <v> or <is> element.
+    let workbook = read_workbook(source).context("read cells identified in merged ranges")?;
+    for (sheet_name, address) in candidates {
+        let Some(sheet) = workbook
+            .sheets
+            .iter()
+            .find(|sheet| sheet.name == sheet_name)
+        else {
+            continue;
+        };
+        let address = normalize_address(&address);
+        if sheet.values.contains_key(&address) || sheet.formulas.contains_key(&address) {
+            return Ok(Some((sheet_name, address)));
+        }
+    }
+    Ok(None)
+}
+
+fn non_anchor_payload_cells(sheet: &str, xml: &str) -> Result<Vec<(String, String)>> {
+    let document = roxmltree::Document::parse(xml)?;
+    let root = document.root_element();
+    anyhow::ensure!(
+        root.tag_name().namespace() == Some(SPREADSHEET_MAIN_NS)
+            && root.tag_name().name() == "worksheet",
+        "worksheet part has an unexpected root element"
+    );
+    let merged_ranges = root
+        .descendants()
+        .filter(|node| {
+            node.is_element()
+                && node.tag_name().namespace() == Some(SPREADSHEET_MAIN_NS)
+                && node.tag_name().name() == "mergeCell"
+        })
+        .map(|node| {
+            let reference = node
+                .attribute("ref")
+                .context("merged range has no reference")?;
+            let (row1, col1, row2, col2) = parse_range(reference)?;
+            Ok((
+                row1.min(row2),
+                col1.min(col2),
+                row1.max(row2),
+                col1.max(col2),
+            ))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    if merged_ranges.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut candidates = Vec::new();
+    for cell in root.descendants().filter(|node| {
+        node.is_element()
+            && node.tag_name().namespace() == Some(SPREADSHEET_MAIN_NS)
+            && node.tag_name().name() == "c"
+    }) {
+        let Some(address) = cell.attribute("r") else {
+            continue;
+        };
+        let (row, column) = parse_cell(address)?;
+        let Some((min_row, min_col, _, _)) = merged_ranges.iter().find(|range| {
+            row >= range.0 && row <= range.2 && column >= range.1 && column <= range.3
+        }) else {
+            continue;
+        };
+        if row == *min_row && column == *min_col {
+            continue;
+        }
+        let has_payload = cell.children().any(|child| {
+            if !child.is_element() || child.tag_name().namespace() != Some(SPREADSHEET_MAIN_NS) {
+                return false;
+            }
+            match child.tag_name().name() {
+                "f" => true,
+                "v" => child.text().is_some_and(|text| !text.is_empty()),
+                "is" => child.descendants().any(|text| {
+                    text.is_element()
+                        && text.tag_name().namespace() == Some(SPREADSHEET_MAIN_NS)
+                        && text.tag_name().name() == "t"
+                        && text.text().is_some_and(|text| !text.is_empty())
+                }),
+                _ => false,
+            }
+        });
+        if has_payload {
+            candidates.push((sheet.to_owned(), normalize_address(address)));
+        }
+    }
+    Ok(candidates)
+}
+
 fn append_xf_zero_probe(xml: &str) -> Result<(String, String)> {
     let document = roxmltree::Document::parse(xml)?;
     let sheet_data = document
@@ -2886,6 +3019,19 @@ mod tests {
                 .vertical(),
             &umya_spreadsheet::VerticalAlignmentValues::Center
         );
+        Ok(())
+    }
+
+    #[test]
+    fn detects_stored_content_in_merged_non_anchor_cells() -> Result<()> {
+        let xml = format!(
+            r#"<worksheet xmlns="{SPREADSHEET_MAIN_NS}"><sheetData>
+                <row r="5"><c r="A5" t="s"><v>1</v></c></row>
+                <row r="10"><c r="A10" t="s"><v>34</v></c><c r="B10" s="2"/></row>
+            </sheetData><mergeCells count="1"><mergeCell ref="A5:A26"/></mergeCells></worksheet>"#
+        );
+        let cells = non_anchor_payload_cells("Sheet1", &xml)?;
+        assert_eq!(cells, vec![("Sheet1".to_owned(), "A10".to_owned())]);
         Ok(())
     }
 
