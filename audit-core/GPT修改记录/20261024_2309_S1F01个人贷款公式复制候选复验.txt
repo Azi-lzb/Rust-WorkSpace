@@ -1,0 +1,25 @@
+时间：2026-10-24 23:17:41（Asia/Shanghai）
+执行者：Codex Audit 开发 Agent
+修改前 commit：fc39a0f
+修改后 commit：本记录与脱敏候选报告一并提交；提交哈希以 Git 记录为准。
+WIP：修改前 audit-dev 工作树干净并与 origin/audit-dev 同步。临时候选文件和报告均写在 F 盘仓库外目录；未写入源项目或原始工作簿。
+
+目的：复验个人贷款 S1 真实模板的公式复制候选，记录 Python 基线与两个现有 Rust 编辑后端的实际结果；不改变生产路由。
+
+修改文件：
+- probe/reports/s1_personal_loan_formula_copy_candidates_windows_20261024.json：记录脱敏的单样本引擎候选、全批映射范围合并格计数及对象差异，仅保存类别计数和耗时。
+- MIGRATION_INVENTORY.md：附记个人贷款公式复制候选结论，S1-F01 整体仍未验证。
+- GPT修改记录/本记录：登记本次候选复验及限制。
+
+逻辑/配置/版本影响：未修改 Rust 业务逻辑、CLI/Web 入口、配置格式、共享 crate、根 Cargo 配置、Cargo.lock 或产品版本；没有登记或启用 ExcelModifier 能力。
+
+实际验证：
+- 当前 Python 公式复制 helper 对临时副本执行时，在目标合并单元格写入阶段抛出只读 MergedCell 错误，未产生新 Python 基线输出。
+- F 盘 Windows 原生 cargo test --locked -p audit-core --test s1_formula_copy_candidate -- --ignored --nocapture，隔离 openpyxl worker 候选：测试 harness 通过；Rust 计划含 268 项操作，worker 在写入前以 	arget_merged_non_anchor_payload 拒绝，未输出。
+- 同一真实目标的 Umya 候选生成了临时 XLSX，但仍标为 Unverified。与既有保存审核副本及原始目标的诊断对比：复制区域 2,178 格、差异 1,831；范围外 2,294 格、差异 386。工作簿级元数据相同，不能抵消单元格语义差异。该参考副本并非当前 Python helper 新生成的输出，故不记为完整 Python/Rust 对拍通过。
+- 对同一映射配置的 7 个真实目标进行只读合并区域盘点：每本四个复制区域内各有 1 个合并非锚单元格。Windows Python 基线与隔离 worker runtime 分别使用独立解释器；本轮未使用 WSL Python 或 deb runtime。
+- git diff --check 将在提交前运行；未执行 Linux/deb 验收和公式重算。
+
+未执行项与已知问题：公式复制仍无可验收后端；当前源 Python helper 对本模板目标也无法生成新基线。OOXML Patch 的现有共享 backend 仅覆盖 ReplaceHeaderText，未提供 ImportRange。未检查或修改未知 OOXML payload；无需新增公共组件时继续 Audit 侧迁移，需共享操作时先由 main 协调。
+
+删除清单：无。回滚：可用 Git revert 回滚本次提交，恢复清单附记并移除本报告/记录；不影响原始样本。
