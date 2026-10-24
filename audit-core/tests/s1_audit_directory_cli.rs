@@ -1,3 +1,4 @@
+use excel_reader::read_workbook;
 use excel_writer::Workbook;
 use serde_json::{json, Value};
 use std::{
@@ -155,11 +156,39 @@ fn run_cli(input: &Path, template: &Path, manifest: &Path, developer_view: bool)
     run_cli_with_history(input, template, manifest, None, developer_view)
 }
 
+fn run_cli_with_result(
+    input: &Path,
+    template: &Path,
+    manifest: &Path,
+    result_workbook: &Path,
+    developer_view: bool,
+) -> Output {
+    run_cli_with_options(
+        input,
+        template,
+        manifest,
+        None,
+        Some(result_workbook),
+        developer_view,
+    )
+}
+
 fn run_cli_with_history(
     input: &Path,
     template: &Path,
     manifest: &Path,
     history: Option<&Path>,
+    developer_view: bool,
+) -> Output {
+    run_cli_with_options(input, template, manifest, history, None, developer_view)
+}
+
+fn run_cli_with_options(
+    input: &Path,
+    template: &Path,
+    manifest: &Path,
+    history: Option<&Path>,
+    result_workbook: Option<&Path>,
     developer_view: bool,
 ) -> Output {
     let mut command = Command::new(env!("CARGO_BIN_EXE_open-data-audit"));
@@ -179,6 +208,9 @@ fn run_cli_with_history(
         .arg("2026-10-24 12:00:00");
     if let Some(history) = history {
         command.arg("--history-workbook").arg(history);
+    }
+    if let Some(result_workbook) = result_workbook {
+        command.arg("--result-workbook").arg(result_workbook);
     }
     if developer_view {
         command.arg("--developer-view");
@@ -217,13 +249,21 @@ fn cli_runs_both_issue_sources_merges_then_classifies_and_logs_actual_engines() 
     )
     .expect("write formula copy manifest");
 
-    let ordinary = run_cli(&input, &template, &manifest, false);
+    let result_workbook = directory.join("s1-result.xlsx");
+    let ordinary = run_cli_with_result(&input, &template, &manifest, &result_workbook, false);
     assert!(
         ordinary.status.success(),
         "{}",
         String::from_utf8_lossy(&ordinary.stderr)
     );
-    let developer = run_cli(&input, &template, &manifest, true);
+    let developer_result_workbook = directory.join("s1-result-developer.xlsx");
+    let developer = run_cli_with_result(
+        &input,
+        &template,
+        &manifest,
+        &developer_result_workbook,
+        true,
+    );
     assert!(
         developer.status.success(),
         "{}",
@@ -262,6 +302,31 @@ fn cli_runs_both_issue_sources_merges_then_classifies_and_logs_actual_engines() 
     );
     assert_eq!(report["summary"]["new_issues"], 3);
     assert_eq!(report["resolved_issues"].as_array().unwrap().len(), 0);
+    assert_eq!(report["result_workbook"]["issue_count"], 3);
+    assert_eq!(report["result_workbook"]["hyperlink_count"], 3);
+    assert_eq!(
+        report["result_workbook"]["path"],
+        result_workbook
+            .canonicalize()
+            .unwrap()
+            .to_string_lossy()
+            .as_ref()
+    );
+    let result = read_workbook(&result_workbook).expect("read generated S1 result workbook");
+    assert_eq!(result.sheets.len(), 1);
+    assert_eq!(result.sheets[0].name, "本期审核结果");
+    assert!(result.sheets[0].values.len() > 13);
+    assert_eq!(result.sheets[0].values["A1"]["value"], "工作簿名");
+    assert_eq!(
+        result.sheets[0].values["A2"]["value"],
+        source.file_name().unwrap().to_string_lossy().as_ref()
+    );
+    assert_eq!(result.sheets[0].values["B2"]["value"], "检查表");
+    assert_eq!(result.sheets[0].values["C2"]["value"], "A1");
+    assert_eq!(
+        result.sheets[0].values["K2"]["value"],
+        report["issues"][0]["issue_id"]
+    );
 
     let user_log = String::from_utf8_lossy(&ordinary.stderr);
     assert!(user_log.contains("条件格式审核完成"));
@@ -270,6 +335,8 @@ fn cli_runs_both_issue_sources_merges_then_classifies_and_logs_actual_engines() 
     assert!(!user_log.contains("namespace_aware_ooxml"), "{user_log}");
     assert!(!user_log.contains("读取器"), "{user_log}");
     assert!(user_log.contains("未执行公式重算"));
+    assert!(user_log.contains("本期结果工作簿已生成"));
+    assert!(!user_log.contains("rust_xlsxwriter"), "{user_log}");
 
     let developer_report: Value =
         serde_json::from_slice(&developer.stdout).expect("parse developer issue-chain output");
@@ -293,8 +360,22 @@ fn cli_runs_both_issue_sources_merges_then_classifies_and_logs_actual_engines() 
             && event["current_issues"] == 3
             && event["elapsed_ms"].is_number()
     }));
+    assert!(events.iter().any(|event| {
+        event["step"] == "result_workbook_write"
+            && event["status"] == "completed"
+            && event["engine"] == "rust_xlsxwriter 0.101.0"
+            && event["issues"] == 3
+            && event["hyperlinks"] == 3
+            && event["elapsed_ms"].is_number()
+    }));
 
-    fs::remove_dir_all(directory).expect("remove temporary issue-chain workbooks");
+    if std::env::var_os("AUDIT_S1_KEEP_RESULT_ARTIFACTS").is_some() {
+        fs::write(directory.join("rust-result.json"), &ordinary.stdout)
+            .expect("save synthetic Rust issues for Python writer parity");
+        println!("S1_RESULT_PARITY_DIR={}", directory.display());
+    } else {
+        fs::remove_dir_all(directory).expect("remove temporary issue-chain workbooks");
+    }
 }
 
 #[test]

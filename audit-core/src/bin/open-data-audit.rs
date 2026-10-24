@@ -21,6 +21,7 @@ use audit_core::{
         S1HistoryWorkbookReadSummary,
     },
     s1_issue_chain::{merge_s1_issue_sources, S1IssueFilePair},
+    s1_result_workbook::write_s1_result_workbook,
     s1_structure_compare::{
         compare_s1_source_structure, read_s1_structure_template_with_required_sheets,
     },
@@ -336,6 +337,10 @@ struct S1AuditDirectoryArgs {
     /// Optional preferred history sheet, falling back to standard and legacy names.
     #[arg(long, requires = "history_workbook")]
     history_sheet: Option<String>,
+
+    /// Optional path for a new XLSX containing the current S1-F01 result table.
+    #[arg(long)]
+    result_workbook: Option<PathBuf>,
 
     /// Emit developer-view JSON progress events with actual engines and timings.
     #[arg(long, default_value_t = false)]
@@ -904,6 +909,11 @@ fn run_s1_audit_directory(arguments: S1AuditDirectoryArgs) -> Result<()> {
         "S1 输入路径不是目录：{}",
         input_dir.display()
     );
+    let result_workbook_path = arguments
+        .result_workbook
+        .as_deref()
+        .map(prepare_s1_result_workbook_path)
+        .transpose()?;
     let template_workbook = fs::canonicalize(&arguments.template_workbook)
         .with_context(|| format!("读取 S1 模板 {}", arguments.template_workbook.display()))?;
     let manifest_path = fs::canonicalize(&arguments.formula_manifest).with_context(|| {
@@ -927,6 +937,9 @@ fn run_s1_audit_directory(arguments: S1AuditDirectoryArgs) -> Result<()> {
             !excluded
                 .iter()
                 .any(|candidate| same_file_path(path, candidate))
+                && result_workbook_path
+                    .as_ref()
+                    .is_none_or(|output| !same_file_path(path, output))
         })
         .collect::<Vec<_>>();
     let available_source_count = source_files.len();
@@ -1341,6 +1354,85 @@ fn run_s1_audit_directory(arguments: S1AuditDirectoryArgs) -> Result<()> {
         );
     }
 
+    let result_workbook_summary = if let Some(path) = result_workbook_path.as_deref() {
+        let writer_started_at = chrono::Local::now().to_rfc3339();
+        let writer_started = Instant::now();
+        if arguments.developer_view {
+            eprintln!(
+                "{}",
+                serde_json::to_string(&serde_json::json!({
+                    "type": "progress",
+                    "product": "open-data-audit",
+                    "feature": "S1-F01",
+                    "step": "result_workbook_write",
+                    "status": "started",
+                    "engine": "rust_xlsxwriter 0.101.0",
+                    "started_at": writer_started_at,
+                    "issues": history_result.current_issues.len()
+                }))?
+            );
+        } else {
+            eprintln!("正在生成 S1-F01 本期结果工作簿…");
+        }
+        match write_s1_result_workbook(path, None, &history_result.current_issues) {
+            Ok(summary) => {
+                if arguments.developer_view {
+                    eprintln!(
+                        "{}",
+                        serde_json::to_string(&serde_json::json!({
+                            "type": "progress",
+                            "product": "open-data-audit",
+                            "feature": "S1-F01",
+                            "step": "result_workbook_write",
+                            "status": "completed",
+                            "engine": summary.engine,
+                            "started_at": writer_started_at,
+                            "finished_at": chrono::Local::now().to_rfc3339(),
+                            "elapsed_ms": summary.elapsed_ms,
+                            "issues": summary.issue_count,
+                            "hyperlinks": summary.hyperlink_count,
+                            "path": summary.path
+                        }))?
+                    );
+                } else {
+                    eprintln!(
+                        "S1-F01 本期结果工作簿已生成：{} 条审核项，{} 个审核副本链接；耗时 {} ms；路径 {}。",
+                        summary.issue_count,
+                        summary.hyperlink_count,
+                        summary.elapsed_ms,
+                        summary.path.display()
+                    );
+                }
+                Some(summary)
+            }
+            Err(error) => {
+                if arguments.developer_view {
+                    eprintln!(
+                        "{}",
+                        serde_json::to_string(&serde_json::json!({
+                            "type": "progress",
+                            "product": "open-data-audit",
+                            "feature": "S1-F01",
+                            "step": "result_workbook_write",
+                            "status": "failed",
+                            "engine": "rust_xlsxwriter 0.101.0",
+                            "elapsed_ms": writer_started.elapsed().as_millis(),
+                            "error": format!("{error:#}")
+                        }))?
+                    );
+                } else {
+                    eprintln!(
+                        "S1-F01 本期结果工作簿生成失败；耗时 {} ms：{error:#}",
+                        writer_started.elapsed().as_millis()
+                    );
+                }
+                return Err(error.context("S1-F01 结果工作簿生成失败"));
+            }
+        }
+    } else {
+        None
+    };
+
     let status = if structure_preflight
         .as_ref()
         .is_some_and(|summary| summary.files_rejected > 0)
@@ -1375,6 +1467,9 @@ fn run_s1_audit_directory(arguments: S1AuditDirectoryArgs) -> Result<()> {
         "merged_history": history_result.merged_history,
         "elapsed_ms": run_started.elapsed().as_millis()
     });
+    if let Some(summary) = result_workbook_summary {
+        output["result_workbook"] = serde_json::to_value(summary)?;
+    }
     if let Some(preflight) = structure_preflight {
         output["structure_preflight"] = serde_json::to_value(preflight)?;
     }
@@ -2745,6 +2840,39 @@ fn same_file_path(left: &Path, right: &Path) -> bool {
     {
         left == right
     }
+}
+
+fn prepare_s1_result_workbook_path(output_path: &Path) -> Result<PathBuf> {
+    anyhow::ensure!(
+        output_path
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("xlsx")),
+        "S1 结果工作簿输出路径必须使用 .xlsx"
+    );
+    let absolute = if output_path.is_absolute() {
+        output_path.to_path_buf()
+    } else {
+        std::env::current_dir()?.join(output_path)
+    };
+    let parent = absolute
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    let file_name = absolute
+        .file_name()
+        .context("S1 结果工作簿输出路径缺少文件名")?;
+    let resolved = if parent.is_dir() {
+        fs::canonicalize(parent)?.join(file_name)
+    } else {
+        absolute
+    };
+    anyhow::ensure!(
+        !resolved.exists(),
+        "拒绝覆盖已有 S1 结果工作簿：{}",
+        resolved.display()
+    );
+    Ok(resolved)
 }
 
 fn resolve_manifest_path(base: &Path, path: PathBuf) -> PathBuf {

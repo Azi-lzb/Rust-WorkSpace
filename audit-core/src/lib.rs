@@ -15,6 +15,7 @@ pub mod s1_conditional_audit;
 pub mod s1_formula_audit;
 pub mod s1_history;
 pub mod s1_issue_chain;
+pub mod s1_result_workbook;
 pub mod s1_structure_compare;
 pub mod s1_template;
 pub mod s1_template_rules;

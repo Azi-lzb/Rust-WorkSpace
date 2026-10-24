@@ -1,0 +1,72 @@
+{
+  "schema_version": 1,
+  "suite": "audit.s1_issue_chain",
+  "baseline": "Open-Data-Audit UOS/native DAG adapter formula/conditional Issue stages and history classifier",
+  "status": "passed",
+  "python": {
+    "formula_issues": 297,
+    "conditional_issues": 2,
+    "conditional_evaluated_cells": 602,
+    "merged_issues": 299
+  },
+  "rust": {
+    "formula_issues": 297,
+    "conditional_issues": 2,
+    "merged_issues": 299,
+    "resolved_issues": 0,
+    "readers": [
+      "calamine",
+      "calamine+namespace_aware_ooxml",
+      "rust_s1_issue_chain+rust_s1_history"
+    ],
+    "cli_elapsed_ms": 15292,
+    "cli_peak_rss_kib": 30380,
+    "result_workbook": {
+      "engine": "rust_xlsxwriter 0.101.0",
+      "issue_count": 299,
+      "hyperlink_count": 299,
+      "elapsed_ms": 6423
+    }
+  },
+  "comparison": {
+    "current_issues": {
+      "expected_count": 299,
+      "actual_count": 299,
+      "missing_in_rust": 0,
+      "missing_in_python": 0,
+      "field_difference_counts": {}
+    },
+    "resolved_issues": {
+      "expected_count": 0,
+      "actual_count": 0,
+      "missing_in_rust": 0,
+      "missing_in_python": 0,
+      "field_difference_counts": {}
+    },
+    "merged_history": {
+      "expected_count": 299,
+      "actual_count": 299,
+      "missing_in_rust": 0,
+      "missing_in_python": 0,
+      "field_difference_counts": {}
+    },
+    "result_workbook": {
+      "status": "passed",
+      "rows": 299,
+      "hyperlinks": 299,
+      "mismatch_counts": {}
+    },
+    "mismatch_count": 0
+  },
+  "verification": {
+    "all_workbooks_unchanged": true,
+    "formula_recalculation": "not performed; saved audit-copy values only",
+    "raw_issue_values_or_paths_persisted": false,
+    "python_conditional_metadata_source": "workflow.adapters.native_audit_handlers.handle_conditional_issue_extract",
+    "windows_general_handler_metadata_behavior": "workflow.adapters.audit_handlers.handle_conditional_issue_extract passes source organization fields; S1 UOS/native path intentionally leaves them empty",
+    "scope": "one read-only real source/audit-copy pair and one S1 template",
+    "source_filename_alias_used_for_linux_component_limit": false,
+    "rust_cli_peak_rss_scope": "complete s1-audit-directory process, including result workbook output",
+    "python_conditional_total_time_s": 0.281
+  }
+}

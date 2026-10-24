@@ -7,6 +7,7 @@ import argparse
 import dataclasses
 import hashlib
 import json
+import ntpath
 import os
 import subprocess
 import sys
@@ -17,6 +18,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
+from urllib.parse import unquote
 
 sys.dont_write_bytecode = True
 
@@ -108,6 +110,7 @@ def invoke_rust(args: argparse.Namespace, manifest: Path, source: Path) -> tuple
         source_arg = source.relative_to(args.input_dir.resolve(strict=True)).as_posix()
         audit_arg = wsl_path(args.audit_workbook.resolve(strict=True))
         mapping_arg = wsl_path(args.mapping_config.resolve(strict=True)) if args.mapping_config else None
+        result_arg = wsl_path(args.result_workbook.resolve()) if args.result_workbook else None
     else:
         command = [str(binary)]
         input_arg = str(args.input_dir.resolve(strict=True))
@@ -116,6 +119,7 @@ def invoke_rust(args: argparse.Namespace, manifest: Path, source: Path) -> tuple
         source_arg = source.relative_to(args.input_dir.resolve(strict=True)).as_posix()
         audit_arg = str(args.audit_workbook.resolve(strict=True))
         mapping_arg = str(args.mapping_config.resolve(strict=True)) if args.mapping_config else None
+        result_arg = str(args.result_workbook.resolve()) if args.result_workbook else None
 
     command.extend(
         [
@@ -139,6 +143,8 @@ def invoke_rust(args: argparse.Namespace, manifest: Path, source: Path) -> tuple
     )
     if mapping_arg:
         command.extend(["--mapping-config", mapping_arg])
+    if result_arg:
+        command.extend(["--result-workbook", result_arg])
     started = time.perf_counter()
     completed = subprocess.run(
         command,
@@ -158,6 +164,140 @@ def invoke_rust(args: argparse.Namespace, manifest: Path, source: Path) -> tuple
     return output, completed.stderr, elapsed_ms
 
 
+def normalize_hyperlink_target(value: str) -> str:
+    target = value
+    if target.lower().startswith("file://"):
+        target = unquote(target[len("file://") :])
+        if target.startswith("/") and len(target) >= 3 and target[2] == ":":
+            target = target[1:]
+        elif not target.startswith("/") and "/" in target:
+            target = "\\\\" + target.replace("/", "\\")
+    if target.lower().startswith("/mnt/") and len(target) > 6:
+        drive = target[5].upper()
+        target = f"{drive}:\\{target[7:].replace('/', chr(92))}"
+    if target.startswith("\\\\") or (len(target) >= 2 and target[1] == ":"):
+        return ntpath.normcase(ntpath.normpath(target))
+    return os.path.normcase(os.path.normpath(target))
+
+
+def compare_result_workbooks(expected_path: Path, actual_path: Path) -> dict[str, Any]:
+    from openpyxl import load_workbook
+
+    expected_book = load_workbook(expected_path, data_only=False, read_only=False)
+    actual_book = load_workbook(actual_path, data_only=False, read_only=False)
+    try:
+        expected = expected_book["本期审核结果"]
+        actual = actual_book["本期审核结果"]
+        mismatches: Counter[str] = Counter()
+        if expected_book.sheetnames != actual_book.sheetnames:
+            mismatches["sheet_names"] += 1
+        if expected.freeze_panes != actual.freeze_panes:
+            mismatches["freeze_panes"] += 1
+        if expected.auto_filter.ref != actual.auto_filter.ref:
+            mismatches["auto_filter"] += 1
+        max_row = max(expected.max_row, actual.max_row)
+        max_column = max(expected.max_column, actual.max_column)
+        for row in range(1, max_row + 1):
+            for column in range(1, max_column + 1):
+                expected_cell = expected.cell(row, column)
+                actual_cell = actual.cell(row, column)
+                expected_value = expected_cell.value or ""
+                actual_value = actual_cell.value or ""
+                if expected_value != actual_value:
+                    mismatches["cell_values"] += 1
+                if expected_value and expected_cell.data_type != actual_cell.data_type:
+                    mismatches["cell_types"] += 1
+                if expected_value and expected_cell.number_format != actual_cell.number_format:
+                    mismatches["number_formats"] += 1
+
+        def effective_column_width(sheet, column_index: int) -> float:
+            for dimension in sheet.column_dimensions.values():
+                minimum = dimension.min
+                maximum = dimension.max or minimum
+                if minimum <= column_index <= maximum:
+                    return dimension.width
+            return sheet.sheet_format.defaultColWidth or 13.0
+
+        for column_index in range(1, 14):
+            expected_width = effective_column_width(expected, column_index)
+            actual_width = effective_column_width(actual, column_index)
+            if abs(expected_width - actual_width) > 0.01:
+                mismatches["column_widths"] += 1
+
+        for row in (1,):
+            for column in range(1, 14):
+                expected_cell = expected.cell(row, column)
+                actual_cell = actual.cell(row, column)
+                if expected_cell.font.bold != actual_cell.font.bold:
+                    mismatches["header_font"] += 1
+                if (expected_cell.fill.fgColor.rgb or "")[-6:] != (
+                    actual_cell.fill.fgColor.rgb or ""
+                )[-6:]:
+                    mismatches["header_fill"] += 1
+
+        def hyperlinks(sheet) -> dict[str, tuple[str, str, str]]:
+            result = {}
+            for row in sheet.iter_rows():
+                for cell in row:
+                    link = cell.hyperlink
+                    if link is not None:
+                        result[cell.coordinate] = (
+                            normalize_hyperlink_target(link.target or ""),
+                            link.location or "",
+                            link.display or "",
+                        )
+            return result
+
+        def color_signature(color):
+            if color is None:
+                return None
+            if color.type == "rgb":
+                return ("rgb", (color.rgb or "")[-6:].lower(), round(color.tint, 6))
+            if color.type == "theme":
+                return ("theme", color.theme, round(color.tint, 6))
+            if color.type == "indexed":
+                return ("indexed", color.indexed, round(color.tint, 6))
+            return (color.type, str(color.value), round(color.tint, 6))
+
+        def hyperlink_font_signature(font):
+            return (
+                font.name,
+                font.sz,
+                font.bold,
+                font.italic,
+                font.underline,
+                color_signature(font.color),
+            )
+
+        expected_links = hyperlinks(expected)
+        actual_links = hyperlinks(actual)
+        for coordinate in set(expected_links) | set(actual_links):
+            expected_link = expected_links.get(coordinate)
+            actual_link = actual_links.get(coordinate)
+            if expected_link is None or actual_link is None:
+                mismatches["hyperlink_cells"] += 1
+                continue
+            if expected_link[0] != actual_link[0]:
+                mismatches["hyperlink_targets"] += 1
+            if expected_link[1] != actual_link[1]:
+                mismatches["hyperlink_locations"] += 1
+            if expected_link[2] != actual_link[2]:
+                mismatches["hyperlink_display"] += 1
+            if hyperlink_font_signature(expected[coordinate].font) != hyperlink_font_signature(
+                actual[coordinate].font
+            ):
+                mismatches["hyperlink_styles"] += 1
+        return {
+            "status": "passed" if not mismatches else "failed",
+            "rows": max_row - 1,
+            "hyperlinks": len(actual_links),
+            "mismatch_counts": dict(sorted(mismatches.items())),
+        }
+    finally:
+        expected_book.close()
+        actual_book.close()
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--source-root", required=True, type=Path)
@@ -168,6 +308,8 @@ def main() -> int:
     parser.add_argument("--template-workbook", required=True, type=Path)
     parser.add_argument("--protected-original", action="append", type=Path, default=[])
     parser.add_argument("--mapping-config", type=Path)
+    parser.add_argument("--result-workbook", type=Path)
+    parser.add_argument("--rust-cli-peak-rss-file", type=Path)
     parser.add_argument("--wsl-distribution", default="Ubuntu")
     parser.add_argument("--period", required=True)
     parser.add_argument("--batch-id", default="s1-chain-parity")
@@ -206,6 +348,7 @@ def main() -> int:
     )
     from base_audit.service import _organisation_from_name
     from base_audit.history import classify_current_issues, merge_history
+    from base_audit.native.result_writer import write_audit_summary
     from openpyxl import load_workbook
 
     mappings = load_feature_mappings(mapping_config, template)
@@ -282,6 +425,40 @@ def main() -> int:
             encoding="utf-8",
         )
         rust, rust_log, rust_elapsed_ms = invoke_rust(args, manifest, source)
+    rust_cli_peak_rss_kib = None
+    if args.rust_cli_peak_rss_file:
+        try:
+            rust_cli_peak_rss_kib = int(
+                args.rust_cli_peak_rss_file.read_text(encoding="ascii").strip()
+            )
+        except (OSError, ValueError) as error:
+            raise ValueError("Could not read the measured Rust CLI peak RSS") from error
+        if rust_cli_peak_rss_kib <= 0:
+            raise ValueError("Measured Rust CLI peak RSS must be positive")
+
+    result_workbook_comparison = None
+    if args.result_workbook:
+        if not args.result_workbook.is_file():
+            raise ValueError("Rust S1 result workbook was not created")
+        with tempfile.TemporaryDirectory(prefix="audit-s1-python-result-") as directory:
+            python_result_workbook = Path(directory) / "python-result.xlsx"
+            write_audit_summary(
+                python_result_workbook,
+                python_current,
+                sheet_name="本期审核结果",
+                mode="OPENPYXL",
+            )
+            result_workbook_comparison = compare_result_workbooks(
+                python_result_workbook,
+                args.result_workbook.resolve(strict=True),
+            )
+        writer_summary = rust.get("result_workbook")
+        if not isinstance(writer_summary, dict):
+            raise ValueError("Rust CLI did not report the S1 result-workbook execution")
+        if writer_summary.get("issue_count") != len(rust.get("issues", [])):
+            raise ValueError("Rust S1 result-workbook issue count differs from the CLI result")
+    else:
+        writer_summary = None
 
     formula_comparison = compare_issues(python_current, rust.get("issues", []))
     resolved_comparison = compare_issues(python_resolved, rust.get("resolved_issues", []))
@@ -307,6 +484,8 @@ def main() -> int:
         + sum(item["field_difference_counts"].values())
         for item in all_comparisons
     )
+    if result_workbook_comparison:
+        mismatch_count += sum(result_workbook_comparison["mismatch_counts"].values())
     log_events = [
         json.loads(line)
         for line in rust_log.splitlines()
@@ -343,11 +522,23 @@ def main() -> int:
             "resolved_issues": len(rust.get("resolved_issues", [])),
             "readers": actual_readers,
             "cli_elapsed_ms": rust_elapsed_ms,
+            "cli_peak_rss_kib": rust_cli_peak_rss_kib,
+            "result_workbook": (
+                {
+                    "engine": writer_summary.get("engine"),
+                    "issue_count": writer_summary.get("issue_count"),
+                    "hyperlink_count": writer_summary.get("hyperlink_count"),
+                    "elapsed_ms": writer_summary.get("elapsed_ms"),
+                }
+                if writer_summary
+                else None
+            ),
         },
         "comparison": {
             "current_issues": formula_comparison,
             "resolved_issues": resolved_comparison,
             "merged_history": history_comparison,
+            "result_workbook": result_workbook_comparison,
             "mismatch_count": mismatch_count,
         },
         "verification": {
@@ -358,6 +549,11 @@ def main() -> int:
             "windows_general_handler_metadata_behavior": "workflow.adapters.audit_handlers.handle_conditional_issue_extract passes source organization fields; S1 UOS/native path intentionally leaves them empty",
             "scope": "one read-only real source/audit-copy pair and one S1 template",
             "source_filename_alias_used_for_linux_component_limit": args.source_filename_alias_used,
+            "rust_cli_peak_rss_scope": (
+                "complete s1-audit-directory process, including result workbook output"
+                if rust_cli_peak_rss_kib is not None
+                else "not measured"
+            ),
             "python_conditional_total_time_s": round(
                 float(conditional_stats.get("total_time", 0.0)), 3
             ),
