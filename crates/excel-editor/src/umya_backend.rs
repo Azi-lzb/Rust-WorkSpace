@@ -107,6 +107,8 @@ impl EditBackend for UmyaXlsxBackend {
             .map_err(|error| BackendFailure::failed(format!("open XLSX: {error:#}")))?;
         validate_row_deletion_scope(plan, &workbook)
             .map_err(|error| BackendFailure::unsupported_before_write(format!("{error:#}")))?;
+        validate_row_insertion_scope(plan, &workbook)
+            .map_err(|error| BackendFailure::unsupported_before_write(format!("{error:#}")))?;
         let outline_copies = plan
             .operations
             .iter()
@@ -346,6 +348,28 @@ fn validate_row_deletion_scope(plan: &ExcelEditPlan, workbook: &Workbook) -> Res
     Ok(())
 }
 
+fn validate_row_insertion_scope(plan: &ExcelEditPlan, workbook: &Workbook) -> Result<()> {
+    if !plan
+        .operations
+        .iter()
+        .any(|operation| matches!(operation, EditOperation::InsertRows { .. }))
+    {
+        return Ok(());
+    }
+    let mut simulated = workbook.clone();
+    for operation in &plan.operations {
+        if let EditOperation::InsertRows {
+            sheet,
+            first_row,
+            count,
+        } = operation
+        {
+            insert_rows_with_excel_references(&mut simulated, sheet, *first_row, *count)?;
+        }
+    }
+    Ok(())
+}
+
 const EXCEL_MAX_ROWS: u32 = 1_048_576;
 const EXCEL_MAX_COLUMNS: u32 = 16_384;
 
@@ -490,6 +514,408 @@ fn delete_rows_with_excel_references(
             .set_cell_value(value);
     }
     Ok(())
+}
+
+#[derive(Clone)]
+struct InsertedFormula {
+    inserted_address: String,
+    value: umya_spreadsheet::CellValue,
+}
+
+fn insert_rows_with_excel_references(
+    workbook: &mut Workbook,
+    target_sheet: &str,
+    first_row: u32,
+    count: u32,
+) -> Result<()> {
+    let last_inserted_row = first_row
+        .checked_add(
+            count
+                .checked_sub(1)
+                .context("row insertion count must be positive")?,
+        )
+        .context("row insertion range overflows")?;
+    anyhow::ensure!(
+        first_row > 0 && last_inserted_row <= EXCEL_MAX_ROWS,
+        "row insertion range is outside the XLSX grid"
+    );
+    let target_index = workbook
+        .sheet_collection()
+        .iter()
+        .position(|sheet| sheet.name() == target_sheet)
+        .with_context(|| format!("worksheet {target_sheet:?} not found"))?;
+    let target = workbook
+        .sheet_by_name(target_sheet)
+        .with_context(|| format!("worksheet {target_sheet:?} not found"))?;
+    for cell in target.cells() {
+        let (row, _) = parse_cell(&cell.coordinate().to_string())?;
+        if row >= first_row {
+            anyhow::ensure!(
+                row.checked_add(count)
+                    .is_some_and(|new_row| new_row <= EXCEL_MAX_ROWS),
+                "row insertion would move target cell {} beyond the XLSX grid",
+                cell.coordinate()
+            );
+        }
+    }
+
+    let mut target_formulas = Vec::new();
+    let mut external_formula_groups =
+        Vec::<(String, Vec<(String, umya_spreadsheet::CellValue)>)>::new();
+    for sheet in workbook.sheet_collection() {
+        let sheet_name = sheet.name().to_owned();
+        let formulas = sheet
+            .cells()
+            .into_iter()
+            .filter(|cell| cell.is_formula())
+            .map(|cell| (cell.coordinate().to_string(), cell.cell_value().clone()))
+            .collect::<Vec<_>>();
+        if sheet_name == target_sheet {
+            for (address, value) in formulas {
+                ensure_row_insert_formula_supported(&value, &sheet_name, target_sheet)?;
+                target_formulas.push((address, value));
+            }
+        } else {
+            let relevant = formulas
+                .into_iter()
+                .filter(|(_, value)| formula_references_sheet(value.formula(), target_sheet))
+                .collect::<Vec<_>>();
+            if !relevant.is_empty() {
+                for (_, value) in &relevant {
+                    ensure_row_insert_formula_supported(&value, &sheet_name, target_sheet)?;
+                }
+                external_formula_groups.push((sheet_name, relevant));
+            }
+        }
+    }
+
+    // Transform target-sheet formulas in an isolated worksheet so formula
+    // cells are not adjusted twice when the real target sheet is shifted.
+    let target_formula_updates =
+        adjust_target_formulas_for_row_insertion(target_sheet, first_row, count, &target_formulas)?;
+
+    // The umya workbook-level insertion currently shifts every worksheet.
+    // Use the target worksheet API for local rows, and use isolated formula
+    // sheets only to update references from other sheets to the target.
+    let mut external_formula_updates = Vec::new();
+    for (formula_sheet, formulas) in external_formula_groups {
+        let updates = adjust_external_formulas_for_row_insertion(
+            &formula_sheet,
+            target_sheet,
+            first_row,
+            count,
+            &formulas,
+        )?;
+        external_formula_updates.push((formula_sheet, updates));
+    }
+
+    let global_names = workbook
+        .defined_names()
+        .iter()
+        .map(|name| {
+            adjust_defined_name_for_row_insertion(name, None, target_sheet, first_row, count)
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let mut local_name_updates = Vec::new();
+    for sheet in workbook.sheet_collection() {
+        let owner = sheet.name().to_owned();
+        if owner == target_sheet {
+            continue;
+        }
+        let names = sheet
+            .defined_names()
+            .iter()
+            .map(|name| {
+                adjust_defined_name_for_row_insertion(
+                    name,
+                    Some(&owner),
+                    target_sheet,
+                    first_row,
+                    count,
+                )
+            })
+            .collect::<Result<Vec<_>>>()?;
+        local_name_updates.push((owner, names));
+    }
+
+    *workbook.defined_names_mut() = global_names;
+    for (owner, names) in local_name_updates {
+        *workbook
+            .sheet_by_name_mut(&owner)
+            .with_context(|| format!("worksheet {owner:?} disappeared"))?
+            .defined_names_mut() = names;
+    }
+    for (formula_sheet, formulas) in external_formula_updates {
+        let worksheet = workbook
+            .sheet_by_name_mut(&formula_sheet)
+            .with_context(|| format!("worksheet {formula_sheet:?} disappeared"))?;
+        for (address, value) in formulas {
+            worksheet.cell_mut(address.as_str()).set_cell_value(value);
+        }
+    }
+
+    // Preserve cached formula values while letting the worksheet-level API
+    // move cells, dimensions, comments, merges and other row-bound objects.
+    {
+        let target = &mut workbook.sheet_collection_mut()[target_index];
+        for (address, _) in &target_formulas {
+            target.cell_value_mut(address.as_str()).remove_formula();
+        }
+        target.insert_new_row(first_row, count);
+    }
+    let target = &mut workbook.sheet_collection_mut()[target_index];
+    for formula in target_formula_updates {
+        target
+            .cell_mut(formula.inserted_address.as_str())
+            .set_cell_value(formula.value);
+    }
+    Ok(())
+}
+
+fn adjust_target_formulas_for_row_insertion(
+    target_sheet: &str,
+    first_row: u32,
+    count: u32,
+    formulas: &[(String, umya_spreadsheet::CellValue)],
+) -> Result<Vec<InsertedFormula>> {
+    if formulas.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut helper = umya_spreadsheet::new_file();
+    let worksheet = helper
+        .sheet_by_name_mut("Sheet1")
+        .context("create target formula adjustment worksheet")?;
+    worksheet.set_name(target_sheet);
+    let mut locks = Vec::with_capacity(formulas.len());
+    for (address, original) in formulas {
+        let (unlocked, row_locks) = unlock_absolute_formula_rows(original.formula());
+        let mut value = original.clone();
+        set_cell_value_formula(&mut value, unlocked)?;
+        worksheet.cell_mut(address.as_str()).set_cell_value(value);
+        locks.push((address.clone(), row_locks));
+    }
+    worksheet.insert_new_row(first_row, count);
+    let mut result = Vec::with_capacity(formulas.len());
+    for (original_address, row_locks) in locks {
+        let (row, column) = parse_cell(&original_address)?;
+        let inserted_address = cell_address(
+            if row >= first_row {
+                row.checked_add(count)
+                    .context("formula row exceeds XLSX limit")?
+            } else {
+                row
+            },
+            column,
+        );
+        let mut value = worksheet
+            .get_cell(inserted_address.as_str())
+            .with_context(|| format!("adjusted formula {inserted_address} is missing"))?
+            .cell_value()
+            .clone();
+        let locked = restore_absolute_formula_rows(value.formula(), &row_locks)?;
+        set_cell_value_formula(&mut value, locked)?;
+        result.push(InsertedFormula {
+            inserted_address,
+            value,
+        });
+    }
+    Ok(result)
+}
+
+fn adjust_external_formulas_for_row_insertion(
+    formula_sheet: &str,
+    target_sheet: &str,
+    first_row: u32,
+    count: u32,
+    formulas: &[(String, umya_spreadsheet::CellValue)],
+) -> Result<Vec<(String, umya_spreadsheet::CellValue)>> {
+    let parking = formula_insertion_parking_coordinates(first_row, count, formulas.len())?;
+    let mut helper = umya_spreadsheet::new_file();
+    let worksheet = helper
+        .sheet_by_name_mut("Sheet1")
+        .context("create external formula adjustment worksheet")?;
+    worksheet.set_name(formula_sheet);
+    let mut marker = Vec::with_capacity(formulas.len());
+    for ((original_address, original), parked_address) in formulas.iter().zip(&parking) {
+        let (unlocked, row_locks) = unlock_absolute_formula_rows(original.formula());
+        let mut value = original.clone();
+        set_cell_value_formula(&mut value, unlocked)?;
+        worksheet
+            .cell_mut(parked_address.as_str())
+            .set_cell_value(value);
+        marker.push((original_address.clone(), parked_address.clone(), row_locks));
+    }
+    worksheet.insert_new_row_from_other_sheet(target_sheet, first_row, count);
+    let mut result = Vec::with_capacity(marker.len());
+    for (original_address, parked_address, row_locks) in marker {
+        let (parked_row, parked_column) = parse_cell(&parked_address)?;
+        let shifted_address = cell_address(
+            if parked_row >= first_row {
+                parked_row
+                    .checked_add(count)
+                    .context("parked formula exceeds XLSX limit")?
+            } else {
+                parked_row
+            },
+            parked_column,
+        );
+        let mut value = worksheet
+            .get_cell(shifted_address.as_str())
+            .with_context(|| format!("external formula {shifted_address} disappeared"))?
+            .cell_value()
+            .clone();
+        let locked = restore_absolute_formula_rows(value.formula(), &row_locks)?;
+        set_cell_value_formula(&mut value, locked)?;
+        result.push((original_address, value));
+    }
+    Ok(result)
+}
+
+fn ensure_row_insert_formula_supported(
+    value: &umya_spreadsheet::CellValue,
+    formula_sheet: &str,
+    target_sheet: &str,
+) -> Result<()> {
+    anyhow::ensure!(
+        value.is_formula(),
+        "row insertion formula adjustment received a non-formula cell"
+    );
+    let formula = value.formula();
+    anyhow::ensure!(
+        !formula.is_empty(),
+        "shared formula followers are unsupported for row insertion"
+    );
+    if let Some(formula_object) = value.formula_obj() {
+        anyhow::ensure!(
+            formula_object.formula_type() == &umya_spreadsheet::CellFormulaValues::Normal,
+            "array, data-table and shared formulas are unsupported for row insertion"
+        );
+    }
+    let upper = formula.to_ascii_uppercase();
+    anyhow::ensure!(
+        !upper.contains("INDIRECT(") && !formula.contains(['[', ']']),
+        "dynamic INDIRECT, structured and external formula references are unsupported for row insertion"
+    );
+    anyhow::ensure!(
+        !formula_has_3d_sheet_reference(formula, target_sheet),
+        "3-D formula references are unsupported for row insertion"
+    );
+    anyhow::ensure!(
+        !formula_has_whole_row_reference(formula),
+        "whole-row references are unsupported for row insertion"
+    );
+    anyhow::ensure!(
+        !formula_sheet.is_empty() && !target_sheet.is_empty(),
+        "formula and target worksheet names must not be empty"
+    );
+    Ok(())
+}
+
+fn formula_insertion_parking_coordinates(
+    first_row: u32,
+    count: u32,
+    needed: usize,
+) -> Result<Vec<String>> {
+    if needed == 0 {
+        return Ok(Vec::new());
+    }
+    let last_inserted_row = first_row
+        .checked_add(
+            count
+                .checked_sub(1)
+                .context("row insertion count must be positive")?,
+        )
+        .context("row insertion range overflows")?;
+    let rows_before = u64::from(first_row - 1);
+    let rows_after =
+        u64::from(EXCEL_MAX_ROWS.saturating_sub(last_inserted_row.saturating_add(count)));
+    let columns = u64::from(EXCEL_MAX_COLUMNS);
+    let capacity = (rows_before + rows_after) * columns;
+    anyhow::ensure!(
+        capacity >= needed as u64,
+        "no safe temporary worksheet cells are available for cross-sheet formula adjustment"
+    );
+
+    let mut result = Vec::with_capacity(needed);
+    let before_capacity = rows_before * columns;
+    for index in 0..needed as u64 {
+        let (row, column) = if index < before_capacity {
+            (index / columns + 1, index % columns + 1)
+        } else {
+            let after_index = index - before_capacity;
+            (
+                u64::from(last_inserted_row) + 1 + after_index / columns,
+                after_index % columns + 1,
+            )
+        };
+        result.push(cell_address(row as u32, column as u32));
+    }
+    Ok(result)
+}
+
+fn adjust_defined_name_for_row_insertion(
+    original: &umya_spreadsheet::DefinedName,
+    scope_sheet: Option<&str>,
+    target_sheet: &str,
+    first_row: u32,
+    count: u32,
+) -> Result<umya_spreadsheet::DefinedName> {
+    let address = original.address();
+    let trimmed = address.trim_start_matches('=');
+    if umya_spreadsheet::helper::address::is_address(trimmed) {
+        let (referenced_sheet, _) = umya_spreadsheet::helper::address::split_address(trimmed);
+        let local_to_target = referenced_sheet.is_empty()
+            && scope_sheet.is_some_and(|scope| scope.eq_ignore_ascii_case(target_sheet));
+        if !referenced_sheet.eq_ignore_ascii_case(target_sheet) && !local_to_target {
+            anyhow::ensure!(
+                !referenced_sheet.is_empty()
+                    || scope_sheet.is_some()
+                    || !formula_has_a1_reference(trimmed),
+                "workbook-level relative defined name {:?} is ambiguous during row insertion",
+                original.name()
+            );
+            return Ok(original.clone());
+        }
+
+        let (unlocked, row_locks) = unlock_absolute_formula_rows(trimmed);
+        let helper_address = if local_to_target {
+            format!("'{}'!{unlocked}", target_sheet.replace('\'', "''"))
+        } else {
+            unlocked
+        };
+        let name = defined_name_with_address(original, &helper_address);
+        let mut helper = umya_spreadsheet::new_file();
+        let worksheet = helper
+            .sheet_by_name_mut("Sheet1")
+            .context("create defined-name adjustment worksheet")?;
+        worksheet.set_name(target_sheet);
+        worksheet.defined_names_mut().push(name);
+        worksheet.insert_new_row(first_row, count);
+        let adjusted = worksheet
+            .defined_names()
+            .first()
+            .context("defined name disappeared during row insertion")?;
+        let adjusted_address = adjusted.address();
+        let final_address = if local_to_target {
+            let (_, adjusted_range) =
+                umya_spreadsheet::helper::address::split_address(&adjusted_address);
+            restore_absolute_formula_rows(adjusted_range, &row_locks)?
+        } else {
+            restore_absolute_formula_rows(&adjusted_address, &row_locks)?
+        };
+        return Ok(defined_name_with_address(original, &final_address));
+    }
+
+    let target_reference = formula_references_sheet(&address, target_sheet);
+    let local_relative_reference = scope_sheet
+        .is_some_and(|scope| scope.eq_ignore_ascii_case(target_sheet))
+        && formula_has_a1_reference(&address);
+    anyhow::ensure!(
+        !target_reference && !local_relative_reference,
+        "defined name {:?} uses an expression that cannot be safely adjusted for row insertion",
+        original.name()
+    );
+    Ok(original.clone())
 }
 
 fn formula_updates_for_sheet(
@@ -1132,7 +1558,7 @@ fn apply_operation(workbook: &mut crate::Workbook, operation: &EditOperation) ->
                 *first_row > 0 && *count > 0,
                 "row insertion requires positive one-based indexes"
             );
-            workbook.insert_new_row(sheet, *first_row, *count);
+            insert_rows_with_excel_references(workbook, sheet, *first_row, *count)?;
         }
         EditOperation::RenameSheet { old_name, new_name } => {
             validate_sheet_name(new_name)?;
