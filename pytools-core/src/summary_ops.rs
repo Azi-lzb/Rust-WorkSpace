@@ -1942,9 +1942,6 @@ fn build_column_headers(sheet: &SheetDump, ranges: &[(usize, usize, usize, usize
     out
 }
 fn cell_at_or_merged(sheet: &SheetDump, address: &str) -> serde_json::Value {
-    if let Some(value) = sheet.values.get(address) {
-        return value.clone();
-    }
     let Some((row, col)) = parse_a1(address) else {
         return serde_json::Value::Null;
     };
@@ -1962,7 +1959,11 @@ fn cell_at_or_merged(sheet: &SheetDump, address: &str) -> serde_json::Value {
             }
         }
     }
-    serde_json::Value::Null
+    sheet
+        .values
+        .get(address)
+        .cloned()
+        .unwrap_or(serde_json::Value::Null)
 }
 
 fn date_format(_serial: f64) -> Format {

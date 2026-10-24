@@ -360,6 +360,38 @@
       },
       "comparison": "exact",
       "rule": "last matching start/end marker in row-major order, matching PyCode overwrite behavior"
+    },
+    "merged_non_anchor_cell": {
+      "fixture": "tests/fixtures/summary_comments/merged_children_source.xlsx",
+      "scenario": "synthetic raw OOXML value in B2 inside merged A2:C3; PyCode _gcv resolves B2 and C2 to A2",
+      "pycode_values": {
+        "D2": "merged anchor",
+        "E2": "merged anchor",
+        "D3": "merged anchor",
+        "E3": "merged anchor"
+      },
+      "rust_values": {
+        "D2": "merged anchor",
+        "E2": "merged anchor",
+        "D3": "merged anchor",
+        "E3": "merged anchor"
+      },
+      "rust_rows": 3,
+      "rust_execution": {
+        "ooxml_error_cells_patched": 0,
+        "read_elapsed_ms": 9,
+        "reader_engine": "calamine",
+        "total_elapsed_ms": 23,
+        "write_elapsed_ms": 11,
+        "writer_engine": "rust_xlsxwriter"
+      },
+      "rust_runtime": {
+        "host": "Windows host",
+        "executable": "configured Windows GNU executable"
+      },
+      "python_runtime": "win32 Python 3.12",
+      "comparison": "exact",
+      "source_unchanged": true
     }
   },
   "python_variant_scope": {

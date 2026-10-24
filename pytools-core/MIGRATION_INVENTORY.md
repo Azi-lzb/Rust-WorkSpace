@@ -335,6 +335,12 @@ Windows 主机未安装 Rust/Cargo。复用 WSL Ubuntu 中已安装的 MinGW 与
 
 PT-6-2 原项目真实批注区域模板仍未找到，当前业务及日志对拍使用合成模板；本轮 Windows 实际入口通过交叉生成的 Windows GNU 二进制执行，当前 Windows 会话没有原生 Cargo。麒麟 V10/UOS V20、glibc 2.28 与 deb 仍待验收，不据此宣称 PT-6-2 整体完成。
 
+### 2026-10-24 PT-6-2 合并区域子格取值对拍修复
+
+合成源簿在 `A2:C3` 合并区域的非锚点 `B2` 中放入原始 OOXML 子格值。此前 Rust `summary-comments` 会优先返回 Calamine 的 `B2` 残值，而 PyCode `_gcv` 对合并区域内的任意坐标都返回左上角 `A2`。Rust 现先解析合并区域，再读取普通单元格值；以 WSL MinGW 离线构建 Windows GNU CLI，并从 Windows Python 3.12 运行实际入口与 PyCode 对拍，`D2/E2/D3/E3` 均为锚点值，3 行输出的完整工作簿投影精确一致，读取/写入引擎为 Calamine/rust_xlsxwriter，源夹具未改变。回归夹具为 `tests/fixtures/summary_comments/merged_children_source.xlsx`，机器结果补入 `probe/reports/summary_used_range_parity_20261024.json`。
+
+`cargo fmt --manifest-path pytools-core/Cargo.toml -- --check`（WSL 离线）通过；`cargo test --offline --locked -p pytools-core --test summary_comments_cli` 3/3 通过。PT-6-2 真实批注模板、麒麟 V10/UOS V20、glibc 2.28 与 deb 验收仍未完成。
+
 ### 2026-10-24 PT-6-1 历史与备份真实工作簿扩展对拍
 
 在原 PyTools 只读目录的 xlsx/历史测试数据/ 选取 4 份工作簿，并从 xlsx/备份/ 选取最小的 1 份工作簿；通过 Windows PowerShell 实际运行 Windows GNU 目标 pytools summary-used-range，与只读 PyCode run_summary_by_usedrange 输出对拍。5 份工作簿共 791 行：历史测试簿 448 行、备份簿 343 行。普通用户、开发者、off 三种日志视图生成的完整工作簿投影均与 PyCode 一致，值/类型、样式及工作簿输出属性无差异。开发者视图分别产生 26/11 条事件，均与保存的历史事件流一致；实际读取/写入引擎字段为 Calamine/rust_xlsxwriter。5 份源文件的大小及修改时间未变，输出仅写入临时目录，没有将源工作簿复制进仓库。

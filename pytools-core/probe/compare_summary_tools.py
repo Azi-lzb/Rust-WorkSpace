@@ -1010,6 +1010,9 @@ def main() -> int:
         second_source = root / "sample_2026-07-31.xlsm"
         template = root / "comment_template.xlsx"
         duplicate_marker_template = root / "comment_template_duplicate_marker.xlsx"
+        merged_comment_source = (
+            WORKSPACE / "pytools-core/tests/fixtures/summary_comments/merged_children_source.xlsx"
+        )
         unsupported_error_source = WORKSPACE / "pytools-core/tests/fixtures/summary_used_range/getting_data_error.xlsx"
         make_source(source)
         patch_formula_cache(source, "E8", "2")
@@ -1018,7 +1021,13 @@ def main() -> int:
         make_comment_template(duplicate_marker_template, duplicate_row_boundaries=True)
         sources = [source, second_source]
         fingerprints_before = source_fingerprints(
-            [*sources, template, duplicate_marker_template, unsupported_error_source]
+            [
+                *sources,
+                template,
+                duplicate_marker_template,
+                merged_comment_source,
+                unsupported_error_source,
+            ]
         )
         python_used, python_comments = python_baselines(sources, source, template, root)
         nocom_used = python_nocom_used_range(sources, root)
@@ -1055,6 +1064,32 @@ def main() -> int:
             rust_comments,
             "6-2 comment summary",
         )
+        python_merged_comments = python_comments_only(
+            template, [merged_comment_source], root / "python_merged_comments"
+        )
+        rust_merged_comments, merged_comments_report = run_rust_comments(
+            template, merged_comment_source, root / "rust_merged_comments"
+        )
+        if python_merged_comments is None or rust_merged_comments is None:
+            raise AssertionError("PyCode or Rust did not save the merged-cell comment summary")
+        assert_equivalent(
+            python_merged_comments,
+            rust_merged_comments,
+            "PT-6-2 merged non-anchor cell behavior",
+        )
+        merged_sheets, _ = workbook_projection(rust_merged_comments)
+        merged_values = {
+            address: merged_sheets[0]["values"].get(address)
+            for address in ("D2", "E2", "D3", "E3")
+        }
+        if (
+            merged_comments_report.get("rows") != 3
+            or set(merged_values.values()) != {"merged anchor"}
+        ):
+            raise AssertionError(
+                "merged source child cells must resolve to the PyCode anchor value: "
+                f"rows={merged_comments_report.get('rows')}, cells={merged_values}"
+            )
         python_duplicate_comments = python_comments_only(
             duplicate_marker_template, [source], root / "python_duplicate_comments"
         )
@@ -1142,7 +1177,13 @@ def main() -> int:
         ):
             raise AssertionError("unknown-error compatibility event is incomplete")
         fingerprints_after = source_fingerprints(
-            [*sources, template, duplicate_marker_template, unsupported_error_source]
+            [
+                *sources,
+                template,
+                duplicate_marker_template,
+                merged_comment_source,
+                unsupported_error_source,
+            ]
         )
         if fingerprints_before != fingerprints_after:
             raise AssertionError("a source workbook or template was modified")
@@ -1269,6 +1310,28 @@ def main() -> int:
             },
             "comment_summary_probe": {
                 "baseline_rows": comments_report.get("rows"),
+                "merged_non_anchor_cell": {
+                    "fixture": "tests/fixtures/summary_comments/merged_children_source.xlsx",
+                    "scenario": (
+                        "B2 contains a synthetic OOXML value inside merge A2:C3; "
+                        "PyCode _gcv resolves B2 and C2 to A2"
+                    ),
+                    "pycode_values": {
+                        address: "merged anchor" for address in ("D2", "E2", "D3", "E3")
+                    },
+                    "rust_values": merged_values,
+                    "rust_rows": merged_comments_report.get("rows"),
+                    "rust_execution": merged_comments_report.get("execution"),
+                    "comparison": "exact",
+                    "rust_runtime": {
+                        "host": rust_cli_runtime_metadata()[0],
+                        "executable": rust_cli_runtime_metadata()[1],
+                    },
+                    "python_runtime": (
+                        f"{sys.platform} Python {sys.version_info.major}.{sys.version_info.minor}"
+                    ),
+                    "source_unchanged": True,
+                },
                 "duplicate_row_region_marker": {
                     "scenario": "duplicate 行区域1 starts at A2 and A3; duplicate 行区域#1 ends at A4 and A5",
                     "python": {

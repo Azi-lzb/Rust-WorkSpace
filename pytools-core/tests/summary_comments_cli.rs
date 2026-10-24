@@ -191,6 +191,61 @@ fn summary_comments_cli_logs_actual_stages_and_preserves_output_across_views() -
 }
 
 #[test]
+fn summary_comments_cli_uses_merge_anchor_for_non_anchor_cells() -> Result<()> {
+    let template = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/summary_comments/comment_template.xlsx");
+    let source = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/summary_comments/merged_children_source.xlsx");
+    let source_before = fs::read(&source)?;
+    let source_dump = read_workbook(&source)?;
+    let source_sheet = source_dump
+        .sheets
+        .iter()
+        .find(|sheet| sheet.name == "Branch_A")
+        .context("merged source sheet missing")?;
+    assert_eq!(
+        source_sheet.values.get("B2"),
+        Some(&serde_json::json!({
+            "type": "string",
+            "value": "raw merged child residue"
+        })),
+        "fixture must reproduce a raw reader value in a merged child cell"
+    );
+
+    let root = unique_test_dir();
+    fs::create_dir_all(&root)?;
+    let output = run_cli(&template, &[&source], &root.join("run"), None)?;
+    assert!(
+        output.status.success(),
+        "summary-comments CLI failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report = parse_stdout(&output)?;
+    assert_eq!(report["rows"], 3);
+    let summary = read_workbook(&output_workbook(&report)?)?;
+    let summary_sheet = summary
+        .sheets
+        .iter()
+        .find(|sheet| sheet.name == "模板")
+        .context("comment summary output sheet missing")?;
+    // PyCode's _gcv maps every coordinate in a merge to its top-left anchor.
+    for address in ["D2", "E2", "D3", "E3"] {
+        assert_eq!(
+            summary_sheet.values.get(address),
+            Some(&serde_json::json!({
+                "type": "string",
+                "value": "merged anchor"
+            })),
+            "merged source cell {address} must use the anchor value"
+        );
+    }
+    assert_eq!(fs::read(&source)?, source_before, "source workbook changed");
+
+    fs::remove_dir_all(root)?;
+    Ok(())
+}
+
+#[test]
 fn summary_comments_cli_records_template_validation_failure() -> Result<()> {
     let root = unique_test_dir();
     fs::create_dir_all(&root)?;
