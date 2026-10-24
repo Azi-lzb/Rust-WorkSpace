@@ -10,11 +10,15 @@
 读取既有工作簿      → 纯 Rust calamine；缺失元数据由 namespace-aware OOXML reader 补足
 新建 XLSX           → rust_xlsxwriter
 修改既有工作簿      → ExcelEditPlan / ExcelModifier 路由至整批操作已验收的单一引擎
-本轮公式重算        → 仅用户显式触发时，经独立 sidecar/lo-convert 调用 LO/COM
+公式重算候选（现有）→ 用户显式触发 sidecar/lo-convert；独立 ExcelCalculator 公共接口为未来能力
+未来公式计算后端    → 按能力选择 LO Calc（Windows/Linux）或 Excel/WPS COM（Windows）
 同类格式转换        → 仅用户显式触发时，经独立 sidecar/lo-convert 调用 LO/COM
+COM 修改（未来）    → 仅经 ExcelModifier 显式选择已验收的 Windows Excel COM / WPS COM
 ```
 
 OOXML Patch、umya-spreadsheet、Go Excelize 和隔离 openpyxl worker 是修改候选，不以本文件的历史实现或理论能力代替真实模板对拍。打印只写页面设置；PDF、渲染和跨类别转换不在主路径范围内。
+
+以上 COM 修改/计算是未来可选能力，不构成当前已实现路由；Excel/WPS COM 分别验收。当前 sidecar 的 `recalculate` 是有限候选命令，不代表 ExcelCalculator 接口、通用公式覆盖或生产 capability 已通过。LibreOffice Calc 是独立计算候选，不能据此推导它是 ExcelModifier 后端。
 
 ## 2. Direct OOXML
 
@@ -32,7 +36,7 @@ OOXML Patch、umya-spreadsheet、Go Excelize 和隔离 openpyxl worker 是修改
 - 禁止依赖 `ns0:` 等具体前缀的正则解析结构；
 - 正确维护 Relationship、Content Types、Sheet graph；
 - 删除 Sheet 后校验不存在悬空引用；
-- 输出必须通过包结构校验和独立 reader 重开；openpyxl 可作为 Python 对拍基线，生产用途仅限根规则 13 限定的隔离修改 worker。Office/WPS/LibreOffice 仅在获准的 sidecar 功能中使用，不作为一般修改验收的必备运行时。
+- 输出必须通过包结构校验和独立 reader 重开；openpyxl 可作为 Python 对拍基线，生产用途仅限根规则 13 限定的隔离修改 worker。Windows Excel/WPS COM 仅作为未来显式、能力门控的修改候选；LibreOffice Calc 仅作为独立计算候选或获准转换引擎，不作为一般修改验收的必备运行时。
 
 不适合：
 - 工作簿真实计算；
@@ -58,16 +62,16 @@ worker 不保证保留所有 Excel 对象；当前不支持行插入/删除，�
 - 可以读写公式文本；
 - **不会真实计算公式**。
 
-## 4. Office / LO / COM sidecar 边界
+## 4. Office / LO / COM 可选引擎边界
 
 ### Windows
-- Excel
-- WPS
+- 修改候选：未来通过 ExcelModifier 调用 Microsoft Excel COM（`Excel.Application`）或 WPS COM（优先验证 `KET.Application`）；分别登记 EngineId 和 capability。
+- 计算候选：独立 ExcelCalculator 可使用 Microsoft Excel COM 或 WPS COM；不可用或未验收时明确报错，不静默切换。
 
 ### UOS/Linux
-- LibreOffice Calc
+- 计算候选：独立 ExcelCalculator 可使用 LibreOffice Calc；运行时来源和 glibc 2.28 离线交付须单独确认。
 
-只有两类操作允许显式调用独立 sidecar：公式重算、同类格式转换。其他 Office/WPS/LibreOffice/COM/UNO 语义不得进入主路径；原生渲染不是可用旁路范围。旁路缺失时该项报告“该功能需要外部引擎”，其他功能继续运行。
+公式计算与同类格式转换可显式调用各自的独立适配器/sidecar；未来 Windows COM 修改只能通过 ExcelModifier 的能力路由执行，不作为通用 sidecar。旧 Python 的整套 COM 业务工作流仍须迁移到 Rust，不得借此保留在生产路径。PDF、渲染和其他未列明的 Office/UNO 能力不开放；外部引擎缺失时该项报告“该功能需要外部引擎”，其他功能继续运行。以上能力当前均不代表已验收。
 
 ## 5. 工作簿计算硬边界
 
