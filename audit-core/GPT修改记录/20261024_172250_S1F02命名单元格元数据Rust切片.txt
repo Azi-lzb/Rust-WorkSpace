@@ -1,0 +1,43 @@
+时间：2026-10-24 17:22:50 +08:00
+执行者：Codex Audit 专属开发 Agent
+分支：audit-dev
+修改前提交：611a2f82211d9d2547ae10b20f948d514ed5a9cd
+功能提交：c8edcbd42ec75bc0a89c31591baf5b527df72659
+WIP：开始时只有上一轮未提交的 S1-F02 元数据切片，本次在原改动上增量完成。源 Python 项目、用户业务工作簿和共享 crates 未修改。
+
+修改目的：
+继续 Rust `s1-region-summary` 中“任意行汇总/固定行汇总”迁移，接入源项目模板的全局与局部单元格元数据字段，并通过合成 Python/Rust 对拍验证。S1-F01 公式复制生产门禁保持关闭；本次未运行其真实候选样本。
+
+修改文件：
+- `audit-core/src/s1_region_summary.rs`：解析“全局单元格区域.”与“单元格区域.”定义名，拒绝无法解析、多单元格范围和重复字段；按模板区域位置排序；把全局字段与对应数据工作表局部字段追加到汇总表；源文件缺少元数据工作表时输出空值并计数；输出列数、回读校验和摘要同步覆盖新增列。
+- `audit-core/src/bin/open-data-audit.rs`：开发者进度事件增加 `metadata_fields_left_blank`。
+- `audit-core/tests/s1_region_summary_cli.rs`：覆盖全局/局部字段提取、Beta 缺少全局元数据表时留空、用户/开发者双视图计数、源输入不变及公式源拒绝。
+- `audit-core/src/s1_region_summary.rs`：新增单格约束、全局/局部顺序和重复字段名单测。
+- `audit-core/tests/fixtures/s1_region_summary_template.xlsx`：扩展合成模板，加入全局“批次”与 Data 局部“分组”名称。
+- `audit-core/tests/compare/compare_s1_region_summary.py`：Python/Excel 合成基线加入同一元数据样本和缺表场景。
+- `audit-core/probe/reports/s1_f02_named_region_summary_synthetic_parity_20261024.json`：更新本次 Windows 合成对拍结果。
+- `audit-core/MIGRATION_INVENTORY.md`：记录元数据子切片通过，同时保留 S1-F02 整体未验证状态。
+- 本记录。
+
+逻辑及兼容影响：
+- 字段列位于“来源文件”“来源工作表”之后，按 Python 顺序先列全局字段、再列对应工作表的局部字段；各自按模板单元格行列位置排序。
+- 沿用 Python 单格引用与不区分大小写的重复字段限制。源文件缺少元数据目标工作表时留空；公式源、兜底汇总和历史追加的既有限制不变。
+- CLI 命令与配置名称不变，未变更 JSON 输入字段、配置格式、共享 crate、根 Cargo 配置或 pytools-core。
+
+实际验证：
+- `cargo fmt -p audit-core`：通过。
+- `cargo test -p audit-core --locked --test s1_region_summary_cli -- --nocapture`：2 项通过。
+- `cargo test -p audit-core --locked`：85 项 lib 单测及全部 Audit 集成/对拍测试通过；1 项既有公式复制手动候选探针保持 ignored。
+- `py -3.12 audit-core/tests/compare/compare_s1_region_summary.py --audit-binary target/debug/open-data-audit.exe --report audit-core/probe/reports/s1_f02_named_region_summary_synthetic_parity_20261024.json`：Windows Python 3.12.10 / Microsoft Excel 对 Rust 合成对拍通过。2 个源工作簿、3 张源工作表、2 张输出表、9 行；值/类型、表序、尺寸、数字格式、表头样式、筛选和冻结差异均为 0；Beta 缺少 Meta 时 2 个字段保持空值且两侧计数一致；输入未改变。列宽最大差异仍为 3.5703125 字符。
+- 测试环境为本机 Windows Rust 工具链；未运行 WSL、Linux、deb、麒麟/UOS 或其 Python runtime 验收。
+
+未执行项及已知问题：
+- 无真实 F02 模板或用户样本验收；S1-F02 整体仍未验证。公式工作簿、兜底模板和历史追加未迁移。
+- S1-F01 公式复制真实对拍未重跑，生产引擎门禁仍按 main 协调结论保持关闭。
+- 没有修改共享 crate 或根 Cargo 配置，无需请求 main 协调。
+
+删除清单与回滚提示：
+- 删除清单：无。新增模板/源工作簿均为合成测试数据，对拍临时输出使用临时目录；源 Python 项目和用户业务文件只读。
+- 回滚：可用 `git revert c8edcbd42ec75bc0a89c31591baf5b527df72659` 回滚业务代码、测试和报告；本记录如需同时撤销，另行回滚包含本记录的文档提交。不影响前一 S1-F02 汇总切片。
+
+【组件版本】：audit-core 0.1.0（不升级；遵循 workspace 版本治理）
