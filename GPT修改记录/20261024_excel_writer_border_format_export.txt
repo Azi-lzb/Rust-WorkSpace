@@ -1,0 +1,18 @@
+日期：2026-10-24
+
+变更范围
+- crates/excel-writer/src/lib.rs：从共享的新建工作簿 API 重导出 rust_xlsxwriter 的通用 FormatBorder。
+- crates/excel-writer/src/lib.rs：增加公共 API 测试，确认调用方能组合 Thin 边框、水平居中和顶部对齐。
+
+目的
+- PyTools PT-1-1 已有对拍证据要求比较表 17 个表头单元格具有粗体、水平居中、顶部对齐及细边框。共享 crate 原先未导出 FormatBorder，限制了业务 crate 通过标准 writer API 表达该输出样式。本次只补通用格式原语，不加入 PyTools 业务概念或逻辑。
+
+测试
+- `cargo test -p excel-writer`（Windows MSVC Developer environment）：2 项通过，0 失败。
+
+未执行项与已知限制
+- 尚未同步至 pytools-dev，也未完成 PT-1-1 真实 CLI 输出与 Python 基线的端到端对拍；新导出不等于业务样式已实现或验收。
+- 不改变默认引擎、依赖版本、其他产品代码或工作簿路由。
+
+回滚
+- 可单独 revert 本记录对应的共享提交；调用方在该提交前不得依赖 FormatBorder 的 crate 根重导出。
