@@ -469,6 +469,6 @@ Windows 原生测试：`cargo test --offline --locked -p pytools-core --lib comm
 
 在 pytools-dev HEAD a376a76 运行现有 PT-6-1 真实样本 probe。Windows Python 基线与 WSL Linux debug cargo run 对原 PyTools xlsx/ 的 13 份 XLSX 分 4 批对拍，96 张工作表、203,580 行完整投影精确一致；值/类型、样式、工作表名称与维度、冻结窗格/表头加粗、公式/合并/定义名称/页面属性通过。批次事件数依次为 26、14、27、63，均与保存运行历史匹配；输入前后 SHA-256 相同。Rust CLI 使用 Calamine、excel-reader::read_xlsx_worksheet_extents、rust_xlsxwriter；其中含 Excel 错误值的批次还使用 OOXML Patch。此次 WSL 验证包含 cargo run debug 调用，不是 glibc 2.28 release 或目标发行版验证。
 
-同一 HEAD 的 Windows 原生 target/debug/pytools.exe 又单独复验最大批次：4 份工作簿、188,365 行完整投影精确一致；63 条 developer 事件与保存历史匹配，输入前后 SHA-256 一致。此项补充 Windows 原生样本覆盖，不替代其余三批的当前 HEAD Windows 重跑。
+在此前 HEAD a376a76 上，Windows 原生 target/debug/pytools.exe 已单独复验最大批次：4 份工作簿、188,365 行完整投影精确一致；63 条 developer 事件与保存历史匹配，输入前后 SHA-256 一致。随后在当前分支 HEAD 19c96fc，使用 Windows 原生真实 CLI 对全部 13 份工作簿分 4 批全量重跑，96 张工作表、203,580 行完整投影精确一致；值/类型、已填单元格样式、工作表及维度、冻结窗格/表头加粗、公式/合并/名称/页面属性通过。批次 developer 事件数为 26、14、27、63，均与保存历史匹配，源文件前后 SHA-256 相同。机器摘要位于 additional_current_head_windows_native_full_20261024；本结果记录正确性，不作 Windows/WSL 性能比较。
 
 机器结果见 probe/reports/summary_used_range_real_parity_20261024.json。此前独立 Windows 全量与 glibc 2.28 release 报告保留各自测量范围。原项目业务含 VBA 的 XLSM 样本、麒麟 V10/UOS V20、deb 与离线交付仍未验收；PT-6-1 整体尚未最终验收。
