@@ -60,11 +60,11 @@
 
 ### 3-3 配置驱动的批量文件重命名
 
-`PyCode.core.convert_33_34_35_37.run_batch_rename_33` 已由 `pytools_core::batch_rename::run_batch_rename_33` 改写，并通过 `pytools rename-batch --config <工作簿> [--log-dir <目录>] [<文件或目录>...]` 接入 Rust CLI。实现读取 `重命名配置` 的简称/全称、全称/代码映射及数据日期/报表名称；按配置首次插入顺序执行不区分大小写的子串匹配，重复配置键覆盖值但保留原顺序；缺少代码、无命中、原名不变、路径不存在及 OS 改名错误按源函数计入跳过；目标冲突使用 `_1` 等后缀。支持文件和目录，不读取或改写工作簿内容。
+`PyCode.core.convert_33_34_35_37.run_batch_rename_33` 已迁移到语义化的 `pytools_core::batch_rename::run_batch_rename`；Rust 仍提供标记为 deprecated 的 `run_batch_rename_33` 兼容别名。该操作通过 `pytools rename-batch --config <工作簿> [--log-dir <目录>] [--log-view user|developer|off] [<文件或目录>...]` 接入 Rust CLI，也接入真实交互菜单“转换工具→1”（主菜单 4→1）。实现读取 `重命名配置` 的简称/全称、全称/代码映射及数据日期/报表名称；按配置首次插入顺序执行不区分大小写的子串匹配，重复配置键覆盖值但保留原顺序；缺少代码、无命中、原名不变、路径不存在及 OS 改名错误按源函数计入跳过；目标冲突使用 `_1` 等后缀。支持文件和目录，不读取或改写工作簿内容。
 
-Python 基线由源 `run_batch_rename_33` 对同一合成配置及路径场景实跑，Python 3.12.10、pandas 2.2.3、openpyxl 3.1.5：改名 3、跳过 4，最终文件/目录名与 `probe/reports/batch_rename_python_baseline.json` 一致；覆盖匹配顺序、代码缺失、无命中、缺失路径、同名跳过、连续冲突后缀、目录内容和 ASCII 大小写匹配。Rust `tests/batch_rename_parity.rs` 验证 API 与 CLI 结果、日志、输入/目标文件内容及配置字节不变，汇总见 `probe/reports/batch_rename_parity.json`。对原只读 `PyCode/config/config.xlsx` 还做了两项验证：CLI 空输入读取成功（0/0）；随后从真实配置选择一个有效别名，在系统临时目录创建合成文件并由 Rust CLI 改名（1/0），确认原配置字节与临时文件内容都不变。结果摘要见 `probe/reports/batch_rename_real_config_smoke.json`。未对原文件或真实业务文件执行改名。
+Python 基线由源 `run_batch_rename_33` 对同一合成配置及路径场景实跑，Python 3.12.10、pandas 2.2.3、openpyxl 3.1.5：改名 3、跳过 4，最终文件/目录名与 `probe/reports/batch_rename_python_baseline.json` 一致；覆盖匹配顺序、代码缺失、无命中、缺失路径、同名跳过、连续冲突后缀、目录内容和 ASCII 大小写匹配。Rust `tests/batch_rename_parity.rs` 验证 API 与 CLI 结果、日志、输入/目标文件内容及配置字节不变，汇总见 `probe/reports/batch_rename_parity.json`。对原只读 `PyCode/config/config.xlsx` 还做了两项验证：CLI 空输入读取成功（0/0）；随后从真实配置选择一个有效别名，在系统临时目录创建合成文件并由 Rust CLI 改名（1/0），确认原配置字节与临时文件内容都不变。结果摘要见 `probe/reports/batch_rename_real_config_smoke.json`。本轮新增 API 配置读取失败事件断言，以及 Windows 原生交互菜单三视图测试：菜单传入全局 `log-view`；user 显示步骤、计数和耗时，developer 输出事件并写 JSON 历史，包含 Calamine/RustFilesystem、阶段耗时和累计耗时且不记录输入路径/文件名，off 不输出进度或新增结构化历史；旧逐项 `.log` 文件仍保留。`cargo test --offline --locked -p pytools-core --test batch_rename_parity --test conversion_menu_cli -j 1`：3/3 和 5/5 通过。未重新执行 Python 基线脚本；对拍测试读取既有 Python 实跑基线，业务改名结果和配置行为未更改。
 
-当前证据仅覆盖脱敏合成配置与临时路径场景；真实业务输入文件、真实配置对应文件名覆盖率、重名冲突在目标文件系统上的竞争行为、麒麟/UOS 和 deb 未验证。此局部 Rust CLI 候选不代表 Python GUI 菜单整体已迁移，也不改变 3-3 的总体“未验证”状态。
+当前证据仅覆盖脱敏合成配置与临时路径场景；真实业务输入文件、真实配置对应文件名覆盖率、重名冲突在目标文件系统上的竞争行为、桌面原生文件选择器、麒麟/UOS 和 deb 未验证。交互菜单选择及路径回退接线已有测试，但不代表完整原 Python GUI 行为或真实样本已验收；3-3/PT-4-1 整体状态仍为“未验证”。
 
 上述结果不代表完整菜单或真实业务模板已验收。尚需：
 - 将每个菜单命令映射到源函数、配置项、文件格式、输出契约和回归用例。

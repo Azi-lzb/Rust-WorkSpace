@@ -389,6 +389,93 @@ fn file_sort_menu_supports_user_developer_and_off_progress_views() -> Result<()>
     Ok(())
 }
 
+#[test]
+fn batch_rename_menu_supports_user_developer_and_off_progress_views() -> Result<()> {
+    let root = TestDirectory::new()?;
+    let config = create_config(root.path())?;
+    let sources = root.path().join("sources");
+    fs::create_dir_all(&sources)?;
+    let log_dir = root.path().join("logs");
+
+    let user_dir = sources.join("user");
+    fs::create_dir_all(&user_dir)?;
+    let user_source = user_dir.join("Bank-user-report.txt");
+    fs::write(&user_source, b"user rename")?;
+    let user = run_action_with_log_view(&config, 1, 1, &user_source, "user")?;
+    assert!(user.status.success(), "user view failed: {}", stderr(&user));
+    assert!(user_dir
+        .join("2026-10-24 B01 Example Bank Monthly.txt")
+        .is_file());
+    let user_stderr = stderr(&user);
+    assert!(user_stderr.contains("正在读取批量重命名配置"));
+    assert!(user_stderr.contains("已处理 1/1 个文件或目录"));
+    assert!(user_stderr.contains("阶段用时"));
+    assert!(!user_stderr.contains(&user_source.display().to_string()));
+    assert!(!user_stderr.contains("Bank-user-report"));
+    let user_report = output_json(&user)?;
+    assert_eq!(user_report["ok"], 1);
+    assert!(user_report.get("run_history_path").is_none());
+    assert!(find_files_with_extension(&log_dir, "log")?.len() == 1);
+    assert!(find_files_with_extension(&log_dir, "json")?.is_empty());
+
+    let developer_dir = sources.join("developer");
+    fs::create_dir_all(&developer_dir)?;
+    let developer_source = developer_dir.join("Bank-developer-report.txt");
+    fs::write(&developer_source, b"developer rename")?;
+    let developer = run_action_with_log_view(&config, 1, 1, &developer_source, "developer")?;
+    assert!(
+        developer.status.success(),
+        "developer view failed: {}",
+        stderr(&developer)
+    );
+    let developer_report = output_json(&developer)?;
+    assert_eq!(developer_report["ok"], 1);
+    let history_path = PathBuf::from(
+        developer_report["run_history_path"]
+            .as_str()
+            .context("developer run-history path missing")?,
+    );
+    let history_bytes = fs::read(&history_path)?;
+    let history_text = String::from_utf8_lossy(&history_bytes);
+    assert!(!history_text.contains(&developer_source.display().to_string()));
+    assert!(!history_text.contains("Bank-developer-report"));
+    let history: Value = serde_json::from_slice(&history_bytes)?;
+    assert_eq!(history["feature_id"], "PT-4-1");
+    assert!(history["total_elapsed_ms"].is_number());
+    let events = history["events"].as_array().context("events missing")?;
+    assert!(events
+        .iter()
+        .any(|event| event["phase"] == "configuration_read"));
+    assert!(events
+        .iter()
+        .any(|event| event["phase"] == "file_processing"));
+    assert!(events.iter().any(|event| event["phase"] == "task"));
+    for engine in ["Calamine", "RustFilesystem"] {
+        assert!(
+            events.iter().any(|event| event["actual_engine"] == engine),
+            "missing engine event for {engine}"
+        );
+    }
+    assert!(events.iter().all(|event| {
+        event["stage_elapsed_ms"].is_number() && event["total_elapsed_ms"].is_number()
+    }));
+    assert!(stderr(&developer).contains("\"feature_id\":\"PT-4-1\""));
+
+    let off_dir = sources.join("off");
+    fs::create_dir_all(&off_dir)?;
+    let off_source = off_dir.join("Bank-off-report.txt");
+    fs::write(&off_source, b"off rename")?;
+    let off = run_action_with_log_view(&config, 1, 1, &off_source, "off")?;
+    assert!(off.status.success(), "off view failed: {}", stderr(&off));
+    assert!(off_dir
+        .join("2026-10-24 B01 Example Bank Monthly.txt")
+        .is_file());
+    assert!(stderr(&off).is_empty());
+    assert_eq!(find_files_with_extension(&log_dir, "json")?.len(), 1);
+
+    Ok(())
+}
+
 fn create_config(root: &Path) -> Result<PathBuf> {
     let config = root.join("config.xlsx");
     let output_dir = root.join("output");

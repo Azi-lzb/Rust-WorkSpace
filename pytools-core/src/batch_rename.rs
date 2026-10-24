@@ -1,10 +1,12 @@
 //! Rust implementation of PyCode's configuration-driven batch file rename (3-3).
 
 use anyhow::{bail, Context, Result};
+use chrono::Local;
 use excel_reader::{read_workbook, SheetDump};
 use serde::Serialize;
 use serde_json::Value;
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 
 const RENAME_SHEET: &str = "重命名配置";
 
@@ -22,6 +24,27 @@ pub struct BatchRenameResult {
     pub ok: usize,
     pub skip: usize,
     pub rows: Vec<BatchRenameRow>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct BatchRenameProgressEvent {
+    pub sequence: usize,
+    pub timestamp: String,
+    pub feature_id: String,
+    pub phase: String,
+    pub status: String,
+    pub completed_files: usize,
+    pub total_files: usize,
+    pub renamed_files: usize,
+    pub skipped_files: usize,
+    pub stage_elapsed_ms: u128,
+    pub total_elapsed_ms: u128,
+    pub components: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub actual_engine: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_type: Option<String>,
+    pub user_message: String,
 }
 
 #[derive(Debug, Default)]
@@ -42,32 +65,117 @@ pub fn run_batch_rename(
     config_path: impl AsRef<Path>,
     paths: &[PathBuf],
 ) -> Result<BatchRenameResult> {
+    run_batch_rename_with_progress(config_path, paths, |_| {})
+}
+
+pub fn run_batch_rename_with_progress<F>(
+    config_path: impl AsRef<Path>,
+    paths: &[PathBuf],
+    mut on_event: F,
+) -> Result<BatchRenameResult>
+where
+    F: FnMut(&BatchRenameProgressEvent),
+{
+    let task_started = Instant::now();
+    let configuration_started = Instant::now();
+    let mut sequence = 0usize;
+    emit_progress(
+        &mut on_event,
+        &mut sequence,
+        &task_started,
+        &configuration_started,
+        "configuration_read",
+        "started",
+        0,
+        paths.len(),
+        0,
+        0,
+        None,
+        None,
+        "正在读取批量重命名配置".to_owned(),
+    );
+
     let config_path = config_path.as_ref();
-    let workbook = read_workbook(config_path)
-        .with_context(|| format!("read rename configuration {}", config_path.display()))?;
-    let sheet = workbook
-        .sheets
-        .iter()
-        .find(|sheet| sheet.name == RENAME_SHEET)
-        .with_context(|| format!("configuration workbook has no {RENAME_SHEET:?} sheet"))?;
-    let maps = load_rename_maps(sheet)?;
+    let configuration = (|| -> Result<(RenameMaps, String, String)> {
+        let workbook = read_workbook(config_path)
+            .with_context(|| format!("read rename configuration {}", config_path.display()))?;
+        let sheet = workbook
+            .sheets
+            .iter()
+            .find(|sheet| sheet.name == RENAME_SHEET)
+            .with_context(|| format!("configuration workbook has no {RENAME_SHEET:?} sheet"))?;
+        let maps = load_rename_maps(sheet)?;
 
-    let date_text = setting(&maps.settings, "数据日期");
-    let report_name = setting(&maps.settings, "报表名称");
-    if maps.short_to_full.is_empty()
-        || maps.full_to_code.is_empty()
-        || date_text.is_empty()
-        || report_name.is_empty()
-    {
-        bail!("重命名配置 缺少必要配置：简称/全称、全称(代码映射)/代码、数据日期、报表名称。");
-    }
+        let date_text = setting(&maps.settings, "数据日期");
+        let report_name = setting(&maps.settings, "报表名称");
+        if maps.short_to_full.is_empty()
+            || maps.full_to_code.is_empty()
+            || date_text.is_empty()
+            || report_name.is_empty()
+        {
+            bail!("重命名配置 缺少必要配置：简称/全称、全称(代码映射)/代码、数据日期、报表名称。");
+        }
+        Ok((maps, date_text, report_name))
+    })();
+    let (maps, date_text, report_name) = match configuration {
+        Ok(configuration) => configuration,
+        Err(error) => {
+            emit_progress(
+                &mut on_event,
+                &mut sequence,
+                &task_started,
+                &configuration_started,
+                "configuration_read",
+                "failed",
+                0,
+                paths.len(),
+                0,
+                0,
+                Some("Calamine"),
+                Some("configuration_error"),
+                "批量重命名配置读取失败，本次任务已停止".to_owned(),
+            );
+            return Err(error);
+        }
+    };
+    emit_progress(
+        &mut on_event,
+        &mut sequence,
+        &task_started,
+        &configuration_started,
+        "configuration_read",
+        "completed",
+        0,
+        paths.len(),
+        0,
+        0,
+        Some("Calamine"),
+        None,
+        "批量重命名配置读取完成".to_owned(),
+    );
 
+    let processing_started = Instant::now();
     let mut result = BatchRenameResult {
         ok: 0,
         skip: 0,
         rows: Vec::with_capacity(paths.len()),
     };
-    for path in paths {
+    emit_progress(
+        &mut on_event,
+        &mut sequence,
+        &task_started,
+        &processing_started,
+        "file_processing",
+        "started",
+        0,
+        paths.len(),
+        result.ok,
+        result.skip,
+        None,
+        None,
+        format!("开始处理 {} 个文件或目录", paths.len()),
+    );
+    for (index, path) in paths.iter().enumerate() {
         let original_name = path
             .file_name()
             .map(|name| name.to_string_lossy().into_owned())
@@ -87,8 +195,104 @@ pub fn run_batch_rename(
             result.skip += 1;
         }
         result.rows.push(row);
+        emit_progress(
+            &mut on_event,
+            &mut sequence,
+            &task_started,
+            &processing_started,
+            "file_processing",
+            "progress",
+            index + 1,
+            paths.len(),
+            result.ok,
+            result.skip,
+            Some("RustFilesystem"),
+            None,
+            format!(
+                "已处理 {}/{} 个文件或目录：改名 {} 个，跳过 {} 个",
+                index + 1,
+                paths.len(),
+                result.ok,
+                result.skip
+            ),
+        );
     }
+
+    emit_progress(
+        &mut on_event,
+        &mut sequence,
+        &task_started,
+        &processing_started,
+        "file_processing",
+        "completed",
+        paths.len(),
+        paths.len(),
+        result.ok,
+        result.skip,
+        (!paths.is_empty()).then_some("RustFilesystem"),
+        None,
+        format!(
+            "文件处理完成：改名 {} 个，跳过 {} 个",
+            result.ok, result.skip
+        ),
+    );
+    let task_finished = Instant::now();
+    emit_progress(
+        &mut on_event,
+        &mut sequence,
+        &task_started,
+        &task_finished,
+        "task",
+        "completed",
+        paths.len(),
+        paths.len(),
+        result.ok,
+        result.skip,
+        None,
+        None,
+        format!(
+            "批量重命名完成：改名 {} 个，跳过 {} 个",
+            result.ok, result.skip
+        ),
+    );
     Ok(result)
+}
+
+fn emit_progress<F>(
+    on_event: &mut F,
+    sequence: &mut usize,
+    task_started: &Instant,
+    phase_started: &Instant,
+    phase: &str,
+    status: &str,
+    completed_files: usize,
+    total_files: usize,
+    renamed_files: usize,
+    skipped_files: usize,
+    actual_engine: Option<&str>,
+    error_type: Option<&str>,
+    user_message: String,
+) where
+    F: FnMut(&BatchRenameProgressEvent),
+{
+    *sequence += 1;
+    on_event(&BatchRenameProgressEvent {
+        sequence: *sequence,
+        timestamp: Local::now().to_rfc3339(),
+        feature_id: "PT-4-1".to_owned(),
+        phase: phase.to_owned(),
+        status: status.to_owned(),
+        completed_files,
+        total_files,
+        renamed_files,
+        skipped_files,
+        stage_elapsed_ms: phase_started.elapsed().as_millis(),
+        total_elapsed_ms: task_started.elapsed().as_millis(),
+        components: vec!["Rust".to_owned()],
+        actual_engine: actual_engine.map(str::to_owned),
+        error_type: error_type.map(str::to_owned),
+        user_message,
+    });
 }
 
 fn rename_one(

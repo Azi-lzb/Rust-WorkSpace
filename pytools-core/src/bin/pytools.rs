@@ -8,7 +8,9 @@ use pytools_core::batch_ops::{
     build_quarterly_rural_loan_plan, build_remove_foreign_plan, build_rural_loan_plan,
     build_village_split_plan,
 };
-use pytools_core::batch_rename::run_batch_rename as run_batch_rename_business;
+use pytools_core::batch_rename::{
+    run_batch_rename_with_progress as run_batch_rename_business, BatchRenameProgressEvent,
+};
 use pytools_core::config::{
     load_extract_tasks, load_foreign_banks, load_global, load_institution_mapping,
     load_timeline_rules, GlobalConfig,
@@ -1748,6 +1750,8 @@ where
             "1" => {
                 arguments.push("--log-dir".to_owned());
                 arguments.push(global.log_dir.to_string_lossy().into_owned());
+                arguments.push("--log-view".to_owned());
+                arguments.push(log_view.to_owned());
                 arguments.extend(
                     paths
                         .into_iter()
@@ -7509,6 +7513,7 @@ fn run_batch_rename(arguments: Vec<String>) -> Result<()> {
     let mut arguments = arguments.into_iter();
     let mut config_path = None::<PathBuf>;
     let mut log_dir = None::<PathBuf>;
+    let mut log_view = "user".to_owned();
     let mut paths = Vec::new();
     while let Some(argument) = arguments.next() {
         match argument.as_str() {
@@ -7522,6 +7527,11 @@ fn run_batch_rename(arguments: Vec<String>) -> Result<()> {
                     arguments.next().context("--log-dir requires a path")?,
                 ));
             }
+            "--log-view" => {
+                log_view = arguments
+                    .next()
+                    .context("--log-view requires user, developer, or off")?;
+            }
             "--help" | "-h" => {
                 print_usage();
                 return Ok(());
@@ -7532,25 +7542,118 @@ fn run_batch_rename(arguments: Vec<String>) -> Result<()> {
     }
 
     let config_path = config_path.context("--config is required")?;
+    anyhow::ensure!(
+        matches!(log_view.as_str(), "user" | "developer" | "off"),
+        "--log-view must be user, developer, or off"
+    );
     let log_dir = log_dir.unwrap_or_else(|| PathBuf::from("logs"));
     let (log_path, mut log_file) = open_batch_rename_log(&log_dir)?;
-    let result = run_batch_rename_business(&config_path, &paths)?;
+    let mut events = Vec::<BatchRenameProgressEvent>::new();
+    let run_result = run_batch_rename_business(&config_path, &paths, |event| {
+        emit_batch_rename_event_view(&log_view, event);
+        if log_view == "developer" {
+            events.push(event.clone());
+        }
+    });
+    let history_result = if log_view == "developer" {
+        Some(write_batch_rename_run_history(&log_dir, &events))
+    } else {
+        None
+    };
+    let result = match run_result {
+        Ok(result) => result,
+        Err(error) => {
+            if let Some(Err(history_error)) = history_result.as_ref() {
+                eprintln!("pytools: could not write batch-rename run history: {history_error:#}");
+            }
+            return Err(error);
+        }
+    };
     let log_warning = write_batch_rename_log(&mut log_file, &result.rows).err();
+    let (history_path, history_warning) = match history_result {
+        Some(Ok(path)) => (Some(path), None),
+        Some(Err(error)) => (None, Some(error.to_string())),
+        None => (None, None),
+    };
     let mut output = serde_json::to_value(result)?;
     if let Some(object) = output.as_object_mut() {
         object.insert(
             "log_path".to_owned(),
             serde_json::json!(log_path.to_string_lossy()),
         );
+        if let Some(path) = history_path {
+            object.insert(
+                "run_history_path".to_owned(),
+                serde_json::json!(path.to_string_lossy()),
+            );
+        }
         if let Some(warning) = log_warning {
             object.insert(
                 "log_warning".to_owned(),
                 serde_json::json!(warning.to_string()),
             );
         }
+        if let Some(warning) = history_warning {
+            object.insert("history_warning".to_owned(), serde_json::json!(warning));
+        }
     }
     println!("{}", serde_json::to_string_pretty(&output)?);
     Ok(())
+}
+
+fn emit_batch_rename_event_view(log_view: &str, event: &BatchRenameProgressEvent) {
+    match log_view {
+        "user" => match event.status.as_str() {
+            "started" => eprintln!("{}", event.user_message),
+            "progress" => eprintln!(
+                "{}（阶段用时 {}ms）",
+                event.user_message, event.stage_elapsed_ms
+            ),
+            "completed" | "failed" => eprintln!(
+                "{}；阶段用时 {}ms，总用时 {}ms",
+                event.user_message, event.stage_elapsed_ms, event.total_elapsed_ms
+            ),
+            _ => eprintln!("{}", event.user_message),
+        },
+        "developer" => {
+            if let Ok(line) = serde_json::to_string(event) {
+                eprintln!("{line}");
+            }
+        }
+        "off" => {}
+        _ => unreachable!("batch-rename log view is validated before execution"),
+    }
+}
+
+fn write_batch_rename_run_history(
+    log_dir: &Path,
+    events: &[BatchRenameProgressEvent],
+) -> Result<PathBuf> {
+    fs::create_dir_all(log_dir)
+        .with_context(|| format!("create log directory {}", log_dir.display()))?;
+    let timestamp = Local::now().format("%Y%m%d_%H%M%S");
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .context("system clock before Unix epoch")?
+        .as_nanos();
+    let path = log_dir.join(format!("PT-4-1_batch_rename_{timestamp}_{nonce}.json"));
+    let history = serde_json::json!({
+        "schema_version": 1,
+        "product": "pytools",
+        "feature_id": "PT-4-1",
+        "total_elapsed_ms": events.last().map(|event| event.total_elapsed_ms),
+        "events": events,
+    });
+    let bytes = serde_json::to_vec_pretty(&history)?;
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)
+        .with_context(|| format!("create run history {}", path.display()))?;
+    file.write_all(&bytes)?;
+    file.write_all(b"\n")?;
+    file.flush()?;
+    Ok(path)
 }
 
 fn open_batch_rename_log(log_dir: &Path) -> Result<(PathBuf, File)> {
@@ -7604,7 +7707,6 @@ fn write_batch_rename_log(
             Local::now().format("%Y-%m-%d %H:%M:%S")
         );
         writeln!(file, "{line}")?;
-        eprintln!("{line}");
     }
     file.flush()?;
     Ok(())
@@ -8552,7 +8654,7 @@ fn print_usage() {
          pytools rename-by-content --config <workbook.xlsx> <file>...\n\
          pytools unrename-by-content --config <workbook.xlsx> <file>...\n\
          pytools rename-local-map --config <workbook.xlsx> <file>...\n\
-         pytools rename-batch --config <workbook.xlsx> [--log-dir <dir>] [<file-or-directory>...]\n\
+         pytools rename-batch --config <workbook.xlsx> [--log-dir <dir>] [--log-view user|developer|off] [<file-or-directory>...]\n\
          The region-sum command runs the Rust non-COM regional total check. Without --config,\n\
          output and logs default to ./output and ./logs. File-sort-prefix writes its XLSX report\n\
          under ./output unless --output-dir is supplied; its log defaults to ./logs. The\n\

@@ -1,4 +1,4 @@
-use pytools_core::batch_rename::run_batch_rename;
+use pytools_core::batch_rename::{run_batch_rename, run_batch_rename_with_progress};
 use serde_json::Value;
 use std::{
     fs,
@@ -194,7 +194,18 @@ fn missing_rename_sheet_is_rejected_before_touching_inputs() {
     let input = root.0.join("建行.xlsx");
     fs::write(&input, b"unchanged").unwrap();
 
-    let error = run_batch_rename(&config_path, &[input.clone()]).unwrap_err();
+    let mut events = Vec::new();
+    let error = run_batch_rename_with_progress(&config_path, &[input.clone()], |event| {
+        events.push(event.clone());
+    })
+    .unwrap_err();
     assert!(error.to_string().contains("重命名配置"));
     assert_eq!(fs::read(input).unwrap(), b"unchanged");
+    assert_eq!(events.len(), 2);
+    assert_eq!(events[0].phase, "configuration_read");
+    assert_eq!(events[0].status, "started");
+    assert_eq!(events[1].phase, "configuration_read");
+    assert_eq!(events[1].status, "failed");
+    assert_eq!(events[1].actual_engine.as_deref(), Some("Calamine"));
+    assert_eq!(events[1].error_type.as_deref(), Some("configuration_error"));
 }
