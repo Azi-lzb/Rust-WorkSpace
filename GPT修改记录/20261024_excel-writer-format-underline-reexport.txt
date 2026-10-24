@@ -1,0 +1,31 @@
+# GPT 修改记录：excel-writer re-export FormatUnderline
+
+- 时间：2026-10-24（Asia/Shanghai）
+- 执行者：Codex
+- Git 基线：main `b916b3a`；本次只提交共享 writer API 与记录。
+- WIP：main 上三个 Audit 业务文件存在未提交修改，未触碰、暂存或提交；pytools-dev 修改未触碰。
+- 【组件版本】：不升级；无 Cargo 或依赖变更。
+
+## 修改目的
+
+开放 rust_xlsxwriter 的 `FormatUnderline` 类型，让 Audit 业务侧可设置 hyperlink 字体为 12 磅且关闭默认下划线，而无需直接依赖上游 crate 类型路径。
+
+## 修改文件与行为
+
+- `crates/excel-writer/src/lib.rs`：从共享 crate 公共接口 re-export `FormatUnderline`；新增编译/API 测试，构造 `Format::new().set_hyperlink().set_font_size(12).set_underline(FormatUnderline::None)`。
+- `GPT修改记录/20261024_excel-writer-format-underline-reexport.txt`：本记录。
+
+## 测试
+
+- `rustfmt --edition 2021 crates/excel-writer/src/lib.rs`：通过。
+- `cargo test -p excel-writer`：通过，1/1；doc tests 无失败。
+- 在本机 WSL Rust 工具链执行；未运行 Audit 真实报表对拍或全 workspace 测试。
+
+## 状态与限制
+
+- 只增加公共类型导出和 API 编译测试，不改变 writer 输出、默认样式或业务逻辑。
+- Audit 需要 cherry-pick 后应用其 hyperlink format，并在真实对拍中确认字体、下划线和其他样式契约。
+
+## 回滚
+
+不含删除项。撤销时只移除本次公共 re-export、API 测试及本记录；不触碰同期 Audit/PyTools 工作。

@@ -1,0 +1,22 @@
+日期：2026-10-24
+
+变更范围
+- crates/excel-editor/python/openpyxl_worker.py：将 openpyxl worker 的全工作簿非空公式缓存拒绝改为按 OOXML worksheet 关系、工作表名和单元格坐标检查。只有 ExcelEditPlan 中显式定点写入该格，或 ImportRange 明确 `copy_values=true` 且 `materialize_blank_cells=true` 覆盖该格时，原缓存才可被此次保存丢弃；范围外缓存仍在任何输出写入前拒绝。
+- crates/excel-editor/tests/python/test_openpyxl_worker.py：增加范围内缓存可被明确覆盖、范围外缓存仍拒绝的回归测试。
+
+目的
+- openpyxl 保存工作簿会丢弃公式缓存。旧全工作簿拒绝逻辑会阻止 S1 计划中被 ImportRange 明确覆盖的目标缓存；本次将保护粒度缩到计划确切覆盖的坐标，不放宽未修改区域保护。
+
+测试
+- `python -m unittest crates.excel-editor.tests.python.test_openpyxl_worker`：6 项通过，Python 3.12.10 / openpyxl 3.1.5。
+- `cargo test -p excel-editor`：通过，13 个库单测、1 个 create_sheet_at 测试、1 个 ImportRange 测试及可运行的 worker 集成测试通过；4 个要求独立测试 runtime 的测试保持 ignored。
+- 设置 `RUST_WORKSPACE_OPENPYXL_PYTHON` 为本机 Python 3.12.10 后，`cargo test -p excel-editor --test openpyxl_worker rust_modifier_invokes_one_batch_worker_and_preserves_source -- --ignored --exact`：1 项通过。该验证使用本机隔离模式 `-I` 可导入的开发 Python，不代表 deb 内置 runtime 已验收。
+
+未执行项与已知限制
+- 尚未在 Audit 提供的 7 个真实样本上重跑完整 S1 计划，也未完成该批对象级 Python/Rust 对拍；Audit capability 仍须保持 Unverified，不能据此更改生产路由。
+- 对范围复制，只有 `copy_values` 与 `materialize_blank_cells` 同时为 true 时才被认作完整覆盖；公式复制、样式复制、批注复制或部分覆盖本身不会解除缓存保护。定点 SetCellValue/SetFormulaText 仅解除相同工作表相同坐标的缓存保护。
+- 目前只登记非空公式缓存；空缓存公式仍按原工作簿处理语义。
+- 本次未修改 Audit/PyTools 业务代码、路由、依赖或源 Python 项目。
+
+回滚
+- 可单独 revert 本记录对应的共享提交；回滚后 worker 恢复全工作簿缓存拒绝行为，已验收保留项不受影响。
