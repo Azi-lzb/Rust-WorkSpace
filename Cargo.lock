@@ -1138,7 +1138,10 @@ dependencies = [
  "csv",
  "encoding_rs",
  "excel-reader",
+ "ooxml-patch",
+ "roxmltree",
  "serde_json",
+ "zip 6.0.0",
 ]
 
 [[package]]
