@@ -69,11 +69,35 @@ class OpenpyxlWorkerTests(unittest.TestCase):
         src["B1"] = 9
         src["A1"].font = Font(bold=True)
         src["A1"].comment = openpyxl.comments.Comment("copied note", "source-author")
+        src["C1"] = "=1+1"
         src.merge_cells("A2:B2")
         src["A2"] = "merged import"
         src.row_dimensions[1].height = 25
         src.column_dimensions["A"].width = 22
         imported.save(self.import_source)
+        self._add_formula_cache(self.import_source, "xl/worksheets/sheet1.xml", "C1", "2")
+
+    @staticmethod
+    def _add_formula_cache(path, part_name, address, value):
+        replacement = path.with_name(path.stem + ".cached.xlsx")
+        with zipfile.ZipFile(path, "r") as original, zipfile.ZipFile(replacement, "w", zipfile.ZIP_DEFLATED) as patched:
+            for item in original.infolist():
+                data = original.read(item.filename)
+                if item.filename == part_name:
+                    root = ET.fromstring(data)
+                    main_ns = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+                    cell = root.find(f".//{{{main_ns}}}c[@r='{address}']")
+                    formula = cell.find(f"{{{main_ns}}}f")
+                    if formula is None:
+                        raise AssertionError("expected formula cell")
+                    cached_value = cell.find(f"{{{main_ns}}}v")
+                    if cached_value is None:
+                        cached_value = ET.SubElement(cell, f"{{{main_ns}}}v")
+                    cached_value.text = value
+                    ET.register_namespace("", main_ns)
+                    data = ET.tostring(root, encoding="utf-8", xml_declaration=True)
+                patched.writestr(item, data)
+        replacement.replace(path)
 
     def tearDown(self):
         self.temp.cleanup()
@@ -110,12 +134,13 @@ class OpenpyxlWorkerTests(unittest.TestCase):
                       target_sheet="Data", target_start="H5", copy_values=True,
                       copy_formulas=False, copy_styles=True, copy_comments=True),
             operation("import_range", source_workbook=str(self.import_source), source_sheet="Source",
-                      source_range="A1:B2", target_sheet="Data", target_start="J1",
+                      source_range="A1:C2", target_sheet="Data", target_start="J1",
                       copy_values=True, copy_formulas=True, style_mode="full", copy_comments=True,
                       copy_merges=True, copy_row_heights=True, copy_column_widths=True,
                       copy_row_hidden=False, copy_column_hidden=False, copy_outline_levels=False,
                       copy_all_row_dimensions=False, copy_all_column_dimensions=False,
                       materialize_blank_cells=True, hide_zero=False),
+            operation("set_workbook_calculation_properties", full_calc_on_load=True, force_full_calc=True),
             operation("rename_sheet", old_name="Notes", new_name="Information"),
             operation("create_sheet", name="Generated"),
             operation("create_sheet_at", name="History", index=0),
@@ -155,6 +180,9 @@ class OpenpyxlWorkerTests(unittest.TestCase):
         self.assertEqual(sheet["J1"].value, "imported")
         self.assertTrue(sheet["J1"].font.bold)
         self.assertEqual(sheet["J1"].comment.text, "copied note")
+        self.assertEqual(sheet["L1"].value, "=1+1")
+        self.assertTrue(saved.calculation.fullCalcOnLoad)
+        self.assertTrue(saved.calculation.forceFullCalc)
         self.assertIn("J2:K2", {item.coord for item in sheet.merged_cells.ranges})
         self.assertAlmostEqual(sheet.row_dimensions[1].height, 25)
         self.assertAlmostEqual(sheet.column_dimensions["J"].width, 22)

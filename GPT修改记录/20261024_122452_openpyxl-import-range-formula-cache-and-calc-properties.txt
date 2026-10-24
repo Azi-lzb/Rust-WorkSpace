@@ -1,0 +1,28 @@
+日期：2026-10-24
+
+变更：
+- crates/excel-editor/python/openpyxl_worker.py：允许 ImportRange 来源工作簿含公式缓存；保留目标工作簿公式缓存拒绝保护。新增 SetWorkbookCalculationProperties 批量操作，写入 fullCalcOnLoad/forceFullCalc 并由 worker 读回验证。
+- crates/excel-editor/src/openpyxl_backend.rs：将 SetWorkbookCalculationProperties 纳入完整批次 allowlist；Rust validator 使用 OOXML reader 独立读回并验证请求属性。
+- crates/excel-editor/tests/python/test_openpyxl_worker.py：扩大合成 ImportRange，加入带公式缓存的来源公式和计算属性操作；保留目标工作簿缓存拒绝测试。
+- crates/excel-editor/tests/openpyxl_worker.rs：Rust→worker→Rust validator 集成计划增加来源公式及计算属性读回断言。
+
+目的：响应 Audit S1-F01 真实候选在写入前被 SetWorkbookCalculationProperties 拒绝，以及模板来源缓存被误判为必须保留目标缓存的问题。来源模板缓存和目标工作簿缓存分别处理；公式文本复制不等于公式重算，不改变任何生产 capability 或默认路由。
+
+修改前状态：main HEAD 9668d17，工作区干净；audit-dev HEAD 79f757c 且干净；pytools-dev 有未跟踪文件 pytools-core/probe/compare_nocom_summary_assets.py，本轮未触及。
+
+测试：
+- `wsl.exe -d Ubuntu --exec bash -lc '/mnt/c/Users/AZI/Desktop/VibeCode/1.rust-workspace/.test-openpyxl-venv/bin/python -I /mnt/c/Users/AZI/Desktop/VibeCode/1.rust-workspace/crates/excel-editor/tests/python/test_openpyxl_worker.py'`：4 项通过。
+- `wsl.exe -d Ubuntu --exec bash -lc 'cd /mnt/c/Users/AZI/Desktop/VibeCode/1.rust-workspace && cargo test -p excel-editor --locked'`：通过；13 个单元测试、create_sheet_at 1 项、import_range 1 项及常规 openpyxl worker 1 项通过；4 项需隔离 runtime 的测试按现状忽略。
+- `RUST_WORKSPACE_OPENPYXL_PYTHON=/mnt/c/Users/AZI/Desktop/VibeCode/1.rust-workspace/.test-openpyxl-venv/bin/python cargo test -p excel-editor --locked --test openpyxl_worker rust_modifier_invokes_one_batch_worker_and_preserves_source -- --ignored --nocapture`（Ubuntu/WSL2）：通过，验证整批 Rust 调用、来源公式导入、计算属性读回及输入文件不变。
+- `git diff --check`：通过。
+
+未执行/未完成：
+- 尚未在 Audit 7 份真实样本上用更新后的 worker 复跑；必须继续验证样式语义及目标工作簿未修改区域。
+- 未验证隔离 Python runtime 的 Linux 产品打包、麒麟 V10、统信 UOS/glibc 2.28 或 deb。
+- 未登记生产 Passed capability，未改变生产默认路由。
+
+已知问题：
+- openpyxl 保存仍会丢弃目标工作簿中已有的非空公式缓存，因此目标缓存仍在写入前明确拒绝；本次只放宽来源模板缓存检查。
+- 真实模板完整保真仍未验证，S1-F01 的 openpyxl worker 能力保持 Unverified。
+
+回滚：仅回滚上述共享 worker、Rust allowlist/validator、两处测试及本记录中的变更；不得回滚 Audit/PyTools 工作树中的独立提交或 WIP。
