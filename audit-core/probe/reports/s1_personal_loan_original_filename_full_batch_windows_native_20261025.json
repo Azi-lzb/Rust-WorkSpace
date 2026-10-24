@@ -1,0 +1,101 @@
+{
+  "schema_version": 1,
+  "suite": "audit.s1_personal_loan_original_filename_full_batch_windows_native",
+  "baseline": "Open-Data-Audit Windows Python comparison harness",
+  "status": "passed",
+  "scope": {
+    "sample_period": "2026-07-31",
+    "business_area": "personal loan S1 audit",
+    "source_workbooks": 7,
+    "saved_formula_result_copies": 7,
+    "mapping_configuration_supplied": true,
+    "original_filenames_used": true,
+    "filename_aliases_used": false,
+    "evidence_kind": "sanitized aggregate of seven Python/Rust per-file comparisons and one Rust directory CLI run"
+  },
+  "template_preflight": {
+    "status": "passed",
+    "rules_total": 895,
+    "formula_ranges": 4,
+    "structure_ranges": 8,
+    "extraction_ranges": 4,
+    "formula_ref_warning_count": 1,
+    "rust_reader": "calamine + namespace-aware OOXML"
+  },
+  "per_file_parity": {
+    "cases_total": 7,
+    "cases_passed": 7,
+    "mismatch_count": 0,
+    "python_formula_issues": 27,
+    "rust_formula_issues": 27,
+    "python_conditional_issues": 0,
+    "rust_conditional_issues": 0,
+    "merged_issue_rows": 27,
+    "result_workbook_rows": 27,
+    "result_workbook_links": 27,
+    "result_workbook_difference_count": 0,
+    "history_result_workbook_rows": 27,
+    "history_result_workbook_difference_count": 0,
+    "automatic_template_selection_matched_python_cases": 7
+  },
+  "rust_directory_cli": {
+    "status": "completed",
+    "files_accepted": 7,
+    "formula_issues": 27,
+    "conditional_issues": 0,
+    "current_issue_rows": 27,
+    "result_workbook_rows": 27,
+    "result_workbook_links": 27,
+    "history_result_workbook_rows": 27,
+    "developer_log_event_count": 38,
+    "developer_log_contains_actual_engine_and_elapsed_time": true,
+    "stages": [
+      "source_workbook_discovery",
+      "template_recommendation",
+      "conditional_area_mapping",
+      "template_health_preflight",
+      "template_rule_and_area_load",
+      "structure_preflight",
+      "structure_preflight_file",
+      "conditional_format_issue_extraction",
+      "formula_result_issue_extraction",
+      "issue_merge_and_history_classification",
+      "result_workbook_write",
+      "history_result_workbook_write"
+    ],
+    "engines": [
+      "namespace_aware_ooxml_sheet_directory",
+      "calamine+namespace_aware_ooxml",
+      "calamine",
+      "rust_s1_issue_chain+rust_s1_history",
+      "rust_xlsxwriter 0.101.0"
+    ]
+  },
+  "execution": {
+    "platform": "Windows x86_64",
+    "rust_target": "x86_64-pc-windows-msvc",
+    "python_baseline": "Windows Python 3.12.10, openpyxl 3.1.5",
+    "isolated_openpyxl_worker_invoked": false,
+    "formula_copy": "not executed; the run consumed previously saved formula-result audit copies",
+    "formula_recalculation": "not performed",
+    "existing_history_workbook_input": false,
+    "performance_claim": false
+  },
+  "verification": {
+    "source_workbooks_unchanged": true,
+    "saved_formula_result_copies_unchanged": true,
+    "template_unchanged": true,
+    "mapping_configuration_unchanged": true,
+    "raw_filenames_or_paths_persisted": false,
+    "raw_business_values_persisted": false,
+    "configuration_names_or_paths_persisted": false
+  },
+  "limitations": [
+    "This evidence covers per-file Python/Rust comparisons and one Rust full-directory CLI run; it is not a Python full-batch run.",
+    "The saved formula-result copies bypass Rust formula copying and formula recalculation.",
+    "The standalone history result workbook was compared, but no pre-existing history workbook was supplied for read/merge/writeback validation.",
+    "The existing-history workbook edit candidate remains Unverified after the shared validator rejected a defined-names readback difference; no capability route was enabled.",
+    "No Linux compatibility or deb runtime validation was performed.",
+    "S1-F01 overall remains unverified."
+  ]
+}

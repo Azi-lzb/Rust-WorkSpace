@@ -1,0 +1,28 @@
+时间：2026-10-25 03:12:42 +08:00
+执行者：Codex Audit 开发 Agent
+修改前 commit：4524cabe9e8b8b89225b9f37905518ff87545a9c
+修改后 commit：见最终 Git 提交；本记录随该提交纳入。
+WIP 情况：修改前 audit-dev 工作区干净，且与 origin/audit-dev 同步。
+
+修改目的：持久化 S1-F01 个人贷款真实样本使用原文件名、Windows 原生 Rust 目录 CLI、结果簿及独立历史结果簿对拍证据；保留 S1-F01 未验证状态。
+修改文件：
+- audit-core/probe/reports/s1_personal_loan_original_filename_full_batch_windows_native_20261025.json：新增脱敏汇总报告，不含原文件名、路径、配置名或业务值。
+- audit-core/MIGRATION_INVENTORY.md：仅更新 S1-F01 行，追加本轮对拍范围和限制。
+- audit-core/GPT修改记录/20261025_031242_S1F01原名全批RustCLI对拍与历史结果簿.txt：本记录。
+
+逻辑或文档变化：7 个原名源工作簿逐本 Python/Rust 对拍通过，差异 0；Rust `s1-audit-directory` 全目录 CLI 接受 7 个工作簿并输出 27 条当前 Issue 和 27 行结果/历史结果。逐文件比较覆盖结果簿与独立历史结果簿，差异均为 0。Rust CLI 开发者日志包含 38 个实际阶段事件，并记录执行引擎及耗时。模板预检报告 895 条规则、4 个公式范围、8 个结构范围、4 个提取范围及 1 个公式 `#REF!` 警告。
+
+实际测试与对拍：
+- Windows 原生 `s1-template-rules` 使用真实模板及配置完成预检：895/895 规则通过。
+- `audit-core/tests/compare/compare_s1_audit_directory.py` 对 7 本原名工作簿分别运行 Python/Rust 对拍：7/7 通过，Issue 与结果簿/历史结果簿字段差异 0，未使用 Linux 文件名别名。
+- Windows 原生 `open-data-audit s1-audit-directory` 全目录运行：7 本接受、27 条公式 Issue、0 条条件格式 Issue、27 行当前结果、27 行独立历史结果；开发者日志 38 个阶段事件。
+- 源工作簿、副本、模板和配置均未改变；报告未保存原文件名、路径和业务值。
+- 对拍基线为 Windows Python 3.12.10 / openpyxl 3.1.5；这不是隔离 openpyxl worker 或 deb runtime 验证。
+
+未执行项：Rust 公式复制与重算、既有历史工作簿输入及写回、Linux 兼容性和 deb runtime 验证。本轮没有修改业务代码，也没有重新运行对拍；记录上述本轮已完成的测试结果。
+
+已知问题：公式复制仍基于已保存公式结果副本；既有历史工作簿编辑候选仍因共享 validator 的 DefinedNames 读回差异被拒，路由保持 Unverified。S1-F01 整体未验证。未测量性能，不作性能结论。
+
+删除清单：无。
+回滚提示：本轮只增加脱敏报告和修改记录，并在 MIGRATION_INVENTORY.md S1-F01 行追加一段证据；回滚时仅撤销该行追加并删除本报告与本记录，不影响业务代码或样本文件。
+【组件版本】：不升级。
