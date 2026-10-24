@@ -638,3 +638,8 @@ Windows 原生验证：`cargo fmt --manifest-path pytools-core/Cargo.toml -- --c
 Windows 原生验证：`cargo fmt --manifest-path pytools-core/Cargo.toml -- --check` 通过；`cargo test --offline --locked -p pytools-core --test print_menu_cli --test print_comment_execution -j 1` 中打印菜单测试 3/3、候选执行测试 1/1 通过。菜单测试由真实 CLI 进程验证 PT-3-1/3-2 确认执行、拒绝后的 plan-only、输出路径、候选工作表、批注/零值语义及源簿不变。使用 PyTools Python 3.12.10/openpyxl 3.1.5 与 Windows 原生 `target/debug/pytools.exe` 新跑 `probe/compare_print_comment_plans.py`，keep/fast 两种计划与 ExcelModifier 候选的完整投影均通过；机器报告为 `probe/reports/print_comment_plan_parity_20261025.json`、`probe/reports/print_comment_execution_parity_20261025.json`。对拍样本为合成 XLSX，源未改变，执行 capability 仅临时测试使用。
 
 本轮只用合成 XLSX 与测试专用 capability。生产 capability、真实打印模板、Windows 桌面弹窗手工操作、麒麟 V10/UOS V20、glibc 2.28 和离线 deb 未验收；PT-3-1/PT-3-2 整体仍为未验证。
+### 2026-10-25 PT-6-1 Windows Rust CLI 真实 XLSX 样本复验
+
+在 Windows Python 3.12.10/openpyxl 3.1.5 环境下，直接运行现成的 `compare_real_used_range_sample()`，以原 PyTools 只读 `xlsx/` 目录的 13 份真实 XLSX 与 Windows 上运行的 `target/debug/pytools.exe` 按四批对拍。96 张工作表、203,580 行的完整输出投影均一致；行数/文件数和开发者事件流/保存历史断言通过，源文件前后指纹一致，输出只在临时目录。机器报告：`probe/reports/summary_used_range_real_parity_20261025.json`。
+
+完整组合 `compare_summary_tools.py` 未能完成，因为当前 PyTools Python venv 缺少 NoComPyTools 对拍所需的 `python_calamine`；本次已隔离运行 PyCode/Rust PT-6-1 主样本对拍，不安装依赖、不修改源项目。此结果补充 Windows 上运行现有 Rust CLI 的阶段证据，不代表 Windows 原生 Cargo 构建、原 PyTools 业务 VBA XLSM、麒麟 V10/UOS V20、glibc 2.28、deb 或离线交付验收；PT-6-1 整体仍未完成最终验收。
