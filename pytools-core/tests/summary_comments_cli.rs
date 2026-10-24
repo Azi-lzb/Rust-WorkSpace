@@ -246,6 +246,65 @@ fn summary_comments_cli_uses_merge_anchor_for_non_anchor_cells() -> Result<()> {
 }
 
 #[test]
+fn summary_comments_cli_ignores_empty_set_marker_like_pycode() -> Result<()> {
+    let root = unique_test_dir();
+    fs::create_dir_all(&root)?;
+    let template = root.join("empty_set_template.xlsx");
+    create_empty_set_template(&template)?;
+    let template_before = fs::read(&template)?;
+    let source = root.join("source.xlsx");
+    create_source_workbook(&source)?;
+    let source_before = fs::read(&source)?;
+
+    let output = run_cli(&template, &[&source], &root.join("run"), None)?;
+    assert!(
+        output.status.success(),
+        "summary-comments CLI failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report = parse_stdout(&output)?;
+    assert_eq!(report["saved"], true);
+    assert_eq!(report["rows"], 2);
+
+    let summary = read_workbook(&output_workbook(&report)?)?;
+    let sheet = summary
+        .sheets
+        .iter()
+        .find(|sheet| sheet.name == "模板")
+        .context("comment summary output sheet missing")?;
+    for (address, value) in [
+        ("A1", "工作簿"),
+        ("B1", "工作表"),
+        ("C1", "余额"),
+        ("D1", "余额_2"),
+        ("E1", "行号"),
+    ] {
+        assert_eq!(
+            sheet.values.get(address),
+            Some(&serde_json::json!({"type":"string", "value":value})),
+            "unexpected header at {address}"
+        );
+    }
+    assert!(
+        !sheet.values.contains_key("F1"),
+        "empty set() marker must not add an output column"
+    );
+    assert_eq!(
+        sheet.values.get("C2"),
+        Some(&serde_json::json!({"type":"number", "value":10.5}))
+    );
+    assert_eq!(
+        sheet.values.get("D2"),
+        Some(&serde_json::json!({"type":"string", "value":"甲"}))
+    );
+    assert_eq!(fs::read(&template)?, template_before, "template changed");
+    assert_eq!(fs::read(&source)?, source_before, "source workbook changed");
+
+    fs::remove_dir_all(root)?;
+    Ok(())
+}
+
+#[test]
 fn summary_comments_cli_records_template_validation_failure() -> Result<()> {
     let root = unique_test_dir();
     fs::create_dir_all(&root)?;
@@ -351,6 +410,27 @@ fn create_source_workbook(path: &Path) -> Result<()> {
     workbook
         .save(path)
         .context("save synthetic source workbook")
+}
+
+fn create_empty_set_template(path: &Path) -> Result<()> {
+    let mut workbook = rust_xlsxwriter::Workbook::new();
+    {
+        let worksheet = workbook.add_worksheet();
+        worksheet.set_name("模板")?;
+        worksheet.write_string(1, 0, "行开始")?;
+        worksheet.write_string(2, 0, "行结束")?;
+        worksheet.write_string(0, 1, "余额")?;
+        worksheet.write_string(0, 2, "余额")?;
+        worksheet.write_string(0, 3, "空集合")?;
+        worksheet.insert_note(1, 0, &rust_xlsxwriter::Note::new("行区域1"))?;
+        worksheet.insert_note(2, 0, &rust_xlsxwriter::Note::new("行区域#1"))?;
+        worksheet.insert_note(0, 1, &rust_xlsxwriter::Note::new("列区域1"))?;
+        worksheet.insert_note(0, 2, &rust_xlsxwriter::Note::new("列区域#1"))?;
+        worksheet.insert_note(0, 3, &rust_xlsxwriter::Note::new("set()"))?;
+    }
+    workbook
+        .save(path)
+        .context("save empty-set comment template")
 }
 
 fn unique_test_dir() -> PathBuf {

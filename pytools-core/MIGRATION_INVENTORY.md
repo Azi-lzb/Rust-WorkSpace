@@ -432,3 +432,15 @@ Rust 集成回归 `summary_used_range_cli_preserves_common_and_textual_error_tok
 对原项目 xlsx/ 递归发现的 70 份 XLSX，分别运行原 PyCode 与 NoComPyTools 的按使用区域汇总入口，并按最多 3 份工作簿分为 24 批比较完整输出投影。24/24 批有结果，其中 12 批精确一致、12 批存在差异；一致批次包含 34 份输入，差异批次包含其余 36 份输入（比较粒度为批次，不能归因到单个工作簿）。两边失败输入和缺失输出均为 0。汇总行数（含标题行）分别为 1,260,077 和 1,258,014，PyCode 多 2,063 行。差异涉及工作表维度，以及汇总表的行、样式、类型、值和表头加粗属性。
 
 比较运行于 Windows Python 3.12.10；两边 openpyxl 为 3.1.5，NoCom 环境的 python-calamine 为 0.9.0。源工作簿大小和修改时间均未改变。按输出坐标计数的单元格差异可能受删除行后的坐标移动影响，不代表不同源单元格数。该对拍只比较两种 Python 变体，不新增 Rust 行为结论、不改变 PyCode 生产基线；NoCom 独有行为仍标为待确认。机器结果见 `probe/reports/summary_used_range_nocom_assets_20261024.json`，不记录源文件名、单元格值、路径或哈希。
+
+### 2026-10-24 PT-6-2 空 `set()` 批注标记兼容
+
+真实 PyCode `run_summary_by_comment` 的 `set` 正则要求括号内至少有一个字符；空 `set()` 不构成集合标记。Rust 原解析曾接受空内容，导致多出一个空表头和数据列。`summary_ops::parse_set_name` 现跳过零长度捕获，同时保留 `set( )` 经裁剪后为空名称的原 Python 行为。新增真实 `summary-comments` CLI 集成回归与专用 Python/Rust 对拍：2 行输出的值/类型、样式、维度、冻结窗格和页面设置完整投影精确一致，输出 5 列且无空集合列；源模板和源工作簿未变化。机器报告为 `probe/reports/summary_comments_empty_set_marker_parity_20261024.json`。
+
+验证：WSL Ubuntu `cargo test --offline --locked -p pytools-core --lib comment_region_tests` 2/2、`cargo test --offline --locked -p pytools-core --test summary_comments_cli` 4/4、Windows `cargo fmt --manifest-path pytools-core/Cargo.toml -- --check` 通过。Windows SDK 后续由 main 配置完成；Windows 原生 MSVC `cargo test --offline --locked -p pytools-core --lib comment_region_tests` 2/2、`--test summary_comments_cli` 4/4，且原生 Rust CLI 与 PyCode 此场景完整投影一致。PyTools crate 全量测试有一项无关的既有失败：`workbook_extract` 单测引用的 `tests/fixtures/季度报表_县区报表_2024-12-31.xlsx` 在当前 checkout 缺失（WSL lib 测试为 29/30）。该修复只覆盖合成模板边界；PT-6-2 真实业务批注模板、麒麟/UOS、glibc 2.28 与 deb 验收仍未完成。
+
+### 2026-10-24 PT-6-1 Windows 原生 MSVC CLI 对拍
+
+Windows SDK 安装完成后，使用 native `cargo test` 构建的 `target/debug/pytools.exe` 运行既有 `compare_summary_tools.py`。PyCode 与 Rust 真实入口对原 PyTools `xlsx/` 目录 13 份工作簿分 4 批完整投影对拍一致：96 张工作表、203,580 行；值/类型、样式、工作表及维度、公式、合并、定义名称、冻结窗格与页面属性通过。1,212 个 Excel 错误单元格由既有 OOXML Patch 保留；批次事件流与保存运行记录一致，源文件前后完整性检查通过。合成错误值、未知 `#DATA!`、扩展错误 token、VBA 启用测试簿、输入扩展名过滤和双视图测试均通过。NoComPyTools 与 PyCode 的既有差异保持为变体差异，不作为 PyCode/Rust 失败或生产合同变更。
+
+Windows 原生测试：`cargo test --offline --locked -p pytools-core --lib comment_region_tests` 2/2；`--test summary_comments_cli` 4/4；`--test summary_used_range_error` 5/5；`cargo fmt --manifest-path pytools-core/Cargo.toml -- --check` 通过。Windows 原生结果记录于 `probe/reports/summary_used_range_windows_native_20261024.json`；此前 WSL/glibc 阶段报告保留不变。运行时间仅记录该次 Windows debug 环境，不作跨实现性能结论；本轮没有重建 glibc 2.28 release。PT-6-1 整体仍待原 PyTools 业务含 VBA 的 XLSM 样本、麒麟 V10/UOS V20、deb 和离线交付验收。

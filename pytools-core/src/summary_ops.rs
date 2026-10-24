@@ -1917,7 +1917,11 @@ fn parse_set_name(text: &str) -> Option<String> {
     };
     let rest = &text[idx + marker_len..];
     let end = rest.find([')', '）'])?;
-    Some(rest[..end].trim().to_owned())
+    let name = &rest[..end];
+    if name.is_empty() {
+        return None;
+    }
+    Some(name.trim().to_owned())
 }
 fn build_column_headers(sheet: &SheetDump, ranges: &[(usize, usize, usize, usize)]) -> Vec<String> {
     let mut out = Vec::new();
@@ -2095,6 +2099,13 @@ mod patch_error_cells_tests {
 #[cfg(test)]
 mod comment_region_tests {
     use super::*;
+
+    #[test]
+    fn empty_set_capture_is_ignored_but_whitespace_capture_is_retained() {
+        assert_eq!(parse_set_name("set()"), None);
+        assert_eq!(parse_set_name("set( )"), Some(String::new()));
+        assert_eq!(parse_set_name("SET（区域）"), Some("区域".to_owned()));
+    }
 
     #[test]
     fn duplicate_region_markers_use_last_row_major_boundary() {
