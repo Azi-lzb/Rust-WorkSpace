@@ -3,8 +3,14 @@ use calamine::{open_workbook_auto, Data, Reader, Sheets};
 use roxmltree::Document;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::{collections::BTreeMap, fs, io::Read, path::Path};
-use zip::ZipArchive;
+use std::{
+    collections::BTreeMap,
+    fs,
+    io::{Read, Write},
+    ops::Range,
+    path::Path,
+};
+use zip::{write::SimpleFileOptions, ZipArchive, ZipWriter};
 
 const SPREADSHEET_MAIN_NS: &str = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
 const OFFICE_REL_NS: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
@@ -398,6 +404,196 @@ pub fn read_workbook(path: impl AsRef<Path>) -> Result<WorkbookDump> {
         elapsed_ms: started.elapsed().as_millis(),
         sheets,
     })
+}
+
+/// Read a workbook while treating OOXML error tokens unsupported by Calamine
+/// as ordinary text values. The default `read_workbook` contract is unchanged:
+/// this compatibility path is opt-in, limited to XLSX/XLSM, and normalizes
+/// only literal `<c t="e"><v>…</v></c>` cells in a temporary package copy.
+/// Formula cells and malformed/unknown error-cell structures are rejected.
+pub fn read_workbook_with_unknown_error_tokens_as_text(
+    path: impl AsRef<Path>,
+) -> Result<WorkbookDump> {
+    let path = path.as_ref();
+    match read_workbook(path) {
+        Ok(workbook) => return Ok(workbook),
+        Err(error) if !format!("{error:#}").contains("Unsupported cell error value") => {
+            return Err(error);
+        }
+        Err(_) => {}
+    }
+    ensure!(
+        path.extension()
+            .and_then(|extension| extension.to_str())
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("xlsx")
+                || extension.eq_ignore_ascii_case("xlsm")),
+        "unknown error-token compatibility reader supports XLSX/XLSM only"
+    );
+    let replacements = prepare_unknown_error_token_replacements(path)?;
+    ensure!(!replacements.is_empty(), "Calamine reported an unsupported cell error but no literal unsupported OOXML error token was found");
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)?
+        .as_nanos();
+    let temp = std::env::temp_dir().join(format!(
+        "excel-reader-error-text-{}-{nonce}.xlsx",
+        std::process::id()
+    ));
+    let write_result = write_package_with_replacements(path, &temp, &replacements);
+    if let Err(error) = write_result {
+        let _ = fs::remove_file(&temp);
+        return Err(error)
+            .context("write temporary workbook with unsupported error tokens normalized");
+    }
+    let result = read_workbook(&temp).context("read normalized temporary workbook with Calamine");
+    let _ = fs::remove_file(&temp);
+    result
+}
+
+fn prepare_unknown_error_token_replacements(path: &Path) -> Result<BTreeMap<String, Vec<u8>>> {
+    let mut zip = ZipArchive::new(fs::File::open(path).context("open workbook package")?)?;
+    let mut replacements = BTreeMap::new();
+    for (_, part) in ooxml_worksheet_parts(&mut zip)? {
+        let xml = zip_read(&mut zip, &part)?.into_bytes();
+        let patched = normalize_unknown_error_cells(&xml)?;
+        if patched != xml {
+            replacements.insert(part, patched);
+        }
+    }
+    Ok(replacements)
+}
+
+fn normalize_unknown_error_cells(xml: &[u8]) -> Result<Vec<u8>> {
+    let document = Document::parse(std::str::from_utf8(xml)?)?;
+    let mut edits = Vec::<(Range<usize>, Vec<u8>)>::new();
+    for cell in document.descendants().filter(|node| {
+        node.is_element()
+            && node.tag_name().namespace() == Some(SPREADSHEET_MAIN_NS)
+            && node.tag_name().name() == "c"
+            && node.attribute("t") == Some("e")
+    }) {
+        let value_nodes = cell
+            .children()
+            .filter(|node| {
+                node.is_element()
+                    && node.tag_name().namespace() == Some(SPREADSHEET_MAIN_NS)
+                    && node.tag_name().name() == "v"
+            })
+            .collect::<Vec<_>>();
+        ensure!(
+            value_nodes.len() == 1,
+            "error cell {:?} must contain exactly one cached value",
+            cell.attribute("r")
+        );
+        ensure!(
+            cell.children().all(|child| !child.is_element()
+                || (child.tag_name().namespace() == Some(SPREADSHEET_MAIN_NS)
+                    && child.tag_name().name() == "v")),
+            "unsupported child element in literal error cell {:?}",
+            cell.attribute("r")
+        );
+        let value = value_nodes[0].text().unwrap_or_default();
+        if is_calamine_error_token(value) {
+            continue;
+        }
+        ensure!(
+            cell.children()
+                .all(|child| !child.is_element() || child.tag_name().name() != "f"),
+            "formula error cell {:?} cannot be normalized as a literal string",
+            cell.attribute("r")
+        );
+        let type_attribute = cell
+            .attribute_node("t")
+            .context("error cell is missing type attribute")?;
+        edits.push((type_attribute.range_value(), b"inlineStr".to_vec()));
+        let value_node = value_nodes[0];
+        let prefix = xml_element_qname(xml, cell)?;
+        let is_name = child_qname(&prefix, "is");
+        let text_name = child_qname(&prefix, "t");
+        let text = escape_xml_text(value);
+        let replacement = format!("<{is_name}><{text_name}>{text}</{text_name}></{is_name}>");
+        edits.push((value_node.range(), replacement.into_bytes()));
+    }
+    apply_xml_edits(xml, edits)
+}
+
+fn is_calamine_error_token(value: &str) -> bool {
+    matches!(
+        value,
+        "#DIV/0!" | "#N/A" | "#NAME?" | "#NULL!" | "#NUM!" | "#REF!" | "#VALUE!"
+    )
+}
+
+fn xml_element_qname(xml: &[u8], node: roxmltree::Node<'_, '_>) -> Result<String> {
+    let fragment = std::str::from_utf8(&xml[node.range()])?;
+    let start = fragment
+        .find('<')
+        .context("XML element has no opening tag")?
+        + 1;
+    let end = fragment[start..]
+        .find(|ch: char| ch.is_whitespace() || matches!(ch, '>' | '/'))
+        .map(|offset| start + offset)
+        .context("XML element has no name")?;
+    Ok(fragment[start..end].to_owned())
+}
+
+fn child_qname(parent_qname: &str, child: &str) -> String {
+    parent_qname
+        .rsplit_once(':')
+        .map(|(prefix, _)| format!("{prefix}:{child}"))
+        .unwrap_or_else(|| child.to_owned())
+}
+
+fn escape_xml_text(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+}
+
+fn apply_xml_edits(xml: &[u8], mut edits: Vec<(Range<usize>, Vec<u8>)>) -> Result<Vec<u8>> {
+    edits.sort_by_key(|(range, _)| std::cmp::Reverse((range.start, range.end)));
+    let mut output = xml.to_vec();
+    for (range, replacement) in edits {
+        ensure!(
+            range.start <= range.end && range.end <= output.len(),
+            "OOXML edit range is out of bounds"
+        );
+        output.splice(range, replacement);
+    }
+    Ok(output)
+}
+
+fn write_package_with_replacements(
+    source: &Path,
+    output: &Path,
+    replacements: &BTreeMap<String, Vec<u8>>,
+) -> Result<()> {
+    let mut input = ZipArchive::new(fs::File::open(source)?)?;
+    let file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(output)?;
+    let mut writer = ZipWriter::new(file);
+    for index in 0..input.len() {
+        let mut entry = input.by_index(index)?;
+        let name = entry.name().to_owned();
+        let mut options = SimpleFileOptions::default().compression_method(entry.compression());
+        if let Some(modified) = entry.last_modified() {
+            options = options.last_modified_time(modified);
+        }
+        if entry.is_dir() {
+            writer.add_directory(name, options)?;
+            continue;
+        }
+        writer.start_file(&name, options)?;
+        if let Some(bytes) = replacements.get(&name) {
+            writer.write_all(bytes)?;
+        } else {
+            std::io::copy(&mut entry, &mut writer)?;
+        }
+    }
+    writer.finish()?;
+    Ok(())
 }
 
 /// Read worksheet names without reading worksheet cell values.
