@@ -1,0 +1,46 @@
+# S1 公式复制候选使用 Rust 模板映射对拍
+
+- 时间：2026-10-24 09:10（Asia/Shanghai）
+- 执行者：Codex audit-dev Agent
+- 分支：audit-dev
+- 修改前 commit：45f4608（main 协调的 sidecar 修复后，尚未推送）
+- 修改后 commit：待本次 Audit-only 提交生成
+- WIP：修改前工作区干净；仅有前述 4 个已提交、等待推送的 main 协调提交。根 DEVELOPMENT_GOAL.md 未修改；未发现 audit-core/GPT修改记录/WIP.md。
+
+## 目的与范围
+
+将公式复制候选对拍的范围解析改为调用 Audit Rust 的 load_s1_template_rule_plan。真实样本模式把可选映射配置交给 Rust；Python helper 仍只构造旧实现基线和临时样本，不再向 Rust 注入 Python 解析出的范围 JSON。合成模板加入默认映射名“校验区域”及四个非连续区域，覆盖相同 Rust 解析路径。
+
+本次仍是 Unverified 后端候选探针，不接生产 CLI/GUI、不注册 Passed capability，也不表示 S1-F01 已验收。
+
+## 修改文件
+
+- audit-core/tests/s1_formula_copy_candidate.rs：Rust 候选从模板规则计划取得复制区域；报告注明 rust_s1_template_rule_plan。
+- audit-core/tests/compare/compare_s1_formula_copy_candidate.py：合成模板增加 Rust 默认映射名；真实样本把可选配置交给 Rust，不再写入范围 JSON。
+- audit-core/probe/reports/s1_formula_copy_candidate_synthetic.json：更新本轮无路径、无业务单元格内容的合成对拍汇总。
+- 本修改记录。
+
+## 测试与证据
+
+- WSL Ubuntu：cargo fmt --package audit-core 后，cargo fmt --package audit-core -- --check 通过。
+- WSL Ubuntu：cargo test -p audit-core --locked --quiet 通过，75 个 crate 单元测试及全部已配置集成测试通过；手动候选保持 ignored，需对拍 helper 显式触发。
+- 合成端到端候选：compare_s1_formula_copy_candidate.py 退出码 0，状态 candidate_match_unverified。Rust 通过 load_s1_template_rule_plan 解析 4 个命名区域；16 个区域格、4 个公式、5 条批注，区域值/类型、样式、批注、未修改区域、工作簿对象元数据及 calcPr 差异均为 0；输入模板和审核副本未改动。
+- WSL Ubuntu：cargo test -p lo-convert --locked 通过，2 项 sidecar 单测通过（包含缺失引擎输出必须失败）。
+- Python AST 解析通过；git diff --check 通过。Git 提示若干现有仓库文件的 LF/CRLF 转换警告，不构成本轮文件变更。
+- 上述 sidecar 测试不包含 LO/COM 实际运行，不能证明公式缓存已刷新或结果正确。
+
+## 未执行项与已知问题
+
+- 真实模板/对应审核副本路径仍未收到；真实范围解析和模板保留对拍未运行。
+- 没有实际 LO/COM、公式缓存数值、Python/Rust Issue 结果或麒麟/UOS 目标平台对拍。候选 capability 仍为 Unverified，不进入生产路由。
+- s1-audit-directory 仍消费已有公式结果副本清单；公式复制/重算尚未接入该生产链。sidecar 只允许显式请求；待真实配对样本验证后再接入。
+- S1-F01 整体仍未验收。
+
+## 删除与回滚
+
+- 删除项：无。
+- 回滚：仅回滚本次 Audit-only 提交，恢复候选测试、对拍 helper、合成报告和本记录；不要回滚 main 协调的 shared reader/sidecar 提交或既有 S1 生产链。
+
+## 组件版本
+
+不升级。

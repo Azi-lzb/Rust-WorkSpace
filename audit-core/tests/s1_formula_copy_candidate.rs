@@ -4,29 +4,18 @@
 //! candidate. The capability is Unverified and this test must never be treated
 //! as a production route or as feature acceptance.
 
+use audit_core::s1_template_rules::load_s1_template_rule_plan;
 use excel_editor::{
     inspect_xlsx_profile, BackendCapability, CapabilityStatus, EditBackend, EditOperation,
     EditOperationKind, EngineId, ExcelEditPlan, PreservationRequirement, RangeStyleMode,
     UmyaXlsxBackend, WorkbookFormat,
 };
-use serde::Deserialize;
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
     path::{Path, PathBuf},
     time::Instant,
 };
-
-#[derive(Debug, Deserialize)]
-struct CopyRangeSpec {
-    sheet_name: String,
-    address: String,
-}
-
-#[derive(Debug, Deserialize)]
-struct CopyRangesFile {
-    ranges: Vec<CopyRangeSpec>,
-}
 
 fn required_path(variable: &str) -> PathBuf {
     std::env::var_os(variable)
@@ -46,7 +35,6 @@ fn probes_s1_formula_copy_import_ranges_without_claiming_capability() {
     let target = required_path("AUDIT_S1_COPY_CANDIDATE_INPUT");
     let template = required_path("AUDIT_S1_COPY_CANDIDATE_TEMPLATE");
     let output = required_path("AUDIT_S1_COPY_CANDIDATE_OUTPUT");
-    let ranges_path = required_path("AUDIT_S1_COPY_CANDIDATE_RANGES");
     let report_path = required_path("AUDIT_S1_COPY_CANDIDATE_REPORT");
 
     assert!(target.is_file(), "candidate target workbook is unavailable");
@@ -55,17 +43,14 @@ fn probes_s1_formula_copy_import_ranges_without_claiming_capability() {
         "candidate template workbook is unavailable"
     );
     assert!(!output.exists(), "candidate output path must be new");
-    let ranges: CopyRangesFile =
-        serde_json::from_slice(&fs::read(ranges_path).expect("read range definitions"))
-            .expect("parse range definitions");
-    assert_eq!(
-        ranges.ranges.len(),
-        4,
-        "candidate scope requires four ranges"
-    );
+    let mapping_config = std::env::var_os("AUDIT_S1_COPY_CANDIDATE_MAPPING").map(PathBuf::from);
+    let template_plan = load_s1_template_rule_plan(&template, mapping_config.as_deref())
+        .expect("resolve formula-copy ranges through Rust S1 template rules");
+    let ranges = template_plan.definition.copy_ranges;
+    assert_eq!(ranges.len(), 4, "candidate scope requires four ranges");
+    let range_import_count = ranges.len();
 
     let mut operations: Vec<EditOperation> = ranges
-        .ranges
         .into_iter()
         .map(|range| {
             let start = target_start(&range.address)
@@ -156,8 +141,9 @@ fn probes_s1_formula_copy_import_ranges_without_claiming_capability() {
     };
     let candidate_report = serde_json::json!({
         "status": status,
-        "range_import_count": 4,
-        "operation_count": 5,
+        "range_import_count": range_import_count,
+        "operation_count": range_import_count + 1,
+        "range_resolution": "rust_s1_template_rule_plan",
         "engine": "umya-spreadsheet",
         "capability_status": "unverified",
         "production_route_eligible": false,

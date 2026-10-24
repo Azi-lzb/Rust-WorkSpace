@@ -5,21 +5,22 @@
   "sample_kind": "synthetic",
   "python": {
     "baseline": "base_audit.native.openpyxl_workbook.copy_formula_ranges_from_template",
-    "elapsed_ms": 20
+    "elapsed_ms": 28
   },
   "rust_candidate": {
     "calculation_properties_operation_present": true,
     "capability_status": "unverified",
-    "elapsed_ms": 408,
+    "elapsed_ms": 409,
     "engine": "umya-spreadsheet",
     "formula_recalculation_performed": false,
     "operation_count": 5,
     "output_created": true,
     "production_route_eligible": false,
     "range_import_count": 4,
+    "range_resolution": "rust_s1_template_rule_plan",
     "status": "written_unverified_candidate",
     "target_inventory_complete": true,
-    "elapsed_ms_including_test_harness": 19931,
+    "elapsed_ms_including_test_harness": 23152,
     "candidate_test_exit_code": 0,
     "formula_cache_nonempty_count": 0,
     "output_readback_failed": false,

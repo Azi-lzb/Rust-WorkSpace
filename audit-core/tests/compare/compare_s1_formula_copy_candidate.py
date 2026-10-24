@@ -24,6 +24,7 @@ from xml.etree import ElementTree
 
 from openpyxl import Workbook, load_workbook
 from openpyxl.comments import Comment
+from openpyxl.workbook.defined_name import DefinedName
 from openpyxl.styles import Alignment, Font, PatternFill, Protection
 from openpyxl.utils.cell import range_boundaries
 
@@ -67,6 +68,12 @@ def make_synthetic_pair(directory: Path) -> tuple[Path, Path, list[dict[str, str
         top_left.value = f"=ROW()+COLUMN()+{index}"
         top_left.comment = Comment(f"synthetic-rule-{index}", "baseline")
     source["B2"].comment = Comment("synthetic-value-comment", "baseline")
+    template.defined_names.add(
+        DefinedName(
+            "校验区域",
+            attr_text=",".join(f"'审核表'!{address}" for address in ranges),
+        )
+    )
     template.save(template_path)
     template.close()
 
@@ -482,8 +489,6 @@ def main() -> int:
 
         if len(ranges) != 4:
             raise ValueError("candidate must contain exactly four ImportRange operations")
-        ranges_path = directory / "ranges.json"
-        ranges_path.write_text(json.dumps({"ranges": ranges}), encoding="utf-8")
         python_output = directory / "python_output.xlsx"
         rust_output = directory / "rust_output.xlsx"
         rust_report_path = directory / "rust_candidate.json"
@@ -498,17 +503,15 @@ def main() -> int:
         template_book.close()
 
         rust_started = time.perf_counter()
-        rust_exit = invoke_candidate(
-            workspace,
-            {
-                "AUDIT_S1_COPY_CANDIDATE_INPUT": audit_path,
-                "AUDIT_S1_COPY_CANDIDATE_TEMPLATE": template_path,
-                "AUDIT_S1_COPY_CANDIDATE_OUTPUT": rust_output,
-                "AUDIT_S1_COPY_CANDIDATE_RANGES": ranges_path,
-                "AUDIT_S1_COPY_CANDIDATE_REPORT": rust_report_path,
-            },
-            args.wsl_distribution,
-        )
+        candidate_paths = {
+            "AUDIT_S1_COPY_CANDIDATE_INPUT": audit_path,
+            "AUDIT_S1_COPY_CANDIDATE_TEMPLATE": template_path,
+            "AUDIT_S1_COPY_CANDIDATE_OUTPUT": rust_output,
+            "AUDIT_S1_COPY_CANDIDATE_REPORT": rust_report_path,
+        }
+        if mapping_path is not None:
+            candidate_paths["AUDIT_S1_COPY_CANDIDATE_MAPPING"] = mapping_path
+        rust_exit = invoke_candidate(workspace, candidate_paths, args.wsl_distribution)
         rust_elapsed_ms = round((time.perf_counter() - rust_started) * 1000)
         candidate = json.loads(rust_report_path.read_text(encoding="utf-8")) if rust_report_path.exists() else {
             "status": "candidate_invocation_failed",
