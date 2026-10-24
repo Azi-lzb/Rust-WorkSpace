@@ -156,65 +156,131 @@ def style_signature(cell):
     )
 
 
-def cell_signature(cell):
-    comment = None if cell.comment is None else (cell.comment.text, cell.comment.author)
-    hyperlink = None
-    if cell.hyperlink is not None:
-        hyperlink = (
-            cell.hyperlink.target,
-            cell.hyperlink.location,
-            cell.hyperlink.display,
-            cell.hyperlink.tooltip,
-        )
-    return cell.value, cell.data_type, style_signature(cell), comment, hyperlink
+def cell_value_type_signature(cell):
+    return cell.value, cell.data_type
 
 
-def cell_mismatch_counts(expected_path: Path, actual_path: Path, ranges):
-    expected = load_workbook(expected_path, data_only=False, keep_links=True)
-    actual = load_workbook(actual_path, data_only=False, keep_links=True)
-    counts = {"range_cells": 0, "range_mismatches": 0, "outside_cells": 0, "outside_mismatches": 0}
+def formula_text_signature(cell):
+    if cell.data_type == "f" or (isinstance(cell.value, str) and cell.value.startswith("=")):
+        return cell.value
+    return None
+
+
+def comment_signature(cell):
+    return None if cell.comment is None else (cell.comment.text, cell.comment.author)
+
+
+def hyperlink_signature(cell):
+    if cell.hyperlink is None:
+        return None
+    return (
+        cell.hyperlink.target,
+        cell.hyperlink.location,
+        cell.hyperlink.display,
+        cell.hyperlink.tooltip,
+    )
+
+
+def cell_mismatch_counts(
+    python_path: Path, rust_path: Path, template_path: Path, target_path: Path, ranges
+):
+    """Compare copied cells to the Python value/comment contract and template styles.
+
+    The legacy Python cross-workbook style copier can emit invalid font component
+    references. Therefore copied-range styles are checked against the source
+    template, while values, formulas, comments and hyperlinks are compared with
+    the Python baseline. Cells outside copied ranges are compared with the input.
+    """
+    python_book = load_workbook(python_path, data_only=False, keep_links=True)
+    rust_book = load_workbook(rust_path, data_only=False, keep_links=True)
+    template_book = load_workbook(template_path, data_only=False, keep_links=True)
+    target_book = load_workbook(target_path, data_only=False, keep_links=True)
+    counts = {
+        "range_cells": 0,
+        "range_value_type_mismatches": 0,
+        "range_formula_text_mismatches": 0,
+        "range_style_mismatches": 0,
+        "range_comment_mismatches": 0,
+        "range_hyperlink_mismatches": 0,
+        "range_mismatches": 0,
+        "outside_cells": 0,
+        "outside_value_type_mismatches": 0,
+        "outside_formula_text_mismatches": 0,
+        "outside_style_mismatches": 0,
+        "outside_comment_mismatches": 0,
+        "outside_hyperlink_mismatches": 0,
+        "outside_mismatches": 0,
+        "outside_sheet_mismatches": 0,
+    }
     range_cells: dict[str, set[tuple[int, int]]] = {}
+
+    def record_cell(prefix, expected_value, actual_value, expected_style, actual_style):
+        counts[f"{prefix}_value_type_mismatches"] += int(
+            cell_value_type_signature(expected_value) != cell_value_type_signature(actual_value)
+        )
+        counts[f"{prefix}_formula_text_mismatches"] += int(
+            formula_text_signature(expected_value) != formula_text_signature(actual_value)
+        )
+        counts[f"{prefix}_comment_mismatches"] += int(
+            comment_signature(expected_value) != comment_signature(actual_value)
+        )
+        counts[f"{prefix}_hyperlink_mismatches"] += int(
+            hyperlink_signature(expected_value) != hyperlink_signature(actual_value)
+        )
+        counts[f"{prefix}_style_mismatches"] += int(
+            style_signature(expected_style) != style_signature(actual_style)
+        )
+
     for item in ranges:
         min_col, min_row, max_col, max_row = range_boundaries(item["address"].replace("$", ""))
+        sheet_name = item["sheet_name"]
+        if any(
+            sheet_name not in book.sheetnames
+            for book in (python_book, rust_book, template_book)
+        ):
+            raise CandidateReadbackError("range_sheet_missing")
         cells = {(row, col) for row in range(min_row, max_row + 1) for col in range(min_col, max_col + 1)}
-        range_cells.setdefault(item["sheet_name"], set()).update(cells)
-        left = expected[item["sheet_name"]]
-        right = actual[item["sheet_name"]]
+        range_cells.setdefault(sheet_name, set()).update(cells)
+        python_sheet = python_book[sheet_name]
+        rust_sheet = rust_book[sheet_name]
+        template_sheet = template_book[sheet_name]
         for row, col in cells:
             counts["range_cells"] += 1
-            try:
-                left_signature = cell_signature(left.cell(row, col))
-            except Exception as error:
-                raise CandidateReadbackError(f"python_range_cell_{type(error).__name__}") from None
-            try:
-                right_signature = cell_signature(right.cell(row, col))
-            except Exception as error:
-                raise CandidateReadbackError(f"rust_range_cell_{type(error).__name__}") from None
-            counts["range_mismatches"] += int(left_signature != right_signature)
+            record_cell(
+                "range",
+                python_sheet.cell(row, col),
+                rust_sheet.cell(row, col),
+                template_sheet.cell(row, col),
+                rust_sheet.cell(row, col),
+            )
 
-    for sheet_name in sorted(set(expected.sheetnames) | set(actual.sheetnames)):
-        if sheet_name not in expected.sheetnames or sheet_name not in actual.sheetnames:
-            counts["outside_mismatches"] += 1
+    for sheet_name in sorted(set(target_book.sheetnames) | set(rust_book.sheetnames)):
+        if sheet_name not in target_book.sheetnames or sheet_name not in rust_book.sheetnames:
+            counts["outside_sheet_mismatches"] += 1
             continue
-        left = expected[sheet_name]
-        right = actual[sheet_name]
-        coordinates = set(left._cells) | set(right._cells)
+        target_sheet = target_book[sheet_name]
+        rust_sheet = rust_book[sheet_name]
+        coordinates = set(target_sheet._cells) | set(rust_sheet._cells)
         for row, col in coordinates:
             if (row, col) in range_cells.get(sheet_name, set()):
                 continue
             counts["outside_cells"] += 1
-            try:
-                left_signature = cell_signature(left.cell(row, col))
-            except Exception as error:
-                raise CandidateReadbackError(f"python_outside_cell_{type(error).__name__}") from None
-            try:
-                right_signature = cell_signature(right.cell(row, col))
-            except Exception as error:
-                raise CandidateReadbackError(f"rust_outside_cell_{type(error).__name__}") from None
-            counts["outside_mismatches"] += int(left_signature != right_signature)
+            record_cell(
+                "outside",
+                target_sheet.cell(row, col),
+                rust_sheet.cell(row, col),
+                target_sheet.cell(row, col),
+                rust_sheet.cell(row, col),
+            )
 
-    expected.close()
-    actual.close()
+    for prefix in ("range", "outside"):
+        counts[f"{prefix}_mismatches"] = sum(
+            counts[f"{prefix}_{kind}_mismatches"]
+            for kind in ("value_type", "formula_text", "style", "comment", "hyperlink")
+        )
+    counts["outside_mismatches"] += counts["outside_sheet_mismatches"]
+    for book in (python_book, rust_book, template_book, target_book):
+        book.close()
     return counts
 
 
@@ -754,7 +820,7 @@ def main() -> int:
                 }
                 calc_mismatch = 1
             try:
-                cell_comparison = cell_mismatch_counts(python_output, rust_output, ranges)
+                cell_comparison = cell_mismatch_counts(python_output, rust_output, template_path, audit_path, ranges)
             except CandidateReadbackError as error:
                 readback_failed = True
                 readback_failure_category = readback_failure_category or str(error)
@@ -764,12 +830,15 @@ def main() -> int:
                 }
             try:
                 python_metadata = workbook_metadata(python_output)
+                target_metadata = workbook_metadata(audit_path)
                 rust_metadata = workbook_metadata(rust_output)
                 metadata_mismatch = int(python_metadata != rust_metadata)
+                target_metadata_mismatch = int(target_metadata != rust_metadata)
             except Exception as error:
                 readback_failed = True
                 readback_failure_category = readback_failure_category or f"metadata_{type(error).__name__}"
                 metadata_mismatch = 1
+                target_metadata_mismatch = 1
         else:
             readback_failed = True
             readback_failure_category = "rust_output_missing"
@@ -778,6 +847,7 @@ def main() -> int:
                 "outside_cells": 0, "outside_mismatches": 0,
             }
             metadata_mismatch = 1
+            target_metadata_mismatch = 1
             calc_mismatch = 1
             python_calc = calculation_flags(python_output)
             rust_calc = {"full_calc_on_load": None, "force_full_calc": None}
@@ -802,6 +872,7 @@ def main() -> int:
             cell_comparison["range_mismatches"]
             + cell_comparison["outside_mismatches"]
             + metadata_mismatch
+            + target_metadata_mismatch
             + calc_mismatch
             + int(readback_failed)
         )
@@ -811,10 +882,20 @@ def main() -> int:
         )
         mismatches += invalid_style_reference_count + recalculation["mismatch_count"]
         scope_stats = range_stats(template_path, ranges)
+        if rust_exit != 0 or not output_created:
+            candidate_status = "candidate_unavailable"
+        elif not inputs_unchanged:
+            candidate_status = "input_mutated"
+        elif readback_failed:
+            candidate_status = "comparison_incomplete"
+        elif mismatches:
+            candidate_status = "candidate_mismatch"
+        else:
+            candidate_status = "candidate_match_unverified"
         report = {
             "schema_version": 1,
             "suite": "audit.s1_formula_copy_candidate",
-            "status": "candidate_match_unverified" if rust_exit == 0 and mismatches == 0 and inputs_unchanged else "candidate_mismatch_or_unavailable",
+            "status": candidate_status,
             "sample_kind": sample_kind,
             "python": {"baseline": "base_audit.native.openpyxl_workbook.copy_formula_ranges_from_template", "elapsed_ms": python_elapsed_ms},
             "rust_candidate": {
@@ -831,14 +912,18 @@ def main() -> int:
             },
             "comparison": {
                 **cell_comparison,
-                "workbook_metadata_mismatch_count": metadata_mismatch,
+                "python_vs_rust_workbook_metadata_mismatch_count": metadata_mismatch,
+                "target_vs_rust_workbook_metadata_mismatch_count": target_metadata_mismatch,
                 "calculation_flags_mismatch_count": calc_mismatch,
                 "python_calculation_flags": python_calc,
                 "rust_calculation_flags": rust_calc,
                 "python_formula_cache_nonempty_count": python_cache_count,
                 "package_differences_python_vs_rust": package_differences,
+                "template_style_references": style_reference_summary(template_path),
+                "target_style_references": style_reference_summary(audit_path),
                 "python_style_references": python_style_references,
                 "rust_style_references": rust_style_references,
+                "python_baseline_invalid_style_component_references": python_style_references["invalid_style_component_reference_counts"],
                 "invalid_style_reference_count": invalid_style_reference_count,
                 "output_readback_failed": readback_failed,
                 "mismatch_count": mismatches,
@@ -851,6 +936,12 @@ def main() -> int:
                 "production_route_eligible": False,
                 "target_linux_validation": "not performed",
                 "scope": "four cross-workbook ImportRange operations plus calculation flags; direct candidate only",
+                "copied_range_styles_compared_to": "source template",
+                "other_cell_styles_and_values_compared_to": "original target workbook",
+                "python_baseline_style_integrity": (
+                    "reported separately; not used as copied-range style oracle "
+                    "when component references are invalid"
+                ),
             },
         }
 

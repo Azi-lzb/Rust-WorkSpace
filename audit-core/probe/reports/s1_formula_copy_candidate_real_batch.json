@@ -1,122 +1,468 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "suite": "audit.s1_formula_copy_candidate_real_batch",
-  "status": "blocked_before_write",
+  "status": "object_comparison_mismatch",
   "sample_scope": {
     "source_audit_pairs": 7,
     "same_selected_s1_template": true,
     "mapping": "source_project_default",
-    "operation": "four cross-workbook formula-range imports plus calculation flags",
-    "formula_recalculation": "not requested"
+    "operation": "four cross-workbook ImportRange operations plus calculation flags",
+    "formula_recalculation": "not requested",
+    "python_structure_preflight_accepted": 17,
+    "candidate_pairs_selected": 7
   },
   "candidate": [
     {
       "sample_ordinal": 1,
-      "status": "candidate_backend_rejected_or_failed",
-      "failure_kind": "unsupported_before_write",
-      "failure_category": "unverified_target_workbook_structure",
-      "target_inventory_complete": false,
-      "output_created": false,
-      "inputs_unchanged": true,
-      "capability_status": "unverified",
-      "production_route_eligible": false,
-      "copy_range_count": 4,
-      "template_formula_cell_count": 1072
+      "execution_and_input_safety": {
+        "status": "written_unverified_candidate",
+        "failure_kind": null,
+        "failure_category": null,
+        "test_exit_code": 0,
+        "target_inventory_complete": true,
+        "output_created": true,
+        "input_unchanged": true
+      },
+      "object_level_comparison": {
+        "status": "mismatch",
+        "range_cells": 5487,
+        "range_value_type_mismatches": 0,
+        "range_formula_text_mismatches": 0,
+        "range_style_mismatches": 100,
+        "range_comment_mismatches": 0,
+        "range_hyperlink_mismatches": 0,
+        "range_mismatches": 100,
+        "outside_cells": 3047,
+        "outside_value_type_mismatches": 216,
+        "outside_formula_text_mismatches": 0,
+        "outside_style_mismatches": 0,
+        "outside_comment_mismatches": 0,
+        "outside_hyperlink_mismatches": 0,
+        "outside_mismatches": 216,
+        "python_vs_rust_metadata_mismatch": 0,
+        "target_vs_rust_metadata_mismatch": 0,
+        "calc_flags_mismatch": 0,
+        "readback_failed": false,
+        "readback_failure_category": null,
+        "python_baseline_invalid_style_components": {
+          "font": 1012,
+          "fill": 0,
+          "border": 0,
+          "custom_number_format": 0
+        },
+        "candidate_invalid_style_components": {
+          "font": 0,
+          "fill": 0,
+          "border": 0,
+          "custom_number_format": 0
+        }
+      },
+      "package_level_comparison": {
+        "python_vs_rust_part_name_difference_count": 17,
+        "part_name_difference_categories": {
+          "comments": 8,
+          "drawings": 8,
+          "other": 1
+        },
+        "common_part_byte_difference_count": 19,
+        "common_part_byte_difference_categories": {
+          "content_types": 1,
+          "other": 4,
+          "relationships": 2,
+          "styles": 1,
+          "workbook": 1,
+          "worksheets": 10
+        }
+      }
     },
     {
       "sample_ordinal": 2,
-      "status": "candidate_backend_rejected_or_failed",
-      "failure_kind": "unsupported_before_write",
-      "failure_category": "unverified_target_workbook_structure",
-      "target_inventory_complete": false,
-      "output_created": false,
-      "inputs_unchanged": true,
-      "capability_status": "unverified",
-      "production_route_eligible": false,
-      "copy_range_count": 4,
-      "template_formula_cell_count": 1072
+      "execution_and_input_safety": {
+        "status": "written_unverified_candidate",
+        "failure_kind": null,
+        "failure_category": null,
+        "test_exit_code": 0,
+        "target_inventory_complete": true,
+        "output_created": true,
+        "input_unchanged": true
+      },
+      "object_level_comparison": {
+        "status": "mismatch",
+        "range_cells": 5487,
+        "range_value_type_mismatches": 0,
+        "range_formula_text_mismatches": 0,
+        "range_style_mismatches": 802,
+        "range_comment_mismatches": 0,
+        "range_hyperlink_mismatches": 0,
+        "range_mismatches": 802,
+        "outside_cells": 3047,
+        "outside_value_type_mismatches": 211,
+        "outside_formula_text_mismatches": 0,
+        "outside_style_mismatches": 0,
+        "outside_comment_mismatches": 0,
+        "outside_hyperlink_mismatches": 0,
+        "outside_mismatches": 211,
+        "python_vs_rust_metadata_mismatch": 0,
+        "target_vs_rust_metadata_mismatch": 0,
+        "calc_flags_mismatch": 0,
+        "readback_failed": false,
+        "readback_failure_category": null,
+        "python_baseline_invalid_style_components": {
+          "font": 1011,
+          "fill": 0,
+          "border": 0,
+          "custom_number_format": 0
+        },
+        "candidate_invalid_style_components": {
+          "font": 0,
+          "fill": 0,
+          "border": 0,
+          "custom_number_format": 0
+        }
+      },
+      "package_level_comparison": {
+        "python_vs_rust_part_name_difference_count": 17,
+        "part_name_difference_categories": {
+          "comments": 8,
+          "drawings": 8,
+          "other": 1
+        },
+        "common_part_byte_difference_count": 19,
+        "common_part_byte_difference_categories": {
+          "content_types": 1,
+          "other": 4,
+          "relationships": 2,
+          "styles": 1,
+          "workbook": 1,
+          "worksheets": 10
+        }
+      }
     },
     {
       "sample_ordinal": 3,
-      "status": "candidate_backend_rejected_or_failed",
-      "failure_kind": "unsupported_before_write",
-      "failure_category": "unverified_target_workbook_structure",
-      "target_inventory_complete": false,
-      "output_created": false,
-      "inputs_unchanged": true,
-      "capability_status": "unverified",
-      "production_route_eligible": false,
-      "copy_range_count": 4,
-      "template_formula_cell_count": 1072
+      "execution_and_input_safety": {
+        "status": "written_unverified_candidate",
+        "failure_kind": null,
+        "failure_category": null,
+        "test_exit_code": 0,
+        "target_inventory_complete": true,
+        "output_created": true,
+        "input_unchanged": true
+      },
+      "object_level_comparison": {
+        "status": "mismatch",
+        "range_cells": 5487,
+        "range_value_type_mismatches": 0,
+        "range_formula_text_mismatches": 0,
+        "range_style_mismatches": 802,
+        "range_comment_mismatches": 0,
+        "range_hyperlink_mismatches": 0,
+        "range_mismatches": 802,
+        "outside_cells": 3047,
+        "outside_value_type_mismatches": 207,
+        "outside_formula_text_mismatches": 0,
+        "outside_style_mismatches": 0,
+        "outside_comment_mismatches": 0,
+        "outside_hyperlink_mismatches": 0,
+        "outside_mismatches": 207,
+        "python_vs_rust_metadata_mismatch": 0,
+        "target_vs_rust_metadata_mismatch": 0,
+        "calc_flags_mismatch": 0,
+        "readback_failed": false,
+        "readback_failure_category": null,
+        "python_baseline_invalid_style_components": {
+          "font": 1011,
+          "fill": 0,
+          "border": 0,
+          "custom_number_format": 0
+        },
+        "candidate_invalid_style_components": {
+          "font": 0,
+          "fill": 0,
+          "border": 0,
+          "custom_number_format": 0
+        }
+      },
+      "package_level_comparison": {
+        "python_vs_rust_part_name_difference_count": 17,
+        "part_name_difference_categories": {
+          "comments": 8,
+          "drawings": 8,
+          "other": 1
+        },
+        "common_part_byte_difference_count": 19,
+        "common_part_byte_difference_categories": {
+          "content_types": 1,
+          "other": 4,
+          "relationships": 2,
+          "styles": 1,
+          "workbook": 1,
+          "worksheets": 10
+        }
+      }
     },
     {
       "sample_ordinal": 4,
-      "status": "candidate_backend_rejected_or_failed",
-      "failure_kind": "unsupported_before_write",
-      "failure_category": "unverified_target_workbook_structure",
-      "target_inventory_complete": false,
-      "output_created": false,
-      "inputs_unchanged": true,
-      "capability_status": "unverified",
-      "production_route_eligible": false,
-      "copy_range_count": 4,
-      "template_formula_cell_count": 1072
+      "execution_and_input_safety": {
+        "status": "written_unverified_candidate",
+        "failure_kind": null,
+        "failure_category": null,
+        "test_exit_code": 0,
+        "target_inventory_complete": true,
+        "output_created": true,
+        "input_unchanged": true
+      },
+      "object_level_comparison": {
+        "status": "mismatch",
+        "range_cells": 5487,
+        "range_value_type_mismatches": 0,
+        "range_formula_text_mismatches": 0,
+        "range_style_mismatches": 802,
+        "range_comment_mismatches": 0,
+        "range_hyperlink_mismatches": 0,
+        "range_mismatches": 802,
+        "outside_cells": 3047,
+        "outside_value_type_mismatches": 211,
+        "outside_formula_text_mismatches": 0,
+        "outside_style_mismatches": 0,
+        "outside_comment_mismatches": 0,
+        "outside_hyperlink_mismatches": 0,
+        "outside_mismatches": 211,
+        "python_vs_rust_metadata_mismatch": 0,
+        "target_vs_rust_metadata_mismatch": 0,
+        "calc_flags_mismatch": 0,
+        "readback_failed": false,
+        "readback_failure_category": null,
+        "python_baseline_invalid_style_components": {
+          "font": 1011,
+          "fill": 0,
+          "border": 0,
+          "custom_number_format": 0
+        },
+        "candidate_invalid_style_components": {
+          "font": 0,
+          "fill": 0,
+          "border": 0,
+          "custom_number_format": 0
+        }
+      },
+      "package_level_comparison": {
+        "python_vs_rust_part_name_difference_count": 17,
+        "part_name_difference_categories": {
+          "comments": 8,
+          "drawings": 8,
+          "other": 1
+        },
+        "common_part_byte_difference_count": 19,
+        "common_part_byte_difference_categories": {
+          "content_types": 1,
+          "other": 4,
+          "relationships": 2,
+          "styles": 1,
+          "workbook": 1,
+          "worksheets": 10
+        }
+      }
     },
     {
       "sample_ordinal": 5,
-      "status": "candidate_backend_rejected_or_failed",
-      "failure_kind": "unsupported_before_write",
-      "failure_category": "unverified_target_workbook_structure",
-      "target_inventory_complete": false,
-      "output_created": false,
-      "inputs_unchanged": true,
-      "capability_status": "unverified",
-      "production_route_eligible": false,
-      "copy_range_count": 4,
-      "template_formula_cell_count": 1072
+      "execution_and_input_safety": {
+        "status": "written_unverified_candidate",
+        "failure_kind": null,
+        "failure_category": null,
+        "test_exit_code": 0,
+        "target_inventory_complete": true,
+        "output_created": true,
+        "input_unchanged": true
+      },
+      "object_level_comparison": {
+        "status": "mismatch",
+        "range_cells": 5487,
+        "range_value_type_mismatches": 0,
+        "range_formula_text_mismatches": 0,
+        "range_style_mismatches": 802,
+        "range_comment_mismatches": 0,
+        "range_hyperlink_mismatches": 0,
+        "range_mismatches": 802,
+        "outside_cells": 3047,
+        "outside_value_type_mismatches": 219,
+        "outside_formula_text_mismatches": 0,
+        "outside_style_mismatches": 0,
+        "outside_comment_mismatches": 0,
+        "outside_hyperlink_mismatches": 0,
+        "outside_mismatches": 219,
+        "python_vs_rust_metadata_mismatch": 0,
+        "target_vs_rust_metadata_mismatch": 0,
+        "calc_flags_mismatch": 0,
+        "readback_failed": false,
+        "readback_failure_category": null,
+        "python_baseline_invalid_style_components": {
+          "font": 1011,
+          "fill": 0,
+          "border": 0,
+          "custom_number_format": 0
+        },
+        "candidate_invalid_style_components": {
+          "font": 0,
+          "fill": 0,
+          "border": 0,
+          "custom_number_format": 0
+        }
+      },
+      "package_level_comparison": {
+        "python_vs_rust_part_name_difference_count": 17,
+        "part_name_difference_categories": {
+          "comments": 8,
+          "drawings": 8,
+          "other": 1
+        },
+        "common_part_byte_difference_count": 19,
+        "common_part_byte_difference_categories": {
+          "content_types": 1,
+          "other": 4,
+          "relationships": 2,
+          "styles": 1,
+          "workbook": 1,
+          "worksheets": 10
+        }
+      }
     },
     {
       "sample_ordinal": 6,
-      "status": "candidate_backend_rejected_or_failed",
-      "failure_kind": "unsupported_before_write",
-      "failure_category": "unverified_target_workbook_structure",
-      "target_inventory_complete": false,
-      "output_created": false,
-      "inputs_unchanged": true,
-      "capability_status": "unverified",
-      "production_route_eligible": false,
-      "copy_range_count": 4,
-      "template_formula_cell_count": 1072
+      "execution_and_input_safety": {
+        "status": "written_unverified_candidate",
+        "failure_kind": null,
+        "failure_category": null,
+        "test_exit_code": 0,
+        "target_inventory_complete": true,
+        "output_created": true,
+        "input_unchanged": true
+      },
+      "object_level_comparison": {
+        "status": "mismatch",
+        "range_cells": 5487,
+        "range_value_type_mismatches": 0,
+        "range_formula_text_mismatches": 0,
+        "range_style_mismatches": 802,
+        "range_comment_mismatches": 0,
+        "range_hyperlink_mismatches": 0,
+        "range_mismatches": 802,
+        "outside_cells": 3047,
+        "outside_value_type_mismatches": 209,
+        "outside_formula_text_mismatches": 0,
+        "outside_style_mismatches": 0,
+        "outside_comment_mismatches": 0,
+        "outside_hyperlink_mismatches": 0,
+        "outside_mismatches": 209,
+        "python_vs_rust_metadata_mismatch": 0,
+        "target_vs_rust_metadata_mismatch": 0,
+        "calc_flags_mismatch": 0,
+        "readback_failed": false,
+        "readback_failure_category": null,
+        "python_baseline_invalid_style_components": {
+          "font": 1011,
+          "fill": 0,
+          "border": 0,
+          "custom_number_format": 0
+        },
+        "candidate_invalid_style_components": {
+          "font": 0,
+          "fill": 0,
+          "border": 0,
+          "custom_number_format": 0
+        }
+      },
+      "package_level_comparison": {
+        "python_vs_rust_part_name_difference_count": 17,
+        "part_name_difference_categories": {
+          "comments": 8,
+          "drawings": 8,
+          "other": 1
+        },
+        "common_part_byte_difference_count": 19,
+        "common_part_byte_difference_categories": {
+          "content_types": 1,
+          "other": 4,
+          "relationships": 2,
+          "styles": 1,
+          "workbook": 1,
+          "worksheets": 10
+        }
+      }
     },
     {
       "sample_ordinal": 7,
-      "status": "candidate_backend_rejected_or_failed",
-      "failure_kind": "unsupported_before_write",
-      "failure_category": "unverified_target_workbook_structure",
-      "target_inventory_complete": false,
-      "output_created": false,
-      "inputs_unchanged": true,
-      "capability_status": "unverified",
-      "production_route_eligible": false,
-      "copy_range_count": 4,
-      "template_formula_cell_count": 1072
+      "execution_and_input_safety": {
+        "status": "written_unverified_candidate",
+        "failure_kind": null,
+        "failure_category": null,
+        "test_exit_code": 0,
+        "target_inventory_complete": true,
+        "output_created": true,
+        "input_unchanged": true
+      },
+      "object_level_comparison": {
+        "status": "mismatch",
+        "range_cells": 5487,
+        "range_value_type_mismatches": 0,
+        "range_formula_text_mismatches": 0,
+        "range_style_mismatches": 802,
+        "range_comment_mismatches": 0,
+        "range_hyperlink_mismatches": 0,
+        "range_mismatches": 802,
+        "outside_cells": 3047,
+        "outside_value_type_mismatches": 223,
+        "outside_formula_text_mismatches": 0,
+        "outside_style_mismatches": 0,
+        "outside_comment_mismatches": 0,
+        "outside_hyperlink_mismatches": 0,
+        "outside_mismatches": 223,
+        "python_vs_rust_metadata_mismatch": 0,
+        "target_vs_rust_metadata_mismatch": 0,
+        "calc_flags_mismatch": 0,
+        "readback_failed": false,
+        "readback_failure_category": null,
+        "python_baseline_invalid_style_components": {
+          "font": 1011,
+          "fill": 0,
+          "border": 0,
+          "custom_number_format": 0
+        },
+        "candidate_invalid_style_components": {
+          "font": 0,
+          "fill": 0,
+          "border": 0,
+          "custom_number_format": 0
+        }
+      },
+      "package_level_comparison": {
+        "python_vs_rust_part_name_difference_count": 17,
+        "part_name_difference_categories": {
+          "comments": 8,
+          "drawings": 8,
+          "other": 1
+        },
+        "common_part_byte_difference_count": 19,
+        "common_part_byte_difference_categories": {
+          "content_types": 1,
+          "other": 4,
+          "relationships": 2,
+          "styles": 1,
+          "workbook": 1,
+          "worksheets": 10
+        }
+      }
     }
   ],
-  "package_inventory_observation": {
-    "target_workbooks_with_incomplete_rust_inventory": 7,
-    "profile_unrecognized_directory_entries": 21,
-    "profile_unrecognized_file_parts": 0,
-    "reject_unverified_directory_markers": 7,
-    "reject_unverified_file_parts": 0,
-    "blocker": "zip_directory_marker"
-  },
   "conclusion": {
     "capability_status": "unverified",
     "production_route_eligible": false,
-    "user_workbooks_modified": false,
-    "candidate_outputs_created": 0,
-    "shared_layer_coordination_required": "Skip ZIP directory entries in both excel-editor workbook profiling and ooxml-patch unverified-part rejection; retain file-part checks and re-run full ImportRange preservation comparison.",
-    "target_linux_validation": "not performed",
-    "raw_values_paths_or_hashes_persisted": false
+    "candidate_execution_and_input_safety": "all 7 candidates wrote temporary output; all 7 input pairs remained unchanged",
+    "object_level_comparison": "completed_with_mismatches",
+    "package_level_comparison": "part-name and byte differences observed; see each sample",
+    "formula_recalculation": "not performed",
+    "python_baseline_style_limitation": "The old cross-workbook copier output has invalid font component references; copied-range styles are therefore compared to the source template, while values/formulas/comments/hyperlinks are compared to the Python baseline.",
+    "raw_values_paths_or_hashes_persisted": false,
+    "target_linux_validation": "not performed"
   }
 }

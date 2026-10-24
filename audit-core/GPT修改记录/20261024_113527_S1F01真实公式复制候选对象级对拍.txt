@@ -1,0 +1,51 @@
+# S1-F01 真实公式复制候选对象级对拍
+
+- 时间：2026-10-24 11:35（Asia/Shanghai）
+- 执行者：Codex audit-dev Agent
+- 修改前 commit：5eb919d（main 协调的 ZIP 目录项清点修复已安全同步到 audit-dev）
+- 修改后 commit：本记录随本轮提交，提交号由 Git 历史追溯。
+- WIP：保留既有 formula-copy probe 与 11:12 真实批次报告；本轮仅更新 Audit 测试比较器、脱敏候选证据和 S1-F01 清单。未修改 `DEVELOPMENT_GOAL.md`、源 Python、用户工作簿、`pytools-core/**`、公共 crates、根 Cargo 文件或 `Cargo.lock`。未发现 `audit-core/GPT修改记录/WIP.md`。
+
+## 目的
+
+main 修复共享 OOXML inventory 将 ZIP 目录标记算作未验证文件部件后，继续在用户给出的 2026-07-31 样本中执行 S1 公式范围复制候选。修正 Audit comparer 对 Python 跨工作簿复制后无效字体引用的依赖，使其逐坐标比较业务值、公式、批注、链接和实际预期样式；不根据候选尝试结果登记生产能力。
+
+## 修改文件
+
+- `audit-core/tests/compare/compare_s1_formula_copy_candidate.py`：将复制区域 cell 比较改为按坐标读取；复制区值/类型、公式、批注、超链接比较 Python 基线，复制样式比较源模板；未修改区值、类型、样式、批注和超链接比较原始目标。区分候选不可用、输入被改、对拍不完整和对象差异状态；输出 Python 基线字体引用问题。
+- `audit-core/probe/reports/s1_formula_copy_candidate_real_batch.json`：记录 7 个样本逐项安全性、对象差异和 ZIP 部件差异，不含路径、单元格值、公式文本或哈希。
+- `audit-core/MIGRATION_INVENTORY.md`：更新共享 ZIP 目录项修复后的真实候选证据，S1-F01 保持未验证。
+- 本记录。
+
+## 实际数据流与候选结果
+
+- Python 默认映射从模板解析 4 个复制范围；模板有 1,072 个公式单元格和 8 个结构区域。样本子批次共 68 个可发现工作簿，Python 结构预检接受 17 个，本轮按既有候选范围取 7 个逐本测试。
+- Rust 对每本目标以 direct、Unverified `UmyaXlsxBackend` 执行 4 个 `ImportRange` 和计算属性操作；不进入生产 CLI、不重算公式、不修改输入。7/7 目标包 inventory 完整并生成临时候选；7/7 输入前后保持不变。
+- 对拍 5,487 个复制区域单元格：值/类型、公式文本、批注位置/文本/作者、超链接差异均为 0。复制样式对照模板后，样本 1 有 100 个样式差异，样本 2–7 各有 802 个。
+- 未修改区每本对比 3,047 格：值/类型差异分别为 216、211、207、211、219、209、223；公式、样式、批注、超链接差异均为 0。Python/Rust 与原目标/Rust 工作簿元数据差异均为 0。
+- 每本 Python/Rust ZIP 输出观察到 17 个部件名差异（comments=8、drawings=8、other=1）和 19 个共同部件字节差异（Content_Types=1、other=4、relationships=2、styles=1、workbook=1、worksheets=10）。这些是序列化层观察，未单独推断为对象损坏；具体对象安全按上面的值/样式/批注/链接及元数据比较。
+- 旧 Python 输出的 style table 有无效 font component references（首个样本 1,012 个；源模板与目标为 0），导致旧 comparer 在 `openpyxl` 访问 copied-range font 时触发 `IndexError`。本轮不以该 Python 输出的复制区样式作为正确值；样式依据模板，Python 的缺陷单独报告。改进后的 comparer 完成 7/7 对拍，无 readback exception。
+- 候选存在真实的复制区样式差异和未修改区值/类型变化，因此能力维持 Unverified，生产路由资格为 false。以上证据见 `audit-core/probe/reports/s1_formula_copy_candidate_real_batch.json`。
+
+## 测试
+
+- Windows 原生 Python 3.12：`python -m py_compile audit-core/tests/compare/compare_s1_formula_copy_candidate.py` 通过。
+- WSL Ubuntu：真实批次 7 次调用 `cargo test -p audit-core --test s1_formula_copy_candidate --locked -- --ignored --nocapture` 均退出 0；候选文件可读回，但上列对象差异导致对拍不通过。此为共享引擎候选测试，不是生产能力验收。
+- `git diff --check`：待提交前复核。
+- Windows 原生 Rust、Windows Excel/WPS、麒麟 V10/UOS V20、目标 glibc/deb、公式重算及生产 CLI 公式复制尚未验证。
+
+## 未完成事项与已知问题
+
+- 当前 direct Umya ImportRange 候选在 7 个真实目标上改变了未修改区域的 207–223 个值/类型，并有 100/802 个 copied-range 样式差异；不能接入 S1 生产路径。
+- Python 基线的 cross-workbook style copy 本身产生无效字体组件引用；该现象只作为基线限制，不能反向证明 Rust 正确。
+- main 已收到共享引擎候选对象差异和 `read_defined_names` 已具备的确认；共享引擎修复按 main 协调执行。本分支不修改 public crates。
+- S1-F01 整体迁移/验收仍未完成。
+
+## 删除与回滚
+
+- 删除清单：无仓库文件删除。运行用的临时 manifest/候选工作簿/逐本报告在提交前按精确路径清理；用户源数据未改。
+- 回滚：本轮仅含 Audit 测试、脱敏报告和迁移清单，可单独 `git revert <本轮提交>`；不回滚 main 协调的共享提交。
+
+## 组件版本
+
+不升级；沿用当前 `audit-core` crate 版本。
