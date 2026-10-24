@@ -1,0 +1,38 @@
+# S1-F01 Rust 模板公式检查接入现有 GUI
+
+- 时间：2026-10-24 18:12（Asia/Shanghai）
+- 修改前 commit：c8f3d8c1ad82854d7b4c3e7c90640673bbdef4ec
+- 修改后 commit：本记录随本轮提交，提交号由 Git 历史追溯。
+- Worktree：原 C 盘工作区在 audit-dev 分支且开始时干净、与 origin/audit-dev 同步。因 C 盘无可用空间，在 F 盘建立同一提交的本地开发副本；没有覆盖原工作区。
+- WIP：开始时没有未提交或未跟踪改动；未发现 audit-core/GPT修改记录/WIP.md。未修改 DEVELOPMENT_GOAL.md、源 Python 项目、真实工作簿、pytools-core/**、公共 crates、根 Cargo 配置或 Cargo.lock。
+
+## 目的与改动
+
+将现有前端 checkTemplateFormulas() 调用接至 Rust，只读检查模板存储公式文本中的明确错误 token，并盘点三类业务命名区域、内部名称和其他名称。公式不重算，工作簿不修改。
+
+修改文件：
+
+- audit-core/src/s1_template_inspection.rs：使用现有 excel_reader::read_workbook 和 read_defined_names；保留原 Python 的 JSON 字段、错误消息、分类和展示顺序。为对齐 openpyxl 可见性，报告中不列出其隐藏的 _xlnm.* 内建定义名。
+- audit-core/src/lib.rs：注册 Audit S1 检查模块。
+- audit-core/src/web_bridge.rs：加入 choose_file(template)、清除模板选择和 inspect_template_formulas；接受现有 GUI 同步的路径字段。普通日志保留用户摘要，明细日志记录读取步骤、实际引擎与耗时。未改原前端 HTML。
+
+实际引擎：公式文本由 Calamine 读取，Defined Names 由 namespace-aware OOXML reader 补读；没有调用修改引擎、Python worker 或公式重算 sidecar。
+
+## 验证
+
+Windows 原生环境：rustc 1.99.1、cargo 1.99.1；Python 基线为 Windows Python 3.12.10 + openpyxl 3.1.5（不是 openpyxl worker 或 deb runtime）。
+
+- cargo fmt --package audit-core：通过。
+- cargo test --locked -p audit-core --lib template_inspection -- --nocapture：5 passed。
+- cargo test --locked -p audit-core --lib：91 passed。
+- cargo test --locked -p audit-core：通过；既有 1 个手动候选测试保持 ignored。
+- 用户提供压缩包中的 22 个真实模板只读对拍：Python base_audit.formula_inspection 与 Rust 报告逐字段一致，22/22。初测发现 openpyxl 不暴露 _xlnm.*，Rust 报告层按旧接口契约过滤后复测通过。源文件未修改；临时提取副本、脚本和 Rust probe 未进入仓库。自动安全策略拒绝本轮删除命令，副本仍在临时 F 盘目录及未跟踪 examples 中。
+- git diff --check：通过。
+- 未进行 Linux、目标 glibc 或 deb 验证；本轮是 Windows GUI bridge 的只读读取路径，不涉及跨平台进程或文件修改。
+
+## 未完成项、风险与回滚
+
+- 此功能只完成“检查模板”只读子功能，不代表 S1-F01 迁移验收完成。公式复制仍受既有 ExcelModifier 保真门禁阻挡，本轮未改变其生产路由。
+- Calamine/OOXML 元数据读取在 Linux 目标机的兼容性尚未验证；输入仅验证 .xlsx / .xlsm。
+- 没有删除受版本控制的文件；临时 probe 和样本副本仍留在工作环境、不纳入提交，清理命令受自动策略阻断。可使用单个普通 git revert <本轮提交> 回滚本轮代码与记录。
+- 【组件版本】audit-core 0.1.0，未升级。

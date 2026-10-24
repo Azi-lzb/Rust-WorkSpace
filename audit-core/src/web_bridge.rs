@@ -5,6 +5,7 @@
 
 use crate::{
     period_pairs::{list_period_pairs, report_source_warning},
+    s1_template_inspection::{inspect_s1_template, INSPECTION_ENGINE},
     s2_config_check::check_s2_config,
     s2_service::{run_s2_audit, S2ProgressEvent, S2RunRequest},
 };
@@ -124,6 +125,10 @@ impl AppState {
         });
         let s2_state = json!({
             "input": "",
+            "templateDir": "",
+            "template": "",
+            "templateManual": false,
+            "external": "",
             "output": "",
             "outputPinned": false,
             "pcCurDir": "",
@@ -303,7 +308,9 @@ fn dispatch_api(
         "get_state" => Ok(state.get_state()),
         "check_period_audit_config" => check_period_audit_config(state),
         "choose_period_compare" => choose_period_compare(state, args),
-        "clear_path" => clear_period_path(state, args),
+        "choose_file" => choose_file(state, args),
+        "clear_path" => clear_path(state, args),
+        "inspect_template_formulas" => inspect_template_formulas(state),
         "toggle_period_output_pin" => toggle_period_output_pin(state),
         "browse_dir" => browse_dir(state, args),
         "start_period_compare_v2" => start_period_compare_v2(state),
@@ -315,6 +322,118 @@ fn dispatch_api(
     }
 }
 
+fn choose_file(state: &AppState, args: &[Value]) -> std::result::Result<Value, ApiError> {
+    let field = arg_string(args, 0)
+        .ok_or_else(|| ApiError::new(StatusCode::BAD_REQUEST, "choose_file 缺少路径类型"))?;
+    if field != "template" {
+        return Err(ApiError::new(
+            StatusCode::NOT_IMPLEMENTED,
+            format!("Rust 迁移版暂不支持选择文件：{field}"),
+        ));
+    }
+    let selected = arg_string(args, 1).unwrap_or_default().trim();
+    if selected.is_empty() {
+        return Ok(json!(""));
+    }
+    let path = PathBuf::from(unquote_path(selected));
+    if !path.is_file() {
+        return Err(ApiError::new(
+            StatusCode::BAD_REQUEST,
+            format!("所选模板文件不存在：{}", path.display()),
+        ));
+    }
+    if !path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| {
+            extension.eq_ignore_ascii_case("xlsx") || extension.eq_ignore_ascii_case("xlsm")
+        })
+    {
+        return Err(ApiError::new(
+            StatusCode::BAD_REQUEST,
+            "模板公式检查目前只支持 .xlsx 和 .xlsm",
+        ));
+    }
+
+    let mut ui = state.lock();
+    if ui.value["busy"] == true {
+        return Err(ApiError::new(
+            StatusCode::CONFLICT,
+            "审核正在运行，暂不能更改路径",
+        ));
+    }
+    ui.value["template"] = json!(path.to_string_lossy());
+    ui.value["templateManual"] = json!(true);
+    push_log(&mut ui.value, "S1 模板：已选择待检查模板".to_owned());
+    Ok(ui.value["template"].clone())
+}
+
+fn inspect_template_formulas(state: &AppState) -> std::result::Result<Value, ApiError> {
+    let mut ui = state.lock();
+    if ui.value["busy"] == true {
+        return Err(ApiError::new(
+            StatusCode::CONFLICT,
+            "任务正在运行，请完成后再检查模板公式",
+        ));
+    }
+    let template = ui.value["template"]
+        .as_str()
+        .filter(|path| !path.trim().is_empty())
+        .map(PathBuf::from)
+        .ok_or_else(|| ApiError::new(StatusCode::BAD_REQUEST, "请先选择或自动识别匹配模板"))?;
+    let started = Instant::now();
+    let (report, read_elapsed_ms) = inspect_s1_template(&template).map_err(|error| {
+        ApiError::new(
+            StatusCode::BAD_REQUEST,
+            format!("模板公式检查失败：{error:#}"),
+        )
+    })?;
+    let formula_count = report.formula_count;
+    let error_count = report.errors.len();
+    let ranges = report
+        .named_range_groups
+        .iter()
+        .filter(|group| group.count > 0)
+        .map(|group| format!("{} {}个", group.family, group.count))
+        .collect::<Vec<_>>()
+        .join("、");
+    let other_count = report.other_names.len();
+    let internal_count = report.internal_names.len();
+    let value = serde_json::to_value(report)
+        .map_err(|error| ApiError::internal(format!("序列化模板检查结果失败：{error}")))?;
+    push_log(
+        &mut ui.value,
+        format!(
+            "检查模板：共 {formula_count} 个公式；明确错误 {error_count} 处；命名区域 {}；其他 {other_count} 个；内部名称 {internal_count} 个",
+            if ranges.is_empty() { "无" } else { &ranges }
+        ),
+    );
+    push_detail_log(
+        &mut ui.value,
+        format!(
+            "S1-F01 模板检查步骤：读取公式文本与命名区域；引擎 {INSPECTION_ENGINE}；读取耗时 {read_elapsed_ms} ms；总耗时 {} ms",
+            started.elapsed().as_millis()
+        ),
+    );
+    Ok(value)
+}
+
+fn clear_path(state: &AppState, args: &[Value]) -> std::result::Result<Value, ApiError> {
+    if arg_string(args, 0) == Some("template") {
+        let mut ui = state.lock();
+        if ui.value["busy"] == true {
+            return Err(ApiError::new(
+                StatusCode::CONFLICT,
+                "审核正在运行，暂不能清除路径",
+            ));
+        }
+        ui.value["template"] = json!("");
+        ui.value["templateManual"] = json!(false);
+        push_log(&mut ui.value, "S1 模板：已清除模板选择".to_owned());
+        return Ok(json!(true));
+    }
+    clear_period_path(state, args)
+}
 fn check_period_audit_config(state: &AppState) -> std::result::Result<Value, ApiError> {
     let config_path = state.lock().value["pcConfig"]
         .as_str()
@@ -741,6 +860,18 @@ fn update_state(state: &AppState, args: &[Value]) -> std::result::Result<Value, 
     }
     for (key, value) in updates {
         match key.as_str() {
+            "input" | "templateDir" | "template" | "external" | "output" => {
+                let Some(path) = value.as_str() else {
+                    return Err(ApiError::new(
+                        StatusCode::BAD_REQUEST,
+                        format!("{key} 必须是字符串"),
+                    ));
+                };
+                ui.value[key] = json!(path.trim());
+                if key == "template" && !path.trim().is_empty() {
+                    ui.value["templateManual"] = json!(true);
+                }
+            }
             "uiTheme" | "uiAccent" => {
                 if !value.is_string() {
                     return Err(ApiError::new(
@@ -902,6 +1033,16 @@ fn period_path_label(kind: &str) -> &'static str {
     }
 }
 
+fn push_detail_log(state: &mut Value, message: String) {
+    let Some(log) = state.get_mut("log").and_then(Value::as_array_mut) else {
+        return;
+    };
+    log.push(json!({"text": message, "detail": true}));
+    if log.len() > 200 {
+        let excess = log.len() - 200;
+        log.drain(0..excess);
+    }
+}
 fn push_log(state: &mut Value, message: String) {
     let Some(log) = state.get_mut("log").and_then(Value::as_array_mut) else {
         return;
@@ -941,6 +1082,7 @@ impl IntoResponse for ApiError {
 #[cfg(test)]
 mod tests {
     use super::{browse_dir, dispatch_api, render_index, AppState};
+    use excel_writer::Workbook;
     use serde_json::{json, Value};
     use std::{
         fs,
@@ -967,6 +1109,63 @@ mod tests {
         assert!(value["pcConfig"].is_string());
         assert_eq!(value["filePickerMode"], "浏览器内置");
         assert_eq!(value["busy"], false);
+        assert_eq!(value["template"], "");
+    }
+
+    #[test]
+    fn s1_template_inspection_is_reachable_through_the_existing_ui_api() {
+        let suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "audit_web_template_inspection_{}_{}.xlsx",
+            std::process::id(),
+            suffix
+        ));
+        let mut workbook = Workbook::new();
+        let sheet = workbook.add_worksheet();
+        sheet.set_name("检查表").expect("set sheet");
+        sheet
+            .write_formula(0, 0, "=1+#REF!")
+            .expect("write formula");
+        workbook
+            .define_name("校验区域_1", "='检查表'!$A$1")
+            .expect("define named range");
+        workbook.save(&path).expect("save workbook");
+
+        let state = test_state();
+        let chosen = dispatch_api(
+            &state,
+            "choose_file",
+            &[json!("template"), json!(path.to_string_lossy())],
+        )
+        .expect("choose template");
+        assert_eq!(chosen, json!(path.to_string_lossy()));
+        let report =
+            dispatch_api(&state, "inspect_template_formulas", &[]).expect("inspect template");
+        assert_eq!(report["template"], path.to_string_lossy().as_ref());
+        assert_eq!(report["formulaCount"], 1);
+        assert_eq!(report["errors"][0]["kind"], "公式");
+        assert_eq!(report["errors"][0]["token"], "#REF!");
+        assert_eq!(report["namedRangeGroups"][0]["count"], 1);
+        let logs = state.get_state()["log"].as_array().unwrap().clone();
+        assert!(logs.iter().any(|entry| entry["detail"] == false));
+        assert!(logs.iter().any(|entry| {
+            entry["detail"] == true
+                && entry["text"]
+                    .as_str()
+                    .is_some_and(|text| text.contains("calamine+namespace_aware_ooxml"))
+        }));
+        fs::remove_file(path).expect("remove workbook");
+    }
+
+    #[test]
+    fn s1_template_inspection_respects_busy_state() {
+        let state = test_state();
+        state.lock().value["busy"] = json!(true);
+        let error = dispatch_api(&state, "inspect_template_formulas", &[]).unwrap_err();
+        assert_eq!(error.status, axum::http::StatusCode::CONFLICT);
     }
 
     #[test]
