@@ -584,3 +584,11 @@ Windows 原生 Rust 验证：`cargo fmt --manifest-path pytools-core/Cargo.toml 
 另将只读 PyCode `run_summary_by_comment` 与本机编译的 `target/debug/pytools.exe summary-comments` 对拍三个合成场景：标准行/列区域（6 行）、重复行区域标记（6 行）和合并区域非锚点（3 行）。完整工作簿投影一致，比较值/类型、工作表名/维度、样式、冻结窗格、合并区域、公式、定义名称、打印区域、页面设置、页边距和居中属性。机器报告为 `probe/reports/summary_comments_windows_native_parity_20261025.json`。
 
 本次只补充 PT-6-2 的 Windows 原生环境证据，没有修改业务代码。证据仍只覆盖合成输入；真实批注区域模板、Windows 原生文件弹窗手工操作、麒麟 V10/UOS V20、glibc 2.28 和离线 deb 未验证，PT-6-2 生产验收仍为未验证。
+
+### 2026-10-25 PT-5-1/PT-5-2 配置工具交互菜单接入
+
+主菜单新增类别 5，并按只读 PyCode `main.py` 的 5-1/5-2 入口接入现有 Rust 配置能力。配置缺失或无法加载时仍可打开菜单；其他依赖配置的业务类别会提示先处理配置。5-1 在缺少配置时通过 Rust `initialize_new_config` 新建 11 张表；配置已存在时生成修复计划并保留原文件。只有显式提供匹配 capability/platform 才经 ExcelModifier 生成并校验候选，用户再输入 `y` 后才按原文件规划快照安全替换，保留备份。5-2 每次从磁盘读取，用户视图展示工作表维度、全局路径、启用规则/映射/提取任务摘要，开发者视图附原始配置结构及实际读取组件；打印阶段用时。没有已验收的生产修复 capability，因此菜单不默认修改现有配置。
+
+Windows 原生 `cargo fmt --manifest-path pytools-core/Cargo.toml -- --check` 通过；主菜单回归 31/31：`config_menu_cli` 2/2、`timeline_menu_cli` 3/3、`dedup_menu_cli` 1/1、`print_menu_cli` 1/1、`conversion_menu_cli` 1/1、`summary_menu_cli` 3/3、`batch_tools_menu_cli` 15/15、`fx_header_menu_cli` 4/4、`archive_menu_cli` 1/1。真实菜单覆盖缺失配置提示、5-1 初始化、5-2 磁盘重读以及既有配置的计划模式；新配置为 11 张工作表，计划模式的修复计划非空、候选未生成且输入配置字节不变。配置模板和值、表头批注与只读真实配置的 Python/Rust 对拍沿用 `probe/reports/config_admin_parity_20261023.json`；修复候选的 openpyxl worker 语义及保留项沿用 `tests/config_repair_execution.rs` 的既有候选验证。本轮未重新运行 Python 基线，也未用 capability 执行菜单中的候选提交。
+
+仍未完成真实用户配置文件的修改验收、生产 capability 登记、Windows 桌面交互、目标平台和离线 deb 验收；PT-5-1 修复生产验收继续为未验证。配置查看和菜单集成测试使用合成/本地配置，不写真实业务数据或运行历史。

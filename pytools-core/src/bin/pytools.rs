@@ -9,7 +9,10 @@ use pytools_core::batch_ops::{
     build_village_split_plan,
 };
 use pytools_core::batch_rename::run_batch_rename as run_batch_rename_business;
-use pytools_core::config::{load_extract_tasks, load_global, GlobalConfig};
+use pytools_core::config::{
+    load_extract_tasks, load_foreign_banks, load_global, load_institution_mapping,
+    load_timeline_rules, GlobalConfig,
+};
 use pytools_core::config_admin::{build_config_repair_plan, initialize_new_config, view_config};
 use pytools_core::conversion::{
     convert_excel_files_in_source_folders, convert_excel_files_to, convert_one,
@@ -162,12 +165,13 @@ fn run_interactive_menu(arguments: Vec<String>) -> Result<()> {
         capabilities.is_some() == platform.is_some(),
         "--capabilities and --platform must be provided together"
     );
-    let global = load_global(&config_path).with_context(|| {
-        format!(
-            "load PyTools global configuration {}",
-            config_path.display()
-        )
-    })?;
+    let (mut global, mut config_error) = match load_global(&config_path) {
+        Ok(global) => (global, None),
+        Err(error) => (
+            fallback_menu_global(&config_path)?,
+            Some(format!("{error:#}")),
+        ),
+    };
 
     let stdin = io::stdin();
     let allow_native_dialog = stdin.is_terminal();
@@ -178,12 +182,30 @@ fn run_interactive_menu(arguments: Vec<String>) -> Result<()> {
         &mut input,
         &mut output,
         &config_path,
-        &global,
+        &mut global,
+        &mut config_error,
         log_view,
         allow_native_dialog,
         capabilities.as_deref(),
         platform.as_deref(),
     )
+}
+
+fn fallback_menu_global(config_path: &Path) -> Result<GlobalConfig> {
+    let base = config_path
+        .parent()
+        .and_then(Path::parent)
+        .unwrap_or_else(|| Path::new("."));
+    let base = if base.is_absolute() {
+        base.to_path_buf()
+    } else {
+        std::env::current_dir()?.join(base)
+    };
+    Ok(GlobalConfig::new(
+        base.join("input"),
+        base.join("output"),
+        base.join("logs"),
+    ))
 }
 
 fn default_app_config_path() -> PathBuf {
@@ -199,7 +221,8 @@ fn run_interactive_main_menu<R, W>(
     input: &mut R,
     output: &mut W,
     config_path: &Path,
-    global: &GlobalConfig,
+    global: &mut GlobalConfig,
+    config_error: &mut Option<String>,
     log_view: &str,
     allow_native_dialog: bool,
     capabilities: Option<&Path>,
@@ -215,15 +238,40 @@ where
         writeln!(output, "  2  去重工具（检查与生成计划）")?;
         writeln!(output, "  3  打印工具（生成页面设置计划）")?;
         writeln!(output, "  4  转换与文件命名工具")?;
+        writeln!(output, "  5  配置工具")?;
         writeln!(output, "  6  汇总工具")?;
         writeln!(output, "  7  一二批处理工具（当前接入 7-1 至 7-8）")?;
         writeln!(output, "  8  归档工具")?;
         writeln!(output, "  0  退出")?;
         writeln!(output, "==============================")?;
+        if let Some(error) = config_error.as_deref() {
+            if log_view == "developer" {
+                writeln!(
+                    output,
+                    "[配置不可用] {}；请先使用 5-1 初始化/修复配置表（{error}）",
+                    config_path.display()
+                )?;
+            } else {
+                writeln!(
+                    output,
+                    "[配置不可用] {}；请先使用 5-1 初始化/修复配置表。",
+                    config_path.display()
+                )?;
+            }
+        }
         let Some(choice) = read_menu_choice(input, output, "主菜单选择> ")? else {
             writeln!(output, "再见。")?;
             return Ok(());
         };
+        if matches!(choice.as_str(), "1" | "2" | "3" | "4" | "6" | "7" | "8")
+            && config_error.is_some()
+        {
+            writeln!(
+                output,
+                "当前配置不可用，该工具暂不能运行；请先进入 5 配置工具。"
+            )?;
+            continue;
+        }
         match choice.as_str() {
             "1" => run_interactive_timeline_menu(
                 input,
@@ -245,6 +293,16 @@ where
                 config_path,
                 global,
                 allow_native_dialog,
+            )?,
+            "5" => run_interactive_config_menu(
+                input,
+                output,
+                config_path,
+                global,
+                config_error,
+                log_view,
+                capabilities,
+                platform,
             )?,
             "6" => {
                 run_interactive_summary_menu(input, output, global, log_view, allow_native_dialog)?
@@ -271,8 +329,334 @@ where
                 writeln!(output, "再见。")?;
                 return Ok(());
             }
-            _ => writeln!(output, "仅接受 1、2、3、4、6、7、8 或 0")?,
+            _ => writeln!(output, "仅接受 1、2、3、4、5、6、7、8 或 0")?,
         }
+    }
+}
+
+fn run_interactive_config_menu<R, W>(
+    input: &mut R,
+    output: &mut W,
+    config_path: &Path,
+    global: &mut GlobalConfig,
+    config_error: &mut Option<String>,
+    log_view: &str,
+    capabilities: Option<&Path>,
+    platform: Option<&str>,
+) -> Result<()>
+where
+    R: BufRead,
+    W: Write,
+{
+    loop {
+        writeln!(output, "------ 配置工具 ------")?;
+        writeln!(output, "  1  初始化/修复配置表")?;
+        writeln!(output, "  2  查看当前配置（重新读取磁盘）")?;
+        writeln!(output, "  0  返回")?;
+        writeln!(output, "----------------------")?;
+        let Some(choice) = read_menu_choice(input, output, "子菜单选择> ")? else {
+            return Ok(());
+        };
+        match choice.as_str() {
+            "1" => {
+                if let Err(error) = run_interactive_config_initialize_or_repair(
+                    input,
+                    output,
+                    config_path,
+                    global,
+                    config_error,
+                    log_view,
+                    capabilities,
+                    platform,
+                ) {
+                    if log_view == "developer" {
+                        writeln!(output, "[配置操作失败] {error:#}")?;
+                    } else {
+                        writeln!(
+                            output,
+                            "[配置操作失败] 请检查配置文件是否为有效的 .xlsx，再重试或联系开发者。"
+                        )?;
+                    }
+                }
+            }
+            "2" => {
+                let view_started = Instant::now();
+                match view_config(config_path) {
+                    Ok(view) => {
+                        writeln!(output, "配置文件: {}", config_path.display())?;
+                        if let Ok(modified) =
+                            fs::metadata(config_path).and_then(|metadata| metadata.modified())
+                        {
+                            let modified = chrono::DateTime::<Local>::from(modified);
+                            writeln!(output, "最后修改: {}", modified.format("%Y-%m-%d %H:%M:%S"))?;
+                        }
+                        writeln!(output, "Sheet 列表（{}）:", view.sheets.len())?;
+                        for sheet in &view.sheets {
+                            let row_count = sheet
+                                .rows
+                                .iter()
+                                .skip(1)
+                                .filter(|row| {
+                                    row.iter().any(|value| {
+                                        !value.is_null()
+                                            && value.as_str().is_none_or(|text| !text.is_empty())
+                                    })
+                                })
+                                .count();
+                            let column_count = sheet.rows.first().map(Vec::len).unwrap_or(0);
+                            writeln!(
+                                output,
+                                "  - {}: {} 行 × {} 列",
+                                sheet.name, row_count, column_count
+                            )?;
+                        }
+                        if log_view == "developer" {
+                            writeln!(
+                                output,
+                                "原始配置视图: {}",
+                                serde_json::to_string_pretty(&view)?
+                            )?;
+                            writeln!(output, "实际读取组件: excel-reader / Calamine")?;
+                        } else {
+                            match load_global(config_path) {
+                                Ok(config) => {
+                                    writeln!(output, "全局配置解析:")?;
+                                    writeln!(output, "  输入目录: {}", config.input_dir.display())?;
+                                    writeln!(
+                                        output,
+                                        "  输出目录: {}",
+                                        config.output_dir.display()
+                                    )?;
+                                    writeln!(output, "  日志目录: {}", config.log_dir.display())?;
+                                    writeln!(output, "  源文件扩展名: {:?}", config.source_exts)?;
+                                }
+                                Err(error) => {
+                                    if log_view == "developer" {
+                                        writeln!(output, "  [全局配置解析失败] {error:#}")?;
+                                    } else {
+                                        writeln!(
+                                            output,
+                                            "  [全局配置解析失败] 请使用 5-1 初始化/修复配置表。"
+                                        )?;
+                                    }
+                                }
+                            }
+                            if let Ok(rules) = load_timeline_rules(config_path) {
+                                let enabled =
+                                    rules.iter().filter(|rule| rule.enabled).collect::<Vec<_>>();
+                                writeln!(output, "时序提取规则（启用）: {} 条", enabled.len())?;
+                                for rule in enabled {
+                                    writeln!(
+                                        output,
+                                        "  · {}  wb={}  sheet={}",
+                                        rule.name, rule.wb_keyword, rule.sheet_keyword
+                                    )?;
+                                }
+                            }
+                            if let (Ok(mapping), Ok(foreign)) = (
+                                load_institution_mapping(config_path),
+                                load_foreign_banks(config_path),
+                            ) {
+                                writeln!(
+                                    output,
+                                    "机构映射: {} 条；外资行: {} 个",
+                                    mapping.len(),
+                                    foreign.len()
+                                )?;
+                            }
+                            if let Ok(tasks) = load_extract_tasks(config_path) {
+                                writeln!(output, "工作表提取任务（启用）: {} 条", tasks.len())?;
+                            }
+                        }
+                        writeln!(output, "用时={}ms", view_started.elapsed().as_millis())?;
+                        refresh_interactive_global(config_path, global, config_error);
+                        if let Some(error) = config_error.as_deref() {
+                            if log_view == "developer" {
+                                writeln!(output, "[全局配置不可用] {error}")?;
+                            } else {
+                                writeln!(
+                                    output,
+                                    "[全局配置不可用] 请使用 5-1 初始化/修复配置表。"
+                                )?;
+                            }
+                        }
+                    }
+                    Err(_error) if !config_path.is_file() => {
+                        writeln!(
+                            output,
+                            "[缺失] 配置文件 {} 不存在，请先选择 5-1 初始化/修复配置表。",
+                            config_path.display()
+                        )?;
+                    }
+                    Err(error) => {
+                        *config_error = Some(format!("{error:#}"));
+                        if log_view == "developer" {
+                            writeln!(output, "[读取失败] {error:#}")?;
+                        } else {
+                            writeln!(
+                                output,
+                                "[读取失败] 请检查配置文件，或使用 5-1 初始化/修复配置表。"
+                            )?;
+                        }
+                    }
+                }
+            }
+            "0" => return Ok(()),
+            _ => writeln!(output, "仅接受 1、2 或 0")?,
+        }
+    }
+}
+
+fn run_interactive_config_initialize_or_repair<R, W>(
+    input: &mut R,
+    output: &mut W,
+    config_path: &Path,
+    global: &mut GlobalConfig,
+    config_error: &mut Option<String>,
+    log_view: &str,
+    capabilities: Option<&Path>,
+    platform: Option<&str>,
+) -> Result<()>
+where
+    R: BufRead,
+    W: Write,
+{
+    anyhow::ensure!(
+        config_path
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("xlsx")),
+        "PyTools configuration must use the .xlsx format"
+    );
+
+    if !config_path.exists() {
+        let initialize_started = Instant::now();
+        writeln!(output, "正在新建 PyTools 配置表……")?;
+        let result = initialize_new_config(config_path)?;
+        writeln!(
+            output,
+            "[完成] 已新建配置表：{}（{} 张工作表，用时={}ms）",
+            result.path.display(),
+            result.sheets,
+            initialize_started.elapsed().as_millis()
+        )?;
+        if log_view == "developer" {
+            writeln!(output, "实际写入引擎: rust_xlsxwriter")?;
+        }
+        refresh_interactive_global(config_path, global, config_error);
+        if let Some(error) = config_error.as_deref() {
+            if log_view == "developer" {
+                writeln!(output, "[全局配置加载失败] {error}")?;
+            } else {
+                writeln!(
+                    output,
+                    "[全局配置加载失败] 请检查新建配置表，必要时选择 5-1 修复。"
+                )?;
+            }
+        }
+        return Ok(());
+    }
+
+    let output_dir = unique_menu_action_dir(&global.output_dir, "config-repair");
+    let candidate_path = output_dir.join("config-candidate.xlsx");
+    let plan_path = output_dir.join("repair-plan.json");
+    let original_sha256 = sha256_file(config_path)?;
+    let plan_started = Instant::now();
+    let Some(plan) = build_config_repair_plan(config_path, &candidate_path)? else {
+        writeln!(
+            output,
+            "[无需修复] 当前配置已经完整：{}",
+            config_path.display()
+        )?;
+        refresh_interactive_global(config_path, global, config_error);
+        return Ok(());
+    };
+    fs::create_dir_all(&output_dir)?;
+    fs::write(&plan_path, serde_json::to_vec_pretty(&plan)?)?;
+    writeln!(
+        output,
+        "[计划已生成] 共 {} 项操作，用时={}ms：{}",
+        plan.operations.len(),
+        plan_started.elapsed().as_millis(),
+        plan_path.display()
+    )?;
+
+    let (Some(capabilities), Some(platform)) = (capabilities, platform) else {
+        writeln!(
+            output,
+            "当前为计划模式；源配置未修改，也未生成候选。启动菜单时提供 --capabilities <json> 与 --platform <id>，且二者须匹配已验收能力，才可执行候选。"
+        )?;
+        if log_view == "developer" {
+            writeln!(
+                output,
+                "实际读取组件: excel-reader / Calamine 与 OOXML worksheet extent reader；修改引擎: 未执行"
+            )?;
+        }
+        return Ok(());
+    };
+
+    verify_planning_snapshot(config_path, Some(&original_sha256))?;
+    let execution_started = Instant::now();
+    let execution = apply_plan_with_capability_file(&plan, capabilities, platform)?;
+    let _candidate_view = view_config(&candidate_path)?;
+    let _candidate_global = load_global(&candidate_path)?;
+    writeln!(
+        output,
+        "[候选已验证] {}；源配置仍未替换；执行用时={}ms。",
+        candidate_path.display(),
+        execution_started.elapsed().as_millis()
+    )?;
+    if log_view == "developer" {
+        writeln!(
+            output,
+            "实际执行信息: {}",
+            serde_json::to_string(&execution)?
+        )?;
+    }
+    let confirm = read_menu_choice(
+        input,
+        output,
+        "确认用该候选替换当前配置？输入 y 确认；默认保留原文件> ",
+    )?;
+    if confirm
+        .as_deref()
+        .is_some_and(|answer| matches!(answer.to_ascii_lowercase().as_str(), "y" | "yes"))
+    {
+        let commit_started = Instant::now();
+        let committed =
+            replace_target_from_candidate(&candidate_path, config_path, &original_sha256)?;
+        writeln!(
+            output,
+            "[完成] 配置已安全更新：{}；原文件备份：{}；提交用时={}ms",
+            committed.target.display(),
+            committed
+                .backup_path
+                .as_deref()
+                .map(|path| path.display().to_string())
+                .unwrap_or_else(|| "无".to_owned()),
+            commit_started.elapsed().as_millis()
+        )?;
+        refresh_interactive_global(config_path, global, config_error);
+        if let Some(error) = config_error.as_deref() {
+            anyhow::bail!("updated configuration cannot be loaded: {error}");
+        }
+    } else {
+        writeln!(output, "未替换当前配置；候选文件保留在输出目录。")?;
+    }
+    Ok(())
+}
+
+fn refresh_interactive_global(
+    config_path: &Path,
+    global: &mut GlobalConfig,
+    config_error: &mut Option<String>,
+) {
+    match load_global(config_path) {
+        Ok(refreshed) => {
+            *global = refreshed;
+            *config_error = None;
+        }
+        Err(error) => *config_error = Some(format!("{error:#}")),
     }
 }
 
@@ -7282,7 +7666,7 @@ fn print_usage() {
     eprintln!(
         "Usage:\n\
          pytools [menu] [--config <config.xlsx>] [--log-view user|developer|off] [--capabilities <json> --platform <id>]\n\
-         no command opens the migrated menu; available categories: 1 (timeline 1/3/4/5), 2 (dedup 1-6), 3 (print 1-4), 4 (conversion and file naming 1-10), 6 (summary 1/2), 7 (batch 7-1/7-8), and 8 (archive 1-5)\n\
+         no command opens the migrated menu; available categories: 1 (timeline 1/3/4/5), 2 (dedup 1-6), 3 (print 1-4), 4 (conversion and file naming 1-10), 5 (configuration 1/2), 6 (summary 1/2), 7 (batch 7-1/7-8), and 8 (archive 1-5)\n\
          timeline-precheck --config <workbook.xlsx>\n\
          timeline-compare --config <workbook.xlsx> --template <workbook.xlsx> <source.xlsx>...\n\
          wide-summary --config <workbook.xlsx> <source.xlsx>...\n\
