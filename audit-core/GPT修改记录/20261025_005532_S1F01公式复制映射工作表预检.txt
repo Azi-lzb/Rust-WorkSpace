@@ -1,0 +1,13 @@
+# S1-F01 公式复制目标工作表预检
+
+- 时间：2026-10-25 00:55 +08:00；执行者：Audit 专属开发 Agent。
+- 修改前 commit：`5daa3f2`；修改后 commit：包含本记录的本地功能提交。
+- WIP：修改前 `audit-dev` 工作树干净，与 `origin/audit-dev` 同步。
+- 目的：在构造 S1 公式复制 `ExcelEditPlan` 时，先确认目标簿包含模板每个复制区域映射的工作表；与只读 Python 基线在目标缺表时的拒绝行为一致，避免将无效计划交给 ExcelModifier。
+- 文件：`audit-core/src/s1_formula_copy.rs`；新增目标缺少映射工作表的合成回归测试。调用既有共享 `excel_reader::read_xlsx_sheet_names_ooxml`，未改共享 crate、配置、VBA 或入口。
+- 测试：`rustfmt --edition 2024 --check audit-core/src/s1_formula_copy.rs` 通过；`cargo test --offline --locked -p audit-core --lib s1_formula_copy::tests -j 1` 通过（6/6）；`git diff --check` 通过。`cargo fmt --all -- --check` 还会报告多个未修改文件的格式差异；格式化命令产生的无关改动已逐文件恢复。
+- 样本诊断：用户提供目录中最初筛出的个人贷款目标只有 2 张工作表，模板映射涉及的 4 个工作表均不匹配；未把该错配文件作为公式复制候选、未创建输出，也未记录工作表名或单元格内容。
+- 未执行：真实公式复制写回与对象对拍、公式重算、完整 S1-F01 及目标 Linux 验收。生产公式复制能力仍为 Unverified。
+- 已知问题：现有修改引擎候选仍受合并单元格/公式缓存保护或对象保留差异限制。本变更只增加业务计划前置校验，不放宽共享安全门，也不改变生产路由。
+- 版本：不升级。
+- 删除与回滚：无删除；可用 `git revert <本次功能提交>` 回滚本变更。

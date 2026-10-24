@@ -7,14 +7,14 @@
 
 use crate::{
     models::CopyRange,
-    s1_template_rules::{load_s1_template_rule_plan, S1TemplateRuleSummary},
+    s1_template_rules::{S1TemplateRuleSummary, load_s1_template_rule_plan},
 };
-use anyhow::{ensure, Context, Result};
+use anyhow::{Context, Result, ensure};
 use excel_editor::{
-    inspect_xlsx_profile, EditOperation, ExcelEditPlan, PreservationRequirement, RangeStyleMode,
-    WorkbookProfile,
+    EditOperation, ExcelEditPlan, PreservationRequirement, RangeStyleMode, WorkbookProfile,
+    inspect_xlsx_profile,
 };
-use excel_reader::{read_ooxml_comments, WorkbookComment};
+use excel_reader::{WorkbookComment, read_ooxml_comments};
 use std::{collections::BTreeMap, fs, path::Path};
 
 #[derive(Clone, Debug)]
@@ -81,6 +81,17 @@ pub fn build_s1_formula_copy_edit_plan(
         "S1 模板没有可复制的公式区域"
     );
     let target_profile = inspect_xlsx_profile(target_workbook).context("检查 S1 目标工作簿结构")?;
+    let target_sheet_names = excel_reader::read_xlsx_sheet_names_ooxml(target_workbook)
+        .context("读取 S1 目标工作簿工作表名")?;
+    for range in &template.definition.copy_ranges {
+        ensure!(
+            target_sheet_names
+                .iter()
+                .any(|sheet_name| sheet_name == &range.sheet_name),
+            "S1 公式复制目标工作簿缺少模板映射工作表“{}”",
+            range.sheet_name
+        );
+    }
     let template_profile =
         inspect_xlsx_profile(template_workbook).context("检查 S1 公式模板结构")?;
     let template_comments =
@@ -346,9 +357,13 @@ mod tests {
     }
 
     fn write_target(path: &Path) {
+        write_target_with_sheet(path, "检查表");
+    }
+
+    fn write_target_with_sheet(path: &Path, sheet_name: &str) {
         let mut workbook = Workbook::new();
         let sheet = workbook.add_worksheet();
-        sheet.set_name("检查表").expect("name target sheet");
+        sheet.set_name(sheet_name).expect("name target sheet");
         sheet
             .write_string(0, 0, "target value")
             .expect("write target value");
@@ -401,6 +416,29 @@ mod tests {
         ));
         assert!(!output.exists(), "plan construction must not write output");
 
+        fs::remove_dir_all(directory).expect("remove formula-copy test directory");
+    }
+
+    #[test]
+    fn refuses_formula_copy_when_target_lacks_a_mapped_template_sheet() {
+        let directory = temporary_directory();
+        let target = directory.join("target.xlsx");
+        let template = directory.join("template.xlsx");
+        let output = directory.join("output.xlsx");
+        write_target_with_sheet(&target, "其他工作表");
+        write_template(&template);
+
+        let error = build_s1_formula_copy_edit_plan(&target, &template, &output, None)
+            .expect_err("missing target sheet must stop plan construction");
+
+        assert!(
+            format!("{error:#}").contains("目标工作簿缺少模板映射工作表"),
+            "{error:#}"
+        );
+        assert!(
+            !output.exists(),
+            "preflight must not create candidate output"
+        );
         fs::remove_dir_all(directory).expect("remove formula-copy test directory");
     }
 
