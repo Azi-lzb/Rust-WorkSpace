@@ -36,13 +36,22 @@ def digest(path: Path) -> str:
     return result.hexdigest()
 
 
-def write_source(path: Path, rows: dict[int, tuple[Any, Any]]) -> None:
+def write_source(
+    path: Path,
+    rows: dict[int, tuple[Any, Any]],
+    local_value: str,
+    global_value: str | None = None,
+) -> None:
     workbook = Workbook()
     sheet = workbook.active
     sheet.title = "Data"
+    sheet["F1"] = local_value
     for row_number, values in rows.items():
         sheet.cell(row_number, 2, values[0])
         sheet.cell(row_number, 3, values[1])
+    if global_value is not None:
+        metadata_sheet = workbook.create_sheet("Meta")
+        metadata_sheet["A1"] = global_value
     workbook.save(path)
 
 
@@ -153,8 +162,13 @@ def main() -> int:
         output_dir.mkdir()
         alpha = input_dir / "!Alpha_20260731.xlsx"
         beta = input_dir / "Beta_20260731.xlsx"
-        write_source(alpha, {4: ("甲", 10), 5: (None, 0), 7: ("乙", 20)})
-        write_source(beta, {4: ("丙", 30), 5: ("丁", 40)})
+        write_source(
+            alpha,
+            {4: ("甲", 10), 5: (None, 0), 7: ("乙", 20)},
+            "甲组",
+            "批次甲",
+        )
+        write_source(beta, {4: ("丙", 30), 5: ("丁", 40)}, "乙组")
         input_files = [alpha, beta]
         before = {path: digest(path) for path in input_files}
         features = (
@@ -244,11 +258,14 @@ def main() -> int:
             "rust_events": len(rust_events),
             "source_workbooks": rust_payload["summary"]["source_workbooks"],
             "source_sheets": rust_payload["summary"]["source_sheets"],
+            "metadata_fields_left_blank": rust_payload["summary"][
+                "metadata_fields_left_blank"
+            ],
             "output_sheets": rust_payload["summary"]["output_sheets"],
             "data_rows": rust_payload["summary"]["data_rows"],
             "input_files_unchanged": all(digest(path) == value for path, value in before.items()),
             "comparison": comparison,
-            "scope": "Windows synthetic formula-free XLSX; named arbitrary/fixed rows; merged multi-row header; values, types, sheet order, dimensions, number formats, header style, filter and freeze compared; no fallback template, extra metadata, history enrichment, real template or Linux runtime",
+            "scope": "Windows synthetic formula-free XLSX; named arbitrary/fixed rows; global/local single-cell metadata fields; missing source metadata sheet leaves the global field blank; merged multi-row header; values, types, sheet order, dimensions, number formats, header style, filter and freeze compared; no fallback template, history enrichment, real template or Linux runtime",
         }
         encoded = json.dumps(report, ensure_ascii=False, indent=2) + "\n"
         if args.report:

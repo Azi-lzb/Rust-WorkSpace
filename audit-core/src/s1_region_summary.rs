@@ -7,15 +7,15 @@
 
 use crate::{
     name_config::{
-        load_s1_region_summary_mappings, resolve_named_ranges_for_mappings,
+        load_s1_region_summary_mappings, resolve_named_ranges_for_mappings, NamedRangeArea,
         FIXED_ROW_SUMMARY_FUNCTION, USED_RANGE_SUMMARY_FUNCTION,
     },
     template::normalize_template_name,
 };
 use anyhow::{bail, ensure, Context, Result};
 use excel_reader::{
-    read_defined_names, read_workbook, read_xlsx_worksheet_extents, CellValue, DefinedNameRecord,
-    SheetDump, WorkbookDump, WorksheetExtent,
+    read_defined_names, read_workbook, read_xlsx_worksheet_extents, CellValue,
+    DefinedNameParseStatus, DefinedNameRecord, SheetDump, WorkbookDump, WorksheetExtent,
 };
 use excel_writer::{Color, Format, Workbook};
 use serde::Serialize;
@@ -48,6 +48,7 @@ pub struct S1RegionSummarySummary {
     pub output_sheets: usize,
     pub data_rows: usize,
     pub skipped_missing_sheets: usize,
+    pub metadata_fields_left_blank: usize,
     pub reader: &'static str,
     pub writer: &'static str,
     pub discovery_time_ms: u128,
@@ -71,8 +72,16 @@ struct RegionGroup {
     feature_name: String,
     template_sheet_name: String,
     output_sheet_name: String,
+    extra_fields: Vec<SummaryField>,
     headers: Vec<String>,
     rows: Vec<Vec<CellValue>>,
+}
+
+#[derive(Clone, Debug)]
+struct SummaryField {
+    name: String,
+    range: NamedRangeArea,
+    bounds: Bounds,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -162,9 +171,8 @@ pub fn summarize_s1_named_regions(
             .any(|sheet| sheet.name.eq_ignore_ascii_case("兜底模板")),
         "S1-F02 模板含“兜底模板”工作表；当前 Rust 命名区域汇总尚未迁移兜底汇总"
     );
-    ensure_no_unsupported_metadata_names(&defined_names)?;
-
     let areas = crate::name_config::named_areas_from_defined_names(&defined_names);
+    let (global_summary_fields, local_summary_fields) = parse_summary_fields(&defined_names)?;
     let template_sheet_names = template
         .sheets
         .iter()
@@ -208,6 +216,7 @@ pub fn summarize_s1_named_regions(
     let mut groups = Vec::<RegionGroup>::new();
     let mut feature_count = 0;
     let mut skipped_missing_sheets = 0;
+    let mut metadata_fields_left_blank = 0;
     let mut calculation_time_ms = 0_u128;
 
     for mapping in &selected_mappings {
@@ -301,6 +310,11 @@ pub fn summarize_s1_named_regions(
             }
             let header_values =
                 read_header_values(template_sheet, &template_grid, header_bounds, left, right)?;
+            let extra_fields = summary_fields_for_sheet(
+                &global_summary_fields,
+                &local_summary_fields,
+                &data_range.sheet_name,
+            )?;
 
             let group_key = data_range.sheet_name.to_lowercase();
             let group_index = if let Some(index) = feature_group_indices.get(&group_key) {
@@ -312,12 +326,26 @@ pub fn summarize_s1_named_regions(
                     feature_name: mapping.name.clone(),
                     template_sheet_name: data_range.sheet_name.clone(),
                     output_sheet_name: String::new(),
+                    extra_fields: extra_fields.clone(),
                     headers: header_values,
                     rows: Vec::new(),
                 });
                 index
             };
             let group = &mut groups[group_index];
+            ensure!(
+                group
+                    .extra_fields
+                    .iter()
+                    .map(|field| &field.name)
+                    .collect::<Vec<_>>()
+                    == extra_fields
+                        .iter()
+                        .map(|field| &field.name)
+                        .collect::<Vec<_>>(),
+                "汇总功能“{}”的附加字段定义不一致",
+                mapping.name
+            );
             ensure!(
                 group.headers.len() == right - left + 1,
                 "汇总功能“{}”的表头区域列数不一致",
@@ -360,6 +388,35 @@ pub fn summarize_s1_named_regions(
 
                 let calculation_started = Instant::now();
                 let source_grid = decode_sheet_values(source_sheet)?;
+                let mut source_grids =
+                    HashMap::<String, Option<BTreeMap<(usize, usize), CellValue>>>::new();
+                source_grids.insert(source_sheet.name.to_lowercase(), Some(source_grid.clone()));
+                let mut extra_values = Vec::with_capacity(group.extra_fields.len());
+                for field in &group.extra_fields {
+                    let metadata_sheet_key = field.range.sheet_name.to_lowercase();
+                    if !source_grids.contains_key(&metadata_sheet_key) {
+                        let metadata_sheet = source_workbook
+                            .sheets
+                            .iter()
+                            .find(|sheet| sheet.name.eq_ignore_ascii_case(&field.range.sheet_name));
+                        let metadata_grid = metadata_sheet.map(decode_sheet_values).transpose()?;
+                        source_grids.insert(metadata_sheet_key.clone(), metadata_grid);
+                    }
+                    match source_grids
+                        .get(&metadata_sheet_key)
+                        .and_then(Option::as_ref)
+                    {
+                        Some(metadata_grid) => extra_values.push(cell_value(
+                            metadata_grid,
+                            field.bounds.top,
+                            field.bounds.left,
+                        )),
+                        None => {
+                            metadata_fields_left_blank += 1;
+                            extra_values.push(CellValue::Empty);
+                        }
+                    }
+                }
                 let source_stem = source_path
                     .file_stem()
                     .and_then(|name| name.to_str())
@@ -370,9 +427,11 @@ pub fn summarize_s1_named_regions(
                         .map(|column| cell_value(&source_grid, row_number, column))
                         .collect::<Vec<_>>();
                     if row.iter().any(|value| !is_empty_value(value)) {
-                        let mut output_row = Vec::with_capacity(row.len() + 2);
+                        let mut output_row =
+                            Vec::with_capacity(row.len() + group.extra_fields.len() + 2);
                         output_row.push(CellValue::Text(source_name.clone()));
                         output_row.push(CellValue::Text(source_sheet.name.clone()));
+                        output_row.extend(extra_values.iter().cloned());
                         output_row.extend(row);
                         group.rows.push(output_row);
                     }
@@ -388,7 +447,8 @@ pub fn summarize_s1_named_regions(
         group.output_sheet_name =
             output_sheet_name(&group.template_sheet_name, &mut used_sheet_names);
         ensure!(
-            group.rows.len() + 1 <= MAX_ROWS && group.headers.len() + 2 <= MAX_COLUMNS,
+            group.rows.len() + 1 <= MAX_ROWS
+                && group.headers.len() + group.extra_fields.len() + 2 <= MAX_COLUMNS,
             "S1-F02 汇总输出超过 XLSX 的最大行列数"
         );
     }
@@ -427,6 +487,12 @@ pub fn summarize_s1_named_regions(
                     CellValue::Text("来源文件".to_owned()),
                     CellValue::Text("来源工作表".to_owned()),
                 ];
+                headers.extend(
+                    group
+                        .extra_fields
+                        .iter()
+                        .map(|field| CellValue::Text(field.name.clone())),
+                );
                 headers.extend(group.headers.iter().cloned().map(CellValue::Text));
                 write_row(worksheet, 0, &headers, &header_format)?;
                 for (row_index, row) in group.rows.iter().enumerate() {
@@ -473,7 +539,7 @@ pub fn summarize_s1_named_regions(
             feature_name: group.feature_name.clone(),
             sheet_name: group.output_sheet_name.clone(),
             row_count: group.rows.len(),
-            column_count: group.headers.len() + 2,
+            column_count: group.headers.len() + group.extra_fields.len() + 2,
         })
         .collect::<Vec<_>>();
     let data_rows = sheets.iter().map(|sheet| sheet.row_count).sum();
@@ -485,6 +551,7 @@ pub fn summarize_s1_named_regions(
         output_sheets: sheets.len(),
         data_rows,
         skipped_missing_sheets,
+        metadata_fields_left_blank,
         reader: READER_ENGINE,
         writer: WRITER_ENGINE,
         discovery_time_ms,
@@ -498,18 +565,96 @@ pub fn summarize_s1_named_regions(
     })
 }
 
-fn ensure_no_unsupported_metadata_names(records: &[DefinedNameRecord]) -> Result<()> {
-    let unsupported = records
-        .iter()
-        .map(|record| record.name.as_str())
-        .filter(|name| name.starts_with("全局单元格区域.") || name.starts_with("单元格区域."))
-        .collect::<Vec<_>>();
-    ensure!(
-        unsupported.is_empty(),
-        "S1-F02 模板含尚未迁移的额外汇总字段命名区域：{}",
-        unsupported.join("、")
-    );
-    Ok(())
+fn parse_summary_fields(
+    records: &[DefinedNameRecord],
+) -> Result<(Vec<SummaryField>, HashMap<String, Vec<SummaryField>>)> {
+    let mut global_fields = Vec::new();
+    let mut local_fields = HashMap::<String, Vec<SummaryField>>::new();
+    for record in records {
+        let (prefix, is_global) = if record.name.starts_with("全局单元格区域.") {
+            ("全局单元格区域.", true)
+        } else if record.name.starts_with("单元格区域.") {
+            ("单元格区域.", false)
+        } else {
+            continue;
+        };
+        let field_name = record.name[prefix.len()..].trim();
+        if field_name.is_empty() {
+            continue;
+        }
+        ensure!(
+            matches!(&record.parse_status, DefinedNameParseStatus::Areas),
+            "S1-F02 附加字段命名区域“{}”无法解析为工作表单元格：{:?}",
+            record.name,
+            record.parse_status
+        );
+        let areas =
+            crate::name_config::named_areas_from_defined_names(std::slice::from_ref(record));
+        ensure!(
+            !areas.is_empty(),
+            "S1-F02 附加字段命名区域“{}”没有可用的工作表单元格",
+            record.name
+        );
+        for range in areas {
+            let bounds = parse_bounds(&range.address)
+                .with_context(|| format!("S1-F02 附加字段命名区域无效：{}", range.address))?;
+            ensure!(
+                bounds.top == bounds.bottom && bounds.left == bounds.right,
+                "S1-F02 附加字段命名区域“{}”必须只定位一个单元格",
+                record.name
+            );
+            let field = SummaryField {
+                name: field_name.to_owned(),
+                range: range.clone(),
+                bounds,
+            };
+            if is_global {
+                global_fields.push(field);
+            } else {
+                local_fields
+                    .entry(range.sheet_name.to_lowercase())
+                    .or_default()
+                    .push(field);
+            }
+        }
+    }
+    sort_summary_fields(&mut global_fields);
+    for fields in local_fields.values_mut() {
+        sort_summary_fields(fields);
+    }
+    Ok((global_fields, local_fields))
+}
+
+fn sort_summary_fields(fields: &mut [SummaryField]) {
+    fields.sort_by(|left, right| {
+        (left.bounds.top, left.bounds.left, &left.name).cmp(&(
+            right.bounds.top,
+            right.bounds.left,
+            &right.name,
+        ))
+    });
+}
+
+fn summary_fields_for_sheet(
+    global_fields: &[SummaryField],
+    local_fields: &HashMap<String, Vec<SummaryField>>,
+    sheet_name: &str,
+) -> Result<Vec<SummaryField>> {
+    let mut fields = global_fields.to_vec();
+    if let Some(local) = local_fields.get(&sheet_name.to_lowercase()) {
+        fields.extend(local.iter().cloned());
+    }
+    let mut seen = HashSet::new();
+    for field in &fields {
+        let key = field.name.trim().to_lowercase();
+        ensure!(
+            seen.insert(key),
+            "工作表“{}”存在重复的单元格区域字段名：{}",
+            sheet_name,
+            field.name
+        );
+    }
+    Ok(fields)
 }
 
 fn discover_source_workbooks(input_dir: &Path, recursive: bool) -> Result<Vec<PathBuf>> {
@@ -759,6 +904,12 @@ fn validate_summary_workbook(path: &Path, groups: &[RegionGroup]) -> Result<()> 
             CellValue::Text("来源文件".to_owned()),
             CellValue::Text("来源工作表".to_owned()),
         ];
+        headers.extend(
+            group
+                .extra_fields
+                .iter()
+                .map(|field| CellValue::Text(field.name.clone())),
+        );
         headers.extend(group.headers.iter().cloned().map(CellValue::Text));
         for (column, value) in headers.iter().enumerate() {
             if !is_empty_value(value) {
@@ -879,4 +1030,95 @@ fn temporary_path(output_path: &Path) -> Result<PathBuf> {
             .unwrap_or("s1-region-summary"),
         std::process::id()
     )))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use excel_reader::{DefinedNameArea, DefinedNameScope};
+
+    fn area_record(
+        name: &str,
+        scope: DefinedNameScope,
+        sheet: &str,
+        address: &str,
+    ) -> DefinedNameRecord {
+        DefinedNameRecord {
+            name: name.to_owned(),
+            scope,
+            raw_reference: format!("'{sheet}'!{address}"),
+            parse_status: DefinedNameParseStatus::Areas,
+            areas: vec![DefinedNameArea {
+                sheet_name: sheet.to_owned(),
+                sheet_kind: "worksheet".to_owned(),
+                reference: address.to_owned(),
+            }],
+        }
+    }
+
+    #[test]
+    fn metadata_fields_require_single_cell_areas() {
+        let record = area_record(
+            "全局单元格区域.批次",
+            DefinedNameScope::Workbook,
+            "Meta",
+            "$A$1:$B$1",
+        );
+        let error = parse_summary_fields(&[record]).unwrap_err().to_string();
+        assert!(error.contains("必须只定位一个单元格"), "{error}");
+    }
+
+    #[test]
+    fn metadata_fields_sort_global_fields_then_local_fields_and_reject_duplicates() {
+        let records = vec![
+            area_record(
+                "全局单元格区域.后批次",
+                DefinedNameScope::Workbook,
+                "Meta",
+                "$B$2",
+            ),
+            area_record(
+                "全局单元格区域.前批次",
+                DefinedNameScope::Workbook,
+                "Meta",
+                "$A$1",
+            ),
+            area_record(
+                "单元格区域.分组",
+                DefinedNameScope::Worksheet {
+                    local_sheet_id: 0,
+                    sheet_name: Some("Data".to_owned()),
+                    sheet_kind: Some("worksheet".to_owned()),
+                },
+                "Data",
+                "$F$1",
+            ),
+        ];
+        let (global, local) = parse_summary_fields(&records).expect("parse metadata fields");
+        let fields = summary_fields_for_sheet(&global, &local, "data").expect("select metadata");
+        assert_eq!(
+            fields
+                .iter()
+                .map(|field| field.name.as_str())
+                .collect::<Vec<_>>(),
+            ["前批次", "后批次", "分组"]
+        );
+
+        let mut duplicated = records;
+        duplicated.push(area_record(
+            "单元格区域.前批次",
+            DefinedNameScope::Worksheet {
+                local_sheet_id: 0,
+                sheet_name: Some("Data".to_owned()),
+                sheet_kind: Some("worksheet".to_owned()),
+            },
+            "Data",
+            "$G$1",
+        ));
+        let (global, local) = parse_summary_fields(&duplicated).expect("parse duplicate fields");
+        let error = summary_fields_for_sheet(&global, &local, "Data")
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("存在重复的单元格区域字段名"), "{error}");
+    }
 }

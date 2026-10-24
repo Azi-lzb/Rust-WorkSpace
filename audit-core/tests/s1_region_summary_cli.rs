@@ -33,37 +33,62 @@ fn temporary_root(label: &str) -> PathBuf {
 }
 
 fn write_sample_workbook(path: &Path, rows: &[Vec<SampleCell<'_>>]) {
+    write_sample_workbook_with_metadata(path, rows, None, None);
+}
+
+fn write_sample_workbook_with_metadata(
+    path: &Path,
+    rows: &[Vec<SampleCell<'_>>],
+    local_value: Option<&str>,
+    global_value: Option<&str>,
+) {
     let mut workbook = Workbook::new();
     let blank_format = Format::new();
-    let worksheet = workbook.add_worksheet();
-    worksheet.set_name("Data").expect("set test worksheet name");
-    for (row_index, row) in rows.iter().enumerate() {
-        for (column_index, cell) in row.iter().enumerate() {
-            let row_index = row_index as u32;
-            let column_index = column_index as u16;
-            match cell {
-                SampleCell::Text(value) => {
-                    worksheet
-                        .write_string(row_index, column_index, *value)
-                        .expect("write test text");
-                }
-                SampleCell::Number(value) => {
-                    worksheet
-                        .write_number(row_index, column_index, *value)
-                        .expect("write test number");
-                }
-                SampleCell::Blank => {
-                    worksheet
-                        .write_blank(row_index, column_index, &blank_format)
-                        .expect("write test blank");
-                }
-                SampleCell::Formula(value) => {
-                    worksheet
-                        .write_formula(row_index, column_index, *value)
-                        .expect("write test formula");
+    {
+        let worksheet = workbook.add_worksheet();
+        worksheet.set_name("Data").expect("set test worksheet name");
+        for (row_index, row) in rows.iter().enumerate() {
+            for (column_index, cell) in row.iter().enumerate() {
+                let row_index = row_index as u32;
+                let column_index = column_index as u16;
+                match cell {
+                    SampleCell::Text(value) => {
+                        worksheet
+                            .write_string(row_index, column_index, *value)
+                            .expect("write test text");
+                    }
+                    SampleCell::Number(value) => {
+                        worksheet
+                            .write_number(row_index, column_index, *value)
+                            .expect("write test number");
+                    }
+                    SampleCell::Blank => {
+                        worksheet
+                            .write_blank(row_index, column_index, &blank_format)
+                            .expect("write test blank");
+                    }
+                    SampleCell::Formula(value) => {
+                        worksheet
+                            .write_formula(row_index, column_index, *value)
+                            .expect("write test formula");
+                    }
                 }
             }
         }
+        if let Some(value) = local_value {
+            worksheet
+                .write_string(0, 5, value)
+                .expect("write local metadata field");
+        }
+    }
+    if let Some(value) = global_value {
+        let worksheet = workbook.add_worksheet();
+        worksheet
+            .set_name("Meta")
+            .expect("set metadata worksheet name");
+        worksheet
+            .write_string(0, 0, value)
+            .expect("write global metadata field");
     }
     workbook.save(path).expect("save synthetic source workbook");
 }
@@ -113,10 +138,18 @@ fn read_numeric(sheet: &SheetDump, address: &str) -> f64 {
     }
 }
 
+fn read_value(sheet: &SheetDump, address: &str) -> CellValue {
+    sheet
+        .values
+        .get(address)
+        .map(|value| CellValue::from_probe_json(value).expect("decode output cell"))
+        .unwrap_or(CellValue::Empty)
+}
+
 fn create_sources(root: &Path) -> Vec<(PathBuf, Vec<u8>)> {
     fs::create_dir_all(root).expect("create synthetic source directory");
     let alpha = root.join("!Alpha_20260731.xlsx");
-    write_sample_workbook(
+    write_sample_workbook_with_metadata(
         &alpha,
         &[
             vec![SampleCell::Blank; 4],
@@ -139,9 +172,11 @@ fn create_sources(root: &Path) -> Vec<(PathBuf, Vec<u8>)> {
                 SampleCell::Number(20.0),
             ],
         ],
+        Some("甲组"),
+        Some("批次甲"),
     );
     let beta = root.join("Beta_20260731.xlsx");
-    write_sample_workbook(
+    write_sample_workbook_with_metadata(
         &beta,
         &[
             vec![SampleCell::Blank; 3],
@@ -158,6 +193,8 @@ fn create_sources(root: &Path) -> Vec<(PathBuf, Vec<u8>)> {
                 SampleCell::Number(40.0),
             ],
         ],
+        Some("乙组"),
+        None,
     );
     vec![
         (
@@ -184,9 +221,10 @@ fn cli_summarizes_used_and_fixed_named_ranges_and_logs_both_views() {
     let user_json: Value = serde_json::from_slice(&user.stdout).expect("parse user CLI result");
     assert_eq!(user_json["status"], "completed");
     assert_eq!(user_json["summary"]["source_workbooks"], 2);
-    assert_eq!(user_json["summary"]["source_sheets"], 2);
+    assert_eq!(user_json["summary"]["source_sheets"], 3);
     assert_eq!(user_json["summary"]["output_sheets"], 2);
     assert_eq!(user_json["summary"]["data_rows"], 9);
+    assert_eq!(user_json["summary"]["metadata_fields_left_blank"], 2);
     assert!(user_json["summary"].get("reader").is_none());
     assert!(user_json["summary"].get("writer").is_none());
     assert!(!String::from_utf8_lossy(&user.stderr).contains("rust_xlsxwriter"));
@@ -202,17 +240,23 @@ fn cli_summarizes_used_and_fixed_named_ranges_and_logs_both_views() {
     );
     assert_eq!(read_text(&output.sheets[0], "A1"), "来源文件");
     assert_eq!(read_text(&output.sheets[0], "B1"), "来源工作表");
-    assert_eq!(read_text(&output.sheets[0], "C1"), "财务_单位");
-    assert_eq!(read_text(&output.sheets[0], "D1"), "财务_金额");
+    assert_eq!(read_text(&output.sheets[0], "C1"), "批次");
+    assert_eq!(read_text(&output.sheets[0], "D1"), "分组");
+    assert_eq!(read_text(&output.sheets[0], "E1"), "财务_单位");
+    assert_eq!(read_text(&output.sheets[0], "F1"), "财务_金额");
     assert_eq!(read_text(&output.sheets[0], "A2"), "Alpha");
     assert_eq!(read_text(&output.sheets[0], "B2"), "Data");
-    assert_eq!(read_text(&output.sheets[0], "C2"), "甲");
-    assert_eq!(read_numeric(&output.sheets[0], "D3"), 0.0);
-    assert_eq!(read_text(&output.sheets[0], "C4"), "丙");
-    assert_eq!(read_text(&output.sheets[0], "C5"), "丁");
-    assert_eq!(read_text(&output.sheets[1], "C4"), "乙");
-    assert_eq!(read_text(&output.sheets[1], "C5"), "丙");
-    assert_eq!(read_text(&output.sheets[1], "C6"), "丁");
+    assert_eq!(read_text(&output.sheets[0], "C2"), "批次甲");
+    assert_eq!(read_text(&output.sheets[0], "D2"), "甲组");
+    assert_eq!(read_text(&output.sheets[0], "E2"), "甲");
+    assert_eq!(read_numeric(&output.sheets[0], "F3"), 0.0);
+    assert_eq!(read_value(&output.sheets[0], "C4"), CellValue::Empty);
+    assert_eq!(read_text(&output.sheets[0], "D4"), "乙组");
+    assert_eq!(read_text(&output.sheets[0], "E4"), "丙");
+    assert_eq!(read_text(&output.sheets[0], "E5"), "丁");
+    assert_eq!(read_text(&output.sheets[1], "E4"), "乙");
+    assert_eq!(read_text(&output.sheets[1], "E5"), "丙");
+    assert_eq!(read_text(&output.sheets[1], "E6"), "丁");
     for (path, expected) in sources {
         assert_eq!(fs::read(path).expect("read source after run"), expected);
     }
@@ -235,6 +279,7 @@ fn cli_summarizes_used_and_fixed_named_ranges_and_logs_both_views() {
     assert_eq!(events[1]["writer"], "rust_xlsxwriter 0.101.0");
     assert!(events[1]["source_read_time_ms"].is_number());
     assert!(events[1]["write_time_ms"].is_number());
+    assert_eq!(events[1]["metadata_fields_left_blank"], 2);
 
     fs::remove_dir_all(&root).expect("remove synthetic test directory");
 }

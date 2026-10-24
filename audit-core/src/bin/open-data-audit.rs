@@ -915,6 +915,7 @@ fn run_s1_region_summary(arguments: S1RegionSummaryArgs) -> Result<()> {
                 "output_sheets": summary.output_sheets,
                 "data_rows": summary.data_rows,
                 "skipped_missing_sheets": summary.skipped_missing_sheets,
+                "metadata_fields_left_blank": summary.metadata_fields_left_blank,
                 "discovery_time_ms": summary.discovery_time_ms,
                 "template_read_time_ms": summary.template_read_time_ms,
                 "source_read_time_ms": summary.source_read_time_ms,

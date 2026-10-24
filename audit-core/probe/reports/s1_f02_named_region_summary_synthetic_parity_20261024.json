@@ -5,11 +5,12 @@
   "python_engine": "Microsoft Excel",
   "rust_reader": "calamine+namespace_aware_ooxml",
   "rust_writer": "rust_xlsxwriter 0.101.0",
-  "python_elapsed_ms": 4360,
-  "rust_cli_elapsed_ms": 91,
+  "python_elapsed_ms": 9664,
+  "rust_cli_elapsed_ms": 92,
   "rust_events": 2,
   "source_workbooks": 2,
-  "source_sheets": 2,
+  "source_sheets": 3,
+  "metadata_fields_left_blank": 2,
   "output_sheets": 2,
   "data_rows": 9,
   "input_files_unchanged": true,
@@ -37,5 +38,5 @@
       "Data": 5
     }
   },
-  "scope": "Windows synthetic formula-free XLSX; named arbitrary/fixed rows; merged multi-row header; values, types, sheet order, dimensions, number formats, header style, filter and freeze compared; no fallback template, extra metadata, history enrichment, real template or Linux runtime"
+  "scope": "Windows synthetic formula-free XLSX; named arbitrary/fixed rows; global/local single-cell metadata fields; missing source metadata sheet leaves the global field blank; merged multi-row header; values, types, sheet order, dimensions, number formats, header style, filter and freeze compared; no fallback template, history enrichment, real template or Linux runtime"
 }
