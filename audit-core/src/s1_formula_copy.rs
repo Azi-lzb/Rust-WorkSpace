@@ -15,7 +15,11 @@ use excel_editor::{
     inspect_xlsx_profile,
 };
 use excel_reader::{WorkbookComment, read_ooxml_comments};
-use std::{collections::BTreeMap, fs, path::Path};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fs,
+    path::Path,
+};
 
 #[derive(Clone, Debug)]
 pub struct S1FormulaCopyEditPlan {
@@ -98,7 +102,12 @@ pub fn build_s1_formula_copy_edit_plan(
         read_ooxml_comments(template_workbook).context("读取 S1 公式模板批注作者和文本")?;
 
     let mut operations = Vec::with_capacity(template.definition.copy_ranges.len() + 1);
+    let mut copied_ranges = BTreeSet::new();
     for range in &template.definition.copy_ranges {
+        let identity = (range.sheet_name.clone(), range.address.to_ascii_uppercase());
+        if !copied_ranges.insert(identity) {
+            continue;
+        }
         let target_start = range_target_start(&range.address)
             .with_context(|| format!("解析公式复制目标坐标 {}", range.address))?;
         let comment_operations = comment_operations_for_range(
@@ -356,6 +365,48 @@ mod tests {
         workbook.save(path).expect("save formula template");
     }
 
+    fn write_structured_template_with_duplicate_ranges(path: &Path) {
+        let mut workbook = Workbook::new();
+        {
+            let rules = workbook.add_worksheet();
+            rules
+                .set_name("审核规则")
+                .expect("name structured rule worksheet");
+            for (column, header) in crate::template::REQUIRED_HEADERS.iter().enumerate() {
+                rules
+                    .write_string(0, column as u16, *header)
+                    .expect("write structured rule header");
+            }
+            for (row, rule_id) in [(1, "R-01"), (2, "R-02")] {
+                for (column, value) in [
+                    rule_id,
+                    "是",
+                    "报表甲",
+                    "检查表",
+                    "A1",
+                    "B1",
+                    "错误",
+                    "核对错误项",
+                ]
+                .iter()
+                .enumerate()
+                {
+                    rules
+                        .write_string(row, column as u16, *value)
+                        .expect("write structured rule row");
+                }
+            }
+        }
+        let formulas = workbook.add_worksheet();
+        formulas.set_name("检查表").expect("name formula worksheet");
+        formulas
+            .write_formula(0, 0, "=IF(TRUE,\"错误|字段|指标|说明\",\"通过\")")
+            .expect("write structured formula");
+        workbook
+            .save(path)
+            .expect("save duplicate-range structured template");
+    }
+
     fn write_target(path: &Path) {
         write_target_with_sheet(path, "检查表");
     }
@@ -439,6 +490,31 @@ mod tests {
             !output.exists(),
             "preflight must not create candidate output"
         );
+        fs::remove_dir_all(directory).expect("remove formula-copy test directory");
+    }
+
+    #[test]
+    fn deduplicates_identical_structured_formula_copy_ranges() {
+        let directory = temporary_directory();
+        let target = directory.join("target.xlsx");
+        let template = directory.join("template.xlsx");
+        let output = directory.join("output.xlsx");
+        write_target(&target);
+        write_structured_template_with_duplicate_ranges(&template);
+
+        let prepared = build_s1_formula_copy_edit_plan(&target, &template, &output, None)
+            .expect("build plan with duplicate structured ranges");
+        let import_range_count = prepared
+            .edit_plan
+            .operations
+            .iter()
+            .filter(|operation| operation.kind() == EditOperationKind::ImportRange)
+            .count();
+
+        assert_eq!(prepared.template_summary.copy_ranges, 2);
+        assert_eq!(import_range_count, 1);
+        assert_eq!(prepared.edit_plan.operations.len(), 2);
+        assert!(!output.exists(), "plan construction must not write output");
         fs::remove_dir_all(directory).expect("remove formula-copy test directory");
     }
 

@@ -1,0 +1,12 @@
+# S1-F01 公式复制区间去重
+
+- 时间：2026-10-25 01:00 +08:00；执行者：Audit 专属开发 Agent。
+- 修改前 commit：`238db83`；修改后 commit：包含本记录的本地功能提交。
+- WIP：修改前 `audit-dev` 工作树干净，与 `origin/audit-dev` 同步。
+- 目的：对齐旧 Python `copy_formula_ranges_from_template` 的稳定去重语义：同一工作表上地址忽略大小写后相同的复制区间只生成一次 ImportRange 和对应批注操作。结构化规则仍按原数量报告，不改变规则结果。
+- 文件：`audit-core/src/s1_formula_copy.rs`；新增两个结构化规则指向同一公式单元格的计划测试。无入口、配置、VBA、共享 crate 或公共 Cargo 配置变化。
+- 测试：`rustfmt --edition 2024 --check audit-core/src/s1_formula_copy.rs` 通过；`cargo test --offline --locked -p audit-core --lib s1_formula_copy::tests -j 1` 通过（7/7）；`git diff --check` 通过。
+- 未执行：真实模板重复区间对拍、编辑器写回/公式缓存验证、公式重算、完整 S1-F01 与目标 Linux 验收。S1-F01 生产公式复制仍为 Unverified。
+- 已知问题：编辑器候选尚未通过真实模板对象保留验收；本变更仅规范业务计划操作，不改变引擎能力或生产路由。
+- 版本：不升级。
+- 删除与回滚：无删除；可用 `git revert <本次功能提交>` 回滚本变更。
