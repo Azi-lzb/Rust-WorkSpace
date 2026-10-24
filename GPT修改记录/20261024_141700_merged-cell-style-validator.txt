@@ -61,6 +61,14 @@ Audit Agent 复验确认 probe 将实际 `unmodified merged-cell border readback
 - Audit 仍需确认旧业务函数采用同一逐 cell 样式契约；真实模板复验尚未通过前，capability 保持 Unverified，生产路由不变。
 - 定向命令：`cargo test -p excel-editor openpyxl_backend::tests::implicit_xf_zero_properties_are_visible_to_umya_expected_style_reader` 通过（1 项）。先前同模块 6 项测试通过；本轮最终完整同模块回归待执行。没有运行 Audit 样本或 workspace 全量测试。
 
+## 合并区域非锚点数据的 openpyxl 前置拒绝（本轮）
+
+- Audit 已确认 sample 6 的 A10 是合并区 `A5:A26` 非锚点，存有非空 shared string。openpyxl 3.1.5 普通模式执行 `bind_merged_cells` / `_clean_merge_range` 时会把非锚点替换成 `MergedCell`；read_only 模式仍读到该文本，而普通模式读为缺失。Rust 对比因此正确发现候选丢值。
+- `OpenpyxlXlsxBackend::apply` 现对主输入及每个 ImportRange 源文件，在启动 worker 前用 namespace-aware OOXML 找出合并区非锚点候选，再由 Rust calamine 确认该坐标确有值或公式；命中时返回 `unsupported_before_write`，错误只包含 sheet/cell 坐标，不包含单元格值。普通空白样式 cell 不会仅因存在 XML 节点而拒绝。
+- 此处理明确拒绝 openpyxl 会丢值的对象组合，没有修补结果或放宽保留项；其他已验证引擎可由现有路由按能力决定是否处理。生产默认、capability Passed 状态均未更改。
+- 新增 namespace-aware 单元测试，覆盖合并锚点保留、非锚点 shared-string 引用识别、无内容样式 cell 忽略。
+- 验证：`cargo fmt --package excel-editor -- --check` 通过；`cargo test -p excel-editor openpyxl_backend::tests::` 7 项通过；`git diff --check` 通过。未重跑 Audit 候选或完整 workspace 测试；目标 Linux 未验证。
+
 ## 删除、回滚与版本
 
 - 无删除项。可通过普通 `git revert <commit>` 回滚本次共享校验器修正和测试。
