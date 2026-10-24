@@ -24,7 +24,7 @@
 
 每类新迁入配置均须有 Rust 读取、检查、执行和测试落点。启用规则必须“进入执行链”或“明确报告失败”，解析失败不得静默跳过；具体规则见 `rules/06_VBA复刻与配置复核.md`。配置检查只读，不回写或自动修复工作簿。
 
-技术选型遵循 workspace 根 `AGENTS.md` 和规则 13：calamine/OOXML 读取、rust_xlsxwriter 新建、ExcelEditPlan/ExcelModifier 修改；只允许公式重算和同类格式转换显式调用独立 sidecar。旧 Python/Office 调用只作为行为发现材料，不得复用为主路径。
+技术选型遵循 workspace 根 `AGENTS.md` 和规则 13：calamine/OOXML 读取、rust_xlsxwriter 新建、ExcelEditPlan/ExcelModifier 修改。公式计算由独立 ExcelCalculator 显式调用已验收的计算后端，同类格式转换由独立 sidecar 显式调用；未来 Windows COM 修改只能经 ExcelModifier 选择已验收的 Microsoft Excel/WPS 后端。旧 Python/Office 工作流只作为行为发现材料，不得整体复用为生产业务路径。
 
 ## 验收与差异说明
 
