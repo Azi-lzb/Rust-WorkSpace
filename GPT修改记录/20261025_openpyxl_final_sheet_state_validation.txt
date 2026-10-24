@@ -1,0 +1,20 @@
+日期：2026-10-25
+
+变更范围
+- crates/excel-editor/python/openpyxl_worker.py：将工作表创建、删除、重命名和插入的结果校验改为按整批操作折叠出最终工作表名称与顺序，再与重新打开的输出文件比较。
+- crates/excel-editor/tests/python/test_openpyxl_worker.py：增加删除后按相同名称重建工作表的回归测试。
+
+目的
+- 修复合法计划删除工作表后又创建同名工作表时，worker 仍按单条 delete 操作要求最终文件中不存在该名称，导致正确输出被误报为验证失败的问题。最终状态检查仍验证所有工作表名称及顺序，不放宽文件保留要求。
+
+测试
+- `python crates/excel-editor/tests/python/test_openpyxl_worker.py`：7 项通过，Python 3.12.10 / openpyxl 3.1.5。
+- `git diff --check`：通过。
+
+未执行项与已知限制
+- 未运行完整 workspace 测试或真实 Audit S1 批次；Audit 的相关 capability 仍需按其真实样本和现有验收流程单独验证，不因本修复自动改变状态或路由。
+- 本次只验证最终工作表名称和顺序，不声称验证 Excel 内部 worksheet 对象身份。
+- 未修改业务代码、默认路由、能力登记、依赖、读取/写入接口或 Python 源项目。
+
+回滚
+- 可单独 revert 本记录对应的共享提交；回滚后恢复逐操作检查工作表存在性的旧行为，该行为会再次拒绝删除后重建同名工作表的计划。
