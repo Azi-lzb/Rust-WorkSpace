@@ -109,6 +109,15 @@ pub struct WorkbookDump {
     pub sheets: Vec<SheetDump>,
 }
 
+/// Diagnostics returned by the opt-in unsupported error-token compatibility
+/// reader. The count is safe for structured logs and does not expose cell data.
+#[derive(Debug)]
+pub struct UnknownErrorTokenRead {
+    pub workbook: WorkbookDump,
+    pub compatibility_normalization_used: bool,
+    pub normalized_cell_count: usize,
+}
+
 /// A lightweight projection of stored values from a sheet.
 ///
 /// Values use absolute A1 coordinates and preserve the same typed `CellValue`
@@ -744,10 +753,16 @@ pub fn read_workbook(path: impl AsRef<Path>) -> Result<WorkbookDump> {
 /// Formula cells and malformed/unknown error-cell structures are rejected.
 pub fn read_workbook_with_unknown_error_tokens_as_text(
     path: impl AsRef<Path>,
-) -> Result<WorkbookDump> {
+) -> Result<UnknownErrorTokenRead> {
     let path = path.as_ref();
     match read_workbook(path) {
-        Ok(workbook) => return Ok(workbook),
+        Ok(workbook) => {
+            return Ok(UnknownErrorTokenRead {
+                workbook,
+                compatibility_normalization_used: false,
+                normalized_cell_count: 0,
+            });
+        }
         Err(error) if !format!("{error:#}").contains("Unsupported cell error value") => {
             return Err(error);
         }
@@ -760,7 +775,7 @@ pub fn read_workbook_with_unknown_error_tokens_as_text(
                 || extension.eq_ignore_ascii_case("xlsm")),
         "unknown error-token compatibility reader supports XLSX/XLSM only"
     );
-    let replacements = prepare_unknown_error_token_replacements(path)?;
+    let (replacements, normalized_cell_count) = prepare_unknown_error_token_replacements(path)?;
     ensure!(!replacements.is_empty(), "Calamine reported an unsupported cell error but no literal unsupported OOXML error token was found");
     let nonce = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)?
@@ -777,31 +792,44 @@ pub fn read_workbook_with_unknown_error_tokens_as_text(
     }
     let result = read_workbook(&temp).context("read normalized temporary workbook with Calamine");
     let _ = fs::remove_file(&temp);
-    result
+    Ok(UnknownErrorTokenRead {
+        workbook: result?,
+        compatibility_normalization_used: true,
+        normalized_cell_count,
+    })
 }
 
-fn prepare_unknown_error_token_replacements(path: &Path) -> Result<BTreeMap<String, Vec<u8>>> {
+fn prepare_unknown_error_token_replacements(
+    path: &Path,
+) -> Result<(BTreeMap<String, Vec<u8>>, usize)> {
     let mut zip = ZipArchive::new(fs::File::open(path).context("open workbook package")?)?;
     let mut replacements = BTreeMap::new();
+    let mut normalized_cell_count = 0;
     for (_, part) in ooxml_worksheet_parts(&mut zip)? {
         let xml = zip_read(&mut zip, &part)?.into_bytes();
-        let patched = normalize_unknown_error_cells(&xml)?;
+        let (patched, cell_count) = normalize_unknown_error_cells(&xml)?;
         if patched != xml {
             replacements.insert(part, patched);
+            normalized_cell_count += cell_count;
         }
     }
-    Ok(replacements)
+    Ok((replacements, normalized_cell_count))
 }
 
-fn normalize_unknown_error_cells(xml: &[u8]) -> Result<Vec<u8>> {
+fn normalize_unknown_error_cells(xml: &[u8]) -> Result<(Vec<u8>, usize)> {
     let document = Document::parse(std::str::from_utf8(xml)?)?;
     let mut edits = Vec::<(Range<usize>, Vec<u8>)>::new();
+    let mut normalized_cell_count = 0;
     for cell in document.descendants().filter(|node| {
         node.is_element()
             && node.tag_name().namespace() == Some(SPREADSHEET_MAIN_NS)
             && node.tag_name().name() == "c"
             && node.attribute("t") == Some("e")
     }) {
+        ensure!(
+            cell.attribute("r").is_some(),
+            "error cell is missing a coordinate"
+        );
         let value_nodes = cell
             .children()
             .filter(|node| {
@@ -818,7 +846,7 @@ fn normalize_unknown_error_cells(xml: &[u8]) -> Result<Vec<u8>> {
         ensure!(
             cell.children().all(|child| !child.is_element()
                 || (child.tag_name().namespace() == Some(SPREADSHEET_MAIN_NS)
-                    && child.tag_name().name() == "v")),
+                    && matches!(child.tag_name().name(), "v" | "f"))),
             "unsupported child element in literal error cell {:?}",
             cell.attribute("r")
         );
@@ -827,8 +855,11 @@ fn normalize_unknown_error_cells(xml: &[u8]) -> Result<Vec<u8>> {
             continue;
         }
         ensure!(
-            cell.children()
-                .all(|child| !child.is_element() || child.tag_name().name() != "f"),
+            cell.children().all(|child| {
+                !child.is_element()
+                    || child.tag_name().namespace() != Some(SPREADSHEET_MAIN_NS)
+                    || child.tag_name().name() != "f"
+            }),
             "formula error cell {:?} cannot be normalized as a literal string",
             cell.attribute("r")
         );
@@ -843,8 +874,9 @@ fn normalize_unknown_error_cells(xml: &[u8]) -> Result<Vec<u8>> {
         let text = escape_xml_text(value);
         let replacement = format!("<{is_name}><{text_name}>{text}</{text_name}></{is_name}>");
         edits.push((value_node.range(), replacement.into_bytes()));
+        normalized_cell_count += 1;
     }
-    apply_xml_edits(xml, edits)
+    Ok((apply_xml_edits(xml, edits)?, normalized_cell_count))
 }
 
 fn is_calamine_error_token(value: &str) -> bool {
