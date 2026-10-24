@@ -2,7 +2,7 @@ use anyhow::{bail, Context, Result};
 use chrono::Local;
 use pytools_core::archive_ops::{
     archive_by_date_copy, archive_by_date_preview, archive_by_type_copy, archive_by_type_preview,
-    execute_archive_plan,
+    execute_archive_plan, ArchiveResult,
 };
 use pytools_core::batch_ops::{
     build_quarterly_rural_loan_plan, build_remove_foreign_plan, build_rural_loan_plan,
@@ -217,6 +217,7 @@ where
         writeln!(output, "  4  转换与文件命名工具")?;
         writeln!(output, "  6  汇总工具")?;
         writeln!(output, "  7  一二批处理工具（当前接入 7-1 至 7-8）")?;
+        writeln!(output, "  8  归档工具")?;
         writeln!(output, "  0  退出")?;
         writeln!(output, "==============================")?;
         let Some(choice) = read_menu_choice(input, output, "主菜单选择> ")? else {
@@ -258,13 +259,249 @@ where
                 capabilities,
                 platform,
             )?,
+            "8" => run_interactive_archive_menu(
+                input,
+                output,
+                config_path,
+                global,
+                log_view,
+                allow_native_dialog,
+            )?,
             "0" => {
                 writeln!(output, "再见。")?;
                 return Ok(());
             }
-            _ => writeln!(output, "仅接受 1、2、3、4、6、7 或 0")?,
+            _ => writeln!(output, "仅接受 1、2、3、4、6、7、8 或 0")?,
         }
     }
+}
+
+fn run_interactive_archive_menu<R, W>(
+    input: &mut R,
+    output: &mut W,
+    config_path: &Path,
+    global: &GlobalConfig,
+    log_view: &str,
+    allow_native_dialog: bool,
+) -> Result<()>
+where
+    R: BufRead,
+    W: Write,
+{
+    loop {
+        writeln!(output, "------ 归档工具 ------")?;
+        writeln!(output, "  1  按日期归档（预览）")?;
+        writeln!(output, "  2  按类型归档（预览，使用归档类型配置）")?;
+        writeln!(output, "  3  执行归档计划")?;
+        writeln!(output, "  4  按日期归档（直接复制）")?;
+        writeln!(output, "  5  按类型归档（直接复制，使用归档类型配置）")?;
+        writeln!(output, "  0  返回")?;
+        writeln!(output, "----------------------")?;
+        let Some(choice) = read_menu_choice(input, output, "子菜单选择> ")? else {
+            return Ok(());
+        };
+        let (feature_id, operation, description) = match choice.as_str() {
+            "1" => ("PT-8-1", "date-preview", "按日期归档预览"),
+            "2" => ("PT-8-2", "type-preview", "按类型归档预览"),
+            "3" => ("PT-8-3", "plan", "执行归档计划"),
+            "4" => ("PT-8-4", "date-copy", "按日期直接复制归档"),
+            "5" => ("PT-8-5", "type-copy", "按类型直接复制归档"),
+            "0" => return Ok(()),
+            _ => {
+                writeln!(output, "仅接受 1、2、3、4、5 或 0")?;
+                continue;
+            }
+        };
+
+        let mut arguments = vec![
+            "--output-dir".to_owned(),
+            global.output_dir.to_string_lossy().into_owned(),
+        ];
+        let input_count = if operation == "plan" {
+            let Some(plan) = choose_archive_plan_workbook(
+                "选择归档计划 Excel 文件",
+                input,
+                output,
+                allow_native_dialog,
+            )?
+            else {
+                writeln!(output, "[已取消]")?;
+                return Ok(());
+            };
+            arguments.extend(["--plan".to_owned(), plan.to_string_lossy().into_owned()]);
+            1
+        } else {
+            let Some(paths) =
+                choose_archive_paths(description, input, output, allow_native_dialog)?
+            else {
+                writeln!(output, "[已取消]")?;
+                return Ok(());
+            };
+            let Some(target_root) = choose_archive_target_root(input, output, allow_native_dialog)?
+            else {
+                writeln!(output, "[已取消]")?;
+                return Ok(());
+            };
+            arguments.extend([
+                "--target-root".to_owned(),
+                target_root.to_string_lossy().into_owned(),
+                "--config".to_owned(),
+                config_path.to_string_lossy().into_owned(),
+            ]);
+            arguments.extend(paths.iter().map(|path| path.to_string_lossy().into_owned()));
+            paths.len()
+        };
+
+        run_archive_menu_operation(
+            arguments,
+            operation,
+            feature_id,
+            description,
+            input_count,
+            global,
+            log_view,
+        )?;
+        return Ok(());
+    }
+}
+
+fn choose_archive_plan_workbook<R, W>(
+    title: &str,
+    input: &mut R,
+    output: &mut W,
+    allow_native_dialog: bool,
+) -> Result<Option<PathBuf>>
+where
+    R: BufRead,
+    W: Write,
+{
+    let Some(mut selected) = choose_input_paths(
+        title,
+        false,
+        NativeFileFilter::XlsxOnly,
+        input,
+        output,
+        allow_native_dialog,
+    )?
+    else {
+        return Ok(None);
+    };
+    if selected.len() != 1 {
+        writeln!(output, "[提示] 归档计划执行需要且只需要一个 .xlsx 工作簿。")?;
+        return Ok(None);
+    }
+    let path = selected.remove(0);
+    if !path
+        .extension()
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("xlsx"))
+    {
+        writeln!(output, "[跳过] 归档计划当前只接受 .xlsx 工作簿。")?;
+        return Ok(None);
+    }
+    Ok(Some(path))
+}
+
+fn choose_archive_paths<R, W>(
+    title: &str,
+    input: &mut R,
+    output: &mut W,
+    allow_native_dialog: bool,
+) -> Result<Option<Vec<PathBuf>>>
+where
+    R: BufRead,
+    W: Write,
+{
+    writeln!(output, "→ {title}")?;
+    writeln!(output, "  1  选择文件（可多选）")?;
+    writeln!(output, "  2  选择文件夹（递归遍历）")?;
+    writeln!(output, "  0  取消")?;
+    let Some(mode) = read_menu_choice(input, output, "选择方式> ")? else {
+        return Ok(None);
+    };
+    match mode.as_str() {
+        "0" => Ok(None),
+        "1" => choose_input_paths(
+            title,
+            true,
+            NativeFileFilter::AllFiles,
+            input,
+            output,
+            allow_native_dialog,
+        ),
+        "2" => {
+            let native_folder = allow_native_dialog
+                .then(|| native_folder_dialog(title))
+                .flatten();
+            let mut folders = native_folder.into_iter().collect::<Vec<_>>();
+            if folders.is_empty() {
+                writeln!(
+                    output,
+                    "→ 可手动输入递归扫描的文件夹路径（分号分隔），或输入 0 取消："
+                )?;
+                let Some(raw) = read_menu_choice(input, output, "文件夹路径> ")? else {
+                    return Ok(None);
+                };
+                let Some(paths) = parse_manual_path_list(&raw) else {
+                    return Ok(None);
+                };
+                folders.extend(paths);
+            } else {
+                print_selected_paths(output, &folders)?;
+            }
+            for folder in &folders {
+                anyhow::ensure!(
+                    folder.is_dir(),
+                    "archive folder does not exist or is not a directory: {}",
+                    folder.display()
+                );
+            }
+            writeln!(output, "→ 已选择递归扫描文件夹 {} 个", folders.len())?;
+            print_selected_paths(output, &folders)?;
+            Ok(Some(folders))
+        }
+        _ => {
+            writeln!(output, "仅接受 1、2 或 0")?;
+            Ok(None)
+        }
+    }
+}
+
+fn choose_archive_target_root<R, W>(
+    input: &mut R,
+    output: &mut W,
+    allow_native_dialog: bool,
+) -> Result<Option<PathBuf>>
+where
+    R: BufRead,
+    W: Write,
+{
+    writeln!(output, "→ 请选择归档目标根目录")?;
+    if allow_native_dialog {
+        if let Some(path) = native_folder_dialog("选择归档目标根目录") {
+            print_selected_paths(output, std::slice::from_ref(&path))?;
+            return Ok(Some(path));
+        }
+        writeln!(output, "[提示] 文件夹弹窗不可用或已取消。")?;
+    }
+    writeln!(output, "→ 可手动输入目标文件夹路径，或输入 0 取消：")?;
+    let Some(raw) = read_menu_choice(input, output, "目标根目录> ")? else {
+        return Ok(None);
+    };
+    let Some(mut paths) = parse_manual_path_list(&raw) else {
+        return Ok(None);
+    };
+    anyhow::ensure!(
+        paths.len() == 1,
+        "archive target root must be a single directory"
+    );
+    let path = paths.remove(0);
+    anyhow::ensure!(
+        path.is_dir(),
+        "archive target root does not exist or is not a directory: {}",
+        path.display()
+    );
+    print_selected_paths(output, std::slice::from_ref(&path))?;
+    Ok(Some(path))
 }
 
 fn config_cli_arguments(config_path: &Path) -> Vec<String> {
@@ -5951,6 +6188,12 @@ fn run_summary_comments_cli(arguments: Vec<String>) -> Result<()> {
 
 fn run_archive_cli(arguments: Vec<String>, operation: &str) -> Result<()> {
     let options = parse_cli_arguments(arguments)?;
+    let result = execute_archive_operation(&options, operation)?;
+    println!("{}", serde_json::to_string_pretty(&result)?);
+    Ok(())
+}
+
+fn execute_archive_operation(options: &ParsedCli, operation: &str) -> Result<ArchiveResult> {
     let output_dir = options
         .values
         .get("output-dir")
@@ -5984,8 +6227,255 @@ fn run_archive_cli(arguments: Vec<String>, operation: &str) -> Result<()> {
         "plan" => execute_archive_plan(&required_path(&options, "plan")?, &output_dir)?,
         _ => unreachable!(),
     };
-    println!("{}", serde_json::to_string_pretty(&result)?);
+    Ok(result)
+}
+
+fn run_archive_menu_operation(
+    arguments: Vec<String>,
+    operation: &str,
+    feature_id: &str,
+    description: &str,
+    input_paths: usize,
+    global: &GlobalConfig,
+    log_view: &str,
+) -> Result<()> {
+    let run_started = Instant::now();
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or_default();
+    let run_id = format!(
+        "{}_{}_{}",
+        Local::now().format("%Y%m%dT%H%M%S"),
+        std::process::id(),
+        nonce
+    );
+    let actual_engines = archive_actual_engines(operation);
+    let started = archive_run_event(
+        feature_id,
+        &run_id,
+        1,
+        "archive_operation",
+        "started",
+        &format!("开始：{description}，输入路径 {input_paths} 项"),
+        input_paths,
+        None,
+        0,
+        &actual_engines,
+        None,
+    );
+    if log_view != "off" {
+        emit_archive_run_event(log_view, &started);
+    }
+
+    let options = parse_cli_arguments(arguments)?;
+    let result = execute_archive_operation(&options, operation);
+    let elapsed_ms = run_started.elapsed().as_millis();
+    let result = match result {
+        Ok(result) => result,
+        Err(error) => {
+            let failed = archive_run_event(
+                feature_id,
+                &run_id,
+                2,
+                "archive_operation",
+                "failed",
+                &format!("{description}失败；详细错误见终端错误输出"),
+                input_paths,
+                None,
+                elapsed_ms,
+                &actual_engines,
+                Some("archive_operation_failed"),
+            );
+            if log_view != "off" {
+                emit_archive_run_event(log_view, &failed);
+                let events = [started, failed];
+                match write_archive_run_history(
+                    &global.log_dir,
+                    feature_id,
+                    &run_id,
+                    "failed",
+                    input_paths,
+                    elapsed_ms,
+                    &actual_engines,
+                    None,
+                    Some("archive_operation_failed"),
+                    &events,
+                ) {
+                    Ok(path) if log_view == "user" => {
+                        eprintln!("归档运行记录已保存：{}", path.display())
+                    }
+                    Ok(path) => eprintln!("{feature_id} run history: {}", path.display()),
+                    Err(history_error) => {
+                        eprintln!("pytools: warning: could not save {feature_id} run history: {history_error:#}")
+                    }
+                }
+            }
+            return Err(error);
+        }
+    };
+
+    let status = if result.invalid > 0 || result.skipped > 0 || result.failed > 0 {
+        "partial"
+    } else {
+        "succeeded"
+    };
+    let result_summary = serde_json::json!({
+        "files": result.files,
+        "invalid": result.invalid,
+        "copied": result.copied,
+        "skipped": result.skipped,
+        "failed": result.failed,
+    });
+    let completed = archive_run_event(
+        feature_id,
+        &run_id,
+        2,
+        "archive_operation",
+        status,
+        &format!(
+            "{description}完成：文件 {}，无效 {}，已复制 {}，跳过 {}，失败 {}，用时 {} 毫秒",
+            result.files, result.invalid, result.copied, result.skipped, result.failed, elapsed_ms
+        ),
+        input_paths,
+        Some(&result),
+        elapsed_ms,
+        &actual_engines,
+        None,
+    );
+    if log_view != "off" {
+        emit_archive_run_event(log_view, &completed);
+        let events = [started, completed];
+        match write_archive_run_history(
+            &global.log_dir,
+            feature_id,
+            &run_id,
+            status,
+            input_paths,
+            elapsed_ms,
+            &actual_engines,
+            Some(result_summary),
+            None,
+            &events,
+        ) {
+            Ok(path) if log_view == "user" => {
+                eprintln!("归档运行记录已保存：{}", path.display())
+            }
+            Ok(path) => eprintln!("{feature_id} run history: {}", path.display()),
+            Err(error) => {
+                eprintln!("pytools: warning: could not save {feature_id} run history: {error:#}")
+            }
+        }
+    }
+
+    if log_view == "developer" {
+        println!("{}", serde_json::to_string_pretty(&result)?);
+    } else {
+        println!(
+            "[完成] {description}：文件={} 无效={} 已复制={} 跳过={} 失败={} 用时={}毫秒 报告={}",
+            result.files,
+            result.invalid,
+            result.copied,
+            result.skipped,
+            result.failed,
+            elapsed_ms,
+            result.output.display()
+        );
+    }
     Ok(())
+}
+
+fn archive_actual_engines(operation: &str) -> Vec<&'static str> {
+    let mut engines = vec![
+        "Rust std::fs",
+        "excel-reader/Calamine",
+        "excel-writer/rust_xlsxwriter",
+    ];
+    if matches!(operation, "date-copy" | "type-copy" | "plan") {
+        engines.push("Rust std::fs::copy");
+    }
+    engines
+}
+
+fn archive_run_event(
+    feature_id: &str,
+    run_id: &str,
+    sequence: usize,
+    phase: &str,
+    status: &str,
+    user_message: &str,
+    input_paths: usize,
+    result: Option<&ArchiveResult>,
+    elapsed_ms: u128,
+    actual_engines: &[&str],
+    error_type: Option<&str>,
+) -> serde_json::Value {
+    serde_json::json!({
+        "sequence": sequence,
+        "timestamp": Local::now().to_rfc3339(),
+        "feature_id": feature_id,
+        "run_id": run_id,
+        "phase": phase,
+        "status": status,
+        "user_message": user_message,
+        "progress": {
+            "input_paths": input_paths,
+            "processed_files": result.map(|value| value.files + value.invalid).unwrap_or(0),
+            "copied": result.map(|value| value.copied).unwrap_or(0),
+            "skipped": result.map(|value| value.skipped).unwrap_or(0),
+            "failed": result.map(|value| value.failed).unwrap_or(0),
+        },
+        "stage_elapsed_ms": if sequence == 1 { None } else { Some(elapsed_ms) },
+        "total_elapsed_ms": elapsed_ms,
+        "components": ["pytools-core", "excel-reader", "excel-writer"],
+        "actual_engines": actual_engines,
+        "error_type": error_type,
+    })
+}
+
+fn emit_archive_run_event(log_view: &str, event: &serde_json::Value) {
+    match log_view {
+        "developer" => match serde_json::to_string(event) {
+            Ok(encoded) => eprintln!("{encoded}"),
+            Err(_) => {
+                eprintln!("{{\"phase\":\"archive_operation\",\"status\":\"serialization_failed\"}}")
+            }
+        },
+        "user" => eprintln!("{}", event["user_message"].as_str().unwrap_or("归档处理中")),
+        _ => {}
+    }
+}
+
+fn write_archive_run_history(
+    log_dir: &Path,
+    feature_id: &str,
+    run_id: &str,
+    status: &str,
+    input_paths: usize,
+    total_elapsed_ms: u128,
+    actual_engines: &[&str],
+    result: Option<serde_json::Value>,
+    error_type: Option<&str>,
+    events: &[serde_json::Value],
+) -> Result<PathBuf> {
+    fs::create_dir_all(log_dir)
+        .with_context(|| format!("create archive log directory {}", log_dir.display()))?;
+    let report = serde_json::json!({
+        "schema_version": 1,
+        "product": "pytools",
+        "feature_id": feature_id,
+        "run_id": run_id,
+        "status": status,
+        "input_paths": input_paths,
+        "total_elapsed_ms": total_elapsed_ms,
+        "actual_engines": actual_engines,
+        "result": result,
+        "error_type": error_type,
+        "events": events,
+    });
+    let path = log_dir.join(format!("{feature_id}_{run_id}.run.json"));
+    write_json_report_create_new(&path, &report)?;
+    Ok(path)
 }
 
 struct ParsedCli {
@@ -6792,7 +7282,7 @@ fn print_usage() {
     eprintln!(
         "Usage:\n\
          pytools [menu] [--config <config.xlsx>] [--log-view user|developer|off] [--capabilities <json> --platform <id>]\n\
-         no command opens the migrated menu; available categories: 1 (timeline 1/3/4/5), 2 (dedup 1-6), 3 (print 1-4), 4 (conversion and file naming 1-10), 6 (summary 1/2), and 7 (batch 7-1/7-8)\n\
+         no command opens the migrated menu; available categories: 1 (timeline 1/3/4/5), 2 (dedup 1-6), 3 (print 1-4), 4 (conversion and file naming 1-10), 6 (summary 1/2), 7 (batch 7-1/7-8), and 8 (archive 1-5)\n\
          timeline-precheck --config <workbook.xlsx>\n\
          timeline-compare --config <workbook.xlsx> --template <workbook.xlsx> <source.xlsx>...\n\
          wide-summary --config <workbook.xlsx> <source.xlsx>...\n\

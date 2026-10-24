@@ -1,0 +1,37 @@
+# PT-8 归档工具交互菜单接入
+
+- 时间：2026-10-25 01:25（Asia/Shanghai）
+- 执行者：Codex PyTools 专属开发 Agent
+- 修改前 commit：`af4ed13`；分支 `pytools-dev`；工作区干净；修改前分支比 `origin/pytools-dev` 超前 1 个已有证据提交。
+- 修改后 commit：本记录与本功能一同提交，最终提交由 Git 历史记录。
+- WIP：修改前确认无未提交变更。只改 PyTools 业务入口、对应测试、迁移清单和本记录；未修改 Audit、共享 crate、根 Cargo 文件、长期目标文件或源 Python 项目。
+- 目的：将现有归档 Rust API 接入原产品主菜单类别 8，补齐原 Python 的五个归档操作及文件/目录选择流程。
+
+## 变更文件
+
+- `pytools-core/src/bin/pytools.rs`：增加主菜单 8 和五项子菜单；支持多选文件、递归文件夹、目标根目录与 `.xlsx` 计划选择；统一调用现有归档业务操作；增加 user/developer/off 输出与脱敏运行历史，记录结果数量、耗时和实际引擎。帮助文本同步列出类别 8。
+- `pytools-core/tests/archive_menu_cli.rs`：增加真实 `pytools menu` 集成覆盖，验证五项路由、递归目录、预览不复制、计划执行/直接复制内容、日志视图和历史记录不含输入文件路径/文件名。
+- `pytools-core/MIGRATION_INVENTORY.md`：记录菜单接入及合成验证范围，保持真实业务样本和目标平台为未验证。
+- `GPT修改记录/20261025_012500_PT-8归档菜单接入.txt`：本记录。
+
+## 验证结果
+
+- Windows 原生 `cargo fmt --manifest-path pytools-core/Cargo.toml -- --check`：通过。
+- Windows 原生 `cargo test --manifest-path Cargo.toml -p pytools-core --test archive_menu_cli --test archive_parity --offline --locked -j 1`：通过；交互菜单 1/1，既有 Python 基线对拍与 CLI 测试 2/2。
+- `git diff --check`：通过。
+- 归档菜单输入路径与目标目录均来自合成临时目录；计划/直接复制输出逐字节检查。现有 `archive_parity` 将五类工作流与只读 Python 基线比较，结果匹配。
+
+## 未执行项与已知问题
+
+- 没有操作 Windows 原生文件/文件夹弹窗 UI；集成测试走可复现的手工路径回退。原有 native dialog 实现被菜单复用。
+- 没有真实业务目录/配置样本、麒麟 V10/UOS V20、glibc 2.28 或离线 deb 验收。PT-8 整体仍未完成生产验收。
+- 现有归档业务 API 不提供逐文件回调；本次日志记录开始/完成阶段、总耗时和处理计数，没有新增每文件事件。
+- 构建输出包含既有共享 `excel-editor` 弃用 API 警告及 `pytools-core` 两项无关未使用导入警告；本次未改共享组件或无关代码。
+- Excel 配置读取使用共享 `excel-reader`/Calamine；归档报告新建使用 `excel-writer`/rust_xlsxwriter；文件复制使用 Rust 文件系统 API。没有登记新的修改引擎 capability。
+- VBA 或配置结构未更改；菜单行为按只读 PyCode 基线迁移。
+
+## 回滚
+
+回滚时仅撤销本功能提交或反向恢复上述四个文件。不得 reset、clean 或覆盖此前的 PyTools 证据提交及其他工作树内容。
+
+【组件版本】不升级；新增交互菜单入口，不改变共享 crate 或 workspace 依赖。
