@@ -39,3 +39,15 @@
 - 报告复核发现当前生成器曾把“接入 API 前行为”回退为当次成功结果，并丢掉已记录的跨平台 `#DATA!` 结果。本轮从 PT-6-1 提交 `fcae2e0` 的机器报告恢复失败关闭基线和 Windows/glibc 2.28 三视图记录；探针现只保留显式存档的旧基线，不再以当前结果代替缺失的历史值。JSON 与 Python 语法复核通过，未重跑完整业务对拍（本次只修复历史字段保存）。
 - 本轮尝试重建最新 `x86_64-unknown-linux-gnu.2.28` release，但 WSL 缺少 Zig（`cargo zigbuild` 报 `Failed to find zig`），因此没有更新最新 commit 的 GLIBC 符号或 release 运行证据；之前已有的 glibc 2.28 对拍仍保留为其原报告范围。麒麟 V10/UOS V20 实机、deb 安装和离线交付仍未验证。
 - 本轮只修改 pytools-core 的探针、PT-6-1 报告、迁移清单和本记录；未修改共享 crate、Cargo 文件、Audit 或 `DEVELOPMENT_GOAL.md`。Windows 临时输入/输出由 TemporaryDirectory 清理，未纳入仓库。
+
+追加验证（2026-10-24 10:42 中国标准时间）：
+- 当前 worktree 为本仓库的 `pytools-dev` checkout，分支 `pytools-dev`；验证开始时 HEAD 与 `origin/pytools-dev` 均为 `98a702f6c7b883bf7626639572cb196c2bb67734`，工作区干净。`DEVELOPMENT_GOAL.md` 未修改。
+- 从 Zig 官方下载页提供的 Linux x86_64 稳定版 Zig 0.17.0 临时工具链，成功执行 `cargo zigbuild --offline --locked -p pytools-core --bin pytools --release --target x86_64-unknown-linux-gnu.2.28`。`objdump -T` 确认生成的 ELF 最高 GLIBC 动态符号为 `GLIBC_2.28`。
+- 当前 release CLI 的 `cargo test --offline --locked -p pytools-core --test summary_used_range_error` 为 4/4 通过；构建仍有既有 deprecation 与 unused import 警告。
+- 刚重建的 glibc 2.28 release CLI 对 getting_data_error.xlsx 执行 user/developer/off 三视图，与 PyCode 完整投影均一致，均生成 1 行；developer 事件流和 JSON 历史一致且不泄漏 #DATA!，off 无进度输出，输入夹具未改变。
+- 使用 WSL Linux release CLI 直接跑 `summary-used-range`，并与只读 PyCode 输出做完整投影对拍：合成用例通过，13 份原项目 XLSX、96 张工作表、203,580 行分 4 批全部匹配；最大批 188,365 行。值/类型、样式、sheet 名与维度、冻结窗格、表头加粗及公式/合并/名称/页面设置一致；1,212 个受支持错误值保留；输入前后指纹相同。批次实际 reader/writer 为 Calamine/rust_xlsxwriter；最大批 reader/writer/run 阶段耗时记录于机器报告。此数据仅作当前样本的阶段诊断，不作性能比较。
+- WSL Python 不能载入 Windows `python-calamine` `.pyd`，本次不重跑 NoComPyTools 变体；原报告已有 NoComPyTools/PyCode 差异证据并予以保留。完整对拍仍以约定的 PyCode 行为为基线。
+- 对拍运行期的 Python runner、Zig 压缩包与 CLI 输出均在系统/WSL 临时目录，不进入版本库；原 Python 项目只读，13 份源工作簿未改变。
+- 修复 `compare_summary_tools.py` 对配置 CLI 的执行环境标签，支持 WSL Linux 明确报告；补上报告生成时从既有 cross-platform 容器回读历史三视图以及保留两个失败关闭历史字段的逻辑。已将本次真实 Linux host、目标 triple 和最高 GLIBC 符号回写机器报告。
+- 修改限于 `pytools-core/probe/compare_summary_tools.py`、两份 PT-6-1 probe JSON、`pytools-core/MIGRATION_INVENTORY.md` 和本记录；未改共享 crate、根 Cargo/Cargo.lock、Audit、规则或 `DEVELOPMENT_GOAL.md`。
+- 尚未在麒麟 V10/UOS V20 实机安装 deb 或完成离线交付验收，PT-6-1 最终平台验收仍未完成。

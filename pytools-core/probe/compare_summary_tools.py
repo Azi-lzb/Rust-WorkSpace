@@ -499,16 +499,8 @@ def compare_real_used_range_sample() -> dict[str, object]:
             "rust_cli_wall_elapsed_ms": rust_cli_wall_elapsed_ms,
             "execution_environment": {
                 "python_sys_platform": sys.platform,
-                "rust_cli_host": (
-                    "Windows host; Windows GNU executable"
-                    if os.environ.get("PYTOOLS_RUST_CLI")
-                    else "WSL Linux"
-                ),
-                "rust_cli_executable": (
-                    "configured Windows GNU executable"
-                    if os.environ.get("PYTOOLS_RUST_CLI")
-                    else "cargo run"
-                ),
+                "rust_cli_host": rust_cli_runtime_metadata()[0],
+                "rust_cli_executable": rust_cli_runtime_metadata()[1],
                 "rust_cli_wall_includes_cargo_run": not bool(
                     os.environ.get("PYTOOLS_RUST_CLI")
                 ),
@@ -983,6 +975,32 @@ def projection_difference_summary(expected: Path, actual: Path) -> dict[str, obj
         "nocom_pytools_dimensions": actual_dimensions,
     }
 
+
+def rust_cli_runtime_metadata() -> tuple[str, str]:
+    native_cli = os.environ.get("PYTOOLS_RUST_CLI")
+    host = os.environ.get("PYTOOLS_RUST_CLI_HOST")
+    executable = os.environ.get("PYTOOLS_RUST_CLI_LABEL")
+    if host is None:
+        if not native_cli:
+            host = "WSL Linux"
+        elif sys.platform == "win32":
+            host = "Windows host"
+        elif sys.platform == "linux":
+            host = "Linux host"
+        else:
+            host = sys.platform
+    if executable is None:
+        if not native_cli:
+            executable = "cargo run"
+        elif sys.platform == "win32":
+            executable = "configured Windows GNU executable"
+        elif sys.platform == "linux":
+            executable = "configured Linux executable"
+        else:
+            executable = "configured executable"
+    return host, executable
+
+
 def main() -> int:
     if not PYTOOLS_SOURCE.is_dir():
         raise FileNotFoundError(PYTOOLS_SOURCE)
@@ -1157,6 +1175,15 @@ def main() -> int:
             for key in ("windows_gnu_debug", "linux_glibc_2_28_release")
             if key in previous_unknown_rust
         }
+        if not cross_platform_runs:
+            previous_cross_platform_runs = previous_unknown_probe.get(
+                "cross_platform_runs_after_shared_reader_api", {}
+            )
+            cross_platform_runs = {
+                key: previous_cross_platform_runs[key]
+                for key in ("windows_gnu_debug", "linux_glibc_2_28_release")
+                if key in previous_cross_platform_runs
+            }
         previous_rust_behavior = previous_unknown_probe.get(
             "rust_cli_before_reader_compatibility_api",
             previous_unknown_probe.get("previous_rust_behavior_before_shared_reader_api"),
@@ -1216,6 +1243,8 @@ def main() -> int:
                     "rows": 1,
                 },
                 "rust_cli": {
+                    "runtime": rust_cli_runtime_metadata()[0],
+                    "configured_executable": rust_cli_runtime_metadata()[1],
                     "status": "succeeded",
                     "entrypoint": "pytools summary-used-range",
                     "reader_api": "read_workbook_with_unknown_error_tokens_as_text",
@@ -1275,9 +1304,11 @@ def main() -> int:
             ],
         }
         if previous_rust_behavior is not None:
-            report["unknown_cell_error_probe"][
-                "previous_rust_behavior_before_shared_reader_api"
-            ] = previous_rust_behavior
+            for history_key in (
+                "rust_cli_before_reader_compatibility_api",
+                "previous_rust_behavior_before_shared_reader_api",
+            ):
+                report["unknown_cell_error_probe"][history_key] = previous_rust_behavior
         for key, value in previous_report.items():
             if key not in report:
                 report[key] = value

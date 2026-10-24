@@ -39,10 +39,10 @@
   },
   "rust_execution": {
     "ooxml_error_cells_patched": 7,
-    "read_elapsed_ms": 16,
+    "read_elapsed_ms": 27,
     "reader_engine": "calamine",
-    "total_elapsed_ms": 71,
-    "write_elapsed_ms": 52,
+    "total_elapsed_ms": 52,
+    "write_elapsed_ms": 17,
     "writer_engine": "rust_xlsxwriter"
   },
   "progress_logging": {
@@ -66,13 +66,13 @@
       "rust_xlsxwriter"
     ],
     "completed_stage_elapsed_ms": {
-      "extent_scan": 1,
-      "value_read": 5,
+      "extent_scan": 0,
+      "value_read": 0,
       "row_write": 0,
-      "output_save": 12,
-      "ooxml_error_patch": 38,
-      "output_workbook": 52,
-      "run": 71
+      "output_save": 9,
+      "ooxml_error_patch": 2,
+      "output_workbook": 17,
+      "run": 52
     },
     "skipped_input_names": [],
     "input_filter_events_have_no_engine": true
@@ -116,13 +116,13 @@
         "rust_xlsxwriter"
       ],
       "completed_stage_elapsed_ms": {
-        "extent_scan": 2,
-        "value_read": 6,
+        "extent_scan": 0,
+        "value_read": 0,
         "row_write": 0,
-        "output_save": 11,
-        "ooxml_error_patch": 23,
-        "output_workbook": 36,
-        "run": 54
+        "output_save": 8,
+        "ooxml_error_patch": 2,
+        "output_workbook": 17,
+        "run": 50
       },
       "skipped_input_names": [
         "ignored_source.xls",
@@ -150,9 +150,9 @@
     "rust_execution": {
       "reader_engine": "calamine",
       "writer_engine": "rust_xlsxwriter",
-      "read_elapsed_ms": 4,
-      "write_elapsed_ms": 11,
-      "total_elapsed_ms": 17
+      "read_elapsed_ms": 60,
+      "write_elapsed_ms": 16,
+      "total_elapsed_ms": 90
     },
     "progress_log": {
       "view": "developer",
@@ -173,12 +173,12 @@
         "rust_xlsxwriter"
       ],
       "completed_stage_elapsed_ms": {
-        "extent_scan": 1,
-        "value_read": 3,
-        "row_write": 0,
-        "output_save": 10,
-        "output_workbook": 11,
-        "run": 17
+        "extent_scan": 23,
+        "value_read": 37,
+        "row_write": 1,
+        "output_save": 11,
+        "output_workbook": 16,
+        "run": 90
       },
       "skipped_input_names": [],
       "input_filter_events_have_no_engine": true
@@ -238,80 +238,25 @@
           "rust_xlsxwriter"
         ],
         "completed_stage_elapsed_ms": {
-          "extent_scan": 1,
-          "value_read_compatibility": 26,
-          "value_read": 26,
-          "row_write": 0,
-          "output_save": 10,
-          "output_workbook": 11,
-          "run": 41
+          "extent_scan": 23,
+          "value_read_compatibility": 58,
+          "value_read": 58,
+          "row_write": 1,
+          "output_save": 7,
+          "output_workbook": 13,
+          "run": 106
         },
         "skipped_input_names": [],
         "input_filter_events_have_no_engine": true
       },
       "developer_compatibility_event_count": 1,
       "developer_history_omits_cell_token": true,
-      "windows_gnu_debug": {
-        "runtime": "Windows 11 x64; Windows GNU debug CLI executed from PowerShell",
-        "actual_executable": "target/x86_64-pc-windows-gnu/debug/pytools.exe",
-        "views": {
-          "user": {
-            "output_projection": "exact with PyCode",
-            "rows": 1
-          },
-          "developer": {
-            "output_projection": "exact with PyCode",
-            "rows": 1,
-            "event_count": 12,
-            "compatibility_event_count": 1,
-            "event_history_match": true,
-            "log_omits_cell_token": true
-          },
-          "off": {
-            "output_projection": "exact with PyCode",
-            "rows": 1,
-            "application_progress_events": 0
-          }
-        }
-      },
-      "linux_glibc_2_28_release": {
-        "runtime": "WSL Ubuntu; x86_64-unknown-linux-gnu.2.28 release CLI",
-        "actual_executable": "target/x86_64-unknown-linux-gnu/release/pytools",
-        "maximum_glibc_symbol": "GLIBC_2.28",
-        "views": {
-          "user": {
-            "output_projection": "exact with PyCode",
-            "rows": 1
-          },
-          "developer": {
-            "output_projection": "exact with PyCode",
-            "rows": 1,
-            "event_count": 12,
-            "compatibility_event_count": 1,
-            "event_history_match": true,
-            "log_omits_cell_token": true
-          },
-          "off": {
-            "output_projection": "exact with PyCode",
-            "rows": 1,
-            "application_progress_events": 0
-          }
-        }
-      }
+      "runtime": "WSL Ubuntu",
+      "actual_executable": "target/x86_64-unknown-linux-gnu/release/pytools",
+      "maximum_glibc_symbol": "GLIBC_2.28",
+      "configured_executable": "x86_64-unknown-linux-gnu.2.28 release executable"
     },
     "business_parity": "exact",
-    "previous_rust_behavior_before_shared_reader_api": {
-      "status": "failed_closed",
-      "message_contains": "Unsupported cell error value '#DATA!'",
-      "reader_engine": "calamine",
-      "entrypoint": "pytools summary-used-range",
-      "runtime": "Windows GNU debug CLI",
-      "actual_executable": "target/x86_64-pc-windows-gnu/debug/pytools.exe",
-      "exit_code": 2,
-      "failure_stage": "value_read",
-      "partial_output_created": false,
-      "failed_run_log_count": 1
-    },
     "cross_platform_runs_after_shared_reader_api": {
       "windows_gnu_debug": {
         "runtime": "Windows 11 x64; Windows GNU debug CLI executed from PowerShell",
@@ -348,8 +293,6 @@
           "developer": {
             "output_projection": "exact with PyCode",
             "rows": 1,
-            "event_count": 12,
-            "compatibility_event_count": 1,
             "event_history_match": true,
             "log_omits_cell_token": true
           },
@@ -362,6 +305,18 @@
       }
     },
     "note": "PT-6-1 opts into the shared reader's narrow literal error-token normalization API. Ordinary read_workbook remains fail-closed; this probe does not infer support for other tokens.",
+    "previous_rust_behavior_before_shared_reader_api": {
+      "status": "failed_closed",
+      "message_contains": "Unsupported cell error value '#DATA!'",
+      "reader_engine": "calamine",
+      "entrypoint": "pytools summary-used-range",
+      "runtime": "Windows GNU debug CLI",
+      "actual_executable": "target/x86_64-pc-windows-gnu/debug/pytools.exe",
+      "exit_code": 2,
+      "failure_stage": "value_read",
+      "partial_output_created": false,
+      "failed_run_log_count": 1
+    },
     "rust_cli_before_reader_compatibility_api": {
       "status": "failed_closed",
       "message_contains": "Unsupported cell error value '#DATA!'",
@@ -622,7 +577,7 @@
   },
   "limitations": [
     "This report covers synthetic XLSX/XLSM plus one pinned VBA-enabled XlsxWriter test fixture; real-project XLSX parity is recorded separately in summary_used_range_real_parity_<date>.json.",
-    "The official VBA-enabled fixture passed, but original PyTools VBA-bearing XLSM, XLS, XLSB, Kylin/UOS, glibc 2.28 and deb packaging remain unvalidated.",
+    "The official VBA-enabled fixture and WSL glibc 2.28 release validation passed; original PyTools VBA-bearing XLSM, XLS/XLSB, Kylin V10/UOS V20 installation and deb packaging remain unvalidated.",
     "NoComPyTools and PyCode input-format scopes differ; no production scope was inferred from the NoCom-only formats.",
     "Output is a new data workbook; source workbook styles, formulas and unrelated OOXML parts are not copied by contract.",
     "A synthetic XLSX t=e #DATA! cell is written as a string by PyCode; PT-6-1 now uses the shared reader's narrow literal-token normalization API and matches this case. No broader token or format support is inferred."
