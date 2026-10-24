@@ -1,0 +1,28 @@
+时间：2026-10-25 06:15:31
+执行者：Codex
+修改前 commit：b73cb3f
+修改后 commit：待本轮本地提交
+WIP：修改前确认在 audit-dev 工作树；DEVELOPMENT_GOAL.md 已有未提交改动，明确保留且不纳入本次提交。源 Python 与用户真实工作簿只读。
+
+目的：将原 Python `scan_validation_formula_errors` 的模板校验区域公式缓存错误扫描接入 Rust S1-F01 目录审核链路，并完成真实只读样本对拍。
+
+修改文件：
+- audit-core/src/s1_validation_formula_scan.rs：新增 Rust 计划加载、定义名称区域公式扫描、缓存错误来源归集和 Issue 转换。
+- audit-core/src/lib.rs：导出业务模块。
+- audit-core/src/bin/open-data-audit.rs：在 `s1-audit-directory` 接入扫描、重复 Issue 抑制、双视图阶段日志及结果摘要。
+- audit-core/tests/s1_audit_directory_cli.rs：覆盖真实入口中范围内缓存错误纳入、范围外值忽略和输出/日志契约。
+- audit-core/probe/reports/s1_validation_formula_scan_real_parity_windows_native_20261025.json：记录脱敏真实对拍和合成回归证据，不含业务路径、文件名、公式或业务值。
+- audit-core/MIGRATION_INVENTORY.md：补充 S1-F01 局部迁移证据，整体状态保持未验证。
+- audit-core/GPT修改记录/$20261025_061531_S1校验公式扫描Rust集成.txt：本记录。
+
+逻辑影响：Rust 依据模板 `校验区域*` 定义名称扫描公式单元格的模板缓存错误和源文件对应单元格已保存错误；在审核 Issue 合流之前接入，并沿用现有历史归类流程。每文件扫描失败会生成诊断 Issue，不中止其他文件。未修改既有公式复制/编辑器路由、共享 crate、配置格式或前端 API。无 VBA 迁移影响。未作命名调整。组件版本：不升级。
+
+验证：
+- `cargo test --offline --locked -p audit-core s1_validation_formula_scan -- --nocapture`：4 项通过。
+- `cargo test --offline --locked -p audit-core --test s1_audit_directory_cli -- --nocapture`：5 项通过。
+- `cargo test --offline --locked -p audit-core -q`：本轮提交前全套 Audit 测试通过（库 116 passed、2 ignored；所有其余集成测试通过）。
+- Windows 原生 Rust CLI 与 Windows Python 3.12.10/openpyxl 3.1.5 基线使用同批 7 本只读源文件和 1 个模板逐字段对拍：公式单元格总计 7,504；错误记录字段完全一致，1 条源缓存错误，新增 Issue 1 条，缺失工作表 0，失败 0。Rust 完整 CLI 观测 2,279 ms、扫描阶段 661 ms、模板读取 333 ms；数据仅适用于该样本。Python 仅为比较基线，不是隔离 openpyxl worker、WSL Python 或 deb runtime。
+
+未执行/已知限制：公式复制及历史工作簿编辑后端仍受既有 ExcelModifier/真实模板能力门槛限制，保持 Unverified；未执行公式重算、openpyxl worker 验证、WSL 测试或 Linux glibc/deb 目标系统验收。新增对拍只覆盖本次 7 本样本及所选模板；S1-F01 整体仍未验收。
+
+删除清单：无。回滚：在本次提交上执行反向提交可回滚；或删除新扫描模块/导出、移除 `s1-audit-directory` 接线和对应测试及证据，并还原清单对应新增句。保留此前独立 WIP 与已验收代码。

@@ -1,0 +1,54 @@
+{
+  "report_id": "s1_validation_formula_scan_real_parity_windows_native_20261025",
+  "date": "2026-10-25",
+  "feature": "S1-F01 validation-area formula error scan integration",
+  "rust_entry_point": "open-data-audit s1-audit-directory",
+  "rust_module": "audit_core::s1_validation_formula_scan::S1ValidationFormulaScanPlan",
+  "rust_reader": "calamine values + namespace-aware OOXML defined names",
+  "python_baseline": {
+    "function": "s1audit_configured.formula_error_scan.scan_validation_formula_errors",
+    "runtime": "Windows Python 3.12.10 + openpyxl 3.1.5; comparison baseline only, not the isolated product worker or Linux/deb runtime"
+  },
+  "sample_scope": {
+    "source_workbooks": 7,
+    "templates": 1,
+    "existing_audit_copy_manifest_reused": true,
+    "formula_cells_scanned_total": 7504,
+    "formula_cells_scanned_per_source": 1072,
+    "source_cached_errors": 1,
+    "missing_sheets": 0,
+    "scan_failures": 0,
+    "issues_added": 1,
+    "real_sample_fields_equal": true,
+    "compared_error_fields": [
+      "sheet",
+      "cell",
+      "value",
+      "formula",
+      "origin",
+      "template_path_basename",
+      "formula_error_tokens"
+    ],
+    "raw_paths_filenames_formulas_and_business_values_recorded": false,
+    "input_workbooks_modified": false,
+    "template_modified": false,
+    "result_workbook_written": false
+  },
+  "native_windows_timing_ms_observation": {
+    "complete_s1_audit_cli": 2279,
+    "validation_scan_stage": 661,
+    "template_read": 333,
+    "sample_specific_only": true
+  },
+  "synthetic_regression": {
+    "cli_test": "cli_scans_template_validation_formula_cells_and_merges_source_errors",
+    "in_range_cached_error_included": true,
+    "out_of_range_error_ignored": true,
+    "quoted_formula_error_text_ignored": true
+  },
+  "limitations": [
+    "This evidence covers only this seven-workbook sample and the selected template.",
+    "S1-F01 remains unverified overall; formula-copy editing, history-workbook write preservation, repeated-run parity, and target Linux/deb acceptance remain separate gates.",
+    "The Windows Python run is a read-only parity baseline, not a production Python path or isolated openpyxl worker validation."
+  ]
+}

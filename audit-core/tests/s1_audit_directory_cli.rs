@@ -89,6 +89,28 @@ fn formula_template_without_result_rule_or_structure_area(path: &Path) {
         .expect("save unhealthy formula template");
 }
 
+fn source_workbook_with_validation_error(path: &Path) {
+    let mut workbook = Workbook::new();
+    let validation_sheet = workbook.add_worksheet();
+    validation_sheet
+        .set_name("检查表")
+        .expect("name source validation sheet");
+    validation_sheet
+        .write_string(3, 0, "#DIV/0!")
+        .expect("write in-range source error");
+    validation_sheet
+        .write_string(0, 1, "#REF!")
+        .expect("write out-of-range source error");
+    let structure_sheet = workbook.add_worksheet();
+    structure_sheet
+        .set_name("S1Conditional")
+        .expect("name source structure sheet");
+    structure_sheet
+        .write_string(1, 0, "资产总额")
+        .expect("write source structure label");
+    workbook.save(path).expect("save source workbook");
+}
+
 fn audit_copy(path: &Path) {
     let mut workbook = Workbook::new();
     let worksheet = workbook.add_worksheet();
@@ -323,9 +345,9 @@ fn cli_runs_both_issue_sources_merges_then_classifies_and_logs_actual_engines() 
         1
     );
     assert_eq!(report["conditional_summary"]["issues"], 1);
-    assert_eq!(report["issues"].as_array().unwrap().len(), 3);
-    assert_eq!(report["issues"][2]["org_code"], "");
-    assert_eq!(report["issues"][2]["org_name"], "");
+    assert_eq!(report["issues"].as_array().unwrap().len(), 4);
+    assert_eq!(report["issues"][3]["org_code"], "");
+    assert_eq!(report["issues"][3]["org_name"], "");
     assert_eq!(
         report["issues"]
             .as_array()
@@ -333,17 +355,23 @@ fn cli_runs_both_issue_sources_merges_then_classifies_and_logs_actual_engines() 
             .iter()
             .map(|issue| issue["formula_cell"].as_str().unwrap())
             .collect::<Vec<_>>(),
-        ["A1", "A3", "B2"]
+        ["A1", "A3", "", "B2"]
+    );
+    assert_eq!(report["validation_formula_scan"]["status"], "completed");
+    assert_eq!(report["validation_formula_scan"]["missing_sheets"], 1);
+    assert_eq!(
+        report["issues"][2]["rule_id"],
+        "TEMPLATE_FORMULA_SCAN:检查表"
     );
     assert_eq!(
-        report["issues"][2]["audit_file"],
+        report["issues"][3]["audit_file"],
         audit.canonicalize().unwrap().to_string_lossy().as_ref()
     );
-    assert_eq!(report["summary"]["new_issues"], 3);
+    assert_eq!(report["summary"]["new_issues"], 4);
     assert_eq!(report["resolved_issues"].as_array().unwrap().len(), 0);
-    assert_eq!(report["result_workbook"]["issue_count"], 3);
+    assert_eq!(report["result_workbook"]["issue_count"], 4);
     assert_eq!(report["result_workbook"]["hyperlink_count"], 3);
-    assert_eq!(report["history_result_workbook"]["issue_count"], 3);
+    assert_eq!(report["history_result_workbook"]["issue_count"], 4);
     assert_eq!(
         report["history_result_workbook"]["path"],
         history_result_workbook
@@ -401,6 +429,7 @@ fn cli_runs_both_issue_sources_merges_then_classifies_and_logs_actual_engines() 
     let user_log = String::from_utf8_lossy(&ordinary.stderr);
     assert!(user_log.contains("条件格式审核完成"));
     assert!(user_log.contains("公式结果审核完成"));
+    assert!(user_log.contains("S1 校验公式扫描完成"));
     assert!(!user_log.contains("calamine"), "{user_log}");
     assert!(!user_log.contains("namespace_aware_ooxml"), "{user_log}");
     assert!(!user_log.contains("读取器"), "{user_log}");
@@ -434,20 +463,26 @@ fn cli_runs_both_issue_sources_merges_then_classifies_and_logs_actual_engines() 
             && event["issues"] == 2
     }));
     assert!(events.iter().any(|event| {
+        event["step"] == "validation_formula_error_scan"
+            && event["engine"] == "calamine+namespace_aware_ooxml_defined_names"
+            && event["formula_cells_scanned"] == 5
+            && event["missing_sheets"] == 1
+    }));
+    assert!(events.iter().any(|event| {
         event["step"] == "conditional_format_issue_extraction"
             && event["status"] == "completed"
             && event["engine"] == "calamine+namespace_aware_ooxml"
     }));
     assert!(events.iter().any(|event| {
         event["step"] == "issue_merge_and_history_classification"
-            && event["current_issues"] == 3
+            && event["current_issues"] == 4
             && event["elapsed_ms"].is_number()
     }));
     assert!(events.iter().any(|event| {
         event["step"] == "result_workbook_write"
             && event["status"] == "completed"
             && event["engine"] == "rust_xlsxwriter 0.101.0"
-            && event["issues"] == 3
+            && event["issues"] == 4
             && event["hyperlinks"] == 3
             && event["elapsed_ms"].is_number()
     }));
@@ -455,7 +490,7 @@ fn cli_runs_both_issue_sources_merges_then_classifies_and_logs_actual_engines() 
         event["step"] == "history_result_workbook_write"
             && event["status"] == "completed"
             && event["engine"] == "rust_xlsxwriter 0.101.0"
-            && event["issues"] == 3
+            && event["issues"] == 4
             && event["elapsed_ms"].is_number()
     }));
 
@@ -485,19 +520,19 @@ fn cli_runs_both_issue_sources_merges_then_classifies_and_logs_actual_engines() 
         replay_report["history_workbook_summary"]["reader"],
         "calamine"
     );
-    assert_eq!(replay_report["history_workbook_summary"]["rows_read"], 3);
-    assert_eq!(replay_report["summary"]["history_rows"], 3);
-    assert_eq!(replay_report["summary"]["merged_history_rows"], 3);
+    assert_eq!(replay_report["history_workbook_summary"]["rows_read"], 4);
+    assert_eq!(replay_report["summary"]["history_rows"], 4);
+    assert_eq!(replay_report["summary"]["merged_history_rows"], 4);
     assert_eq!(replay_report["summary"]["new_issues"], 0);
-    assert_eq!(replay_report["summary"]["recurring_issues"], 3);
+    assert_eq!(replay_report["summary"]["recurring_issues"], 4);
     assert_eq!(replay_report["summary"]["continuous_issues"], 0);
-    assert_eq!(replay_report["issues"].as_array().unwrap().len(), 3);
+    assert_eq!(replay_report["issues"].as_array().unwrap().len(), 4);
     assert!(replay_report["issues"]
         .as_array()
         .unwrap()
         .iter()
         .all(|issue| issue["status"] == "再次出现"));
-    assert_eq!(replay_report["history_result_workbook"]["issue_count"], 3);
+    assert_eq!(replay_report["history_result_workbook"]["issue_count"], 4);
     let replay_log = String::from_utf8_lossy(&replay.stderr);
     assert!(replay_log.contains("S1 历史工作簿读取完成"));
     assert!(replay_log.contains("历史结果工作簿已生成"));
@@ -508,6 +543,94 @@ fn cli_runs_both_issue_sources_merges_then_classifies_and_logs_actual_engines() 
         println!("S1_RESULT_PARITY_DIR={}", directory.display());
     } else {
         fs::remove_dir_all(directory).expect("remove temporary issue-chain workbooks");
+    }
+}
+
+#[test]
+fn cli_scans_template_validation_formula_cells_and_merges_source_errors() {
+    let directory = temporary_directory("validation_formula_scan");
+    let input = directory.join("input");
+    fs::create_dir_all(&input).expect("create source input directory");
+    let source = input.join("1001_机构甲_2026-07.xlsx");
+    source_workbook_with_validation_error(&source);
+    let template = directory.join("template.xlsx");
+    formula_template(&template);
+    let audit = directory.join("audit-copy.xlsx");
+    audit_copy(&audit);
+    let manifest = directory.join("formula-copies.json");
+    fs::write(
+        &manifest,
+        serde_json::to_vec(&json!({
+            "files": [{
+                "source_file": source.file_name().unwrap().to_string_lossy(),
+                "audit_workbook": audit.file_name().unwrap().to_string_lossy()
+            }]
+        }))
+        .unwrap(),
+    )
+    .expect("write formula copy manifest");
+
+    let output = run_cli(&input, &template, &manifest, true);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: Value = serde_json::from_slice(&output.stdout).expect("parse S1 report");
+    assert_eq!(report["validation_formula_scan"]["status"], "completed");
+    assert_eq!(
+        report["validation_formula_scan"]["formula_cells_scanned"],
+        5
+    );
+    assert_eq!(report["validation_formula_scan"]["formula_errors"], 1);
+    assert_eq!(report["validation_formula_scan"]["missing_sheets"], 0);
+    assert_eq!(report["validation_formula_scan"]["issues_added"], 1);
+    assert_eq!(report["validation_formula_scan"]["failures"], 0);
+    assert_eq!(
+        report["validation_formula_scan"]["errors"][0]["sheet"],
+        "检查表"
+    );
+    assert_eq!(report["validation_formula_scan"]["errors"][0]["cell"], "A4");
+    assert_eq!(
+        report["validation_formula_scan"]["errors"][0]["formula"],
+        "=IF(TRUE,\"\",\"\")"
+    );
+    assert_eq!(
+        report["validation_formula_scan"]["errors"][0]["origin"],
+        "source_cached_value"
+    );
+    let scanner_issue = report["issues"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|issue| issue["check_type"] == "校验公式错误")
+        .expect("source validation formula error issue");
+    assert_eq!(scanner_issue["formula_cell"], "A4");
+    assert_eq!(scanner_issue["formula_result"], "#DIV/0!");
+    assert_eq!(
+        scanner_issue["source_file"],
+        source.canonicalize().unwrap().to_string_lossy().as_ref()
+    );
+    assert!(!report["validation_formula_scan"]["per_file"][0]
+        .to_string()
+        .contains("#REF!"));
+    let events = String::from_utf8_lossy(&output.stderr)
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).expect("parse developer event"))
+        .collect::<Vec<_>>();
+    assert!(events.iter().any(|event| {
+        event["step"] == "validation_formula_error_scan"
+            && event["engine"] == "calamine+namespace_aware_ooxml_defined_names"
+            && event["formula_errors"] == 1
+            && event["issues_added"] == 1
+    }));
+
+    if std::env::var_os("AUDIT_S1_KEEP_VALIDATION_SCAN_ARTIFACTS").is_some() {
+        fs::write(directory.join("rust-result.json"), &output.stdout)
+            .expect("save synthetic Rust scan result for Python parity");
+        println!("S1_VALIDATION_SCAN_PARITY_DIR={}", directory.display());
+    } else {
+        fs::remove_dir_all(directory).expect("remove temporary validation scan fixtures");
     }
 }
 

@@ -29,6 +29,10 @@ use audit_core::{
     s1_summary_merge::merge_s1_workbook_tables,
     s1_template::{recommend_template, recommend_template_for_workbooks, template_workbook_paths},
     s1_template_rules::{assess_s1_template_health, load_s1_template_rule_plan},
+    s1_validation_formula_scan::{
+        issues_from_validation_formula_scan, validation_formula_scan_failure_issue,
+        S1ValidationFormulaScanPlan,
+    },
     s2_service::{run_s2_audit, S2ProgressEvent, S2RunRequest},
     s2_summary::S2AuditSummary,
     s3_explanation_export::export_selected_explanations,
@@ -39,6 +43,7 @@ use audit_core::{
 use clap::{Args, Parser, Subcommand};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -2113,11 +2118,11 @@ fn run_s1_audit_directory(arguments: S1AuditDirectoryArgs) -> Result<()> {
             Ok((result.issues, result.summary))
         })
         .collect::<Result<Vec<_>>>()?;
-    let formula_issues = formula_results
+    let mut formula_issues = formula_results
         .iter()
         .flat_map(|(issues, _)| issues.iter().cloned())
         .collect::<Vec<_>>();
-    let formula_issue_count = formula_issues.len();
+    let formula_result_issue_count = formula_issues.len();
     let formula_nonempty_results = formula_results
         .iter()
         .map(|(_, summary)| summary.formula_result_values_nonempty)
@@ -2151,7 +2156,7 @@ fn run_s1_audit_directory(arguments: S1AuditDirectoryArgs) -> Result<()> {
                 "files": formula_results.len(),
                 "rules_enabled_per_file": template_plan.summary.rules_enabled,
                 "formula_result_values_nonempty": formula_nonempty_results,
-                "issues": formula_issue_count,
+                "issues": formula_result_issue_count,
                 "per_file": per_file,
                 "elapsed_ms": formula_started.elapsed().as_millis(),
                 "formula_recalculation": "not performed; saved values only"
@@ -2163,8 +2168,217 @@ fn run_s1_audit_directory(arguments: S1AuditDirectoryArgs) -> Result<()> {
             formula_results.len(),
             template_plan.summary.rules_enabled,
             formula_nonempty_results,
-            formula_issue_count,
+            formula_result_issue_count,
             formula_started.elapsed().as_millis()
+        );
+    }
+
+    let validation_scan_started = Instant::now();
+    let validation_plan_result =
+        S1ValidationFormulaScanPlan::load(std::slice::from_ref(&template_workbook));
+    let (validation_plan, validation_plan_error) = match validation_plan_result {
+        Ok(plan) => (Some(plan), None),
+        Err(error) => (None, Some(format!("{error:#}"))),
+    };
+    let validation_template_read_time_ms = validation_plan
+        .as_ref()
+        .map(S1ValidationFormulaScanPlan::template_read_time_ms)
+        .unwrap_or_default();
+    let validation_scan_results = accepted_inputs
+        .par_iter()
+        .map(|input| {
+            let source_key = s1_path_identity(&input.source_file);
+            let audit_workbook = pair_by_source
+                .get(&source_key)
+                .context("校验公式扫描清单与结构预检结果不一致")?;
+            let (org_code, org_name) = organisation_from_name(&input.source_file);
+            let metadata = S1FormulaMetadata {
+                period: period.clone(),
+                batch_id: arguments.batch_id.clone(),
+                audit_time: audit_time.clone(),
+                org_code,
+                org_name,
+            };
+            let scan_started = Instant::now();
+            let scan_result = match (&validation_plan, validation_plan_error.as_deref()) {
+                (Some(plan), _) => plan.scan(&input.source_file),
+                (None, Some(error)) => Err(anyhow::anyhow!(error.to_owned())),
+                (None, None) => Err(anyhow::anyhow!("未能准备校验公式扫描计划")),
+            };
+            match scan_result {
+                Ok(report) => {
+                    let mut issues = issues_from_validation_formula_scan(
+                        &report,
+                        &input.source_file,
+                        audit_workbook,
+                        &metadata,
+                    );
+                    let duplicate_issues_suppressed = issues.len()
+                        - issues
+                            .iter()
+                            .filter(|candidate| {
+                                !formula_issues.iter().any(|existing| {
+                                    existing.issue_id == candidate.issue_id
+                                        && existing.formula_result == candidate.formula_result
+                                        && existing.source_file == candidate.source_file
+                                })
+                            })
+                            .count();
+                    issues.retain(|candidate| {
+                        !formula_issues.iter().any(|existing| {
+                            existing.issue_id == candidate.issue_id
+                                && existing.formula_result == candidate.formula_result
+                                && existing.source_file == candidate.source_file
+                        })
+                    });
+                    Ok((
+                        Some(report),
+                        issues,
+                        None,
+                        duplicate_issues_suppressed,
+                        scan_started.elapsed().as_millis(),
+                    ))
+                }
+                Err(error) => Ok((
+                    None,
+                    vec![validation_formula_scan_failure_issue(
+                        &input.source_file,
+                        audit_workbook,
+                        &metadata,
+                        &format!("{error:#}"),
+                    )],
+                    Some(format!("{error:#}")),
+                    0,
+                    scan_started.elapsed().as_millis(),
+                )),
+            }
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let validation_scan_issue_count = validation_scan_results
+        .iter()
+        .map(|(_, issues, _, _, _)| issues.len())
+        .sum::<usize>();
+    let validation_scan_error_count = validation_scan_results
+        .iter()
+        .map(|(report, _, _, _, _)| {
+            report
+                .as_ref()
+                .map(|report| report.errors.len())
+                .unwrap_or_default()
+        })
+        .sum::<usize>();
+    let validation_scan_formula_cells = validation_scan_results
+        .iter()
+        .map(|(report, _, _, _, _)| {
+            report
+                .as_ref()
+                .map(|report| report.formula_cells_scanned)
+                .unwrap_or_default()
+        })
+        .sum::<usize>();
+    let validation_scan_missing_sheets = validation_scan_results
+        .iter()
+        .map(|(report, _, _, _, _)| {
+            report
+                .as_ref()
+                .map(|report| report.missing_sheets.len())
+                .unwrap_or_default()
+        })
+        .sum::<usize>();
+    let validation_scan_failures = validation_scan_results
+        .iter()
+        .filter(|(_, _, error, _, _)| error.is_some())
+        .count();
+    let validation_scan_duplicates_suppressed = validation_scan_results
+        .iter()
+        .map(|(_, _, _, count, _)| count)
+        .sum::<usize>();
+    let validation_scan_per_file = accepted_inputs
+        .iter()
+        .zip(validation_scan_results.iter())
+        .map(|(input, (report, issues, error, _, elapsed_ms))| {
+            json!({
+                "source_file": input.source_file.file_name().map(|name| name.to_string_lossy()),
+                "status": if error.is_some() { "failed" } else { report.as_ref().map(|report| report.status).unwrap_or("skipped") },
+                "formula_cells_scanned": report.as_ref().map(|report| report.formula_cells_scanned).unwrap_or_default(),
+                "source_errors": report.as_ref().map(|report| report.errors.len()).unwrap_or_default(),
+                "missing_sheets": report.as_ref().map(|report| report.missing_sheets.len()).unwrap_or_default(),
+                "issues_added": issues.len(),
+                "elapsed_ms": elapsed_ms
+            })
+        })
+        .collect::<Vec<_>>();
+    let validation_scan_error_details = accepted_inputs
+        .iter()
+        .zip(validation_scan_results.iter())
+        .flat_map(|(input, (report, _, _, _, _))| {
+            report
+                .as_ref()
+                .into_iter()
+                .flat_map(|report| report.errors.iter())
+                .map(|error| {
+                    json!({
+                        "source_file": input.source_file.file_name().map(|name| name.to_string_lossy()),
+                        "sheet": error.sheet,
+                        "cell": error.cell,
+                        "value": error.value,
+                        "formula": error.formula,
+                        "origin": error.origin,
+                        "template_paths": error.template_paths.iter().map(|path| Path::new(path).file_name().map(|name| name.to_string_lossy())).collect::<Vec<_>>(),
+                        "formula_error_tokens": error.formula_error_tokens
+                    })
+                })
+        })
+        .collect::<Vec<_>>();
+    for (_, issues, _, _, _) in &validation_scan_results {
+        formula_issues.extend(issues.iter().cloned());
+    }
+    let formula_issue_count = formula_issues.len();
+    let validation_formula_scan_summary = json!({
+        "status": if validation_scan_failures == 0 { "completed" } else { "completed_with_diagnostics" },
+        "reader": validation_plan.as_ref().map(|_| "calamine+namespace_aware_ooxml_defined_names").unwrap_or("calamine+namespace_aware_ooxml_defined_names"),
+        "template_count": validation_plan.as_ref().map(S1ValidationFormulaScanPlan::template_count).unwrap_or(1),
+        "formula_cells_scanned": validation_scan_formula_cells,
+        "formula_errors": validation_scan_error_count,
+        "errors": validation_scan_error_details,
+        "missing_sheets": validation_scan_missing_sheets,
+        "issues_added": validation_scan_issue_count,
+        "duplicates_suppressed": validation_scan_duplicates_suppressed,
+        "failures": validation_scan_failures,
+        "template_read_time_ms": validation_template_read_time_ms,
+        "elapsed_ms": validation_scan_started.elapsed().as_millis(),
+        "per_file": validation_scan_per_file
+    });
+    if arguments.developer_view {
+        eprintln!(
+            "{}",
+            serde_json::to_string(&serde_json::json!({
+                "type": "progress",
+                "product": "open-data-audit",
+                "feature": "S1-F01",
+                "step": "validation_formula_error_scan",
+                "status": validation_formula_scan_summary["status"],
+                "engine": "calamine+namespace_aware_ooxml_defined_names",
+                "template_read_time_ms": validation_template_read_time_ms,
+                "formula_cells_scanned": validation_scan_formula_cells,
+                "formula_errors": validation_scan_error_count,
+                "missing_sheets": validation_scan_missing_sheets,
+                "issues_added": validation_scan_issue_count,
+                "duplicates_suppressed": validation_scan_duplicates_suppressed,
+                "failures": validation_scan_failures,
+                "per_file": validation_scan_per_file,
+                "elapsed_ms": validation_scan_started.elapsed().as_millis()
+            }))?
+        );
+    } else {
+        eprintln!(
+            "S1 校验公式扫描完成：扫描公式 {} 个，发现错误 {} 项、缺失工作表 {} 项，新增审核项 {} 条；失败 {} 个文件，耗时 {} ms。",
+            validation_scan_formula_cells,
+            validation_scan_error_count,
+            validation_scan_missing_sheets,
+            validation_scan_issue_count,
+            validation_scan_failures,
+            validation_scan_started.elapsed().as_millis()
         );
     }
 
@@ -2440,9 +2654,10 @@ fn run_s1_audit_directory(arguments: S1AuditDirectoryArgs) -> Result<()> {
             "files": formula_results.len(),
             "rules_enabled_per_file": template_plan.summary.rules_enabled,
             "formula_result_values_nonempty": formula_nonempty_results,
-            "issues": formula_issue_count,
+            "issues": formula_result_issue_count,
             "elapsed_ms": formula_started.elapsed().as_millis()
         },
+        "validation_formula_scan": validation_formula_scan_summary,
         "conditional_summary": {
             "status": conditional_report.status,
             "files": conditional_report.files,
