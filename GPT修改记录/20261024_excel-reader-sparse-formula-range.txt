@@ -1,0 +1,24 @@
+日期：2026-10-24
+
+变更：
+- crates/excel-reader/src/lib.rs：从 calamine 的 worksheet_formula 区域仅导出非空公式文本，避免稀疏公式范围中的空单元格被误记为公式。
+- crates/excel-reader/tests/formula_range_empty_cells.rs：新增含 A1、D1、G1、J1 四个公式及中间空列的最小 XLSX 回归夹具，断言 probe 只报告四个真实公式。
+
+目的：修正公式数统计与 OOXML 实际公式/缓存数量不一致的问题，使 sidecar 重算结果验证能正确处理稀疏公式区域。
+
+测试：
+- `cargo fmt -p excel-reader`（Ubuntu/WSL2）：通过。
+- `cargo test -p excel-reader --locked`：10 项单元测试及 2 项集成测试通过。
+- `cargo test -p ooxml-patch --locked`：14 项测试通过。
+- `LO_CONVERT_REQUIRE_LO_TEST=1 cargo test -p lo-convert --locked -- --nocapture`（Ubuntu/WSL2，LibreOffice 24.2.7.2）：3 项单元测试及 1 项真实 headless CLI 集成测试通过。
+- `git diff --check`：通过。
+
+未验证/未执行：
+- 尚未在 audit-dev 的 S1 合成候选对拍中复验修复效果。
+- 未进行真实 S1 业务模板对拍，也未在 Windows COM、麒麟 V10 或统信 UOS 环境验证。
+
+已知问题：
+- 此修复只统一公式文本区域的空单元格表示，不代表公式计算正确性或业务 capability 已验收。
+- pytools-dev 存在与本次无关的 OOXML 测试导入缺失问题；本次只执行其相关读取/sidecar 路径的验证，不据此判断该 crate 全部测试通过。
+
+回滚：仅回滚 `crates/excel-reader/src/lib.rs` 对公式映射的过滤、对应回归测试和本记录；不回滚其他并行分支工作。
