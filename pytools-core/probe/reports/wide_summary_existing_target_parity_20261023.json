@@ -16,7 +16,7 @@
   "comparison_contract": {
     "worksheet_names_order_values_and_types": "exact except numeric values compared with relative and absolute tolerance 1e-15",
     "effective_cell_styles": "exact across every cell in generated summary workbooks, including font, fill, border, alignment, number format, and protection",
-    "formula_text_merges_dimensions_defined_names_freeze_panes": "exact; synthetic output contains no formulas, merges, defined names, or frozen panes",
+    "formula_text_merges_dimensions_defined_names_freeze_panes": "exact; cached source formula values are projected as values, matching PyCode; generated summary output contains no formulas, merges, defined names, or frozen panes",
     "data_date_number_formats": "exact across the generated summary worksheet",
     "new_target_entry": "pytools menu -> timeline 1 -> wide summary 3/4 -> explicit confirmation",
     "new_target_execution_history": "developer-view history records successful target_append_execute, rust_xlsxwriter and stage duration",
@@ -29,6 +29,8 @@
   "summary_workbook_cases": [
     {
       "row_suffix": false,
+      "cached_formula_value_projected": false,
+      "blank_data_date_format": "not_applicable",
       "summary_status": "passed",
       "target_append_status": "passed",
       "summary_sheet_names": [
@@ -54,11 +56,11 @@
       "target_execution_summary": {
         "appended_rows": 2,
         "duplicate_rows_filtered": 1,
-        "elapsed_ms": 41,
+        "elapsed_ms": 37,
         "function": "append_target_execute",
         "stages": [
           {
-            "elapsed_ms": 25,
+            "elapsed_ms": 22,
             "engine": "rust_xlsxwriter",
             "name": "new_workbook_write_and_reopen",
             "status": "succeeded"
@@ -76,6 +78,8 @@
     },
     {
       "row_suffix": true,
+      "cached_formula_value_projected": false,
+      "blank_data_date_format": "not_applicable",
       "summary_status": "passed",
       "target_append_status": "passed",
       "summary_sheet_names": [
@@ -101,17 +105,66 @@
       "target_execution_summary": {
         "appended_rows": 3,
         "duplicate_rows_filtered": 0,
-        "elapsed_ms": 43,
+        "elapsed_ms": 41,
         "function": "append_target_execute",
         "stages": [
           {
-            "elapsed_ms": 25,
+            "elapsed_ms": 24,
             "engine": "rust_xlsxwriter",
             "name": "new_workbook_write_and_reopen",
             "status": "succeeded"
           },
           {
-            "elapsed_ms": 17,
+            "elapsed_ms": 16,
+            "name": "target_commit",
+            "status": "succeeded"
+          }
+        ],
+        "status": "succeeded",
+        "task_skipped_count": 0,
+        "task_success_count": 1
+      }
+    },
+    {
+      "row_suffix": false,
+      "cached_formula_value_projected": true,
+      "blank_data_date_format": "yyyy/m/d",
+      "summary_status": "passed",
+      "target_append_status": "passed",
+      "summary_sheet_names": [
+        "WideRule"
+      ],
+      "summary_dimensions": [
+        [
+          4,
+          9
+        ]
+      ],
+      "summary_cell_count": 36,
+      "summary_effective_styles": "exact",
+      "entry_route": "pytools menu -> 1 timeline -> 3 row-suffix or 4 no-suffix -> confirm",
+      "target_commit_operation": "created",
+      "target_candidate_matches_committed_bytes": true,
+      "target_execution_history": {
+        "phase": "target_append_execute",
+        "status": "succeeded",
+        "actual_engine": "rust_xlsxwriter",
+        "stage_elapsed_ms_recorded": true
+      },
+      "target_execution_summary": {
+        "appended_rows": 2,
+        "duplicate_rows_filtered": 1,
+        "elapsed_ms": 40,
+        "function": "append_target_execute",
+        "stages": [
+          {
+            "elapsed_ms": 24,
+            "engine": "rust_xlsxwriter",
+            "name": "new_workbook_write_and_reopen",
+            "status": "succeeded"
+          },
+          {
+            "elapsed_ms": 15,
             "name": "target_commit",
             "status": "succeeded"
           }
@@ -132,17 +185,17 @@
       "execution_summary": {
         "appended_rows": 1,
         "duplicate_rows_filtered": 2,
-        "elapsed_ms": 197,
+        "elapsed_ms": 215,
         "function": "append_target_execute",
         "stages": [
           {
-            "elapsed_ms": 97,
+            "elapsed_ms": 112,
             "engine": "umya_spreadsheet",
             "name": "excel_modify",
             "status": "succeeded"
           },
           {
-            "elapsed_ms": 20,
+            "elapsed_ms": 21,
             "name": "replacement_contract_validation",
             "status": "succeeded"
           },
@@ -200,22 +253,22 @@
       "execution_summary": {
         "appended_rows": 2,
         "duplicate_rows_filtered": 1,
-        "elapsed_ms": 219,
+        "elapsed_ms": 204,
         "function": "append_target_execute",
         "stages": [
           {
-            "elapsed_ms": 109,
+            "elapsed_ms": 100,
             "engine": "umya_spreadsheet",
             "name": "excel_modify",
             "status": "succeeded"
           },
           {
-            "elapsed_ms": 22,
+            "elapsed_ms": 20,
             "name": "replacement_contract_validation",
             "status": "succeeded"
           },
           {
-            "elapsed_ms": 51,
+            "elapsed_ms": 50,
             "name": "target_commit",
             "status": "succeeded"
           }
@@ -268,6 +321,6 @@
     "No sanitized real business sample was available.",
     "Temporary capability evidence is test-only and does not register a production route.",
     "麒麟/UOS glibc 2.28 deb remains unverified.",
-    "The fixture contains no formulas; the probe validates the generated summary workbook contract and is not a universal workbook-preservation claim."
+    "The cached-formula scenario validates reading and projecting a stored formula result; it does not perform or validate formula recalculation."
   ]
 }

@@ -12,7 +12,7 @@
 
 | 菜单组 | 来源入口中的功能 | 迁移边界 | 当前状态 |
 |---|---|---|---|
-| 时序 | 表头路径比对；时序提取；宽表汇总（行头加后缀）；宽表汇总（行头不加后缀）；预校验 | 迁移时序/路径映射规则、输出列和异常行为 | PT-1-1 现通过原交互菜单 1→1 路由接入 user/developer/off 三视图及开发者运行历史；合成 Python/Rust 输出和样式对拍无差异，真实样本未验收，整体仍未验证。PT-1-3/1-4 两种行头模式已通过 Windows 原生 Rust CLI 合成 Python/Rust 对拍及显式安全目标提交；汇总输出、新目标追加和临时测试 capability 下的既有目标替换有效样式逐格一致，源与配置未变。真实样本、生产 capability 和目标平台仍未验收，整体状态未验证 |
+| 时序 | 表头路径比对；时序提取；宽表汇总（行头加后缀）；宽表汇总（行头不加后缀）；预校验 | 迁移时序/路径映射规则、输出列和异常行为 | PT-1-1 现通过原交互菜单 1→1 路由接入 user/developer/off 三视图及开发者运行历史；合成 Python/Rust 输出和样式对拍无差异，真实样本未验收，整体仍未验证。PT-1-3/1-4 两种行头模式已通过 Windows 原生 Rust CLI 合成 Python/Rust 对拍及显式安全目标提交；汇总输出、新目标追加和临时测试 capability 下的既有目标替换有效样式逐格一致，源与配置未变。新增无可解析日期且含缓存公式的菜单对拍：缓存值按 PyCode 行为投影，空日期列格式一致。真实样本、生产 capability 和目标平台仍未验收，整体状态未验证 |
 | 去重 | 按批注检查；按批注删除；按配置检查；按配置删除；按配置追加到目标；按配置预校验 | 批注读取使用通用 Excel 原语；保留检查与执行的区别 | 六项均有合成语义对拍；PT-2-1 有合成 CLI→ExcelModifier→openpyxl 执行验证，PT-2-2 有合成 Excel COM 对拍及 CLI→ExcelModifier→umya 执行验证，PT-2-4 有合成 CLI→ExcelModifier→umya 执行验证；PT-2-5 新目标不覆盖发布及既有目标 `--commit-target` 提交通过合成测试专用 capability 验证；生产能力、真实样本和其余编辑能力仍未验收 |
 | 打印 | 按批注保留源格式；按批注快速复制；按配置准备打印文件；按配置预校验 | 只写页面设置并准备 xlsx；PDF 菜单不迁移 | 3-1/3-2 计划语义及候选执行已有合成对拍，现已接入菜单 capability/platform 显式确认执行；3-4 预校验通过合成对拍；3-3 模式 1/2/3 已通过合成端到端候选对拍，并按用户合同拒绝已有目标；生产能力、真实模板与目标平台仍未验证 |
 | 转换与文件命名 | 批量重命名；Excel 格式转换；Word 格式转换；批量修改 Sheet 名；按内容加前缀重命名；取消内容前缀；局部映射重命名；提交缺失检查；文件排序前缀；取消排序前缀 | 保留文件操作与同类格式转换；首批 sidecar 为 .et→.xlsx、.xls→.xlsx、.doc→.docx；不迁移 Python 模式切换 | PT-4-4 已接通菜单计划与 capability/platform 显式传入后的确认执行；仍使用合成 Passed capability 测试，不登记生产能力。其他转换项、真实工作簿及整组目标平台验收仍未验证 |
@@ -256,6 +256,14 @@ Windows 原生验证：`cargo check --manifest-path Cargo.toml -p pytools-core -
 Windows 原生 `cargo fmt --manifest-path pytools-core/Cargo.toml -- --check` 通过；`cargo test --offline --locked -p pytools-core --test timeline_menu_cli --test dedup_append_execution` 为 12/12。`probe/compare_wide_summary.py` 已改为通过只读 Python PyCode 基线对比真实 `pytools menu → 1 → 3/4 → 确认` 新目标路径，两种行头模式共 2 个合成菜单场景通过；两个汇总各对比 36 个单元格、有效样式精确，目标输出、候选与已提交簿一致。该脚本另对两种模式的既有目标替换执行 2 个 Rust CLI 对拍，分别比较 467/476 个单元格，目标 sheet 样式精确、未触及工作表属性保留；既有目标的交互菜单计划模式/临时 capability 确认替换由 `timeline_menu_cli` 集成测试覆盖。开发者历史的 `target_append_execute` 状态、实际引擎及阶段耗时通过检查。机器报告更新为 `probe/reports/wide_summary_parity_20261023.json` 与 `probe/reports/wide_summary_existing_target_parity_20261023.json`。
 
 证据仍限于合成 XLSX 和管道输入。未实测 Windows 原生文件弹窗或脱敏真实业务样本；既有目标执行仅使用临时测试 capability，生产 capability、完整真实模板保真、麒麟/UOS glibc 2.28 和离线 deb 未验收，PT-1-3/1-4 整体仍为**未验证**。
+
+### 2026-10-25 PT-1-3/PT-1-4 空日期格式与缓存公式对拍
+
+PyCode `io_excel._apply_data_date_format` 会对宽表输出中“数据日期”列的所有数据行设置 `yyyy/m/d`，包括日期未解析时的空值和文本。Rust 原先只在日期可解析时套用格式；现已修正为日期列的数值、空白和未解析文本均使用该格式。扩展 `probe/compare_wide_summary.py`，通过真实 Rust 菜单入口对无可解析日期、含 `B5 = 8+2.25`/缓存值 `10.25` 的合成输入执行 Python/Rust 对拍，检查汇总簿、目标候选和已提交新目标的值/类型/样式一致、缓存值按旧行为作为值投影、空日期仍为 `yyyy/m/d`，源与配置不变。
+
+Windows 原生 `cargo fmt --manifest-path pytools-core/Cargo.toml -- --check`、`cargo build --offline --locked -p pytools-core --bin pytools` 通过；`cargo test --offline --locked -p pytools-core --test timeline_menu_cli -j 1` 8/8；Python 3.12.10/openpyxl 3.1.5 `probe/compare_wide_summary.py` 通过 3 个新目标菜单场景（含新增公式缓存/空日期边界）和 2 个既有目标替换场景。既有两个行头模式的汇总各比对 36 个单元格，既有目标分别比对 467/476 个单元格，样式均精确；既有目标仅使用临时测试 capability。机器报告更新于 `probe/reports/wide_summary_parity_20261023.json` 和 `probe/reports/wide_summary_existing_target_parity_20261023.json`。
+
+证据仍为合成 XLSX；只验证读取已保存公式缓存，不触发公式重算。没有脱敏真实业务样本或生产 capability；Windows 原生文件弹窗操作、完整真实模板保真、麒麟/UOS glibc 2.28 和离线 deb 未验收，PT-1-3/1-4 整体仍为**未验证**。
 
 ### 2026-10-23 汇总工具 6-1/6-2 合成对拍
 

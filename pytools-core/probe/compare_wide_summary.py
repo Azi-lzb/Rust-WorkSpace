@@ -18,9 +18,11 @@ import subprocess
 import sys
 import tempfile
 import time
+import xml.etree.ElementTree as ET
 from datetime import date, datetime
 from importlib.metadata import version
 from pathlib import Path
+from zipfile import ZipFile
 
 from openpyxl import Workbook, load_workbook
 from openpyxl.comments import Comment
@@ -83,7 +85,7 @@ def run_rust_command(
     )
 
 
-def make_input(path: Path) -> None:
+def make_input(path: Path, cached_formula: bool = False) -> None:
     workbook = Workbook()
     sheet = workbook.active
     sheet.title = "Report"
@@ -100,7 +102,7 @@ def make_input(path: Path) -> None:
     sheet["D4"] = "本息"
     sheet.append([])
     sheet["A5"] = "公司甲"
-    sheet["B5"] = 10.25
+    sheet["B5"] = "=8+2.25" if cached_formula else 10.25
     sheet["C5"] = 12
     sheet["D5"] = 23
     sheet["A6"] = "公司甲"
@@ -112,6 +114,87 @@ def make_input(path: Path) -> None:
     sheet["C7"] = 5
     sheet["D7"] = 9
     workbook.save(path)
+    if cached_formula:
+        patch_cached_formula(path, "B5", "8+2.25", "10.25")
+
+
+def patch_cached_formula(path: Path, address: str, formula_text: str, cached_value: str) -> None:
+    main_ns = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+    ET.register_namespace("", main_ns)
+    with ZipFile(path, "r") as source_archive:
+        entries = [
+            (info, source_archive.read(info.filename))
+            for info in source_archive.infolist()
+        ]
+
+    worksheet_found = False
+    patched_entries = []
+    for info, payload in entries:
+        if info.filename == "xl/worksheets/sheet1.xml":
+            root = ET.fromstring(payload)
+            cell = root.find(f".//{{{main_ns}}}c[@r='{address}']")
+            if cell is None:
+                raise AssertionError(f"formula cell {address} is missing from source")
+            formula = cell.find(f"{{{main_ns}}}f")
+            if formula is None:
+                raise AssertionError(f"formula text is missing from {address}")
+            formula.text = formula_text
+            cached = cell.find(f"{{{main_ns}}}v")
+            if cached is None:
+                cached = ET.SubElement(cell, f"{{{main_ns}}}v")
+            cached.text = cached_value
+            payload = ET.tostring(root, encoding="utf-8", xml_declaration=True)
+            worksheet_found = True
+        patched_entries.append((info, payload))
+
+    if not worksheet_found:
+        raise AssertionError("source worksheet part is missing")
+    with ZipFile(path, "w") as output_archive:
+        for info, payload in patched_entries:
+            output_archive.writestr(info, payload)
+
+    formula_book = load_workbook(path, data_only=False, read_only=False)
+    value_book = load_workbook(path, data_only=True, read_only=False)
+    try:
+        if formula_book["Report"][address].value != f"={formula_text}":
+            raise AssertionError("formula text did not round trip in source fixture")
+        if value_book["Report"][address].value != float(cached_value):
+            raise AssertionError("formula cache did not round trip in source fixture")
+    finally:
+        formula_book.close()
+        value_book.close()
+
+
+def assert_cached_value_projected(paths: list[Path], expected: float) -> None:
+    for path in paths:
+        workbook = load_workbook(path, data_only=True, read_only=False)
+        try:
+            if not any(
+                isinstance(cell.value, (int, float))
+                and math.isclose(float(cell.value), expected, rel_tol=1e-15, abs_tol=1e-15)
+                for worksheet in workbook.worksheets
+                for row in worksheet.iter_rows()
+                for cell in row
+            ):
+                raise AssertionError(f"cached formula result was not projected in {path.name}")
+        finally:
+            workbook.close()
+
+
+def assert_blank_data_date_format(path: Path) -> None:
+    workbook = load_workbook(path, data_only=False, read_only=False)
+    try:
+        worksheet = workbook.active
+        headers = [cell.value for cell in worksheet[1]]
+        date_column = headers.index("数据日期") + 1
+        for row in range(2, worksheet.max_row + 1):
+            cell = worksheet.cell(row, date_column)
+            if cell.value is not None or cell.number_format != "yyyy/m/d":
+                raise AssertionError(
+                    f"blank data-date cell {cell.coordinate} must use yyyy/m/d"
+                )
+    finally:
+        workbook.close()
 
 
 def make_existing_target_seed(full_target: Path, output: Path) -> None:
@@ -627,11 +710,24 @@ def assert_replacement_drops(seed_path: Path, output_path: Path) -> None:
     output.close()
 
 
-def run_case(root: Path, row_suffix: bool) -> dict[str, object]:
-    case = root / ("suffix" if row_suffix else "no_suffix")
+def run_case(
+    root: Path,
+    row_suffix: bool,
+    *,
+    source_filename: str = "sample_2024-06-30.xlsx",
+    cached_formula: bool = False,
+) -> dict[str, object]:
+    case_name = (
+        "no_date_formula_cache"
+        if cached_formula
+        else "suffix"
+        if row_suffix
+        else "no_suffix"
+    )
+    case = root / case_name
     case.mkdir()
-    source = case / "sample_2024-06-30.xlsx"
-    make_input(source)
+    source = case / source_filename
+    make_input(source, cached_formula=cached_formula)
     python_output = case / "python_output"
     rust_output = case / "rust_output"
     config = case / "config.xlsx"
@@ -682,6 +778,12 @@ def run_case(root: Path, row_suffix: bool) -> dict[str, object]:
         raise AssertionError(f"unexpected target execution history event: {target_event}")
     assert_parity(python_target, candidate)
     assert_parity(python_target, committed_target)
+    if cached_formula:
+        assert_cached_value_projected(
+            [baseline, actual, python_target, candidate, committed_target], 10.25
+        )
+        for output_path in [baseline, actual, python_target, candidate, committed_target]:
+            assert_blank_data_date_format(output_path)
     if source.read_bytes() != source_before or config.read_bytes() != config_before:
         raise AssertionError("interactive Rust/Python run modified source workbook or config")
     if committed_target.read_bytes() != candidate.read_bytes():
@@ -689,6 +791,8 @@ def run_case(root: Path, row_suffix: bool) -> dict[str, object]:
     projection = normalized(actual)
     result = {
         "row_suffix": row_suffix,
+        "cached_formula_value_projected": cached_formula,
+        "blank_data_date_format": "yyyy/m/d" if cached_formula else "not_applicable",
         "summary_status": "passed",
         "target_append_status": "passed",
         "summary_sheet_names": projection["sheet_names"],
@@ -813,7 +917,16 @@ def main() -> int:
         raise FileNotFoundError(f"PyCode source not found: {PYTOOLS_SOURCE}")
     with tempfile.TemporaryDirectory(prefix="pytools-wide-probe-", ignore_cleanup_errors=True) as temp:
         root = Path(temp)
-        summary_cases = [run_case(root, False), run_case(root, True)]
+        summary_cases = [
+            run_case(root, False),
+            run_case(root, True),
+            run_case(
+                root,
+                False,
+                source_filename="sample_without_date.xlsx",
+                cached_formula=True,
+            ),
+        ]
         existing_cases = [
             run_existing_target_case(root, False),
             run_existing_target_case(root, True),
@@ -842,7 +955,7 @@ def main() -> int:
             "comparison_contract": {
                 "worksheet_names_order_values_and_types": "exact except numeric values compared with relative and absolute tolerance 1e-15",
                 "effective_cell_styles": "exact across every cell in generated summary workbooks, including font, fill, border, alignment, number format, and protection",
-                "formula_text_merges_dimensions_defined_names_freeze_panes": "exact; synthetic output contains no formulas, merges, defined names, or frozen panes",
+                "formula_text_merges_dimensions_defined_names_freeze_panes": "exact; cached source formula values are projected as values, matching PyCode; generated summary output contains no formulas, merges, defined names, or frozen panes",
                 "data_date_number_formats": "exact across the generated summary worksheet",
                 "new_target_entry": "pytools menu -> timeline 1 -> wide summary 3/4 -> explicit confirmation",
                 "new_target_execution_history": "developer-view history records successful target_append_execute, rust_xlsxwriter and stage duration",
@@ -862,7 +975,7 @@ def main() -> int:
                 "No sanitized real business sample was available.",
                 "Temporary capability evidence is test-only and does not register a production route.",
                 "麒麟/UOS glibc 2.28 deb remains unverified.",
-                "The fixture contains no formulas; the probe validates the generated summary workbook contract and is not a universal workbook-preservation claim.",
+                "The cached-formula scenario validates reading and projecting a stored formula result; it does not perform or validate formula recalculation.",
             ],
         }
         report_path = WORKSPACE / "pytools-core" / "probe" / "reports" / "wide_summary_existing_target_parity_20261023.json"
@@ -886,6 +999,7 @@ def main() -> int:
                     "duplicate row labels",
                     "date in the input filename",
                     "configured target worksheet",
+                    "cached formula value with no parsable input date",
                 ],
             },
             "environment": report["environment"],

@@ -1677,11 +1677,13 @@ fn write_wide_data_date(
     column: u16,
     text: &str,
 ) -> Result<()> {
+    let format = excel_writer::Format::new().set_num_format("yyyy/m/d");
     if let Some(serial) = wide_datetime_serial(text) {
-        let format = excel_writer::Format::new().set_num_format("yyyy/m/d");
         sheet.write_number_with_format(row, column, serial, &format)?;
+    } else if text.is_empty() {
+        sheet.write_blank(row, column, &format)?;
     } else {
-        sheet.write_string(row, column, text)?;
+        sheet.write_string_with_format(row, column, text, &format)?;
     }
     Ok(())
 }
