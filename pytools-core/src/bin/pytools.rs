@@ -38,7 +38,10 @@ use pytools_core::file_sort_prefix::{
     run_remove_file_sort_prefix_with_progress as run_remove_file_sort_prefix_with_progress_business,
     FileSortProgressEvent,
 };
-use pytools_core::local_filename_map::run_local_filename_map_candidate;
+use pytools_core::local_filename_map::{
+    run_local_filename_map_candidate, run_local_filename_map_with_progress,
+    LocalFilenameMapProgressEvent,
+};
 use pytools_core::print_ops::{
     build_comment_print_plan, build_config_print_plans, precheck_print_tasks,
 };
@@ -1892,6 +1895,10 @@ where
                 run_content_prefix_unrename_cli(arguments)?;
             }
             "7" => {
+                arguments.push("--log-dir".to_owned());
+                arguments.push(global.log_dir.to_string_lossy().into_owned());
+                arguments.push("--log-view".to_owned());
+                arguments.push(log_view.to_owned());
                 arguments.extend(
                     paths
                         .into_iter()
@@ -7823,6 +7830,8 @@ fn unique_workbook_candidate(input: &Path, output_dir: &Path, suffix: &str) -> P
 fn run_local_filename_map(arguments: Vec<String>) -> Result<()> {
     let mut arguments = arguments.into_iter();
     let mut config_path = None::<PathBuf>;
+    let mut log_dir = None::<PathBuf>;
+    let mut log_view = None::<String>;
     let mut files = Vec::new();
     while let Some(argument) = arguments.next() {
         match argument.as_str() {
@@ -7830,6 +7839,14 @@ fn run_local_filename_map(arguments: Vec<String>) -> Result<()> {
                 config_path = Some(PathBuf::from(
                     arguments.next().context("--config requires a path")?,
                 ));
+            }
+            "--log-dir" => {
+                log_dir = Some(PathBuf::from(
+                    arguments.next().context("--log-dir requires a path")?,
+                ));
+            }
+            "--log-view" => {
+                log_view = Some(arguments.next().context("--log-view requires a value")?);
             }
             "--help" | "-h" => {
                 print_usage();
@@ -7843,10 +7860,156 @@ fn run_local_filename_map(arguments: Vec<String>) -> Result<()> {
     if files.is_empty() {
         bail!("provide at least one file path");
     }
+    let log_view = log_view.unwrap_or_else(|| "user".to_owned());
+    anyhow::ensure!(
+        matches!(log_view.as_str(), "user" | "developer" | "off"),
+        "--log-view must be user, developer, or off"
+    );
+    let log_dir = log_dir.unwrap_or_else(|| PathBuf::from("logs"));
 
-    let result = run_local_filename_map_candidate(&config_path, &files)?;
-    println!("{}", serde_json::to_string_pretty(&result)?);
+    let mut events = Vec::<serde_json::Value>::new();
+    let mut active_stage = None;
+    let operation_result = if log_view == "off" {
+        run_local_filename_map_candidate(&config_path, &files)
+    } else {
+        run_local_filename_map_with_progress(&config_path, &files, |event| {
+            let event_value = local_filename_map_event_with_stage_elapsed(event, &mut active_stage);
+            if log_view == "developer" {
+                events.push(event_value.clone());
+            }
+            emit_local_filename_map_event_view(&log_view, event, &event_value);
+        })
+    };
+    let history_result = if log_view == "developer" {
+        Some(write_local_filename_map_run_history(&log_dir, &events))
+    } else {
+        None
+    };
+    let result = match operation_result {
+        Ok(result) => result,
+        Err(error) => {
+            if let Some(Err(history_error)) = history_result.as_ref() {
+                eprintln!("pytools: could not write local-map run history: {history_error:#}");
+            }
+            return Err(error);
+        }
+    };
+    let (history_path, history_warning) = match history_result {
+        Some(Ok(path)) => (Some(path), None),
+        Some(Err(error)) => (None, Some(error.to_string())),
+        None => (None, None),
+    };
+    let mut output = serde_json::to_value(result)?;
+    if let Some(path) = history_path {
+        output["run_history_path"] = serde_json::json!(path);
+    }
+    if let Some(warning) = history_warning {
+        output["run_history_warning"] = serde_json::json!(warning);
+    }
+    println!("{}", serde_json::to_string_pretty(&output)?);
     Ok(())
+}
+
+fn local_filename_map_event_with_stage_elapsed(
+    event: &LocalFilenameMapProgressEvent,
+    active_stage: &mut Option<(String, u128)>,
+) -> serde_json::Value {
+    let mut value = serde_json::to_value(event).unwrap_or(serde_json::Value::Null);
+    match event.status.as_str() {
+        "started" => {
+            *active_stage = Some((event.phase.clone(), event.elapsed_ms));
+            value["stage_elapsed_ms"] = serde_json::json!(0);
+        }
+        "completed" | "failed" | "partial_failure" => {
+            let stage_elapsed_ms = active_stage
+                .take()
+                .filter(|(phase, _)| phase == &event.phase)
+                .map(|(_, started_ms)| event.elapsed_ms.saturating_sub(started_ms))
+                .unwrap_or(event.elapsed_ms);
+            value["stage_elapsed_ms"] = serde_json::json!(stage_elapsed_ms);
+        }
+        _ => {}
+    }
+    value
+}
+
+fn emit_local_filename_map_event_view(
+    log_view: &str,
+    event: &LocalFilenameMapProgressEvent,
+    event_value: &serde_json::Value,
+) {
+    match log_view {
+        "user" => {
+            if event.status == "started" {
+                eprintln!("{}", event.user_message);
+            } else if let Some(stage_elapsed_ms) = event_value["stage_elapsed_ms"].as_u64() {
+                eprintln!("{} 阶段用时 {}ms。", event.user_message, stage_elapsed_ms);
+            } else {
+                eprintln!("{}", event.user_message);
+            }
+        }
+        "developer" => {
+            if let Ok(line) = serde_json::to_string(event_value) {
+                eprintln!("{line}");
+            }
+        }
+        "off" => {}
+        _ => unreachable!("local-map log view is validated before execution"),
+    }
+}
+
+fn write_local_filename_map_run_history(
+    log_dir: &Path,
+    events: &[serde_json::Value],
+) -> Result<PathBuf> {
+    fs::create_dir_all(log_dir)
+        .with_context(|| format!("create log directory {}", log_dir.display()))?;
+    let timestamp = Local::now().format("%Y%m%d_%H%M%S");
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .context("system clock before Unix epoch")?
+        .as_nanos();
+    let path = log_dir.join(format!(
+        "PT-4-8_local_filename_map_{timestamp}_{nonce}.run.json"
+    ));
+    let actual_engines = events
+        .iter()
+        .filter_map(|event| event["actual_engine"].as_str())
+        .collect::<std::collections::BTreeSet<_>>();
+    let last_status = events
+        .last()
+        .and_then(|event| event["status"].as_str())
+        .unwrap_or("failed");
+    let status = if last_status != "completed" {
+        "failed"
+    } else if events
+        .iter()
+        .any(|event| event["error_type"].as_str().is_some())
+    {
+        "partial_failure"
+    } else {
+        "succeeded"
+    };
+    let history = serde_json::json!({
+        "schema_version": 1,
+        "product": "pytools",
+        "feature_id": "PT-4-8",
+        "function": "rename-local-map",
+        "status": status,
+        "actual_engines": actual_engines,
+        "total_elapsed_ms": events.last().map(|event| event["elapsed_ms"].clone()),
+        "events": events,
+    });
+    let bytes = serde_json::to_vec_pretty(&history)?;
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)
+        .with_context(|| format!("create run history {}", path.display()))?;
+    file.write_all(&bytes)?;
+    file.write_all(b"\n")?;
+    file.flush()?;
+    Ok(path)
 }
 
 fn run_batch_rename(arguments: Vec<String>) -> Result<()> {
@@ -9130,7 +9293,7 @@ fn print_usage() {
          pytools remove-file-sort-prefix --config <workbook.xlsx> [--output-dir <dir>] [--log-dir <dir>] [--log-view user|developer|off] [<file>...]\n\
          pytools rename-by-content --config <workbook.xlsx> [--log-dir <dir>] [--log-view user|developer|off] <file>...\n\
          pytools unrename-by-content --config <workbook.xlsx> [--log-dir <dir>] [--log-view user|developer|off] <file>...\n\
-         pytools rename-local-map --config <workbook.xlsx> <file>...\n\
+         pytools rename-local-map --config <workbook.xlsx> [--log-dir <dir>] [--log-view user|developer|off] <file>...\n\
          pytools rename-batch --config <workbook.xlsx> [--log-dir <dir>] [--log-view user|developer|off] [<file-or-directory>...]\n\
          The region-sum command runs the Rust non-COM regional total check. Without --config,\n\
          output and logs default to ./output and ./logs. File-sort-prefix writes its XLSX report\n\

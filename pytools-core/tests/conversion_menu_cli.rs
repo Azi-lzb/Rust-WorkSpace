@@ -486,6 +486,107 @@ fn content_prefix_menu_logs_user_developer_and_off_views() -> Result<()> {
 }
 
 #[test]
+fn local_filename_map_menu_logs_user_developer_and_off_views() -> Result<()> {
+    let root = TestDirectory::new()?;
+    let config = create_config(root.path())?;
+    let sources = root.path().join("sources");
+    fs::create_dir_all(&sources)?;
+    let log_dir = root.path().join("logs");
+
+    let user_source = sources.join("before-local-user.txt");
+    fs::write(&user_source, b"local map payload")?;
+    let user = run_action_with_log_view(&config, 7, 1, &user_source, "user")?;
+    assert!(user.status.success(), "user view failed: {}", stderr(&user));
+    assert_eq!(
+        fs::read(sources.join("after-local-user.txt"))?,
+        b"local map payload"
+    );
+    let user_report = output_json(&user)?;
+    assert_eq!(user_report["ok"], 1);
+    assert_eq!(user_report["rules"], 1);
+    assert!(user_report.get("run_history_path").is_none());
+    let user_stderr = stderr(&user);
+    assert!(user_stderr.contains("正在读取局部文件名映射配置"));
+    assert!(user_stderr.contains("已处理 1/1 个文件"));
+    assert!(user_stderr.contains("阶段用时"));
+    assert!(!user_stderr.contains(&user_source.display().to_string()));
+    assert!(!user_stderr.contains("before-local-user.txt"));
+    assert_eq!(fs::read_dir(&log_dir)?.count(), 0);
+
+    let developer_source = sources.join("before-local-developer.txt");
+    fs::write(&developer_source, b"local map payload")?;
+    let developer = run_action_with_log_view(&config, 7, 1, &developer_source, "developer")?;
+    assert!(
+        developer.status.success(),
+        "developer view failed: {}",
+        stderr(&developer)
+    );
+    assert_eq!(
+        fs::read(sources.join("after-local-developer.txt"))?,
+        b"local map payload"
+    );
+    let developer_report = output_json(&developer)?;
+    assert_eq!(developer_report["ok"], 1);
+    let history_path = PathBuf::from(
+        developer_report["run_history_path"]
+            .as_str()
+            .context("local-map history path missing")?,
+    );
+    let history_bytes = fs::read(&history_path)?;
+    let history_text = String::from_utf8_lossy(&history_bytes);
+    assert!(!history_text.contains(&developer_source.display().to_string()));
+    assert!(!history_text.contains("before-local-developer.txt"));
+    assert!(!history_text.contains("after-local-developer.txt"));
+    let history: Value = serde_json::from_slice(&history_bytes)?;
+    assert_eq!(history["feature_id"], "PT-4-8");
+    assert_eq!(history["function"], "rename-local-map");
+    assert_eq!(history["status"], "succeeded");
+    assert!(history["total_elapsed_ms"].is_number());
+    let events = history["events"].as_array().context("events missing")?;
+    assert!(events
+        .iter()
+        .any(|event| event["phase"] == "configuration_read"));
+    assert!(events
+        .iter()
+        .any(|event| event["phase"] == "file_processing"));
+    assert!(events.iter().any(|event| event["phase"] == "task"));
+    assert_eq!(events.last().unwrap()["completed_files"], 1);
+    for engine in ["Calamine", "RustFilesystem"] {
+        assert!(
+            history["actual_engines"]
+                .as_array()
+                .context("actual_engines missing")?
+                .iter()
+                .any(|actual| actual == engine),
+            "missing engine {engine}"
+        );
+    }
+    for phase in ["configuration_read", "file_processing", "task"] {
+        assert!(events.iter().any(|event| {
+            event["phase"] == phase
+                && event["status"] == "completed"
+                && event["stage_elapsed_ms"].is_number()
+        }));
+    }
+    assert!(stderr(&developer).contains("\"feature_id\":\"PT-4-8\""));
+
+    let history_count = fs::read_dir(&log_dir)?.count();
+    let off_source = sources.join("before-local-off.txt");
+    fs::write(&off_source, b"local map payload")?;
+    let off = run_action_with_log_view(&config, 7, 1, &off_source, "off")?;
+    assert!(off.status.success(), "off view failed: {}", stderr(&off));
+    assert_eq!(
+        fs::read(sources.join("after-local-off.txt"))?,
+        b"local map payload"
+    );
+    assert!(stderr(&off).is_empty());
+    assert_eq!(fs::read_dir(&log_dir)?.count(), history_count);
+    assert!(output_json(&off)?.get("run_history_path").is_none());
+
+    Ok(())
+}
+
+#[test]
 fn batch_rename_menu_supports_user_developer_and_off_progress_views() -> Result<()> {
     let root = TestDirectory::new()?;
     let config = create_config(root.path())?;
