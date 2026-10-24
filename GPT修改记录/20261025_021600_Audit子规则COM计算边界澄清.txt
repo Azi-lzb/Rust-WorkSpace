@@ -1,0 +1,26 @@
+时间：2026-10-25 02:16（Asia/Shanghai）
+执行者：Codex main
+修改前 commit：5ae99f0305bd566b2e915e83abe3a7b4b259b198
+工作区状态：修改前 main 干净且与 origin/main 同步；本次只改规范文档。
+
+目的：消除 Audit 子规则中仍把 COM 限定为重算/转换、并禁止其他工作簿修改的旧条款；将 Windows COM 修改限定到 ExcelModifier 的显式能力路由，并将公式计算保持为独立 ExcelCalculator。
+
+修改文件：
+- audit-core/rules/02_核心架构与跨平台.md：明确 calamine 读取、rust_xlsxwriter 新建、未来 Windows COM 修改只经已验收的 ExcelModifier；LibreOffice Calc/Excel/WPS COM 仅为显式且按能力验收的计算候选；修正源项目平台分支的适用边界。
+- audit-core/rules/04_模板工作流与数据边界.md：澄清禁止业务代码直接启动 COM，但允许真实修改需求作为 ExcelEditPlan 经 ExcelModifier 选择已验收后端。
+- audit-core/rules/10_VBA与配置迁移规范.md：区分独立公式计算、转换 sidecar 与 ExcelModifier COM 修改路径。
+- 本记录。
+
+验证：执行 `git diff --check`，通过。未运行构建、测试或业务对拍；没有修改代码、依赖、路由默认、IPC 协议或 Audit/PyTools 的业务迁移状态。
+
+未执行/未验证：
+- 未实现 COM Worker 或 ExcelCalculator；没有安装 pywin32/LibreOffice。
+- 未在麒麟 V10/UOS、Windows Office/WPS 环境验证候选能力。
+- 未修改或重启 Audit/PyTools 长期 Goal；其具体会话 Goal 是否即时读取更新，需由 Agent 在后续安全节点确认。
+- Audit S1 ImportRange 共享请求仍为独立待处理能力，不在本次实现；未改变其能力状态和 Audit 迁移优先级。
+
+已知问题：`audit-dev` 本地工作树干净但落后于 `origin/audit-dev` 6 个提交；活跃 Audit 会话在独立 checkout 中继续工作。由于同步目标的分支状态不一致，本次不直接移动或合并开发工作树，待确认安全同步点后再传递规则提交。`pytools-dev` 本地工作树干净且与远端同步。
+
+组件版本：不升级（纯文档/治理修改）。
+删除清单：无。
+回滚：可单独反向修订以上三条 Audit 子规则；无需回滚业务代码。
