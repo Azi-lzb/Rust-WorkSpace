@@ -1,0 +1,28 @@
+时间：2026-10-24 18:47:28 Asia/Shanghai
+执行者：Codex main
+修改前 commit：672de34
+修改后代码 commit：6ecf941be9d0dd7527e75f2b7e5e35bed15fa9aa
+WIP 情况：修改前 main 工作区干净；本次只修改共享 OpenPyXL 适配器及其模块内定向单测。
+
+目的：避免 ImportRange 因源工作簿中未被本计划读取的其他工作表/区域存在合并非锚载荷而被错误拒绝；保留目标工作簿全局保护。
+
+修改文件：
+- crates/excel-editor/src/openpyxl_backend.rs
+- 本记录
+
+变化：目标工作簿仍检查所有工作表；ImportRange 源检查仅访问指定 source_sheet，并仅将 source_range 内的合并非锚载荷视为拒绝条件。增加范围内命中、范围外忽略及其他工作表忽略的定向单测。未改 Audit 业务代码、能力状态或默认路由。
+
+配置及 VBA 迁移影响：无。
+组件版本：不升级。
+
+测试：
+- `cargo fmt --package excel-editor`：通过。
+- `$env:CARGO_TARGET_DIR='F:\codex-targets\rust-workspace-main'; cargo test --offline --locked -p excel-editor --lib detects_stored_content_in_merged_non_anchor_cells -j 1`：通过，1 项测试。
+- `git diff --check`：通过；Git 仅提示工作副本 LF 将在后续 Git 写入时转为 CRLF。
+
+未执行项：未重跑 Audit 的 S1 真实样本、产品测试或业务对拍；未运行 PyTools 测试、Excel worker 集成测试、Linux 或 deb 验收。Audit Agent 将在安全节点执行一次定向真实样本复验。
+
+已知问题：当前单测覆盖源范围过滤和 sheet 过滤；仍需 Audit 按真实 S1 ImportRange 计划执行一次定向复验。此提交不构成生产能力验收或路由变更。
+
+删除清单：无。
+回滚：回退代码提交 6ecf941 可恢复原先全源工作簿检查行为；未修改输入文件。
