@@ -39,10 +39,10 @@
   },
   "rust_execution": {
     "ooxml_error_cells_patched": 7,
-    "read_elapsed_ms": 27,
+    "read_elapsed_ms": 168,
     "reader_engine": "calamine",
-    "total_elapsed_ms": 52,
-    "write_elapsed_ms": 17,
+    "total_elapsed_ms": 461,
+    "write_elapsed_ms": 237,
     "writer_engine": "rust_xlsxwriter"
   },
   "progress_logging": {
@@ -66,13 +66,13 @@
       "rust_xlsxwriter"
     ],
     "completed_stage_elapsed_ms": {
-      "extent_scan": 0,
-      "value_read": 0,
+      "extent_scan": 15,
+      "value_read": 44,
       "row_write": 0,
-      "output_save": 9,
-      "ooxml_error_patch": 2,
-      "output_workbook": 17,
-      "run": 52
+      "output_save": 78,
+      "ooxml_error_patch": 140,
+      "output_workbook": 237,
+      "run": 461
     },
     "skipped_input_names": [],
     "input_filter_events_have_no_engine": true
@@ -116,13 +116,13 @@
         "rust_xlsxwriter"
       ],
       "completed_stage_elapsed_ms": {
-        "extent_scan": 0,
-        "value_read": 0,
+        "extent_scan": 17,
+        "value_read": 47,
         "row_write": 0,
-        "output_save": 8,
-        "ooxml_error_patch": 2,
-        "output_workbook": 17,
-        "run": 50
+        "output_save": 80,
+        "ooxml_error_patch": 141,
+        "output_workbook": 243,
+        "run": 478
       },
       "skipped_input_names": [
         "ignored_source.xls",
@@ -150,9 +150,9 @@
     "rust_execution": {
       "reader_engine": "calamine",
       "writer_engine": "rust_xlsxwriter",
-      "read_elapsed_ms": 60,
-      "write_elapsed_ms": 16,
-      "total_elapsed_ms": 90
+      "read_elapsed_ms": 116,
+      "write_elapsed_ms": 106,
+      "total_elapsed_ms": 288
     },
     "progress_log": {
       "view": "developer",
@@ -173,12 +173,12 @@
         "rust_xlsxwriter"
       ],
       "completed_stage_elapsed_ms": {
-        "extent_scan": 23,
-        "value_read": 37,
-        "row_write": 1,
-        "output_save": 11,
-        "output_workbook": 16,
-        "run": 90
+        "extent_scan": 61,
+        "value_read": 56,
+        "row_write": 3,
+        "output_save": 85,
+        "output_workbook": 106,
+        "run": 288
       },
       "skipped_input_names": [],
       "input_filter_events_have_no_engine": true
@@ -208,6 +208,8 @@
       "rows": 1
     },
     "rust_cli": {
+      "runtime": "WSL Linux",
+      "configured_executable": "cargo run",
       "status": "succeeded",
       "entrypoint": "pytools summary-used-range",
       "reader_api": "read_workbook_with_unknown_error_tokens_as_text",
@@ -238,23 +240,19 @@
           "rust_xlsxwriter"
         ],
         "completed_stage_elapsed_ms": {
-          "extent_scan": 23,
-          "value_read_compatibility": 58,
-          "value_read": 58,
-          "row_write": 1,
-          "output_save": 7,
-          "output_workbook": 13,
-          "run": 106
+          "extent_scan": 45,
+          "value_read_compatibility": 79,
+          "value_read": 79,
+          "row_write": 2,
+          "output_save": 68,
+          "output_workbook": 86,
+          "run": 257
         },
         "skipped_input_names": [],
         "input_filter_events_have_no_engine": true
       },
       "developer_compatibility_event_count": 1,
-      "developer_history_omits_cell_token": true,
-      "runtime": "WSL Ubuntu",
-      "actual_executable": "target/x86_64-unknown-linux-gnu/release/pytools",
-      "maximum_glibc_symbol": "GLIBC_2.28",
-      "configured_executable": "x86_64-unknown-linux-gnu.2.28 release executable"
+      "developer_history_omits_cell_token": true
     },
     "business_parity": "exact",
     "cross_platform_runs_after_shared_reader_api": {
@@ -305,7 +303,7 @@
       }
     },
     "note": "PT-6-1 opts into the shared reader's narrow literal error-token normalization API. Ordinary read_workbook remains fail-closed; this probe does not infer support for other tokens.",
-    "previous_rust_behavior_before_shared_reader_api": {
+    "rust_cli_before_reader_compatibility_api": {
       "status": "failed_closed",
       "message_contains": "Unsupported cell error value '#DATA!'",
       "reader_engine": "calamine",
@@ -317,7 +315,7 @@
       "partial_output_created": false,
       "failed_run_log_count": 1
     },
-    "rust_cli_before_reader_compatibility_api": {
+    "previous_rust_behavior_before_shared_reader_api": {
       "status": "failed_closed",
       "message_contains": "Unsupported cell error value '#DATA!'",
       "reader_engine": "calamine",
@@ -332,6 +330,38 @@
   },
   "comment_summary_probe": {
     "baseline_rows": 6,
+    "merged_non_anchor_cell": {
+      "fixture": "tests/fixtures/summary_comments/merged_children_source.xlsx",
+      "scenario": "B2 contains a synthetic OOXML value inside merge A2:C3; PyCode _gcv resolves B2 and C2 to A2",
+      "pycode_values": {
+        "D2": "merged anchor",
+        "E2": "merged anchor",
+        "D3": "merged anchor",
+        "E3": "merged anchor"
+      },
+      "rust_values": {
+        "D2": "merged anchor",
+        "E2": "merged anchor",
+        "D3": "merged anchor",
+        "E3": "merged anchor"
+      },
+      "rust_rows": 3,
+      "rust_execution": {
+        "ooxml_error_cells_patched": 0,
+        "read_elapsed_ms": 99,
+        "reader_engine": "calamine",
+        "total_elapsed_ms": 239,
+        "write_elapsed_ms": 75,
+        "writer_engine": "rust_xlsxwriter"
+      },
+      "comparison": "exact",
+      "rust_runtime": {
+        "host": "WSL Linux",
+        "executable": "cargo run"
+      },
+      "python_runtime": "win32 Python 3.12",
+      "source_unchanged": true
+    },
     "duplicate_row_region_marker": {
       "scenario": "duplicate 行区域1 starts at A2 and A3; duplicate 行区域#1 ends at A4 and A5",
       "python": {
@@ -360,38 +390,6 @@
       },
       "comparison": "exact",
       "rule": "last matching start/end marker in row-major order, matching PyCode overwrite behavior"
-    },
-    "merged_non_anchor_cell": {
-      "fixture": "tests/fixtures/summary_comments/merged_children_source.xlsx",
-      "scenario": "synthetic raw OOXML value in B2 inside merged A2:C3; PyCode _gcv resolves B2 and C2 to A2",
-      "pycode_values": {
-        "D2": "merged anchor",
-        "E2": "merged anchor",
-        "D3": "merged anchor",
-        "E3": "merged anchor"
-      },
-      "rust_values": {
-        "D2": "merged anchor",
-        "E2": "merged anchor",
-        "D3": "merged anchor",
-        "E3": "merged anchor"
-      },
-      "rust_rows": 3,
-      "rust_execution": {
-        "ooxml_error_cells_patched": 0,
-        "read_elapsed_ms": 9,
-        "reader_engine": "calamine",
-        "total_elapsed_ms": 23,
-        "write_elapsed_ms": 11,
-        "writer_engine": "rust_xlsxwriter"
-      },
-      "rust_runtime": {
-        "host": "Windows host",
-        "executable": "configured Windows GNU executable"
-      },
-      "python_runtime": "win32 Python 3.12",
-      "comparison": "exact",
-      "source_unchanged": true
     }
   },
   "python_variant_scope": {
@@ -609,7 +607,7 @@
   },
   "limitations": [
     "This report covers synthetic XLSX/XLSM plus one pinned VBA-enabled XlsxWriter test fixture; real-project XLSX parity is recorded separately in summary_used_range_real_parity_<date>.json.",
-    "The official VBA-enabled fixture and WSL glibc 2.28 release validation passed; original PyTools VBA-bearing XLSM, XLS/XLSB, Kylin V10/UOS V20 installation and deb packaging remain unvalidated.",
+    "The official VBA-enabled fixture passed, but original PyTools VBA-bearing XLSM, XLS, XLSB, Kylin/UOS, glibc 2.28 and deb packaging remain unvalidated.",
     "NoComPyTools and PyCode input-format scopes differ; no production scope was inferred from the NoCom-only formats.",
     "Output is a new data workbook; source workbook styles, formulas and unrelated OOXML parts are not copied by contract.",
     "A synthetic XLSX t=e #DATA! cell is written as a string by PyCode; PT-6-1 now uses the shared reader's narrow literal-token normalization API and matches this case. No broader token or format support is inferred."

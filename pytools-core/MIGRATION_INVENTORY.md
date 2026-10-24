@@ -464,3 +464,11 @@ Windows 原生测试：`cargo test --offline --locked -p pytools-core --lib comm
 当前 HEAD 的 Windows 原生 PT-6-1/PT-6-2 回归 9/9 通过；VBA 启用 XLSM 合成夹具由原 PyCode 与真实 Rust CLI 输出精确一致，宏部件未复制到新汇总簿。此夹具不是原 PyTools 业务 XLSM 样本。
 
 机器结果见 `probe/reports/summary_used_range_real_parity_20261024.json` 的 `additional_project_assets_20261024.platform_validation.linux_musl_release_current_9837336`。本轮未能重建 glibc 2.28 release：WSL 缺 Zig，Windows/WSL 对 Zig 官方下载站的 TLS 连接均超时。此项只证明当前 HEAD 的 WSL musl 阶段行为，不代表麒麟 V10/UOS V20 实机、glibc 2.28、deb 或离线验收；PT-6-1 最终验收仍未完成。
+
+### 2026-10-24 PT-6-1 当前 HEAD 真实样本复验
+
+在 pytools-dev HEAD a376a76 运行现有 PT-6-1 真实样本 probe。Windows Python 基线与 WSL Linux debug cargo run 对原 PyTools xlsx/ 的 13 份 XLSX 分 4 批对拍，96 张工作表、203,580 行完整投影精确一致；值/类型、样式、工作表名称与维度、冻结窗格/表头加粗、公式/合并/定义名称/页面属性通过。批次事件数依次为 26、14、27、63，均与保存运行历史匹配；输入前后 SHA-256 相同。Rust CLI 使用 Calamine、excel-reader::read_xlsx_worksheet_extents、rust_xlsxwriter；其中含 Excel 错误值的批次还使用 OOXML Patch。此次 WSL 验证包含 cargo run debug 调用，不是 glibc 2.28 release 或目标发行版验证。
+
+同一 HEAD 的 Windows 原生 target/debug/pytools.exe 又单独复验最大批次：4 份工作簿、188,365 行完整投影精确一致；63 条 developer 事件与保存历史匹配，输入前后 SHA-256 一致。此项补充 Windows 原生样本覆盖，不替代其余三批的当前 HEAD Windows 重跑。
+
+机器结果见 probe/reports/summary_used_range_real_parity_20261024.json。此前独立 Windows 全量与 glibc 2.28 release 报告保留各自测量范围。原项目业务含 VBA 的 XLSM 样本、麒麟 V10/UOS V20、deb 与离线交付仍未验收；PT-6-1 整体尚未最终验收。
