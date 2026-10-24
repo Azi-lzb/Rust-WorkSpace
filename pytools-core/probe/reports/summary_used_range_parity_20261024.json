@@ -26,8 +26,7 @@
       "merged range used as an extent",
       "cached formula values and missing formula-cache semantics",
       "date, boolean, numeric, text and blank semantics",
-      "seven common Excel error values preserved as error-typed cells",
-      "mixed .xlsx/.xlsm inputs with invalid .xls/.xlsb files match the PyCode extension filter"
+      "seven common Excel error values preserved as error-typed cells"
     ]
   },
   "comparison": {
@@ -40,11 +39,150 @@
   },
   "rust_execution": {
     "ooxml_error_cells_patched": 7,
-    "read_elapsed_ms": 240,
+    "read_elapsed_ms": 16,
     "reader_engine": "calamine",
-    "total_elapsed_ms": 577,
-    "write_elapsed_ms": 266,
+    "total_elapsed_ms": 71,
+    "write_elapsed_ms": 52,
     "writer_engine": "rust_xlsxwriter"
+  },
+  "progress_logging": {
+    "view": "developer",
+    "status": "succeeded",
+    "event_stream_matches_saved_history": true,
+    "event_count": 18,
+    "phases": [
+      "extent_scan",
+      "ooxml_error_patch",
+      "output_save",
+      "output_workbook",
+      "row_write",
+      "run",
+      "value_read"
+    ],
+    "actual_engines": [
+      "OOXML Patch",
+      "calamine",
+      "excel-reader::read_xlsx_worksheet_extents",
+      "rust_xlsxwriter"
+    ],
+    "completed_stage_elapsed_ms": {
+      "extent_scan": 1,
+      "value_read": 5,
+      "row_write": 0,
+      "output_save": 12,
+      "ooxml_error_patch": 38,
+      "output_workbook": 52,
+      "run": 71
+    },
+    "skipped_input_names": [],
+    "input_filter_events_have_no_engine": true
+  },
+  "input_filter_probe": {
+    "python_supported_extensions": [
+      ".xlsx",
+      ".xlsm"
+    ],
+    "unsupported_extensions_skipped": [
+      ".xls",
+      ".xlsb"
+    ],
+    "python_rust_output": "exact",
+    "files_summarized": 2,
+    "summary_rows": 19,
+    "skipped_input_names": [
+      "ignored_source.xls",
+      "ignored_source.xlsb"
+    ],
+    "skipped_inputs_used_no_engine": true,
+    "progress_log": {
+      "view": "developer",
+      "status": "succeeded",
+      "event_stream_matches_saved_history": true,
+      "event_count": 20,
+      "phases": [
+        "extent_scan",
+        "input_filter",
+        "ooxml_error_patch",
+        "output_save",
+        "output_workbook",
+        "row_write",
+        "run",
+        "value_read"
+      ],
+      "actual_engines": [
+        "OOXML Patch",
+        "calamine",
+        "excel-reader::read_xlsx_worksheet_extents",
+        "rust_xlsxwriter"
+      ],
+      "completed_stage_elapsed_ms": {
+        "extent_scan": 2,
+        "value_read": 6,
+        "row_write": 0,
+        "output_save": 11,
+        "ooxml_error_patch": 23,
+        "output_workbook": 36,
+        "run": 54
+      },
+      "skipped_input_names": [
+        "ignored_source.xls",
+        "ignored_source.xlsb"
+      ],
+      "input_filter_events_have_no_engine": true
+    }
+  },
+  "vba_enabled_xlsm_probe": {
+    "status": "passed_python_rust_cli_parity",
+    "fixture": "tests/fixtures/summary_used_range/vba_enabled_xlsxwriter_macro01.xlsm",
+    "fixture_origin": {
+      "repository": "jmcnamara/XlsxWriter",
+      "commit": "a880ecc15c1573449dba051e5c21025f00c7c9fc",
+      "path": "xlsxwriter/test/comparison/xlsx_files/macro01.xlsm",
+      "license": "BSD-2-Clause; notice is adjacent to fixture",
+      "macro_execution": "not performed"
+    },
+    "vba_project_bytes": 13312,
+    "summary_rows": 1,
+    "python_rust_output": "exact",
+    "new_output_format": "xlsx",
+    "source_vba_copied_to_new_summary": false,
+    "source_sha256_before_after_equal": true,
+    "rust_execution": {
+      "reader_engine": "calamine",
+      "writer_engine": "rust_xlsxwriter",
+      "read_elapsed_ms": 4,
+      "write_elapsed_ms": 11,
+      "total_elapsed_ms": 17
+    },
+    "progress_log": {
+      "view": "developer",
+      "status": "succeeded",
+      "event_stream_matches_saved_history": true,
+      "event_count": 11,
+      "phases": [
+        "extent_scan",
+        "output_save",
+        "output_workbook",
+        "row_write",
+        "run",
+        "value_read"
+      ],
+      "actual_engines": [
+        "calamine",
+        "excel-reader::read_xlsx_worksheet_extents",
+        "rust_xlsxwriter"
+      ],
+      "completed_stage_elapsed_ms": {
+        "extent_scan": 1,
+        "value_read": 3,
+        "row_write": 0,
+        "output_save": 10,
+        "output_workbook": 11,
+        "run": 17
+      },
+      "skipped_input_names": [],
+      "input_filter_events_have_no_engine": true
+    }
   },
   "offset_used_range_probe": {
     "source_sheet": "Offset",
@@ -67,15 +205,7 @@
       "saved": true,
       "output_value": "#DATA!",
       "output_type": "s",
-      "entrypoint": "PyCode.core.summary_321_322.run_summary_by_usedrange",
-      "runtime": "Windows Python 3.12.10; python-calamine available",
-      "output_rows": 1,
-      "output_projection_row": [
-        "getting_data_error",
-        "Errors",
-        1,
-        "#DATA!"
-      ]
+      "rows": 1
     },
     "rust_cli": {
       "status": "succeeded",
@@ -84,70 +214,92 @@
       "reader_engine": "calamine + OOXML error-token normalization",
       "writer_engine": "rust_xlsxwriter",
       "normalized_cell_count": 1,
-      "windows_gnu_debug": {
-        "runtime": "Windows 11 x64; Windows GNU debug CLI executed from PowerShell",
-        "actual_executable": "target/x86_64-pc-windows-gnu/debug/pytools.exe",
-        "views": {
-          "user": {
-            "output_projection": "exact with PyCode",
-            "rows": 1
-          },
-          "developer": {
-            "output_projection": "exact with PyCode",
-            "rows": 1,
-            "event_count": 12,
-            "compatibility_event_count": 1,
-            "event_history_match": true,
-            "log_omits_cell_token": true
-          },
-          "off": {
-            "output_projection": "exact with PyCode",
-            "rows": 1,
-            "application_progress_events": 0
-          }
-        }
+      "output_value": "#DATA!",
+      "output_type": "s",
+      "rows": 1,
+      "progress_log": {
+        "view": "developer",
+        "status": "succeeded",
+        "event_stream_matches_saved_history": true,
+        "event_count": 12,
+        "phases": [
+          "extent_scan",
+          "output_save",
+          "output_workbook",
+          "row_write",
+          "run",
+          "value_read",
+          "value_read_compatibility"
+        ],
+        "actual_engines": [
+          "calamine",
+          "calamine + OOXML error-token normalization",
+          "excel-reader::read_xlsx_worksheet_extents",
+          "rust_xlsxwriter"
+        ],
+        "completed_stage_elapsed_ms": {
+          "extent_scan": 1,
+          "value_read_compatibility": 26,
+          "value_read": 26,
+          "row_write": 0,
+          "output_save": 10,
+          "output_workbook": 11,
+          "run": 41
+        },
+        "skipped_input_names": [],
+        "input_filter_events_have_no_engine": true
       },
-      "linux_glibc_2_28_release": {
-        "runtime": "WSL Ubuntu; x86_64-unknown-linux-gnu.2.28 release CLI",
-        "actual_executable": "target/x86_64-unknown-linux-gnu/release/pytools",
-        "maximum_glibc_symbol": "GLIBC_2.28",
-        "views": {
-          "user": {
-            "output_projection": "exact with PyCode",
-            "rows": 1
-          },
-          "developer": {
-            "output_projection": "exact with PyCode",
-            "rows": 1,
-            "event_count": 12,
-            "compatibility_event_count": 1,
-            "event_history_match": true,
-            "log_omits_cell_token": true
-          },
-          "off": {
-            "output_projection": "exact with PyCode",
-            "rows": 1,
-            "application_progress_events": 0
-          }
-        }
-      },
-      "source_fixture_unchanged": true,
-      "scope": "synthetic XLSX t=e literal #DATA! only; no general Excel error-token support inferred"
+      "developer_compatibility_event_count": 1,
+      "developer_history_omits_cell_token": true
     },
-    "business_parity": "exact_for_synthetic_unknown_error_token_fixture",
-    "note": "PyTools now opts into the shared reader's narrow literal error-token normalization API only in PT-6-1. The normalized package is read by Calamine; ordinary read_workbook remains fail-closed. Windows GNU debug and WSL glibc 2.28 release CLI outputs matched the read-only PyCode entrypoint in all three log views. This does not establish support for other unknown tokens, workbook objects, target OS installations, or deb delivery.",
-    "rust_cli_before_reader_compatibility_api": {
-      "status": "failed_closed",
-      "message_contains": "Unsupported cell error value '#DATA!'",
-      "reader_engine": "calamine",
+    "business_parity": "exact",
+    "previous_rust_behavior_before_shared_reader_api": {
+      "status": "succeeded",
       "entrypoint": "pytools summary-used-range",
-      "runtime": "Windows GNU debug CLI",
-      "actual_executable": "target/x86_64-pc-windows-gnu/debug/pytools.exe",
-      "exit_code": 2,
-      "failure_stage": "value_read",
-      "partial_output_created": false,
-      "failed_run_log_count": 1
-    }
+      "reader_api": "read_workbook_with_unknown_error_tokens_as_text",
+      "reader_engine": "calamine + OOXML error-token normalization",
+      "writer_engine": "rust_xlsxwriter",
+      "normalized_cell_count": 1,
+      "output_value": "#DATA!",
+      "output_type": "s",
+      "rows": 1,
+      "progress_log": {
+        "view": "developer",
+        "status": "succeeded",
+        "event_stream_matches_saved_history": true,
+        "event_count": 12,
+        "phases": [
+          "extent_scan",
+          "output_save",
+          "output_workbook",
+          "row_write",
+          "run",
+          "value_read",
+          "value_read_compatibility"
+        ],
+        "actual_engines": [
+          "calamine",
+          "calamine + OOXML error-token normalization",
+          "excel-reader::read_xlsx_worksheet_extents",
+          "rust_xlsxwriter"
+        ],
+        "completed_stage_elapsed_ms": {
+          "extent_scan": 2,
+          "value_read_compatibility": 28,
+          "value_read": 28,
+          "row_write": 0,
+          "output_save": 10,
+          "output_workbook": 11,
+          "run": 43
+        },
+        "skipped_input_names": [],
+        "input_filter_events_have_no_engine": true
+      },
+      "developer_compatibility_event_count": 1,
+      "developer_history_omits_cell_token": true
+    },
+    "cross_platform_runs_after_shared_reader_api": {},
+    "note": "PT-6-1 opts into the shared reader's narrow literal error-token normalization API. Ordinary read_workbook remains fail-closed; this probe does not infer support for other tokens."
   },
   "comment_summary_probe": {
     "baseline_rows": 6,
@@ -179,123 +331,6 @@
       },
       "comparison": "exact",
       "rule": "last matching start/end marker in row-major order, matching PyCode overwrite behavior"
-    },
-    "page_settings": {
-      "status": "passed_exact_python_projection_parity",
-      "comparison": "full workbook projection including page setup and margins",
-      "pycode_default_margins": {
-        "left": 0.75,
-        "right": 0.75,
-        "top": 1.0,
-        "bottom": 1.0,
-        "header": 0.5,
-        "footer": 0.5
-      },
-      "rust_margins": "set to PyCode openpyxl workbook defaults",
-      "windows_target_cli_cases": [
-        {
-          "template": "standard_markers",
-          "sources": 2,
-          "rows": 21,
-          "comparison": "exact"
-        },
-        {
-          "template": "duplicate_row_region_markers",
-          "sources": 2,
-          "rows": 21,
-          "comparison": "exact"
-        }
-      ],
-      "original_source_marker_template": "not found; 72 xlsx/xlsm workbooks scanned, comment-bearing config workbooks contained no PT-6-2 row/column/set markers"
-    },
-    "runtime_logging": {
-      "status": "passed_windows_gnu_target_runtime",
-      "views": [
-        "user",
-        "developer",
-        "off"
-      ],
-      "parity_cases": [
-        {
-          "template": "standard_markers",
-          "sources": 2,
-          "rows": 21,
-          "comparison": "exact_full_projection_including_page_settings",
-          "events": 24,
-          "history_matches_event_stream": true
-        },
-        {
-          "template": "duplicate_row_markers",
-          "sources": 2,
-          "rows": 21,
-          "comparison": "exact_full_projection_including_page_settings",
-          "events": 24,
-          "history_matches_event_stream": true
-        }
-      ],
-      "event_history_consistency": "developer stderr events exactly match PT-6-2 saved history",
-      "failure_stage_recording": "template format validation failure reports stage and error type",
-      "representative_load": {
-        "input": "synthetic XLSX",
-        "selected_rows": 10000,
-        "runs_per_mode": 3,
-        "medians_wall_elapsed_ms": {
-          "developer": 2640.29,
-          "off": 2618.42
-        },
-        "median_relative_difference_percent": 0.84,
-        "interpretation": "Developer mode was 0.84% slower by median in this three-run sample; the mode ranges overlap, so the difference is inconclusive. Outputs match; this is not a platform performance guarantee.",
-        "measurements": [
-          {
-            "mode": "developer",
-            "wall_elapsed_ms": 2670.35,
-            "pipeline_elapsed_ms": 2610,
-            "rows": 10000,
-            "events": 22
-          },
-          {
-            "mode": "off",
-            "wall_elapsed_ms": 2629.45,
-            "pipeline_elapsed_ms": 2571,
-            "rows": 10000,
-            "events": 0
-          },
-          {
-            "mode": "off",
-            "wall_elapsed_ms": 2612.88,
-            "pipeline_elapsed_ms": 2555,
-            "rows": 10000,
-            "events": 0
-          },
-          {
-            "mode": "developer",
-            "wall_elapsed_ms": 2640.29,
-            "pipeline_elapsed_ms": 2577,
-            "rows": 10000,
-            "events": 22
-          },
-          {
-            "mode": "developer",
-            "wall_elapsed_ms": 2609.87,
-            "pipeline_elapsed_ms": 2548,
-            "rows": 10000,
-            "events": 22
-          },
-          {
-            "mode": "off",
-            "wall_elapsed_ms": 2618.42,
-            "pipeline_elapsed_ms": 2562,
-            "rows": 10000,
-            "events": 0
-          }
-        ],
-        "python_rust_output": "exact_full_projection_including_page_settings",
-        "logging_changed_output": false
-      },
-      "actual_engines": {
-        "template_and_source_read": "Calamine + namespace-aware OOXML supplement",
-        "output": "rust_xlsxwriter"
-      }
     }
   },
   "python_variant_scope": {
@@ -512,125 +547,12 @@
     "format_difference": "This probe covers xlsx, macro-free xlsm and the pinned VBA-enabled XlsxWriter test fixture. Original PyTools VBA-bearing xlsm and NoComPyTools-only xls/xlsb remain outside the validated set."
   },
   "limitations": [
-    "This report covers synthetic XLSX/XLSM plus one pinned VBA-enabled XlsxWriter test fixture; real-project XLSX parity is recorded separately in summary_used_range_real_parity_20261024.json.",
+    "This report covers synthetic XLSX/XLSM plus one pinned VBA-enabled XlsxWriter test fixture; real-project XLSX parity is recorded separately in summary_used_range_real_parity_<date>.json.",
     "The official VBA-enabled fixture passed, but original PyTools VBA-bearing XLSM, XLS, XLSB, Kylin/UOS, glibc 2.28 and deb packaging remain unvalidated.",
     "NoComPyTools and PyCode input-format scopes differ; no production scope was inferred from the NoCom-only formats.",
     "Output is a new data workbook; source workbook styles, formulas and unrelated OOXML parts are not copied by contract.",
-    "A synthetic XLSX t=e #DATA! cell is written as a string by PyCode; Calamine 0.37 rejects it. Supporting this value requires a coordinated shared-reader capability; no OOXML fallback was added."
+    "A synthetic XLSX t=e #DATA! cell is written as a string by PyCode; PT-6-1 now uses the shared reader's narrow literal-token normalization API and matches this case. No broader token or format support is inferred."
   ],
-  "progress_logging": {
-    "view": "developer",
-    "status": "validated",
-    "event_stream_matches_saved_history": true,
-    "workbook_write_duration_recorded": 220
-  },
-  "input_filter_probe": {
-    "python_supported_extensions": [
-      ".xlsx",
-      ".xlsm"
-    ],
-    "unsupported_extensions_skipped": [
-      ".xls",
-      ".xlsb"
-    ],
-    "python_rust_output": "exact",
-    "files_summarized": 2,
-    "summary_rows": 19,
-    "skipped_input_names": [
-      "ignored_source.xls",
-      "ignored_source.xlsb"
-    ],
-    "skipped_inputs_used_no_engine": true,
-    "progress_log": {
-      "view": "developer",
-      "status": "succeeded",
-      "event_stream_matches_saved_history": true,
-      "event_count": 20,
-      "phases": [
-        "extent_scan",
-        "input_filter",
-        "ooxml_error_patch",
-        "output_save",
-        "output_workbook",
-        "row_write",
-        "run",
-        "value_read"
-      ],
-      "actual_engines": [
-        "OOXML Patch",
-        "calamine",
-        "excel-reader::read_xlsx_worksheet_extents",
-        "rust_xlsxwriter"
-      ],
-      "completed_stage_elapsed_ms": {
-        "extent_scan": 15,
-        "value_read": 40,
-        "row_write": 0,
-        "output_save": 74,
-        "ooxml_error_patch": 127,
-        "output_workbook": 220,
-        "run": 421
-      },
-      "skipped_input_names": [
-        "ignored_source.xls",
-        "ignored_source.xlsb"
-      ],
-      "input_filter_events_have_no_engine": true
-    }
-  },
-  "vba_enabled_xlsm_probe": {
-    "status": "passed_python_rust_cli_parity",
-    "fixture": "tests/fixtures/summary_used_range/vba_enabled_xlsxwriter_macro01.xlsm",
-    "fixture_origin": {
-      "repository": "jmcnamara/XlsxWriter",
-      "commit": "a880ecc15c1573449dba051e5c21025f00c7c9fc",
-      "path": "xlsxwriter/test/comparison/xlsx_files/macro01.xlsm",
-      "license": "BSD-2-Clause; notice is adjacent to fixture",
-      "macro_execution": "not performed"
-    },
-    "vba_project_bytes": 13312,
-    "summary_rows": 1,
-    "python_rust_output": "exact",
-    "new_output_format": "xlsx",
-    "source_vba_copied_to_new_summary": false,
-    "source_sha256_before_after_equal": true,
-    "rust_execution": {
-      "reader_engine": "calamine",
-      "writer_engine": "rust_xlsxwriter",
-      "read_elapsed_ms": 134,
-      "write_elapsed_ms": 205,
-      "total_elapsed_ms": 414
-    },
-    "progress_log": {
-      "view": "developer",
-      "status": "succeeded",
-      "event_stream_matches_saved_history": true,
-      "event_count": 11,
-      "phases": [
-        "extent_scan",
-        "output_save",
-        "output_workbook",
-        "row_write",
-        "run",
-        "value_read"
-      ],
-      "actual_engines": [
-        "calamine",
-        "excel-reader::read_xlsx_worksheet_extents",
-        "rust_xlsxwriter"
-      ],
-      "completed_stage_elapsed_ms": {
-        "extent_scan": 67,
-        "value_read": 69,
-        "row_write": 3,
-        "output_save": 174,
-        "output_workbook": 205,
-        "run": 414
-      },
-      "skipped_input_names": [],
-      "input_filter_events_have_no_engine": true
-    }
-  },
   "linux_stage_validation": {
     "status": "passed_wsl_musl_stage",
     "host": "WSL Ubuntu, glibc 2.39",

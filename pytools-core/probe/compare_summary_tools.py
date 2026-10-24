@@ -8,6 +8,7 @@ import hashlib
 import json
 import logging
 import math
+import os
 import posixpath
 import shlex
 import subprocess
@@ -35,7 +36,7 @@ def wsl_path(path: Path) -> str:
 def from_wsl_path(value: str) -> Path:
     normalized = value.replace("\\", "/")
     if not normalized.startswith("/mnt/"):
-        raise ValueError(f"Rust output outside WSL mounted drive: {value}")
+        return Path(value)
     return Path(f"{normalized[5].upper()}:\\{normalized[7:].replace('/', chr(92))}")
 
 
@@ -498,13 +499,24 @@ def compare_real_used_range_sample() -> dict[str, object]:
             "rust_cli_wall_elapsed_ms": rust_cli_wall_elapsed_ms,
             "execution_environment": {
                 "python_sys_platform": sys.platform,
-                "rust_cli_host": "WSL Linux",
-                "rust_cli_wall_includes_cargo_run": True,
+                "rust_cli_host": (
+                    "Windows host; Windows GNU executable"
+                    if os.environ.get("PYTOOLS_RUST_CLI")
+                    else "WSL Linux"
+                ),
+                "rust_cli_executable": (
+                    "configured Windows GNU executable"
+                    if os.environ.get("PYTOOLS_RUST_CLI")
+                    else "cargo run"
+                ),
+                "rust_cli_wall_includes_cargo_run": not bool(
+                    os.environ.get("PYTOOLS_RUST_CLI")
+                ),
             },
             "timing_note": "Single execution per batch for diagnostics; not a performance comparison.",
             "limitations": [
                 "Original-project XLSX assets only; no production default or broad format acceptance inferred.",
-                "VBA-bearing XLSM, XLS/XLSB, Windows-native Rust and target Linux/deb remain unvalidated.",
+                "VBA-bearing XLSM, XLS/XLSB, Windows-native Cargo build and target Linux/deb remain unvalidated.",
                 "Report contains no source cell values or output workbook; both outputs were temporary.",
             ],
         }
@@ -513,6 +525,14 @@ def compare_real_used_range_sample() -> dict[str, object]:
             / "reports"
             / f"summary_used_range_real_parity_{report_day}.json"
         )
+        previous_report = (
+            json.loads(report_path.read_text(encoding="utf-8"))
+            if report_path.is_file()
+            else {}
+        )
+        for key, value in previous_report.items():
+            if key not in report:
+                report[key] = value
         report_path.parent.mkdir(parents=True, exist_ok=True)
         report_path.write_text(
             json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
@@ -586,18 +606,35 @@ def python_nocom_used_range(sources: list[Path], output: Path) -> Path | None:
 
 
 def run_rust(command_name: str, args: list[Path], output: Path) -> tuple[Path | None, dict[str, object]]:
-    cli = " ".join(shlex.quote(wsl_path(path)) for path in args)
-    log_options = ""
-    if command_name == "summary-used-range":
-        log_options = (
-            f"--log-dir {shlex.quote(wsl_path(output / 'logs'))} "
-            "--log-view developer "
+    native_cli = os.environ.get("PYTOOLS_RUST_CLI")
+    if native_cli:
+        command = [native_cli, command_name, "--output-dir", str(output)]
+        if command_name == "summary-used-range":
+            command.extend(
+                ["--log-dir", str(output / "logs"), "--log-view", "developer"]
+            )
+        command.extend(str(path) for path in args)
+        invocation = command
+    else:
+        cli = " ".join(shlex.quote(wsl_path(path)) for path in args)
+        log_options = ""
+        if command_name == "summary-used-range":
+            log_options = (
+                f"--log-dir {shlex.quote(wsl_path(output / 'logs'))} "
+                "--log-view developer "
+            )
+        command = (
+            f"cd {shlex.quote(wsl_path(WORKSPACE))} && cargo run --quiet -p pytools-core --bin pytools -- "
+            f"{command_name} --output-dir {shlex.quote(wsl_path(output))} {log_options}{cli}"
         )
-    command = (
-        f"cd {shlex.quote(wsl_path(WORKSPACE))} && cargo run --quiet -p pytools-core --bin pytools -- "
-        f"{command_name} --output-dir {shlex.quote(wsl_path(output))} {log_options}{cli}"
-    )
-    completed = subprocess.run(["wsl", "-e", "sh", "-lc", command], check=True, capture_output=True)
+        invocation = ["wsl", "-e", "sh", "-lc", command]
+    try:
+        completed = subprocess.run(invocation, check=True, capture_output=True)
+    except subprocess.CalledProcessError as error:
+        stderr = error.stderr.decode("utf-8-sig", errors="replace") if error.stderr else ""
+        raise RuntimeError(
+            "Rust summary CLI failed: " + stderr[-4000:]
+        ) from error
     stdout = completed.stdout.decode("utf-8-sig", errors="replace").replace("\x00", "")
     stderr = completed.stderr.decode("utf-8-sig", errors="replace").replace("\x00", "")
     for index, character in enumerate(stdout):
@@ -629,7 +666,7 @@ def run_rust(command_name: str, args: list[Path], output: Path) -> tuple[Path | 
                     run_log = json.load(log_file)
                 if run_log.get("status") != "succeeded":
                     raise RuntimeError("Rust CLI PT-6-1 run log did not record success")
-                if len(run_log.get("events", [])) != len(events):
+                if run_log.get("events", []) != events:
                     raise RuntimeError("Rust CLI progress stream and saved run log differ")
                 input_filter_events = [
                     event for event in events if event.get("phase") == "input_filter"
@@ -713,12 +750,25 @@ def compare_used_range_extension_filter(
 
 
 def run_rust_comments(template: Path, source: Path, output: Path) -> tuple[Path | None, dict[str, object]]:
-    command = (
-        f"cd {shlex.quote(wsl_path(WORKSPACE))} && cargo run --quiet -p pytools-core --bin pytools -- "
-        f"summary-comments --template {shlex.quote(wsl_path(template))} "
-        f"--output-dir {shlex.quote(wsl_path(output))} {shlex.quote(wsl_path(source))}"
-    )
-    completed = subprocess.run(["wsl", "-e", "sh", "-lc", command], check=True, capture_output=True)
+    native_cli = os.environ.get("PYTOOLS_RUST_CLI")
+    if native_cli:
+        invocation = [
+            native_cli,
+            "summary-comments",
+            "--template",
+            str(template),
+            "--output-dir",
+            str(output),
+            str(source),
+        ]
+    else:
+        command = (
+            f"cd {shlex.quote(wsl_path(WORKSPACE))} && cargo run --quiet -p pytools-core --bin pytools -- "
+            f"summary-comments --template {shlex.quote(wsl_path(template))} "
+            f"--output-dir {shlex.quote(wsl_path(output))} {shlex.quote(wsl_path(source))}"
+        )
+        invocation = ["wsl", "-e", "sh", "-lc", command]
+    completed = subprocess.run(invocation, check=True, capture_output=True)
     stdout = completed.stdout.decode("utf-8-sig", errors="replace").replace("\x00", "")
     stderr = completed.stderr.decode("utf-8-sig", errors="replace").replace("\x00", "")
     for index, character in enumerate(stdout):
@@ -1021,24 +1071,58 @@ def main() -> int:
             or python_unknown_cell["types"].get("D2") != "s"
         ):
             raise AssertionError("PyCode unknown-error behavior changed from string output")
-        try:
-            run_rust(
-                "summary-used-range",
-                [unsupported_error_source],
-                root / "rust_unknown_error",
+        rust_unknown_error, rust_unknown_report = run_rust(
+            "summary-used-range",
+            [unsupported_error_source],
+            root / "rust_unknown_error",
+        )
+        if rust_unknown_error is None or rust_unknown_report.get("saved") is not True:
+            raise AssertionError("Rust CLI did not save the unknown-error summary")
+        assert_equivalent(
+            python_unknown_error,
+            rust_unknown_error,
+            "PT-6-1 unknown error-token summary",
+        )
+        rust_unknown_sheets, _ = workbook_projection(rust_unknown_error)
+        rust_unknown_cell = rust_unknown_sheets[0]
+        if (
+            rust_unknown_cell["values"].get("D2") != "#DATA!"
+            or rust_unknown_cell["types"].get("D2") != "s"
+        ):
+            raise AssertionError("Rust unknown-error output must preserve #DATA! as string")
+        rust_unknown_execution = rust_unknown_report.get("execution", {})
+        if (
+            rust_unknown_execution.get("reader_engine")
+            != "calamine + OOXML error-token normalization"
+            or rust_unknown_execution.get("unknown_error_token_cells_normalized") != 1
+            or rust_unknown_execution.get("ooxml_error_cells_patched") != 0
+        ):
+            raise AssertionError(
+                "Rust unknown-error route did not use the narrow shared reader API: "
+                + str(rust_unknown_execution)
             )
-        except subprocess.CalledProcessError as error:
-            rust_unknown_error_stderr = error.stderr.decode(
-                "utf-8-sig", errors="replace"
-            )
-            rust_unknown_error_marker = "Unsupported cell error value '#DATA!'"
-            if rust_unknown_error_marker not in rust_unknown_error_stderr:
-                raise AssertionError(
-                    "Rust CLI failed for the unknown error for an unexpected reason: "
-                    + rust_unknown_error_stderr[-1600:]
-                )
-        else:
-            raise AssertionError("Rust CLI unexpectedly accepted the unknown XLSX error")
+        if not rust_unknown_report.get("progress_log", {}).get(
+            "event_stream_matches_saved_history"
+        ):
+            raise AssertionError("unknown-error developer events do not match history")
+        rust_unknown_log_path = from_wsl_path(rust_unknown_report["run_log_path"])
+        rust_unknown_log_bytes = rust_unknown_log_path.read_bytes()
+        if b"#DATA!" in rust_unknown_log_bytes:
+            raise AssertionError("unknown-error history contains the cell token")
+        rust_unknown_log = json.loads(rust_unknown_log_bytes)
+        compatibility_events = [
+            event
+            for event in rust_unknown_log.get("events", [])
+            if event.get("phase") == "value_read_compatibility"
+            and event.get("status") == "succeeded"
+        ]
+        if (
+            len(compatibility_events) != 1
+            or compatibility_events[0].get("actual_engine")
+            != "calamine + OOXML error-token normalization"
+            or compatibility_events[0].get("stage_elapsed_ms") is None
+        ):
+            raise AssertionError("unknown-error compatibility event is incomplete")
         fingerprints_after = source_fingerprints(
             [*sources, template, duplicate_marker_template, unsupported_error_source]
         )
@@ -1055,6 +1139,28 @@ def main() -> int:
             raise AssertionError(f"unexpected used-range summary report: {used_report}")
         if used_report.get("execution", {}).get("ooxml_error_cells_patched") != 7:
             raise AssertionError(f"expected seven preserved Excel error values: {used_report}")
+        report_day = dt.date.today().strftime("%Y%m%d")
+        report_path = (
+            Path(__file__).resolve().parent
+            / "reports"
+            / f"summary_used_range_parity_{report_day}.json"
+        )
+        previous_report = (
+            json.loads(report_path.read_text(encoding="utf-8"))
+            if report_path.is_file()
+            else {}
+        )
+        previous_unknown_probe = previous_report.get("unknown_cell_error_probe", {})
+        previous_unknown_rust = previous_unknown_probe.get("rust_cli", {})
+        cross_platform_runs = {
+            key: previous_unknown_rust[key]
+            for key in ("windows_gnu_debug", "linux_glibc_2_28_release")
+            if key in previous_unknown_rust
+        }
+        previous_rust_behavior = previous_unknown_probe.get(
+            "rust_cli_before_reader_compatibility_api",
+            previous_unknown_rust,
+        )
         report = {
             "schema_version": 1,
             "suite": "pytools.summary_used_range_python_rust_parity",
@@ -1103,13 +1209,35 @@ def main() -> int:
             },
             "unknown_cell_error_probe": {
                 "input": "synthetic XLSX t=e cell with value #DATA!",
-                "pycode": {"saved": True, "output_value": "#DATA!", "output_type": "s"},
-                "rust_cli": {
-                    "status": "failed_closed",
-                    "message_contains": "Unsupported cell error value '#DATA!'",
-                    "reader_engine": "calamine",
+                "pycode": {
+                    "saved": True,
+                    "output_value": "#DATA!",
+                    "output_type": "s",
+                    "rows": 1,
                 },
-                "note": "Calamine 0.37 does not parse this worksheet error token; PyTools does not use an OOXML value fallback.",
+                "rust_cli": {
+                    "status": "succeeded",
+                    "entrypoint": "pytools summary-used-range",
+                    "reader_api": "read_workbook_with_unknown_error_tokens_as_text",
+                    "reader_engine": rust_unknown_execution["reader_engine"],
+                    "writer_engine": rust_unknown_execution["writer_engine"],
+                    "normalized_cell_count": rust_unknown_execution[
+                        "unknown_error_token_cells_normalized"
+                    ],
+                    "output_value": rust_unknown_cell["values"]["D2"],
+                    "output_type": rust_unknown_cell["types"]["D2"],
+                    "rows": rust_unknown_report["rows"],
+                    "progress_log": rust_unknown_report["progress_log"],
+                    "developer_compatibility_event_count": len(compatibility_events),
+                    "developer_history_omits_cell_token": True,
+                },
+                "business_parity": "exact",
+                "previous_rust_behavior_before_shared_reader_api": previous_rust_behavior,
+                "cross_platform_runs_after_shared_reader_api": cross_platform_runs,
+                "note": (
+                    "PT-6-1 opts into the shared reader's narrow literal error-token normalization API. "
+                    "Ordinary read_workbook remains fail-closed; this probe does not infer support for other tokens."
+                ),
             },
             "comment_summary_probe": {
                 "baseline_rows": comments_report.get("rows"),
@@ -1144,11 +1272,12 @@ def main() -> int:
                 "The official VBA-enabled fixture passed, but original PyTools VBA-bearing XLSM, XLS, XLSB, Kylin/UOS, glibc 2.28 and deb packaging remain unvalidated.",
                 "NoComPyTools and PyCode input-format scopes differ; no production scope was inferred from the NoCom-only formats.",
                 "Output is a new data workbook; source workbook styles, formulas and unrelated OOXML parts are not copied by contract.",
-                "A synthetic XLSX t=e #DATA! cell is written as a string by PyCode; Calamine 0.37 rejects it. Supporting this value requires a coordinated shared-reader capability; no OOXML fallback was added.",
+                "A synthetic XLSX t=e #DATA! cell is written as a string by PyCode; PT-6-1 now uses the shared reader's narrow literal-token normalization API and matches this case. No broader token or format support is inferred.",
             ],
         }
-        report_day = dt.date.today().strftime("%Y%m%d")
-        report_path = Path(__file__).resolve().parent / "reports" / f"summary_used_range_parity_{report_day}.json"
+        for key, value in previous_report.items():
+            if key not in report:
+                report[key] = value
         report_path.parent.mkdir(parents=True, exist_ok=True)
         report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         real_sample_report = compare_real_used_range_sample()
