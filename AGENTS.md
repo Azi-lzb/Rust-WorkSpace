@@ -46,6 +46,7 @@ rust-workspace/
 - sidecar/lo-convert 是独立二进制。主路径显式启动子进程，不静态链接、不导入该 crate。
 - 两个业务 crate 各自维护 fixtures、probe 配置和报告；报告不得混用。
 - 产品分别打包为 open-data-audit.deb 和 pytools.deb；共享 Rust 库静态链接进对应二进制，不单独发 .so。
+- 当前 Workspace 仅作为两个产品的临时联合迁移环境。迁移及真实业务验收完成后，按 DEVELOPMENT_GOAL.md 第十七章拆分为 Excel-Core、Audit、PyTools 三个独立 Rust 项目和 Git 仓库；现在不提前拆分。公共 Excel 接口应保持通用、可独立 Cargo 依赖，各产品最终须能独立离线构建。
 
 ## 4. 技术分工与外部引擎边界
 
