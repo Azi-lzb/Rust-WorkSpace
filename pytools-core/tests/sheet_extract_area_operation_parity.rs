@@ -1,9 +1,17 @@
-use excel_reader::{read_value_columns_with_iso_dates, CellValue};
+use anyhow::Context;
+use excel_editor::{
+    inspect_xlsx_profile, open_xlsx, BackendCapability, CapabilityEvidence, CapabilityStatus,
+    EditOperationKind, EngineId, PreservationRequirement, WorkbookFormat,
+};
+use excel_reader::{
+    read_ooxml_comments, read_value_columns_with_iso_dates, read_xlsx_worksheet_extents, CellValue,
+};
 use pytools_core::config::ExtractTask;
 use pytools_core::sheet_extract::run_extract_sheets_area_candidate;
 use serde_json::{json, Value};
+use std::collections::BTreeSet;
 use std::fs;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -18,6 +26,13 @@ fn baseline() -> Value {
         "../probe/reports/sheet_extract_area_python_baseline.json"
     ))
     .expect("valid Python worksheet extraction baseline")
+}
+
+fn full_sheet_baseline() -> Value {
+    serde_json::from_str(include_str!(
+        "../probe/reports/sheet_extract_full_menu_python_baseline.json"
+    ))
+    .expect("valid Python full-sheet extraction baseline")
 }
 
 fn load_tasks(cases: &Value) -> Vec<ExtractTask> {
@@ -42,6 +57,12 @@ fn load_tasks(cases: &Value) -> Vec<ExtractTask> {
 fn fixture_path(name: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/sheet_extract_area")
+        .join(name)
+}
+
+fn full_sheet_fixture_path(name: &str) -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/sheet_extract_full_menu")
         .join(name)
 }
 
@@ -141,6 +162,122 @@ fn run_menu_with_view(config: &Path, input: &str, view: &str) -> std::process::O
         .write_all(input.as_bytes())
         .unwrap();
     child.wait_with_output().unwrap()
+}
+
+fn run_menu_with_capability(
+    config: &Path,
+    input: &str,
+    view: &str,
+    capability: &Path,
+    platform: &str,
+) -> std::process::Output {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_pytools"))
+        .arg("menu")
+        .arg("--config")
+        .arg(config)
+        .arg("--log-view")
+        .arg(view)
+        .arg("--capabilities")
+        .arg(capability)
+        .arg("--platform")
+        .arg(platform)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(input.as_bytes())
+        .unwrap();
+    child.wait_with_output().unwrap()
+}
+
+fn write_full_sheet_test_capability(
+    root: &Path,
+    source: &Path,
+    platform: &str,
+) -> anyhow::Result<PathBuf> {
+    let skeleton_path = root.join("full-sheet-capability-skeleton.xlsx");
+    let mut skeleton = rust_xlsxwriter::Workbook::new();
+    skeleton.add_worksheet().set_name("报表")?;
+    skeleton.save(&skeleton_path)?;
+
+    let mut supported_features = inspect_xlsx_profile(source)?.features_present;
+    supported_features.extend(inspect_xlsx_profile(&skeleton_path)?.features_present);
+    let capability = BackendCapability {
+        engine: EngineId::UmyaSpreadsheet,
+        status: CapabilityStatus::Passed,
+        format: WorkbookFormat::Xlsx,
+        operations: [EditOperationKind::ImportRange].into_iter().collect(),
+        supported_features,
+        preserved: [
+            PreservationRequirement::CellValuesAndTypes,
+            PreservationRequirement::Styles,
+            PreservationRequirement::MergedRanges,
+            PreservationRequirement::RowAndColumnDimensions,
+            PreservationRequirement::UnmodifiedPackageParts,
+            PreservationRequirement::SheetIdentityAndOrder,
+        ]
+        .into_iter()
+        .collect::<BTreeSet<_>>(),
+        platform: platform.to_owned(),
+        evidence: Some(CapabilityEvidence {
+            sample_id: "synthetic-pt-7-6-full-sheet-menu".to_owned(),
+            report_path: "pytools-core/tests/sheet_extract_area_operation_parity.rs".to_owned(),
+            adapter_version: "pytools-core fixture-scoped test capability".to_owned(),
+            engine_version: "umya-spreadsheet 3.1.1".to_owned(),
+            platform: platform.to_owned(),
+        }),
+    };
+    let capability_path = root.join("temporary-full-sheet-capability.json");
+    fs::write(&capability_path, serde_json::to_vec_pretty(&capability)?)?;
+    Ok(capability_path)
+}
+
+fn worksheet_xml(path: &Path) -> anyhow::Result<String> {
+    let file = fs::File::open(path)?;
+    let mut archive = zip::ZipArchive::new(file)?;
+    let mut part = archive.by_name("xl/worksheets/sheet1.xml")?;
+    let mut xml = String::new();
+    part.read_to_string(&mut xml)?;
+    Ok(xml)
+}
+
+fn style_bold(book: &excel_editor::Workbook, sheet: &str, address: &str) -> anyhow::Result<bool> {
+    Ok(book
+        .sheet_by_name(sheet)?
+        .cell(address)
+        .and_then(|cell| cell.style().font())
+        .is_some_and(|font| font.bold()))
+}
+
+fn style_fill(
+    book: &excel_editor::Workbook,
+    sheet: &str,
+    address: &str,
+) -> anyhow::Result<Option<String>> {
+    Ok(book
+        .sheet_by_name(sheet)?
+        .cell(address)
+        .and_then(|cell| cell.style().fill())
+        .and_then(|fill| fill.pattern_fill())
+        .and_then(|fill| fill.foreground_color())
+        .map(|color| color.argb_str().to_ascii_uppercase()))
+}
+
+fn cell_number_format(
+    book: &excel_editor::Workbook,
+    sheet: &str,
+    address: &str,
+) -> anyhow::Result<Option<String>> {
+    Ok(book
+        .sheet_by_name(sheet)?
+        .cell(address)
+        .and_then(|cell| cell.style().numbering_format())
+        .map(|format| format.format_code().to_owned()))
 }
 
 fn excel_cell(row: usize, column: usize) -> String {
@@ -566,6 +703,319 @@ fn interactive_menu_routes_area_extraction_matches_python_and_records_engines() 
         Path::new(env!("CARGO_MANIFEST_DIR")).join("probe/reports/sheet_extract_menu_parity.json");
     fs::write(report_path, serde_json::to_vec_pretty(&report).unwrap()).unwrap();
     fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn interactive_menu_routes_full_sheet_import_against_python_helper_baseline() -> anyhow::Result<()>
+{
+    const PLATFORM: &str = "synthetic-pt-7-6-full-sheet-menu";
+    let baseline = full_sheet_baseline();
+    assert_eq!(baseline["status"], "partial");
+    assert!(baseline["worksheet"]["style_checks"]["python_output"].is_null());
+    assert!(
+        baseline["worksheet"]["style_checks"]["python_output_read_error"]
+            .as_str()
+            .is_some_and(|error| error.contains("IndexError"))
+    );
+
+    let source = full_sheet_fixture_path("source.xlsx");
+    let original_source = fs::read(&source)?;
+    let root = temporary_directory("sheet-extract-full-menu");
+    let mut tasks = load_tasks(&cases());
+    tasks.truncate(1);
+    tasks[0].workbook_keywords = "source".to_owned();
+    tasks[0].sheet_keywords = "报表".to_owned();
+    tasks[0].exclude_keywords.clear();
+    tasks[0].area_spec.clear();
+    tasks[0].stitch_mode = "horizontal".to_owned();
+    tasks[0].output_folder = "整表导入".to_owned();
+    tasks[0].output_name = "full-sheet-output.xlsx".to_owned();
+    let config = create_menu_config(&root, &tasks);
+    let capability = write_full_sheet_test_capability(&root, &source, PLATFORM)?;
+    let output = run_menu_with_capability(
+        &config,
+        &format!("7\n6\n{}\n", source.display()),
+        "developer",
+        &capability,
+        PLATFORM,
+    );
+    assert!(
+        output.status.success(),
+        "full-sheet menu failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("6  工作表数据提取（普通无批注版）"));
+    assert!(stdout.contains("\"extracted_sheets\": 1"));
+    assert!(stdout.contains("\"output_files\": 1"));
+    assert!(stdout.contains("\"failed_files\": 0"));
+
+    let output_path = root.join("app/output/整表导入/full-sheet-output.xlsx");
+    assert!(output_path.is_file());
+    let expected_sheet = &baseline["worksheet"];
+    let expected_name = expected_sheet["name"].as_str().unwrap();
+    let expected_values = expected_sheet["values"].as_array().unwrap();
+    let actual_values = read_value_columns_with_iso_dates(&output_path, 16_384)?;
+    assert_eq!(actual_values.len(), 1);
+    assert_eq!(actual_values[0].name, expected_name);
+    for (row_index, row) in expected_values.iter().enumerate() {
+        for (column_index, expected_cell) in row.as_array().unwrap().iter().enumerate() {
+            let address = excel_cell(row_index + 1, column_index + 1);
+            assert_cell(
+                expected_cell,
+                actual_values[0].values.get(&address),
+                &address,
+                expected_name,
+            );
+        }
+    }
+    let actual_extents = read_xlsx_worksheet_extents(&output_path)?;
+    assert_eq!(actual_extents.len(), 1);
+    assert_eq!(actual_extents[0].name, expected_name);
+    assert_eq!(
+        actual_extents[0].max_row,
+        expected_sheet["max_row"].as_u64().unwrap() as usize
+    );
+    assert_eq!(
+        actual_extents[0].max_column,
+        expected_sheet["max_column"].as_u64().unwrap() as usize
+    );
+
+    let source_workbook = open_xlsx(&source)?;
+    let output_workbook = open_xlsx(&output_path)?;
+    let source_sheet = source_workbook
+        .sheet_by_name(expected_name)
+        .context("source worksheet missing")?;
+    let output_sheet = output_workbook
+        .sheet_by_name(expected_name)
+        .context("full-sheet output missing its source worksheet")?;
+    let expected_merges = expected_sheet["merged_ranges"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|value| value.as_str().unwrap().to_owned())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        output_sheet
+            .merge_cells()
+            .iter()
+            .map(|range| range.range())
+            .collect::<Vec<_>>(),
+        expected_merges
+    );
+    let source_styles = &expected_sheet["style_checks"]["source_workbook_expected"];
+    assert_eq!(
+        style_bold(&source_workbook, expected_name, "A1")?,
+        source_styles["A1_bold"].as_bool().unwrap()
+    );
+    assert_eq!(
+        style_bold(&output_workbook, expected_name, "A1")?,
+        source_styles["A1_bold"].as_bool().unwrap()
+    );
+    for (address, expected_key) in [("A1", "A1_fill"), ("E8", "E8_fill")] {
+        let expected_fill = source_styles[expected_key].as_str();
+        assert_eq!(
+            style_fill(&source_workbook, expected_name, address)?.as_deref(),
+            expected_fill,
+            "source fill at {expected_name}!{address}"
+        );
+        assert_eq!(
+            style_fill(&output_workbook, expected_name, address)?.as_deref(),
+            expected_fill,
+            "copied fill at {expected_name}!{address}"
+        );
+    }
+    for (address, expected_key) in [("B3", "B3_number_format"), ("C3", "C3_number_format")] {
+        let expected_format = source_styles[expected_key].as_str();
+        assert_eq!(
+            cell_number_format(&source_workbook, expected_name, address)?.as_deref(),
+            expected_format,
+            "source number format at {expected_name}!{address}"
+        );
+        assert_eq!(
+            cell_number_format(&output_workbook, expected_name, address)?.as_deref(),
+            expected_format,
+            "copied number format at {expected_name}!{address}"
+        );
+    }
+
+    let source_row = source_sheet
+        .row_dimension(12)
+        .context("source extended row dimension missing")?;
+    let output_row = output_sheet
+        .row_dimension(12)
+        .context("copied extended row dimension missing")?;
+    assert_eq!(output_row.height(), source_row.height());
+    assert_eq!(output_row.hidden(), source_row.hidden());
+    assert_eq!(
+        output_row.height(),
+        expected_sheet["extended_row_dimension"]["height"]
+            .as_f64()
+            .unwrap()
+    );
+    assert_eq!(
+        output_row.hidden(),
+        expected_sheet["extended_row_dimension"]["hidden"]
+            .as_bool()
+            .unwrap()
+    );
+    let source_column = source_sheet
+        .column_dimension("G")
+        .context("source extended column dimension missing")?;
+    let output_column = output_sheet
+        .column_dimension("G")
+        .context("copied extended column dimension missing")?;
+    assert_eq!(output_column.width(), source_column.width());
+    assert_eq!(output_column.hidden(), source_column.hidden());
+    assert_eq!(
+        output_column.width(),
+        expected_sheet["extended_column_dimension"]["width"]
+            .as_f64()
+            .unwrap()
+    );
+    assert_eq!(
+        output_column.hidden(),
+        expected_sheet["extended_column_dimension"]["hidden"]
+            .as_bool()
+            .unwrap()
+    );
+
+    let source_comments = read_ooxml_comments(&source)?;
+    assert!(source_comments
+        .get(expected_name)
+        .is_some_and(|comments| comments.contains_key("D5")));
+    assert_eq!(expected_sheet["comment_copied"], false);
+    let output_comments = read_ooxml_comments(&output_path)?;
+    assert!(!output_comments
+        .get(expected_name)
+        .is_some_and(|comments| comments.contains_key("D5")));
+
+    let output_xml = worksheet_xml(&output_path)?;
+    let document = roxmltree::Document::parse(&output_xml)?;
+    let row = document
+        .descendants()
+        .find(|node| node.tag_name().name() == "row" && node.attribute("r") == Some("12"))
+        .context("serialized row 12 not found")?;
+    assert_eq!(row.attribute("ht"), Some("26"));
+    assert_eq!(row.attribute("hidden"), Some("1"));
+    assert_eq!(row.attribute("outlineLevel"), Some("1"));
+    let column = document
+        .descendants()
+        .find(|node| {
+            node.tag_name().name() == "col"
+                && node.attribute("min") == Some("7")
+                && node.attribute("max") == Some("7")
+        })
+        .context("serialized column G definition not found")?;
+    assert_eq!(column.attribute("width"), Some("20"));
+    assert_eq!(column.attribute("hidden"), Some("1"));
+    assert_eq!(column.attribute("outlineLevel"), Some("2"));
+
+    assert_eq!(fs::read(&source)?, original_source);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let events = stderr
+        .lines()
+        .filter(|line| line.starts_with('{'))
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .collect::<Vec<_>>();
+    for phase in [
+        "source_read",
+        "worksheet_extent_read",
+        "skeleton_write",
+        "excel_modifier",
+        "full_sheet_validation",
+        "output_validation",
+        "output_commit",
+    ] {
+        assert!(
+            events.iter().any(|event| event["phase"] == phase),
+            "missing {phase} event"
+        );
+    }
+    for engine in ["calamine", "rust_xlsxwriter", "umya_spreadsheet"] {
+        assert!(
+            events.iter().any(|event| event["actual_engine"] == engine),
+            "missing actual engine {engine}"
+        );
+    }
+
+    let log_dir = root.join("app/logs");
+    let history_path = fs::read_dir(&log_dir)?
+        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+        .find(|path| {
+            path.file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with("PT-7-6_")
+        })
+        .context("full-sheet menu run history was not saved")?;
+    let history_bytes = fs::read(&history_path)?;
+    let history_text = String::from_utf8_lossy(&history_bytes);
+    let history: Value = serde_json::from_slice(&history_bytes)?;
+    assert_eq!(history["feature_id"], "PT-7-6");
+    assert_eq!(history["status"], "succeeded");
+    assert_eq!(history["total_inputs"], 1);
+    assert_eq!(history["result"]["extracted_sheets"], 1);
+    assert_eq!(history["result"]["output_files"], 1);
+    let actual_engines = history["actual_engines"].as_array().unwrap();
+    for engine in ["calamine", "rust_xlsxwriter", "umya_spreadsheet"] {
+        assert!(actual_engines.iter().any(|actual| actual == engine));
+    }
+    let sample_cell_value = expected_values
+        .iter()
+        .flat_map(|row| row.as_array().unwrap())
+        .find_map(|cell| cell["value"].as_str())
+        .context("full-sheet Python baseline has no text cell")?;
+    assert!(!history_text.contains(sample_cell_value));
+
+    let compared_cells = expected_values
+        .iter()
+        .map(|row| row.as_array().unwrap().len())
+        .sum::<usize>();
+    let report = json!({
+        "schema_version": 1,
+        "status": "partial",
+        "suite": "pytools.sheet_extract.full_sheet_menu_parity",
+        "entry_point": "pytools menu -> 7 -> 6",
+        "baseline": "PyCode/core/feature_1_6_extract_sheets.py::_copy_full_sheet_with_style",
+        "baseline_style_limitation": baseline["limitations"],
+        "input_format": "xlsx",
+        "temporary_test_capability": {
+            "engine": "umya_spreadsheet",
+            "platform": PLATFORM,
+            "production_capability_created": false
+        },
+        "result": {
+            "files": 1,
+            "extracted_sheets": 1,
+            "output_files": 1,
+            "failed_files": 0,
+            "sheet": expected_name,
+            "cell_extent": [expected_sheet["max_row"], expected_sheet["max_column"]],
+            "compared_value_cells": compared_cells,
+            "merged_ranges": expected_merges,
+            "extended_row_dimension": expected_sheet["extended_row_dimension"],
+            "extended_column_dimension": expected_sheet["extended_column_dimension"],
+            "copied_comments": false,
+            "actual_engines": ["calamine", "rust_xlsxwriter", "umya_spreadsheet"]
+        },
+        "checks": {
+            "menu_task_loading_and_source_selection": "passed",
+            "python_helper_values_types_extent_merges_and_dimensions": "matched",
+            "rust_output_styles_against_source_properties": "matched",
+            "ordinary_extraction_drops_comments": "passed",
+            "source_bytes": "preserved",
+            "developer_events_and_history": "passed",
+            "history_excludes_cell_values": "passed",
+            "python_helper_output_style_reopen": baseline["worksheet"]["style_checks"]["python_output_read_error"],
+            "production_capability_created": false
+        }
+    });
+    let report_path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("probe/reports/sheet_extract_full_menu_parity.json");
+    fs::write(report_path, serde_json::to_vec_pretty(&report)?)?;
+    fs::remove_dir_all(root)?;
+    Ok(())
 }
 
 #[test]

@@ -549,4 +549,14 @@ PT-7-3 生产验收仍为**未验证**：没有真实工作簿/配置或授权�
 
 Windows 原生 `cargo fmt --manifest-path pytools-core/Cargo.toml -- --check` 通过；`sheet_extract_area_operation_parity` 7/7、关联的 `batch_tools_menu_cli` 10/10 通过。新增真实 `pytools menu` → 7→6 集成对拍：两个有效合成工作簿和一个损坏 XLSX 得到 4 张表、1 个输出、1 个失败；另有占位 `.xls` 在菜单处过滤。输出 44 个比较单元格的值/类型、工作表名和尺寸与只读 PyCode 基线一致，输入字节不变；user/developer/off 视图回归通过；开发者事件与运行历史记录 Calamine 和 rust_xlsxwriter，历史不含抽样单元格值。机器报告为 `probe/reports/sheet_extract_menu_parity.json`。
 
-证据仅覆盖合成 XLSX、管道输入的手动分号路径和区域模式；Windows 原生文件弹窗未操作，整表通过真实 capability 执行、真实业务模板、其他格式及麒麟/UOS glibc 2.28/deb 未验证。PT-7-6 完整功能及生产验收仍为未验证。
+2026-10-24 的证据仅覆盖合成 XLSX、管道输入的手动分号路径和区域模式；Windows 原生文件弹窗未操作。整表菜单候选对拍见下节。真实业务模板、其他格式及麒麟/UOS glibc 2.28/deb 未验证，PT-7-6 完整功能及生产验收仍为未验证。
+
+### 2026-10-25 PT-7-6 整表菜单端到端合成对拍
+
+在普通无批注版的真实 `pytools menu` → 7→6 入口中执行一个合成 XLSX 整表任务，任务配置、源文件选择、输出提交和运行记录均走产品路径。测试仅创建 fixture-scoped `ImportRange` 临时 capability，明确匹配该合成工作簿与 `umya_spreadsheet`；没有登记生产 capability 或改变默认路由。Python 基线由 `probe/create_sheet_extract_full_menu_baseline.py` 调用只读 `PyCode/core/feature_1_6_extract_sheets.py::_copy_full_sheet_with_style` 生成，工作簿只包含合成值和样式。
+
+Rust 输出与 Python helper 可读部分对拍：8×5 矩形的 40 个值/类型位置、工作表名、存储范围、A1:C1 合并、行 12 和列 G 的尺寸/隐藏/outline，以及普通版丢弃 D5 批注，均匹配；被选取的粗体、填充色和数字格式按源工作簿属性读回一致。Python helper 将跨簿私有 style 数组复制后生成了无法读取的样式表，openpyxl 重开样式时抛出 `IndexError: list index out of range`，因此报告状态为 `partial`，不宣称 Python 输出样式文件级对拍通过。报告分别为 `probe/reports/sheet_extract_full_menu_python_baseline.json` 和 `probe/reports/sheet_extract_full_menu_parity.json`。
+
+端到端测试发现通用 staged-workbook 校验用 Calamine 的非空值尺寸判断整表边界，会漏掉带样式的空白 E8，并错误拒绝有效 8×5 输出。`validate_staged_workbook` 现以共享 OOXML worksheet extent reader 校验存储单元格/合并范围边界，仍由 Calamine 校验值、类型与非空格数。验证没有写入单元格数据的运行历史、源文件字节未变，并记录实际引擎 Calamine、rust_xlsxwriter 与 umya_spreadsheet。
+
+Windows 原生 Rust（rustc/cargo 1.99.1）验证：`cargo fmt --manifest-path pytools-core/Cargo.toml -- --check` 通过；`sheet_extract_area_operation_parity` 8/8、`batch_tools_menu_cli` 10/10、`excel-editor` 的 `detects_stored_content_in_merged_non_anchor_cells` 1/1、`import_range` 1/1 通过；`git diff --check` 无空白错误。仍未操作 Windows 原生文件弹窗，未使用真实业务模板或真实生产 capability，未验证其他格式、麒麟/UOS glibc 2.28 和 deb；整表生产能力与 PT-7-6 完整验收继续标记未验证。

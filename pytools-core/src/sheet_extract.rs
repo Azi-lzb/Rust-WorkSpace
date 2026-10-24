@@ -1383,19 +1383,33 @@ fn write_extracted_value(
 fn validate_staged_workbook(path: &Path, expected_sheets: &[ExpectedSheet]) -> Result<()> {
     let actual_sheets = read_value_columns_with_iso_dates(path, EXCEL_MAX_COLUMNS)
         .with_context(|| format!("reopen staged workbook {}", path.display()))?;
+    let actual_extents = read_xlsx_worksheet_extents(path)
+        .with_context(|| format!("read staged worksheet extents {}", path.display()))?;
     ensure!(
         actual_sheets.len() == expected_sheets.len(),
         "staged workbook has an unexpected worksheet count"
     );
-    for (actual, expected) in actual_sheets.iter().zip(expected_sheets) {
+    ensure!(
+        actual_extents.len() == expected_sheets.len(),
+        "staged workbook has an unexpected worksheet extent count"
+    );
+    for ((actual, extent), expected) in actual_sheets
+        .iter()
+        .zip(&actual_extents)
+        .zip(expected_sheets)
+    {
         ensure!(
-            actual.name == expected.name,
+            actual.name == expected.name && extent.name == expected.name,
             "staged worksheet name changed"
         );
         ensure!(
-            actual.max_row == expected.max_row && actual.max_column == expected.max_column,
-            "staged worksheet dimensions changed for {:?}",
-            expected.name
+            extent.max_row == expected.max_row && extent.max_column == expected.max_column,
+            "staged worksheet stored-cell dimensions changed for {:?}: expected {}x{}, got {}x{}",
+            expected.name,
+            expected.max_row,
+            expected.max_column,
+            extent.max_row,
+            extent.max_column
         );
         let actual_non_empty = actual
             .values
