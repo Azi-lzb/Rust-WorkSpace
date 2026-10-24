@@ -1,0 +1,127 @@
+{
+  "feature": "S1-F02 workbook-table merge",
+  "status": "passed_with_column_width_variance",
+  "fixture": "synthetic",
+  "python_engine": "Microsoft Excel",
+  "rust_reader": "calamine+namespace_aware_ooxml",
+  "rust_writer": "rust_xlsxwriter 0.101.0",
+  "python_elapsed_ms": 3743,
+  "rust_cli_elapsed_ms": 88,
+  "rust_events": 2,
+  "source_workbooks_seen": 3,
+  "source_sheets_seen": 5,
+  "data_rows": 5,
+  "input_files_unchanged": true,
+  "comparison": {
+    "status": "passed",
+    "sheet_name_mismatches": 0,
+    "python_sheet_names": [
+      "Different",
+      "Stats",
+      "Data"
+    ],
+    "rust_sheet_names": [
+      "Different",
+      "Stats",
+      "Data"
+    ],
+    "dimension_mismatches": 0,
+    "value_mismatches": 0,
+    "style_mismatches": 0,
+    "filter_mismatches": 0,
+    "freeze_mismatches": 0,
+    "column_width_max_delta": 3.5703125,
+    "column_widths_exact": false,
+    "sheets": 3,
+    "differing_cells": [],
+    "style_details": [],
+    "freeze_details": [],
+    "column_width_details": [
+      {
+        "sheet": "Different",
+        "column": "A",
+        "python": 20.0703125,
+        "rust": 20.7109375,
+        "delta": 0.640625
+      },
+      {
+        "sheet": "Different",
+        "column": "B",
+        "python": 12.5703125,
+        "rust": 9.140625,
+        "delta": 3.4296875
+      },
+      {
+        "sheet": "Different",
+        "column": "C",
+        "python": 6.92578125,
+        "rust": 5.5703125,
+        "delta": 1.35546875
+      },
+      {
+        "sheet": "Different",
+        "column": "D",
+        "python": 13.0,
+        "rust": 13.0,
+        "delta": 0.0
+      },
+      {
+        "sheet": "Stats",
+        "column": "A",
+        "python": 18.85546875,
+        "rust": 19.85546875,
+        "delta": 1.0
+      },
+      {
+        "sheet": "Stats",
+        "column": "B",
+        "python": 12.5703125,
+        "rust": 9.0,
+        "delta": 3.5703125
+      },
+      {
+        "sheet": "Stats",
+        "column": "C",
+        "python": 6.92578125,
+        "rust": 5.5703125,
+        "delta": 1.35546875
+      },
+      {
+        "sheet": "Stats",
+        "column": "D",
+        "python": 13.0,
+        "rust": 13.0,
+        "delta": 0.0
+      },
+      {
+        "sheet": "Data",
+        "column": "A",
+        "python": 18.85546875,
+        "rust": 19.85546875,
+        "delta": 1.0
+      },
+      {
+        "sheet": "Data",
+        "column": "B",
+        "python": 12.5703125,
+        "rust": 9.0,
+        "delta": 3.5703125
+      },
+      {
+        "sheet": "Data",
+        "column": "C",
+        "python": 6.92578125,
+        "rust": 5.5703125,
+        "delta": 1.35546875
+      },
+      {
+        "sheet": "Data",
+        "column": "D",
+        "python": 13.0,
+        "rust": 13.0,
+        "delta": 0.0
+      }
+    ]
+  },
+  "scope": "formula-free synthetic XLSX; exact values, sheet order, dimensions, number formats, header style, filter and freeze panes; column widths differ by engine; no real templates or Linux runtime"
+}

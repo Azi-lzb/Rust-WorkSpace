@@ -1,0 +1,39 @@
+时间：2026-10-24 16:29:38 +08:00
+执行者：Codex Audit 专属开发 Agent
+分支：audit-dev
+修改前提交：b3c8894316a3cfc32e6caa471bec5c1628c26aee
+修改后提交：本记录随功能提交补填
+WIP：修改前 worktree clean；未发现 Audit WIP 文件。源 Python 与用户业务工作簿只读。
+
+修改目的：
+继续 Audit 业务迁移。S1-F01 公式复制仍因真实模板的合并区非锚点值保真拒绝而不能安全进入生产路由；按已协调范围，在 Audit 自有业务代码中开始 S1-F02“汇总_汇总表合并”切片，不修改共享 crate。
+
+变更文件：
+- audit-core/src/s1_summary_merge.rs：发现 XLSX 源簿、按首个非空行分组、追加来源簿/工作表字段、写入新汇总表并回读验证；公式工作表、错误值和无法按 Value2 语义保真的日期/错误类型明确拒绝。
+- audit-core/src/bin/open-data-audit.rs：新增真实 CLI `s1-merge-workbook-tables`，提供普通用户提示和开发者 JSON 事件。
+- audit-core/src/lib.rs：导出 S1 汇总模块。
+- audit-core/tests/s1_summary_merge_cli.rs：覆盖目录发现、表头分组、输出、双视图日志及公式安全拒绝。
+- audit-core/tests/compare/compare_s1_summary_merge.py：使用源项目只读 Python 实现和 Windows Excel 对拍固定合成夹具。
+- audit-core/probe/reports/s1_f02_workbook_table_merge_synthetic_parity_20261024.json：保存脱敏对拍计数和字段状态，不含真实业务文件名或数据。
+- audit-core/MIGRATION_INVENTORY.md：将 F02 状态保持整体未验证，注明本次已迁移切片及未覆盖范围。
+- 本记录。
+
+实现及验证：
+- Rust CLI 从递归目录发现 3 个嵌套源工作簿、5 张源工作表，忽略根目录上一版汇总；按相同表头输出 3 张表、5 行数据，沿用 Python 完整来源文件名和实测工作表顺序。
+- 结果使用 calamine + namespace-aware OOXML 读取，rust_xlsxwriter 0.101.0 新建；写出后 Rust 独立回读校验工作表与非空单元格值/类型。输出路径不得覆盖已有文件。
+- 公式输入先于输出写入被拒绝，测试确认没有创建结果文件。公式缓存不当成本轮计算结果。
+- Windows 原生 `cargo fmt -p audit-core`、`cargo test -p audit-core --test s1_summary_merge_cli --locked`（2 项通过）、`cargo build -p audit-core --bin open-data-audit --locked` 通过。
+- Windows CPython 3.12.10 + Microsoft Excel Python 基线与 Rust CLI 合成端到端对拍：3 个源簿、5 张工作表、5 行；表序、值/类型、尺寸、数字格式、表头字形/填充、筛选和冻结差异均为 0；输入文件未变化。引擎自动调整列宽造成最大 3.5703125 字符差异，报告为 `passed_with_column_width_variance`，未声称列宽完全对等。
+- 未修改 Cargo.lock、根 Cargo、共享 crates、pytools-core、DEVELOPMENT_GOAL.md 或源 Python。没有新增删除项。
+
+未执行项与已知问题：
+- 没有使用真实 S1-F02 业务模板/数据；本次固定夹具是合成输入。该切片不表示 S1-F02 整体迁移完成。
+- 任意行汇总、固定行汇总、兜底模板和历史说明富化仍未迁移。含公式的工作表当前安全拒绝；需确认公式/缓存及重算语义后再支持。
+- Windows Rust/Python 结果不代表 WSL 测试 Python、麒麟/UOS 或 deb 隔离 runtime。未做 Linux、真实模板、性能/内存预算或 deb 验收。
+- S1-F01 公式复制能力仍保持 Unverified、生产路由关闭；本轮未重跑真实 S1 样本，也未改共享层。
+
+删除清单与回滚：
+- 删除清单：无。集成测试生成的合成目录在测试内清理；源工作簿始终只读。
+- 功能提交后可用 `git revert <本记录所属提交>` 回滚本次 Audit 自有代码、测试、报告和留痕；不影响先前提交的共享预检修正。
+
+【组件版本】：audit-core 0.1.0（不升级；遵循 workspace 版本治理）

@@ -25,6 +25,7 @@ use audit_core::{
     s1_structure_compare::{
         compare_s1_source_structure, read_s1_structure_template_with_required_sheets,
     },
+    s1_summary_merge::merge_s1_workbook_tables,
     s1_template::{recommend_template, recommend_template_for_workbooks, template_workbook_paths},
     s1_template_rules::load_s1_template_rule_plan,
     s2_service::{run_s2_audit, S2ProgressEvent, S2RunRequest},
@@ -73,6 +74,8 @@ enum Command {
     S1AuditDirectory(S1AuditDirectoryArgs),
     /// Classify S1 Issues against prior history and carry forward manual notes.
     S1HistoryClassify(S1HistoryClassifyArgs),
+    /// Merge XLSX worksheet tables with matching first-row headers for S1-F02.
+    S1MergeWorkbookTables(S1MergeWorkbookTablesArgs),
     /// Serve the bundled Audit frontend through the Rust API bridge on localhost.
     Serve(ServeArgs),
 }
@@ -371,6 +374,29 @@ struct S1HistoryClassifyArgs {
     history_sheet: Option<String>,
 
     /// Emit developer-view JSON progress events with stage timing details.
+    #[arg(long, default_value_t = false)]
+    developer_view: bool,
+}
+
+#[derive(Debug, Args)]
+struct S1MergeWorkbookTablesArgs {
+    /// Directory containing source .xlsx workbooks.
+    #[arg(long)]
+    input_dir: PathBuf,
+
+    /// New XLSX output path. Existing files are never overwritten.
+    #[arg(long)]
+    output_workbook: PathBuf,
+
+    /// Feature name used if an output sheet has no source sheet name.
+    #[arg(long, default_value = "汇总表合并")]
+    feature_name: String,
+
+    /// Search child directories; when nested workbooks exist, root-level files are treated as prior summaries.
+    #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
+    recursive: bool,
+
+    /// Emit developer-view JSON progress events with actual engines and timings.
     #[arg(long, default_value_t = false)]
     developer_view: bool,
 }
@@ -676,7 +702,110 @@ fn run() -> Result<()> {
         Command::S1HistoryClassify(arguments) => {
             run_s1_history_classify(arguments)?;
         }
+        Command::S1MergeWorkbookTables(arguments) => {
+            run_s1_merge_workbook_tables(arguments)?;
+        }
     }
+    Ok(())
+}
+
+fn run_s1_merge_workbook_tables(arguments: S1MergeWorkbookTablesArgs) -> Result<()> {
+    let started = Instant::now();
+    let started_at = chrono::Local::now().to_rfc3339();
+    if arguments.developer_view {
+        eprintln!(
+            "{}",
+            serde_json::to_string(&serde_json::json!({
+                "type": "progress",
+                "product": "open-data-audit",
+                "feature": "S1-F02",
+                "step": "workbook_table_merge",
+                "status": "started",
+                "started_at": started_at
+            }))?
+        );
+    } else {
+        eprintln!("正在发现并汇总表头一致的源工作表…");
+    }
+
+    let summary = match merge_s1_workbook_tables(
+        &arguments.input_dir,
+        &arguments.output_workbook,
+        &arguments.feature_name,
+        arguments.recursive,
+    ) {
+        Ok(summary) => summary,
+        Err(error) => {
+            if arguments.developer_view {
+                eprintln!(
+                    "{}",
+                    serde_json::to_string(&serde_json::json!({
+                        "type": "progress",
+                        "product": "open-data-audit",
+                        "feature": "S1-F02",
+                        "step": "workbook_table_merge",
+                        "status": "failed",
+                        "finished_at": chrono::Local::now().to_rfc3339(),
+                        "elapsed_ms": started.elapsed().as_millis(),
+                        "error": format!("{error:#}")
+                    }))?
+                );
+            } else {
+                eprintln!("汇总失败，未生成结果工作簿。");
+            }
+            return Err(error);
+        }
+    };
+
+    if arguments.developer_view {
+        eprintln!(
+            "{}",
+            serde_json::to_string(&serde_json::json!({
+                "type": "progress",
+                "product": "open-data-audit",
+                "feature": "S1-F02",
+                "step": "workbook_table_merge",
+                "status": "completed",
+                "started_at": started_at,
+                "finished_at": chrono::Local::now().to_rfc3339(),
+                "reader": summary.reader,
+                "writer": summary.writer,
+                "source_workbooks": summary.source_workbooks,
+                "source_sheets": summary.source_sheets,
+                "merged_sheets": summary.merged_sheets,
+                "data_rows": summary.data_rows,
+                "discovery_time_ms": summary.discovery_time_ms,
+                "read_time_ms": summary.read_time_ms,
+                "grouping_time_ms": summary.grouping_time_ms,
+                "write_time_ms": summary.write_time_ms,
+                "validation_time_ms": summary.validation_time_ms,
+                "elapsed_ms": started.elapsed().as_millis()
+            }))?
+        );
+    } else {
+        eprintln!(
+            "汇总完成：{} 个工作簿，{} 张结果表，{} 行；耗时 {} ms；输出：{}",
+            summary.source_workbooks,
+            summary.merged_sheets,
+            summary.data_rows,
+            started.elapsed().as_millis(),
+            summary.output_path.display()
+        );
+    }
+    let mut summary_output = serde_json::to_value(&summary)?;
+    if !arguments.developer_view {
+        if let Some(object) = summary_output.as_object_mut() {
+            object.remove("reader");
+            object.remove("writer");
+        }
+    }
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&serde_json::json!({
+            "status": "completed",
+            "summary": summary_output
+        }))?
+    );
     Ok(())
 }
 
