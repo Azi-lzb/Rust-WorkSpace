@@ -7,11 +7,24 @@ use std::path::{Path, PathBuf};
 
 fn normalized_task_path(path: &Option<PathBuf>, base: &Path) -> Option<String> {
     path.as_ref().map(|path| {
+        let path = without_windows_extended_prefix(path);
+        let base = without_windows_extended_prefix(base);
         let relative = path
-            .strip_prefix(base)
+            .strip_prefix(&base)
             .unwrap_or_else(|_| panic!("{} is not under {}", path.display(), base.display()));
         format!("$BASE/{}", relative.to_string_lossy().replace('\\', "/"))
     })
+}
+
+fn without_windows_extended_prefix(path: &Path) -> PathBuf {
+    let path_text = path.to_string_lossy();
+    if let Some(rest) = path_text.strip_prefix("\\\\?\\UNC\\") {
+        PathBuf::from(format!("\\\\{rest}"))
+    } else if let Some(rest) = path_text.strip_prefix("\\\\?\\") {
+        PathBuf::from(rest)
+    } else {
+        path.to_path_buf()
+    }
 }
 
 fn dedup_json(tasks: &[DedupTask], base: &Path) -> Value {

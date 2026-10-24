@@ -189,6 +189,34 @@ fn parse_address(address: &str) -> Option<(usize, usize)> {
 mod tests {
     use super::*;
     use serde_json::{json, Value};
+    use std::path::PathBuf;
+
+    struct TestDir(PathBuf);
+
+    impl TestDir {
+        fn new() -> Self {
+            let nonce = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos();
+            let path = std::env::temp_dir().join(format!(
+                "pytools-workbook-extract-{}-{nonce}",
+                std::process::id()
+            ));
+            std::fs::create_dir(&path).unwrap();
+            Self(path)
+        }
+
+        fn path(&self) -> &Path {
+            &self.0
+        }
+    }
+
+    impl Drop for TestDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
 
     fn string_vec(value: &Value) -> Vec<String> {
         value
@@ -205,9 +233,52 @@ mod tests {
             "../tests/fixtures/workbook_extract_cases.json"
         ))
         .unwrap();
-        let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures")
-            .join(cases["filename"].as_str().unwrap());
+        let test_dir = TestDir::new();
+        let fixture = test_dir.path().join(cases["filename"].as_str().unwrap());
+        let mut workbook = rust_xlsxwriter::Workbook::new();
+        let sheet = workbook.add_worksheet();
+        sheet
+            .set_name(cases["sheet_name"].as_str().unwrap())
+            .unwrap();
+        let rows = cases["sheet"].as_array().unwrap();
+        for (row_index, row) in rows.iter().enumerate() {
+            for (column_index, value) in row.as_array().unwrap().iter().enumerate() {
+                // The fixture contains one merged B2:C2 header; write it
+                // through merge_range below so the generated workbook has
+                // the same merge metadata as the Python baseline input.
+                if row_index == 1 && matches!(column_index, 1 | 2) {
+                    continue;
+                }
+                match value {
+                    Value::Null => {}
+                    Value::String(value) => {
+                        sheet
+                            .write_string(row_index as u32, column_index as u16, value)
+                            .unwrap();
+                    }
+                    Value::Number(value) => {
+                        sheet
+                            .write_number(
+                                row_index as u32,
+                                column_index as u16,
+                                value.as_f64().unwrap(),
+                            )
+                            .unwrap();
+                    }
+                    Value::Bool(value) => {
+                        sheet
+                            .write_boolean(row_index as u32, column_index as u16, *value)
+                            .unwrap();
+                    }
+                    _ => panic!("unsupported workbook extraction fixture cell: {value}"),
+                }
+            }
+        }
+        let merge_header = rows[1][1].as_str().unwrap();
+        sheet
+            .merge_range(1, 1, 1, 2, merge_header, &rust_xlsxwriter::Format::new())
+            .unwrap();
+        workbook.save(&fixture).unwrap();
         let rule_case = &cases["rule"];
         let rule = TimelineRule {
             enabled: true,
