@@ -237,7 +237,7 @@ impl EditBackend for OpenpyxlXlsxBackend {
                 "ExcelEditPlan workbook profile differs from the source package inventory",
             ));
         }
-        match find_non_anchor_merged_payload(&plan.input) {
+        match find_non_anchor_merged_payload(&plan.input, None) {
             Ok(Some((sheet, cell))) => {
                 return Err(BackendFailure::unsupported_before_write(format!(
                     "openpyxl cannot preserve stored content in merged non-anchor cell {sheet}!{cell}"
@@ -261,7 +261,10 @@ impl EditBackend for OpenpyxlXlsxBackend {
         }
         for operation in &plan.operations {
             if let EditOperation::ImportRange {
-                source_workbook, ..
+                source_workbook,
+                source_sheet,
+                source_range,
+                ..
             } = operation
             {
                 let profile = crate::inspect_xlsx_profile(source_workbook).map_err(|error| {
@@ -276,7 +279,10 @@ impl EditBackend for OpenpyxlXlsxBackend {
                         "ImportRange source contains workbook features outside the openpyxl capability evidence",
                     ));
                 }
-                match find_non_anchor_merged_payload(source_workbook) {
+                match find_non_anchor_merged_payload(
+                    source_workbook,
+                    Some((source_sheet, source_range)),
+                ) {
                     Ok(Some((sheet, cell))) => {
                         return Err(BackendFailure::unsupported_before_write(format!(
                             "openpyxl cannot preserve ImportRange source content in merged non-anchor cell {sheet}!{cell}"
@@ -1857,15 +1863,39 @@ fn worksheet_parts_by_name(source: &Path) -> Result<BTreeMap<String, String>> {
 }
 
 /// Openpyxl's normal worksheet loader removes every non-anchor cell in a
-/// merged range. Refuse these workbooks before launching the worker when such
-/// a cell has a stored value or formula, since saving would lose that content.
-fn find_non_anchor_merged_payload(source: &Path) -> Result<Option<(String, String)>> {
+/// merged range. Check target workbooks globally; for ImportRange sources,
+/// check only the selected sheet and source range whose payload will be read.
+fn find_non_anchor_merged_payload(
+    source: &Path,
+    scope: Option<(&str, &str)>,
+) -> Result<Option<(String, String)>> {
     let parts = worksheet_parts_by_name(source)?;
+    if let Some((source_sheet, source_range)) = scope {
+        anyhow::ensure!(
+            parts
+                .keys()
+                .any(|name| name.eq_ignore_ascii_case(source_sheet)),
+            "ImportRange source sheet {source_sheet:?} is missing"
+        );
+        parse_range(source_range).context("parse ImportRange source range")?;
+    }
     let mut archive = zip::ZipArchive::new(File::open(source)?)?;
     let mut candidates = Vec::new();
-    for (sheet, part) in parts {
-        let xml = read_zip_part(&mut archive, &part)?;
-        candidates.extend(non_anchor_payload_cells(&sheet, &xml)?);
+    for (sheet, part) in &parts {
+        if scope.is_some_and(|(source_sheet, _)| !sheet.eq_ignore_ascii_case(source_sheet)) {
+            continue;
+        }
+        let xml = read_zip_part(&mut archive, part)?;
+        let sheet_candidates = non_anchor_payload_cells(sheet, &xml)?;
+        if let Some((source_sheet, source_range)) = scope {
+            candidates.extend(merged_payload_cells_in_range(
+                sheet_candidates,
+                source_sheet,
+                source_range,
+            )?);
+        } else {
+            candidates.extend(sheet_candidates);
+        }
     }
     if candidates.is_empty() {
         return Ok(None);
@@ -1888,6 +1918,29 @@ fn find_non_anchor_merged_payload(source: &Path) -> Result<Option<(String, Strin
         }
     }
     Ok(None)
+}
+
+fn merged_payload_cells_in_range(
+    candidates: Vec<(String, String)>,
+    source_sheet: &str,
+    source_range: &str,
+) -> Result<Vec<(String, String)>> {
+    let (range_row_1, range_col_1, range_row_2, range_col_2) = parse_range(source_range)?;
+    let min_row = range_row_1.min(range_row_2);
+    let max_row = range_row_1.max(range_row_2);
+    let min_col = range_col_1.min(range_col_2);
+    let max_col = range_col_1.max(range_col_2);
+    let mut in_range = Vec::new();
+    for (sheet, address) in candidates {
+        if !sheet.eq_ignore_ascii_case(source_sheet) {
+            continue;
+        }
+        let (row, column) = parse_cell(&address)?;
+        if row >= min_row && row <= max_row && column >= min_col && column <= max_col {
+            in_range.push((sheet, address));
+        }
+    }
+    Ok(in_range)
 }
 
 fn non_anchor_payload_cells(sheet: &str, xml: &str) -> Result<Vec<(String, String)>> {
@@ -3032,6 +3085,12 @@ mod tests {
         );
         let cells = non_anchor_payload_cells("Sheet1", &xml)?;
         assert_eq!(cells, vec![("Sheet1".to_owned(), "A10".to_owned())]);
+        assert_eq!(
+            merged_payload_cells_in_range(cells.clone(), "Sheet1", "A10")?,
+            cells
+        );
+        assert!(merged_payload_cells_in_range(cells.clone(), "Sheet1", "A5:A9")?.is_empty());
+        assert!(merged_payload_cells_in_range(cells, "Other", "A5:A26")?.is_empty());
         Ok(())
     }
 
