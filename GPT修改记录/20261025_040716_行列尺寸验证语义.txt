@@ -1,0 +1,35 @@
+时间：2026-10-25 04:07:16 Asia/Shanghai
+执行者：Codex main
+修改前 commit：9dd0797（main，origin/main）
+修改后 commit：本记录与共享 validator 修复一并提交，提交 ID 见本轮汇报。
+WIP 情况：修改前 main 工作区干净。Audit 工作树在此前的 AutoFilter 修复提交后干净但领先 origin/audit-dev 1 个本地提交；PyTools 工作树有 `pytools-core/src/bin/pytools.rs`、`pytools-core/src/sheet_extract.rs`、`pytools-core/tests/sheet_extract_area_operation_parity.rs` 三处未提交修改，均未触碰。
+
+目的：根据 Audit S1 candidate-only 诊断修复 openpyxl 保留校验器对 worksheet 行列尺寸的误报，同时保留保真拒绝能力。
+
+修改文件：
+- `crates/excel-editor/src/openpyxl_backend.rs`
+- 本记录
+
+变化：
+- 行列尺寸按工作表身份比较；列范围展开后按每列有效属性比较，避免仅因 OOXML 分组形式不同误报。
+- 对显式 `SetColumnWidth`、`SetRowHeight` 只豁免相应尺寸属性；宽高仍由现有独立 Rust readback 校验，其他列/行属性继续比较。
+- 对保留行高数值完全不变、仅输出新增 `customHeight="1"` 的已观察序列化规范化予以接受；高度、隐藏或样式变化仍拒绝。
+- 跟踪保留工作表的插入/删除行尺寸位置变化。
+- 删除并重建工作表时，只有该工作表显式 `drop_allowed` 包含 `RowAndColumnDimensions` 才允许不继承旧尺寸；不会豁免其他工作表或其他保留项。
+
+配置及业务路由影响：无。未更改 capability 状态、默认路由、ExcelEditPlan 协议或业务代码。Audit S1 仍未验收。
+
+组件版本：不升级。
+
+测试：
+- `rustfmt --edition 2021 crates/excel-editor/src/openpyxl_backend.rs`：通过。
+- `git diff --check`：通过。
+- `cargo test --offline --locked -p excel-editor --lib`：29 项通过。
+- 构建输出仅有现存 umya-spreadsheet deprecated API 警告。
+
+未执行项：未运行 Audit S1 真实工作簿复测、结果对拍或 Linux/deb 验收；未运行 PyTools 或 workspace 全量测试。应在 Audit 安全同步该公共提交后，由 Audit Agent 重跑同一 candidate-only 验收。
+
+已知问题：真实 S1 模板上的尺寸差异修复尚待复测；候选文件越过 validator 不等于业务输出已对拍，也不允许将 capability 标为 Passed。row insert/delete 的真实 Excel 保真仍需各对应功能对拍。
+
+删除清单：无。
+回滚：回退本次代码提交可恢复原始严格整簿 XML 尺寸相等校验；不回滚或重写此前提交，不修改源工作簿。
