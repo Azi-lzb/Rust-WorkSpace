@@ -55,6 +55,94 @@ fn readback_failure_category(message: &str) -> &'static str {
     }
 }
 
+fn candidate_apply_failure_category(message: &str) -> &'static str {
+    let message = message.to_ascii_lowercase();
+    if message.contains("unverified workbook structure")
+        || message.contains("source workbook contains unverified ooxml parts")
+        || message.contains("unknown_package_parts")
+        || message.contains("inventory is incomplete")
+    {
+        "unverified_target_workbook_structure"
+    } else if message.contains("unverified range import source structure") {
+        "unverified_template_workbook_structure"
+    } else if message
+        .contains("exceleditplan workbook profile differs from the source package inventory")
+    {
+        "target_workbook_profile_mismatch"
+    } else if message.contains("cannot preserve stored content in merged non-anchor cell") {
+        "target_merged_non_anchor_payload"
+    } else if message
+        .contains("cannot preserve importrange source content in merged non-anchor cell")
+    {
+        "source_merged_non_anchor_payload"
+    } else if message.contains("does not support the complete operation batch")
+        || message.contains("does not support the complete batch")
+        || message.contains("unsupported_operation")
+    {
+        "complete_operation_batch_unsupported"
+    } else if message.contains("importrange source contains workbook features") {
+        "unverified_template_workbook_features"
+    } else if message.contains("dimension-copy flags are not enabled") {
+        "unsupported_range_dimension_copy"
+    } else if message.contains("formula_cache_not_preserved")
+        || message.contains("cached formula result")
+    {
+        "formula_cache_not_preserved"
+    } else if message.contains("unsupported_import_source") {
+        "unsupported_template_workbook_structure"
+    } else if message.contains("does not exist") {
+        "missing_candidate_input"
+    } else if message.contains("supports xlsx only")
+        || message.contains("accepts xlsx only")
+        || message.contains("unsupported_format")
+    {
+        "unsupported_input_format"
+    } else if message.contains("open xlsx") {
+        "target_open_failed"
+    } else if message.contains("apply import_range") {
+        "range_import_failed"
+    } else if message.contains("save xlsx") {
+        "candidate_save_failed"
+    } else if message.contains("bundled python/openpyxl worker")
+        || message.contains("openpyxl worker is unavailable")
+        || message.contains("start bundled openpyxl worker")
+    {
+        "worker_unavailable"
+    } else {
+        "other_candidate_failure"
+    }
+}
+
+#[test]
+fn candidate_apply_failure_categories_are_path_free_and_case_insensitive() {
+    let cases = [
+        (
+            "openpyxl cannot preserve stored content in merged non-anchor cell Sheet1!D5",
+            "target_merged_non_anchor_payload",
+        ),
+        (
+            "openpyxl cannot preserve ImportRange source content in merged non-anchor cell Sheet1!A10",
+            "source_merged_non_anchor_payload",
+        ),
+        (
+            "ImportRange source contains workbook features outside the openpyxl capability evidence",
+            "unverified_template_workbook_features",
+        ),
+        (
+            "ExcelEditPlan workbook profile differs from the source package inventory",
+            "target_workbook_profile_mismatch",
+        ),
+        (
+            "formula_cache_not_preserved: cached formula result would be discarded",
+            "formula_cache_not_preserved",
+        ),
+    ];
+
+    for (message, expected) in cases {
+        assert_eq!(candidate_apply_failure_category(message), expected);
+    }
+}
+
 fn readback_failure_location<'a>(message: &'a str, marker: &str) -> Option<(&'a str, &'a str)> {
     let failure = message.rsplit_once(marker)?.1;
     let location = failure.split(": expected ").next()?;
@@ -423,42 +511,10 @@ fn probes_s1_formula_copy_import_ranges_without_claiming_capability() {
             BackendErrorKind::UnsupportedBeforeWrite => "unsupported_before_write",
             BackendErrorKind::Failed => "backend_failed",
         });
-    let apply_failure_category = apply_result.as_ref().err().map(|failure| {
-        let message = failure.message.to_ascii_lowercase();
-        if message.contains("unverified workbook structure") {
-            "unverified_target_workbook_structure"
-        } else if message.contains("unverified range import source structure") {
-            "unverified_template_workbook_structure"
-        } else if message.contains("does not support the complete operation batch") {
-            "complete_operation_batch_unsupported"
-        } else if message.contains("ImportRange source contains workbook features") {
-            "unverified_template_workbook_features"
-        } else if message.contains("dimension-copy flags are not enabled") {
-            "unsupported_range_dimension_copy"
-        } else if message.contains("formula_cache_not_preserved")
-            || message.contains("cached formula result")
-        {
-            "formula_cache_not_preserved"
-        } else if message.contains("unknown_package_parts")
-            || message.contains("inventory is incomplete")
-        {
-            "unverified_target_workbook_structure"
-        } else if message.contains("unsupported_import_source") {
-            "unsupported_template_workbook_structure"
-        } else if message.contains("does not exist") {
-            "missing_candidate_input"
-        } else if message.contains("supports xlsx only") {
-            "unsupported_input_format"
-        } else if message.contains("open xlsx") {
-            "target_open_failed"
-        } else if message.contains("apply import_range") {
-            "range_import_failed"
-        } else if message.contains("save xlsx") {
-            "candidate_save_failed"
-        } else {
-            "other_candidate_failure"
-        }
-    });
+    let apply_failure_category = apply_result
+        .as_ref()
+        .err()
+        .map(|failure| candidate_apply_failure_category(&failure.message));
     let status = if apply_result.is_ok() && output_created {
         "written_unverified_candidate"
     } else {

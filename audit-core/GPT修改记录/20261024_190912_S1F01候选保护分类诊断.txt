@@ -1,0 +1,30 @@
+# S1-F01 公式复制候选保护分类诊断
+
+- 时间：2026-10-24 19:09:12（Asia/Shanghai）
+- 执行者：Codex audit-dev Agent
+- 修改前 commit：`04a6ece`
+- WIP：开始时位于 `F:/audit-dev-codex` 的 `audit-dev`，与 `origin/audit-dev` 同步。保留既有未跟踪 `audit-core/examples/`，未修改 `DEVELOPMENT_GOAL.md`、源 Python、用户工作簿、`pytools-core/**`、公共 crates、根 Cargo 文件或 `Cargo.lock`。
+
+## 目的
+
+让 S1-F01 真实候选探针对写入前的共享编辑器拒绝原因输出稳定、脱敏的类别，避免真实样本失败被记为含糊的 `other_candidate_failure`。分类器将原始错误转为常量类别，不记录样本路径、工作表名、单元格地址、公式或值。
+
+## 修改文件
+
+- `audit-core/tests/s1_formula_copy_candidate.rs`：抽取并补充候选失败分类，覆盖目标/源合并非锚载荷、工作簿 profile、模板能力、公式缓存及操作批次等保护条件；增加路径无关的分类单测，并修正大小写归一化后仍使用混合大小写匹配的问题。
+- 本记录。
+
+## 测试与真实样本
+
+- `rustfmt --edition 2024 --check audit-core/tests/s1_formula_copy_candidate.rs`：通过。全包 `cargo fmt --check` 被既有未跟踪 `audit-core/examples/s1_template_inspection_probe.rs` 格式差异阻止；未修改该 WIP 文件。
+- `cargo test --offline --locked -p audit-core --test s1_formula_copy_candidate candidate_apply_failure_categories_are_path_free_and_case_insensitive -j 1`：通过，1 项测试。
+- Windows 原生真实样本单副本全操作候选：Python 基线 982 ms；Rust 计划解析 4 个 `ImportRange`、55 个 `SetComment` 和计算属性操作，共 60 项。候选在写入前被目标全局合并非锚载荷保护拒绝；脱敏类别为 `target_merged_non_anchor_payload`，未生成输出，输入未变。
+- 未执行公式重算；没有 Rust 输出可供复制范围对象对拍；候选仍为 `Unverified`，生产路由仍关闭。`git diff --check` 通过。
+
+## 未完成与回滚
+
+- 目标工作簿的全局合并载荷保护保持不变。现存 Umya 七样本报告仍显示复制区样式差异及未修改区值/类型差异；没有已验收的该真实样本修改引擎。
+- Windows Excel/WPS、目标 Linux、sidecar 重算、产品 CLI 公式复制及生产路由均未验证。
+- 组件版本：不升级。
+- 删除清单：无。
+- 回滚：回退本次候选诊断提交即可移除分类器和该记录；不影响共享编辑器或用户输入文件。
