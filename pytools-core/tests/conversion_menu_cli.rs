@@ -1,4 +1,9 @@
 use anyhow::{Context, Result};
+use excel_editor::{
+    BackendCapability, CapabilityEvidence, CapabilityStatus, EditOperation, EngineId,
+};
+use excel_reader::read_workbook;
+use pytools_core::sheet_rename::build_sheet_rename_plan;
 use serde::Deserialize;
 use serde_json::Value;
 use std::{
@@ -11,6 +16,7 @@ use std::{
 };
 
 static NEXT_TEST_DIRECTORY_ID: AtomicU64 = AtomicU64::new(0);
+const SHEET_RENAME_PLATFORM: &str = "pt-4-4-menu-synthetic";
 
 struct TestDirectory(PathBuf);
 
@@ -231,6 +237,76 @@ fn interactive_conversion_menu_routes_all_ten_file_workflows() -> Result<()> {
 }
 
 #[test]
+fn sheet_rename_menu_executes_only_after_capability_and_confirmation() -> Result<()> {
+    let root = TestDirectory::new()?;
+    let config = create_config(root.path())?;
+    let input = root.path().join("rename-confirmed.xlsx");
+    create_source_workbook(&input, "OldSheet")?;
+    let capability = root.path().join("passed-sheet-rename.json");
+    write_sheet_rename_capability(&config, &input, &capability)?;
+    let original = fs::read(&input)?;
+
+    let result = run_sheet_rename_menu(&config, &capability, &input, "y")?;
+    assert!(
+        result.status.success(),
+        "menu execution failed: {}",
+        stderr(&result)
+    );
+    assert!(String::from_utf8_lossy(&result.stdout).contains("原位修改所选 .xlsx"));
+    let report = menu_object_json(&result)?;
+    assert_eq!(report["rename_ok"], 1);
+    assert_eq!(report["files"][0]["status"], "renamed");
+    assert_eq!(
+        report["files"][0]["execution"]["engine"],
+        "umya_spreadsheet"
+    );
+
+    let workbook = read_workbook(&input)?;
+    let names = workbook
+        .sheets
+        .iter()
+        .map(|sheet| sheet.name.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(names, ["Data", "NewSheet"]);
+    assert_eq!(
+        workbook.sheets[0]
+            .values
+            .get("A1")
+            .and_then(|value| value.get("value"))
+            .and_then(Value::as_str),
+        Some("Bank")
+    );
+    assert_ne!(fs::read(&input)?, original);
+    Ok(())
+}
+
+#[test]
+fn sheet_rename_menu_decline_keeps_the_source_and_generates_only_a_plan() -> Result<()> {
+    let root = TestDirectory::new()?;
+    let config = create_config(root.path())?;
+    let input = root.path().join("rename-declined.xlsx");
+    create_source_workbook(&input, "OldSheet")?;
+    let capability = root.path().join("passed-sheet-rename.json");
+    write_sheet_rename_capability(&config, &input, &capability)?;
+    let original = fs::read(&input)?;
+
+    let result = run_sheet_rename_menu(&config, &capability, &input, "n")?;
+    assert!(
+        result.status.success(),
+        "menu plan failed: {}",
+        stderr(&result)
+    );
+    let stdout = String::from_utf8_lossy(&result.stdout);
+    assert!(stdout.contains("[未执行] 保留原工作簿，仅生成 Sheet 改名计划。"));
+    let report = menu_object_json(&result)?;
+    assert_eq!(report["execution"], "plan_only");
+    assert_eq!(fs::read(&input)?, original);
+    let plans = find_files_with_extension(&root.path().join("output"), "json")?;
+    assert_eq!(plans.len(), 1);
+    Ok(())
+}
+
+#[test]
 fn file_sort_menu_supports_user_developer_and_off_progress_views() -> Result<()> {
     let root = TestDirectory::new()?;
     let config = create_config(root.path())?;
@@ -431,6 +507,49 @@ fn create_source_workbook(path: &Path, second_sheet: &str) -> Result<()> {
     Ok(())
 }
 
+fn write_sheet_rename_capability(config: &Path, input: &Path, path: &Path) -> Result<()> {
+    let plan_output = input.with_file_name("sheet-rename-plan-output.xlsx");
+    let plan = build_sheet_rename_plan(config, input, &plan_output)?
+        .plan
+        .context("synthetic workbook should produce a sheet rename plan")?;
+    let capability = BackendCapability {
+        engine: EngineId::UmyaSpreadsheet,
+        status: CapabilityStatus::Passed,
+        format: plan.format,
+        operations: plan.operations.iter().map(EditOperation::kind).collect(),
+        supported_features: plan.workbook.features_present.clone(),
+        preserved: plan.preserve.clone(),
+        platform: SHEET_RENAME_PLATFORM.to_owned(),
+        evidence: Some(CapabilityEvidence {
+            sample_id: "synthetic-pt-4-4-menu".to_owned(),
+            report_path: "pytools-core/tests/conversion_menu_cli.rs".to_owned(),
+            adapter_version: "umya-spreadsheet-3.1.1".to_owned(),
+            engine_version: "umya-spreadsheet-3.1.1".to_owned(),
+            platform: SHEET_RENAME_PLATFORM.to_owned(),
+        }),
+    };
+    fs::write(path, serde_json::to_vec_pretty(&capability)?)?;
+    Ok(())
+}
+
+fn run_sheet_rename_menu(
+    config: &Path,
+    capability: &Path,
+    input: &Path,
+    confirmation: &str,
+) -> Result<Output> {
+    let mut child = menu_command(config);
+    child
+        .arg("--capabilities")
+        .arg(capability)
+        .arg("--platform")
+        .arg(SHEET_RENAME_PLATFORM)
+        .arg("--log-view")
+        .arg("off");
+    let menu_input = format!("4\n4\n1\n{}\n{confirmation}\n0\n", input.display());
+    finish_menu(child, &menu_input)
+}
+
 fn run_action(config: &Path, action: u8, mode: u8, selected: &Path) -> Result<Output> {
     let input = format!("4\n{action}\n{mode}\n{}\n0\n", selected.display());
     run_menu(config, &input)
@@ -502,6 +621,16 @@ fn output_json(output: &Output) -> Result<Value> {
         .context("CLI JSON output missing")?;
     let mut deserializer = serde_json::Deserializer::from_slice(&output.stdout[start..]);
     Value::deserialize(&mut deserializer).context("decode CLI JSON output")
+}
+
+fn menu_object_json(output: &Output) -> Result<Value> {
+    let start = output
+        .stdout
+        .iter()
+        .position(|byte| *byte == b'{')
+        .context("menu JSON object missing")?;
+    let mut deserializer = serde_json::Deserializer::from_slice(&output.stdout[start..]);
+    Value::deserialize(&mut deserializer).context("decode menu JSON object")
 }
 
 fn find_files_with_extension(root: &Path, extension: &str) -> Result<Vec<PathBuf>> {

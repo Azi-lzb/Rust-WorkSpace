@@ -300,6 +300,8 @@ where
                 global,
                 log_view,
                 allow_native_dialog,
+                capabilities,
+                platform,
             )?,
             "5" => run_interactive_config_menu(
                 input,
@@ -1643,6 +1645,8 @@ fn run_interactive_convert_menu<R, W>(
     global: &GlobalConfig,
     log_view: &str,
     allow_native_dialog: bool,
+    capabilities: Option<&Path>,
+    platform: Option<&str>,
 ) -> Result<()>
 where
     R: BufRead,
@@ -1653,7 +1657,7 @@ where
         writeln!(output, "  1  批量重命名文件")?;
         writeln!(output, "  2  批量 Excel 格式转换（按配置，调用已选引擎）")?;
         writeln!(output, "  3  批量 Word 格式转换（按配置，调用已选引擎）")?;
-        writeln!(output, "  4  批量修改 Sheet 名（生成计划）")?;
+        writeln!(output, "  4  批量修改 Sheet 名（默认计划；可显式确认执行）")?;
         writeln!(output, "  5  根据文件内容添加前缀")?;
         writeln!(output, "  6  根据文件内容取消前缀")?;
         writeln!(output, "  7  按局部映射重命名文件")?;
@@ -1722,6 +1726,47 @@ where
                 run_convert_batch_cli(arguments, false)?;
             }
             "4" => {
+                let execute = if capabilities.is_some() && platform.is_some() {
+                    writeln!(
+                        output,
+                        "[确认] 将通过当前能力配置和平台验证后，原位修改所选 .xlsx 工作簿。"
+                    )?;
+                    read_menu_choice(
+                        input,
+                        output,
+                        "输入 y/yes/是 执行修改；其他输入仅生成计划> ",
+                    )?
+                    .is_some_and(|answer| {
+                        matches!(
+                            answer.trim().to_ascii_lowercase().as_str(),
+                            "y" | "yes" | "是"
+                        )
+                    })
+                } else {
+                    false
+                };
+                if execute {
+                    let (Some(capabilities), Some(platform)) = (capabilities, platform) else {
+                        unreachable!("sheet rename execution requires both capability options")
+                    };
+                    let mut arguments = config_cli_arguments(config_path);
+                    arguments.extend([
+                        "--capabilities".to_owned(),
+                        capabilities.to_string_lossy().into_owned(),
+                        "--platform".to_owned(),
+                        platform.to_owned(),
+                    ]);
+                    arguments.extend(
+                        paths
+                            .into_iter()
+                            .map(|path| path.to_string_lossy().into_owned()),
+                    );
+                    run_rename_sheets(arguments)?;
+                    return Ok(());
+                }
+                if capabilities.is_some() {
+                    writeln!(output, "[未执行] 保留原工作簿，仅生成 Sheet 改名计划。")?;
+                }
                 let plan_dir = unique_menu_action_dir(&global.output_dir, "sheet-rename");
                 fs::create_dir_all(&plan_dir)?;
                 let mut planned = 0usize;
