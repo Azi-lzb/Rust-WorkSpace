@@ -162,6 +162,29 @@ def main() -> int:
             / "pytools-core/probe/reports"
             / f"summary_used_range_error_token_matrix_{dt.date.today():%Y%m%d}.json"
         )
+        previous_report = (
+            json.loads(report_path.read_text(encoding="utf-8"))
+            if report_path.is_file()
+            else {}
+        )
+        platform_runs = previous_report.get("platform_runs", {})
+        previous_run = previous_report.get("rust_cli")
+        if not platform_runs and previous_run:
+            previous_key = (
+                "windows_gnu_debug"
+                if "Windows" in previous_run.get("runtime", "")
+                else "wsl_cargo_debug"
+            )
+            platform_runs[previous_key] = previous_run
+        current_key = (
+            "windows_gnu_debug"
+            if "Windows" in host
+            else "wsl_cargo_debug"
+            if "WSL" in host
+            else "configured_cli"
+        )
+        platform_runs[current_key] = report["rust_cli"]
+        report["platform_runs"] = platform_runs
         report_path.parent.mkdir(parents=True, exist_ok=True)
         report_path.write_text(
             json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
@@ -175,6 +198,7 @@ def main() -> int:
                     "extended_tokens_as_text": 8,
                     "reader_engine": rust_execution.get("reader_engine"),
                     "writer_engine": rust_execution.get("writer_engine"),
+                    "runtime_key": current_key,
                     "report": str(report_path),
                 },
                 ensure_ascii=False,

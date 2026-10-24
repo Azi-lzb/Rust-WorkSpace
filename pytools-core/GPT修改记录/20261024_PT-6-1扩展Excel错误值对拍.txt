@@ -27,3 +27,5 @@
 删除文件：无；Python/Rust 临时输出位于 `%TEMP%`。
 回滚：使用 `git revert` 撤销本轮 PT-6-1 扩展错误值提交。原 Python 项目源文件保持只读。
 【组件版本】：不升级，当前 0.1.0。
+
+追加验证（同日）：将对拍 probe 改为并列记录不同运行环境，再次分别使用 Windows GNU debug CLI 和 WSL Ubuntu `cargo run` Linux debug CLI 对同一 fixture 执行 PyCode/Rust 完整投影比较。两端均通过；WSL developer 历史 14 条事件与 CLI 事件匹配，reader/writer 分别为 Calamine error-token normalization 与 rust_xlsxwriter。机器报告同时保存 `windows_gnu_debug` 和 `wsl_cargo_debug` 结果。WSL 有 cargo-zigbuild 与 objdump，但未找到 Zig 可执行文件，因此本次没有重建 glibc 2.28 release；已有 release 结果不外推到本轮新增 fixture。

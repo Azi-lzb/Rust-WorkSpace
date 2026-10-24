@@ -421,7 +421,7 @@ Windows GNU debug CLI 在 PowerShell 与只读 PyCode `PyCode.core.summary_321_3
 
 ### 2026-10-24 PT-6-1 扩展 Excel 错误值 token 对拍
 
-新增合成 `error_token_matrix.xlsx`，覆盖 7 种常见 Excel 错误和 8 种扩展字面 `t=e` token。只读 PyCode 与真实 `pytools summary-used-range` Windows GNU CLI 输出的完整工作簿投影一致：7 个常见错误保留为 error 类型，8 个扩展 token 输出为文本。Rust 使用 Calamine + OOXML error-token normalization 和 rust_xlsxwriter；阶段计数分别为 OOXML Patch 保留 7 个错误值、文本兼容读取 8 个未知 token。开发者事件历史与 CLI 事件流一致，历史不含 token 内容，输入夹具字节未变。
+新增合成 `error_token_matrix.xlsx`，覆盖 7 种常见 Excel 错误和 8 种扩展字面 `t=e` token。只读 PyCode 与真实 `pytools summary-used-range` Windows GNU CLI 输出的完整工作簿投影一致：7 个常见错误保留为 error 类型，8 个扩展 token 输出为文本。Rust 使用 Calamine + OOXML error-token normalization 和 rust_xlsxwriter；阶段计数分别为 OOXML Patch 保留 7 个错误值、文本兼容读取 8 个未知 token。开发者事件历史与 CLI 事件流一致，历史不含 token 内容，输入夹具字节未变。同一夹具再由 WSL Ubuntu `cargo run` Linux debug CLI 处理，与 PyCode 投影仍完全一致；14 条开发者事件与历史匹配，结果与 Windows GNU 记录并列。该次不是 glibc 2.28 release 验证。
 
 Rust 集成回归 `summary_used_range_cli_preserves_common_and_textual_error_token_matrix` 检查真实 CLI 报告、输入 XML 错误 token、输出类型与值以及日志隐私。Windows Python/Rust 对拍机器报告为 `probe/reports/summary_used_range_error_token_matrix_20261024.json`。验证：Windows Python 3.12.10 对拍通过；WSL `cargo fmt -p pytools-core -- --check` 通过；WSL `cargo test --offline --locked -p pytools-core --test summary_used_range_error -q` 为 5/5 通过。
 
