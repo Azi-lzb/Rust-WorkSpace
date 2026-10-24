@@ -1,0 +1,202 @@
+{
+  "schema_version": 1,
+  "suite": "audit.s1_formula_copy.final_real_sample_recheck",
+  "created_at": "2026-10-24T14:49:04.3105401+08:00",
+  "sample_count": 7,
+  "sample_role_counts": {
+    "formula_copy_targets": 7,
+    "matching_existing_reviewed_copies": 7,
+    "matching_s1_templates": 1
+  },
+  "runtime": {
+    "rust": "Windows native cargo/rustc",
+    "rust_candidate_engine": "openpyxl-worker",
+    "worker_runtime": "Windows CPython 3.12.10 + openpyxl 3.1.5 (test-only)",
+    "wsl_python_used": false,
+    "debian_runtime_tested": false
+  },
+  "mapping_config": "built-in defaults; no custom mapping workbook found in supplied batch",
+  "capability_status": "unverified",
+  "production_route_eligible": false,
+  "formula_recalculation_performed": false,
+  "samples": [
+    {
+      "sample_index": 1,
+      "runner_exit_code": 0,
+      "status": "comparison_incomplete",
+      "mismatch_count": 214,
+      "rust_readback_failure_category": "imported_style_semantic_mismatch",
+      "rust_apply_failure_category": null,
+      "imported_range_style_mismatches": 2,
+      "imported_range_comment_mismatches": 0,
+      "imported_range_formula_mismatches": 0,
+      "outside_style_mismatches": 0,
+      "outside_value_type_mismatches": 211,
+      "input_workbooks_unchanged": true,
+      "python_elapsed_ms": 939,
+      "rust_candidate_elapsed_ms": 31135,
+      "rust_formula_cache_nonempty_count": 0,
+      "formula_recalculation_performed": false
+    },
+    {
+      "sample_index": 2,
+      "runner_exit_code": 0,
+      "status": "comparison_incomplete",
+      "mismatch_count": 210,
+      "rust_readback_failure_category": "imported_style_semantic_mismatch",
+      "rust_apply_failure_category": null,
+      "imported_range_style_mismatches": 2,
+      "imported_range_comment_mismatches": 0,
+      "imported_range_formula_mismatches": 0,
+      "outside_style_mismatches": 0,
+      "outside_value_type_mismatches": 207,
+      "input_workbooks_unchanged": true,
+      "python_elapsed_ms": 2094,
+      "rust_candidate_elapsed_ms": 17257,
+      "rust_formula_cache_nonempty_count": 0,
+      "formula_recalculation_performed": false
+    },
+    {
+      "sample_index": 3,
+      "runner_exit_code": 0,
+      "status": "comparison_incomplete",
+      "mismatch_count": 214,
+      "rust_readback_failure_category": "imported_style_semantic_mismatch",
+      "rust_apply_failure_category": null,
+      "imported_range_style_mismatches": 2,
+      "imported_range_comment_mismatches": 0,
+      "imported_range_formula_mismatches": 0,
+      "outside_style_mismatches": 0,
+      "outside_value_type_mismatches": 211,
+      "input_workbooks_unchanged": true,
+      "python_elapsed_ms": 1080,
+      "rust_candidate_elapsed_ms": 13854,
+      "rust_formula_cache_nonempty_count": 0,
+      "formula_recalculation_performed": false
+    },
+    {
+      "sample_index": 4,
+      "runner_exit_code": 0,
+      "status": "comparison_incomplete",
+      "mismatch_count": 222,
+      "rust_readback_failure_category": "imported_style_semantic_mismatch",
+      "rust_apply_failure_category": null,
+      "imported_range_style_mismatches": 2,
+      "imported_range_comment_mismatches": 0,
+      "imported_range_formula_mismatches": 0,
+      "outside_style_mismatches": 0,
+      "outside_value_type_mismatches": 219,
+      "input_workbooks_unchanged": true,
+      "python_elapsed_ms": 925,
+      "rust_candidate_elapsed_ms": 13422,
+      "rust_formula_cache_nonempty_count": 0,
+      "formula_recalculation_performed": false
+    },
+    {
+      "sample_index": 5,
+      "runner_exit_code": 0,
+      "status": "comparison_incomplete",
+      "mismatch_count": 226,
+      "rust_readback_failure_category": "imported_style_semantic_mismatch",
+      "rust_apply_failure_category": null,
+      "imported_range_style_mismatches": 2,
+      "imported_range_comment_mismatches": 0,
+      "imported_range_formula_mismatches": 0,
+      "outside_style_mismatches": 0,
+      "outside_value_type_mismatches": 223,
+      "input_workbooks_unchanged": true,
+      "python_elapsed_ms": 937,
+      "rust_candidate_elapsed_ms": 15057,
+      "rust_formula_cache_nonempty_count": 0,
+      "formula_recalculation_performed": false
+    },
+    {
+      "sample_index": 6,
+      "runner_exit_code": 0,
+      "status": "comparison_incomplete",
+      "mismatch_count": 210,
+      "rust_readback_failure_category": "imported_style_semantic_mismatch",
+      "rust_apply_failure_category": null,
+      "imported_range_style_mismatches": 0,
+      "imported_range_comment_mismatches": 0,
+      "imported_range_formula_mismatches": 0,
+      "outside_style_mismatches": 0,
+      "outside_value_type_mismatches": 209,
+      "input_workbooks_unchanged": true,
+      "python_elapsed_ms": 899,
+      "rust_candidate_elapsed_ms": 13440,
+      "rust_formula_cache_nonempty_count": 0,
+      "formula_recalculation_performed": false
+    },
+    {
+      "sample_index": 7,
+      "runner_exit_code": 0,
+      "status": "comparison_incomplete",
+      "mismatch_count": 219,
+      "rust_readback_failure_category": "imported_style_semantic_mismatch",
+      "rust_apply_failure_category": null,
+      "imported_range_style_mismatches": 2,
+      "imported_range_comment_mismatches": 0,
+      "imported_range_formula_mismatches": 0,
+      "outside_style_mismatches": 0,
+      "outside_value_type_mismatches": 216,
+      "input_workbooks_unchanged": true,
+      "python_elapsed_ms": 917,
+      "rust_candidate_elapsed_ms": 12824,
+      "rust_formula_cache_nonempty_count": 0,
+      "formula_recalculation_performed": false
+    }
+  ],
+  "aggregate": {
+    "candidates_with_readback_failure": 7,
+    "candidates_with_apply_failure": 0,
+    "candidates_with_nonzero_mismatches": 7,
+    "all_inputs_unchanged": true
+  },
+  "diagnostic": {
+    "sample_index": 1,
+    "first_error": "Rust style readback mismatch at SHEET_2!K5",
+    "target_sheet_ordinal": 2,
+    "target_cell": "K5",
+    "import_operation": {
+      "style_mode": "Full",
+      "source_range": "H4:T195",
+      "target_start": "H4",
+      "mapped_source_cell": "K5",
+      "copy_merges": false
+    },
+    "merge_membership": {
+      "template_source_cell": false,
+      "original_target_cell": false,
+      "candidate_cell": false
+    },
+    "rust_validator_expected_style_empty": true,
+    "openpyxl": {
+      "source_alignment_vertical": "center",
+      "candidate_alignment_vertical": "center",
+      "source_cell_xf_index": 0,
+      "source_cell_xf_alignment_vertical": "center",
+      "candidate_cell_xf_index": 22,
+      "candidate_cell_xf_apply_alignment": "1",
+      "source_candidate_effective_components_equal": true,
+      "compared_components": [
+        "number_format",
+        "font",
+        "fill",
+        "border",
+        "alignment",
+        "protection"
+      ],
+      "target_candidate_differing_components": [
+        "alignment"
+      ],
+      "source_candidate_style_ids": [
+        44,
+        22
+      ],
+      "candidate_cell_xf_alignment_vertical": "center"
+    },
+    "interpretation": "Openpyxl source and candidate effective styles match; source cellXfs index 0 contains a real vertical=center alignment. Rust expected-style readback reports an empty Style, indicating a shared style acquisition/readback mismatch. This is not a merged-cell case."
+  },
+  "diagnostic_added_at": "2026-10-24T14:55:11.5766551+08:00"
+}
