@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "source": "base_audit.systems.s5_configured_statistics.recognition.file_period_hint",
+  "case_count": 9,
+  "cases": [
+    {
+      "input": "C:\\s5\\2026-07-31\\bank\\report_2026-08-03.xlsx",
+      "period_hint": "2026-08-03"
+    },
+    {
+      "input": "D:\\s5\\report_202608.xlsx",
+      "period_hint": "2026-08-31"
+    },
+    {
+      "input": "D:\\s5\\report_2026-07-31_2026-08-31.xlsx",
+      "period_hint": "多个日期"
+    },
+    {
+      "input": "D:\\s5\\report_2026-02-30.xlsx",
+      "period_hint": "日期格式异常"
+    },
+    {
+      "input": "D:\\s5\\2026-07-31\\bank\\report.xlsx",
+      "period_hint": "2026-07-31"
+    },
+    {
+      "input": "D:\\s5\\202608\\bank\\report.xlsx",
+      "period_hint": "2026-08-31"
+    },
+    {
+      "input": "D:\\s5\\2026-07-31_2026-08-31\\report.xlsx",
+      "period_hint": "多个日期"
+    },
+    {
+      "input": "D:\\s5\\2026-02-30\\report.xlsx",
+      "period_hint": "日期格式异常"
+    },
+    {
+      "input": "C:\\s5\\bank\\report.xlsx",
+      "period_hint": ""
+    }
+  ]
+}

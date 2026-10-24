@@ -25,7 +25,7 @@
 | S3-F03 | 机构说明到说明文件 | 机构反馈读取、身份键匹配、冲突处理和说明回写 | 未验证；待多机构反馈样本 |
 | S3-F04 | 本期数值核对 | 本期数据核对规则、跨期关联和异常报告 | 未验证；待真实日报/月报批次 |
 | S3-F05 | 比较文件到金融表单 | 比较结果写入金融表单并保留表单结构、格式和名称引用 | 未验证；待金融表单样本 |
-| S5-F01 | 汇总核查表校验（逐笔统计配置版） | 配置驱动读取、逐笔规则、校验结果与输出 | 未验证；已完成报告期识别子切片：Rust CLI `s5-detect-period` 按源文件名、源表报告期字段、输入目录祖先顺序识别，支持原格式、月末归一、非法/多期拒绝和公式单元格忽略；20 例 Python `periods_in` 基线逐项一致，合成日期单元格 Python/Rust CLI 的报告期与来源一致；用户提供的两组选中文件各 7 份，Python/Rust 均识别 `2026-07-31` 且来源均为文件名，输入只读。普通/开发者日志含步骤、实际 reader/engine 与耗时。证据见 `probe/reports/s5_period_parser_python_baseline.json` 和 `probe/reports/s5_period_recognition_windows_native_20261025.json`。配置驱动审核、模板/业务匹配、规则执行及审核结果输出仍未迁移；S5-F01 整体仍未验证 |
+| S5-F01 | 汇总核查表校验（逐笔统计配置版） | 配置驱动读取、逐笔规则、校验结果与输出 | 未验证；已完成报告期识别子切片：Rust CLI `s5-detect-period` 按源文件名、源表报告期字段、输入目录祖先顺序识别，支持原格式、月末归一、非法/多期拒绝和公式单元格忽略；20 例 Python `periods_in` 基线逐项一致，合成日期单元格 Python/Rust CLI 的报告期与来源一致；用户提供的两组选中文件各 7 份，Python/Rust 均识别 `2026-07-31` 且来源均为文件名，输入只读。新增 Rust CLI `s5-file-period-hints` 迁移 Python `file_period_hint`：文件名/目录优先、异常/多期提示、不读取工作簿；9 例 Python 基线一致，用户 S5 样本子树 120 个 XLSX/XLSM 路径与 Python 提示逐项一致（0 差异、输入只读），见 `probe/reports/s5_file_period_hint_python_baseline.json` 和 `probe/reports/s5_file_period_hint_windows_native_20261025.json`。普通/开发者日志含步骤、实际路径解析器/reader 状态与耗时。此前期间识别证据见 `probe/reports/s5_period_parser_python_baseline.json` 和 `probe/reports/s5_period_recognition_windows_native_20261025.json`。配置驱动审核、模板/业务匹配、规则执行及审核结果输出仍未迁移；S5-F01 整体仍未验证 |
 | S5-F02 | 隐藏维护工具（来源测试标识） | 从源代码确认实际业务功能、输入输出和触发方式 | 待确认；不能因默认隐藏而跳过 |
 | S5-F03 | 隐藏维护工具（来源测试标识） | 从源代码确认实际业务功能、输入输出和触发方式 | 待确认；不能因默认隐藏而跳过 |
 | S5-F04 | 隐藏维护工具（来源测试标识） | 从源代码确认实际业务功能、输入输出和触发方式 | 待确认；不能因默认隐藏而跳过 |

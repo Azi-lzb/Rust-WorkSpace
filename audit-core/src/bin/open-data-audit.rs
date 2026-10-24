@@ -32,7 +32,7 @@ use audit_core::{
     s2_service::{run_s2_audit, S2ProgressEvent, S2RunRequest},
     s2_summary::S2AuditSummary,
     s3_explanation_export::export_selected_explanations,
-    s5_period_recognition::detect_s5_period,
+    s5_period_recognition::{detect_s5_period, s5_file_period_hint},
     web_bridge::serve_web_ui,
 };
 use clap::{Args, Parser, Subcommand};
@@ -59,6 +59,8 @@ struct Cli {
 enum Command {
     /// Detect an S5 report period from selected workbooks and their source fields.
     S5DetectPeriod(S5DetectPeriodArgs),
+    /// Add filename/folder period hints to selected S5 workbooks without opening them.
+    S5FilePeriodHints(S5FilePeriodHintsArgs),
     /// Run the S2 period-report audit and create its three-sheet result workbook.
     S2(S2Args),
     /// Export S3-F02 comparison rows selected for institution explanation.
@@ -565,6 +567,17 @@ struct S5DetectPeriodArgs {
 }
 
 #[derive(Debug, Args)]
+struct S5FilePeriodHintsArgs {
+    /// Selected S5 input workbook. Repeat once per selected .xlsx/.xlsm file.
+    #[arg(long = "input-file", required = true)]
+    selected_files: Vec<PathBuf>,
+
+    /// Emit developer-view JSON progress with the path parser and elapsed time.
+    #[arg(long, default_value_t = false)]
+    developer_view: bool,
+}
+
+#[derive(Debug, Args)]
 struct S3ExportExplanationsArgs {
     /// S3 comparison workbook containing the output-explanation selection column.
     #[arg(long)]
@@ -602,6 +615,9 @@ fn run() -> Result<()> {
     match cli.command {
         Command::S5DetectPeriod(arguments) => {
             run_s5_detect_period(arguments)?;
+        }
+        Command::S5FilePeriodHints(arguments) => {
+            run_s5_file_period_hints(arguments)?;
         }
         Command::Serve(arguments) => {
             let config_path = arguments.config.unwrap_or_else(default_s2_config_path);
@@ -805,6 +821,101 @@ struct S5DetectPeriodOutput<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     reader: Option<&'a str>,
     elapsed_ms: u128,
+}
+
+#[derive(Debug, Serialize)]
+struct S5FilePeriodHintItem {
+    path: String,
+    period_hint: String,
+}
+
+#[derive(Debug, Serialize)]
+struct S5FilePeriodHintsOutput {
+    status: &'static str,
+    selected_file_count: usize,
+    reader: &'static str,
+    items: Vec<S5FilePeriodHintItem>,
+    elapsed_ms: u128,
+}
+
+fn run_s5_file_period_hints(arguments: S5FilePeriodHintsArgs) -> Result<()> {
+    for path in &arguments.selected_files {
+        anyhow::ensure!(path.is_file(), "S5 输入文件不存在：{}", path.display());
+        let extension = path
+            .extension()
+            .and_then(|value| value.to_str())
+            .unwrap_or_default();
+        anyhow::ensure!(
+            extension.eq_ignore_ascii_case("xlsx") || extension.eq_ignore_ascii_case("xlsm"),
+            "S5 文件期次提示只支持 XLSX/XLSM：{}",
+            path.display()
+        );
+    }
+
+    let started = Instant::now();
+    if arguments.developer_view {
+        eprintln!(
+            "{}",
+            serde_json::to_string(&serde_json::json!({
+                "type": "progress",
+                "product": "open-data-audit",
+                "feature": "S5-F01",
+                "step": "file_period_hints",
+                "status": "started",
+                "selected_file_count": arguments.selected_files.len(),
+                "engine": "rust_path_name_parser",
+                "reader": "none",
+                "started_at": chrono::Local::now().to_rfc3339()
+            }))?
+        );
+    } else {
+        eprintln!(
+            "正在识别 S5 文件列表报告期提示：{} 个文件（仅解析文件名和目录，不读取工作簿）…",
+            arguments.selected_files.len()
+        );
+    }
+
+    let items = arguments
+        .selected_files
+        .iter()
+        .map(|path| S5FilePeriodHintItem {
+            path: path.to_string_lossy().into_owned(),
+            period_hint: s5_file_period_hint(path),
+        })
+        .collect::<Vec<_>>();
+    let output = S5FilePeriodHintsOutput {
+        status: "completed",
+        selected_file_count: items.len(),
+        reader: "none",
+        items,
+        elapsed_ms: started.elapsed().as_millis(),
+    };
+
+    if arguments.developer_view {
+        eprintln!(
+            "{}",
+            serde_json::to_string(&serde_json::json!({
+                "type": "progress",
+                "product": "open-data-audit",
+                "feature": "S5-F01",
+                "step": "file_period_hints",
+                "status": "completed",
+                "selected_file_count": output.selected_file_count,
+                "engine": "rust_path_name_parser",
+                "reader": output.reader,
+                "elapsed_ms": output.elapsed_ms,
+                "finished_at": chrono::Local::now().to_rfc3339()
+            }))?
+        );
+        println!("{}", serde_json::to_string_pretty(&output)?);
+    } else {
+        eprintln!(
+            "已完成 {} 个 S5 文件期次提示；引擎 Rust 文件名/目录解析（未读取工作簿），耗时 {} ms。",
+            output.selected_file_count, output.elapsed_ms
+        );
+        println!("{}", serde_json::to_string_pretty(&output)?);
+    }
+    Ok(())
 }
 
 fn run_s5_detect_period(arguments: S5DetectPeriodArgs) -> Result<()> {

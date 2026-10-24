@@ -102,6 +102,52 @@ pub fn detect_s5_period(files: &[PathBuf], input_dir: &Path) -> Result<S5PeriodD
     })
 }
 
+/// Return the S5 file-list period hint using only the filename and parent
+/// directory names. This intentionally does not open the workbook.
+pub fn s5_file_period_hint(path: &Path) -> String {
+    let stem = path
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .unwrap_or_default();
+    match analyze_period_text(stem) {
+        Ok(analysis) => {
+            if let Some(hint) = period_hint(&analysis.periods) {
+                return hint;
+            }
+        }
+        Err(_) => return "日期格式异常".to_owned(),
+    }
+
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let resolved_parent = std::fs::canonicalize(parent).unwrap_or_else(|_| parent.to_path_buf());
+    for folder in resolved_parent.ancestors() {
+        let name = folder
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or_default();
+        match analyze_period_text(name) {
+            Ok(analysis) => {
+                if let Some(hint) = period_hint(&analysis.periods) {
+                    return hint;
+                }
+            }
+            Err(_) => return "日期格式异常".to_owned(),
+        }
+    }
+    String::new()
+}
+
+fn period_hint(periods: &BTreeSet<String>) -> Option<String> {
+    match periods.len() {
+        0 => None,
+        1 => periods.first().cloned(),
+        _ => Some("多个日期".to_owned()),
+    }
+}
+
 /// Parse S5's accepted day/month date tokens. Month-only values become the
 /// last calendar day of that month; invalid day tokens are rejected.
 pub fn periods_in_s5_text(value: &str) -> Result<BTreeSet<String>> {
@@ -423,7 +469,10 @@ fn cell_coordinate(row: usize, mut column: usize) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{analyze_period_text, detect_s5_period, periods_in_s5_text, scan_workbook_fields};
+    use super::{
+        analyze_period_text, detect_s5_period, periods_in_s5_text, s5_file_period_hint,
+        scan_workbook_fields,
+    };
     use excel_reader::{SheetDump, WorkbookDump};
     use serde::Deserialize;
     use serde_json::json;
@@ -439,6 +488,17 @@ mod tests {
         input: String,
         periods: Option<Vec<String>>,
         error: Option<String>,
+    }
+
+    #[derive(Deserialize)]
+    struct PythonFileHintBaseline {
+        cases: Vec<PythonFileHintCase>,
+    }
+
+    #[derive(Deserialize)]
+    struct PythonFileHintCase {
+        input: PathBuf,
+        period_hint: String,
     }
 
     #[test]
@@ -466,6 +526,24 @@ mod tests {
                     case.input
                 );
             }
+        }
+    }
+
+    #[test]
+    fn file_period_hint_matches_python_filename_and_directory_baseline() {
+        let baseline: PythonFileHintBaseline = serde_json::from_str(include_str!(
+            "../probe/reports/s5_file_period_hint_python_baseline.json"
+        ))
+        .expect("valid Python S5 file period hint baseline");
+        assert_eq!(baseline.cases.len(), 9);
+        for (index, case) in baseline.cases.iter().enumerate() {
+            assert_eq!(
+                s5_file_period_hint(&case.input),
+                case.period_hint,
+                "Python file-period-hint case {}: {:?}",
+                index + 1,
+                case.input
+            );
         }
     }
 

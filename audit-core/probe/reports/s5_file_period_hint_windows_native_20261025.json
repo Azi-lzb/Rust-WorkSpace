@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "feature": "S5-F01",
+  "scope": "file_period_hint_names_and_parent_directories_only",
+  "selected_path_count": 120,
+  "rust_item_count": 120,
+  "python_rust_equal": true,
+  "mismatch_count": 0,
+  "python_hint_counts": {
+    "2026-07-31": 85,
+    "2026-08-31": 19,
+    "2026-09-12": 2,
+    "2026-09-30": 9,
+    "2026-10-19": 1,
+    "2026-10-21": 1,
+    "2026-10-22": 1,
+    "多个日期": 1,
+    "日期格式异常": 1
+  },
+  "rust_hint_counts": {
+    "2026-07-31": 85,
+    "2026-08-31": 19,
+    "2026-09-12": 2,
+    "2026-09-30": 9,
+    "2026-10-19": 1,
+    "2026-10-21": 1,
+    "2026-10-22": 1,
+    "多个日期": 1,
+    "日期格式异常": 1
+  },
+  "rust_reader": "none",
+  "rust_cli_status": "completed",
+  "filenames_and_hints_persisted": false,
+  "workbook_values_read": false,
+  "input_modified": false
+}
