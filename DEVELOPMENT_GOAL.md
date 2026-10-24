@@ -92,7 +92,7 @@ PyTools 包括但不限于：
 
 ### 4.2 允许 Python 承担特定 Excel 修改任务
 
-不要求最终程序完全不包含 Python。Python 可以作为特定 Excel 兼容引擎使用，尤其是 openpyxl。
+不要求最终程序完全不包含 Python。Python 可以作为隔离的 Excel 兼容 worker 使用：openpyxl 只承担已有工作簿修改；未来 Windows Office COM worker 可通过 pywin32 / `win32com.client` 承担经验证的 Excel 修改和公式计算任务。两者都不得承担业务规则、统计或审核逻辑。
 
 目标架构：
 
@@ -111,6 +111,12 @@ Rust 主程序
           +-- Rust umya-spreadsheet
           +-- Go Excelize Worker
           +-- Python openpyxl Worker
+          +-- Python Office COM Worker（未来 Windows 修改后端）
+
+独立的 ExcelCalculator（未来能力）
+          +-- LibreOffice Calc
+          +-- Microsoft Excel COM（Windows）
+          +-- WPS 表格 COM（Windows，待验证）
 ```
 
 openpyxl 的职责限定为：
@@ -128,7 +134,7 @@ openpyxl 的职责限定为：
 
 ### 4.3 性能要求
 
-优先使用 Rust 完成高频、大批量和计算密集型操作。使用 Python openpyxl 时：
+优先使用 Rust 完成高频、大批量和计算密集型操作。使用 openpyxl 或未来的 Python Office COM worker 时：
 
 1. 避免逐单元格启动 Python 进程。
 2. 批量提交同一工作簿的修改操作。
@@ -166,7 +172,7 @@ openpyxl 的职责限定为：
 - 创建新的打印报表。
 - 设置新工作簿样式和打印参数。
 
-对于大规模输出，应评估内存使用和适用的低内存写入方式。
+对于大规模输出，应评估内存使用和适用的低内存写入方式。不为统一后端而强制创建通用 ExcelWritePlan 或复杂工作簿对象模型；当前 rust_xlsxwriter 门面可以保持现状。
 
 ### 5.3 修改已有 Excel
 
@@ -176,6 +182,8 @@ openpyxl 的职责限定为：
 2. Rust umya-spreadsheet：Rust 原生工作簿修改。
 3. Go Excelize：可选的 Excel 修改兼容引擎。
 4. Python openpyxl：复杂工作簿修改和样式兼容引擎。
+5. Microsoft Excel COM：未来 Windows 可选修改引擎。
+6. WPS 表格 COM：未来 Windows 可选修改引擎，按 WPS 版本单独验证。
 
 上述引擎属于既定目标能力。是否已经完成实现，必须检查当前代码，不得假设全部可用。
 
@@ -192,6 +200,12 @@ openpyxl 的职责限定为：
 - 实际测试结果。
 
 不得简单按照固定优先级盲目选择。对于存在兼容性风险的文件，应使用保守、安全的处理路径。修改已有文件时应遵守现有文件保护、临时保存、验证和安全回退规范。不得在输出损坏后静默切换引擎并覆盖原文件。
+
+COM 修改候选只在 Windows 上显式选择并通过实际 COM 激活及对应能力验收后可用；Microsoft Excel 与 WPS COM 使用独立引擎标识和能力证据。未来 Python worker 优先使用 pywin32 / `win32com.client`、Excel `Excel.Application` 或经验证的 WPS `KET.Application`，并复用工作簿级 ExcelEditPlan、EditBackend 和 JSON IPC。Windows worker 必须使用隔离运行时及锁定的 pywin32，不依赖系统 Python/PATH。显式选择不可用引擎时明确报错，不静默切换。Microsoft Excel COM 可作为 Excel 原生参考基准；WPS COM 是独立参考，不能假设两者完全一致。读取和新建的测试可用 COM 脚本生成参考数据/文件，但不因此接入 Reader/Writer 生产路由。比较值、公式、样式和结构等语义及未修改区域，不比较 XLSX 字节。COM 不进入 Linux 产品的必要依赖，不提供 COM 读取器或新建 writer。
+
+### 5.5 独立公式计算能力
+
+未来建立与读取、新建和修改分离的 `ExcelCalculator`。当前 sidecar 已有有限 `recalculate` 候选命令，但不等于公共计算接口或通用验收。计算候选为 LibreOffice Calc（Windows/Linux）、Microsoft Excel COM 和 WPS COM（后两者仅 Windows，WPS 另行验证）；LibreOffice 的基础公式计算已有用户实测反馈，但不代表全公式兼容、Excel 文件保真或目标系统部署已验收。显式请求支持普通重算和完整重算；验证公式语义、计算结果、依赖关系，以及计算引擎保存工作簿造成的非预期公式、样式或结构变化。不同计算引擎不承诺结果完全等价。此能力不加入 ExcelModifier 修改后端；计算协议可按引擎采用适配器，不强制 JSON IPC。未实现、环境不可用或能力未验收的引擎不得展示为可选项；默认读取、新建、修改路由保持不变。
 
 ## 六、功能级数据流追踪
 
@@ -487,7 +501,7 @@ Python/Rust 对拍
 - 文件保真和安全回退要求。
 - 现有测试及部署约束。
 
-如果实际迁移发现规范存在缺失、错误或冲突，可以进行必要的最小范围修订。特别注意：若旧规范仍要求生产环境绝对禁止 Python，应将其调整为允许封装隔离的 openpyxl Excel 修改 worker，但业务核心必须 Rust 原生。
+如果实际迁移发现规范存在缺失、错误或冲突，可以进行必要的最小范围修订。生产 Python 仍不得承载业务核心；除隔离 openpyxl 修改 worker 外，仅允许未来通过验收的 Windows pywin32 Office COM 修改/计算 worker。
 
 调整规范时：
 
@@ -501,7 +515,7 @@ Python/Rust 对拍
 
 最终完成两个独立产品的 Linux x86_64 离线安装包。目标系统：麒麟 V10、统信 UOS V20；目标兼容 glibc 2.28。
 
-最终用户不需要预装：
+核心业务路径不要求最终用户预装：
 
 - Python。
 - Go。
@@ -512,6 +526,8 @@ Python/Rust 对拍
 
 如果某项功能需要 openpyxl，必须随安装包封装经过验证的独立 Python 运行时和相关依赖。如果需要 Go Excelize worker，应将其编译为目标平台可运行的独立程序并随包提供。不得要求最终用户联网安装依赖。
 
+可选 Windows COM 修改/计算功能仅在兼容的 Microsoft Excel 或 WPS COM 接口实际可用且能力已验证时提供；核心程序不因这些软件缺失而无法启动。Linux 不依赖 COM。可选 LibreOffice Calc 计算能力不得假设目标机已安装：启用前必须明确其运行时来自独立离线组件/安装包还是受支持的外部安装，并验证体积、依赖和目标平台；无计算引擎时只报告该功能需要外部引擎，其他功能照常运行。
+
 最终验收必须验证：
 
 1. Linux x86_64 构建。
@@ -521,7 +537,7 @@ Python/Rust 对拍
 5. Audit 核心业务功能。
 6. PyTools 核心业务功能。
 7. Excel 读取、修改和新建。
-8. openpyxl / Excelize worker 的实际可用性。
+8. 已启用的 openpyxl / Excelize worker 的实际可用性；若发布可选计算能力，另验收其运行时来源和隔离缺失行为。
 9. 真实业务样本对拍。
 10. GUI 或 CLI 实际入口。
 11. 离线安装。
@@ -623,6 +639,6 @@ Python/Rust 对拍
 
 当前 Rust Workspace 仅作为 Open-Data-Audit 与 PyTools 两个 Python 项目的临时联合迁移环境。迁移期间继续使用 `main`、`audit-dev`、`pytools-dev` 三个 Git 工作树并行开发，不提前拆分仓库。
 
-两个产品最终必须能够拆分为完全独立的 Rust 项目和 Git 仓库，分别维护、测试、版本管理和发布。迁移期间可以共同使用 Excel 基础 crates，但两个产品的业务代码、配置、入口和交付流程必须保持独立，不得形成无法拆分的跨产品业务依赖。公共 Excel 引擎保持清晰、通用的接口；最终根据实际维护和发布需要，选择独立版本化共享或分别纳入产品，并确保每个产品都能独立离线构建。
+两个产品最终必须拆分为三个完全独立的 Rust 项目和 Git 仓库：Excel-Core、Audit、PyTools，分别维护、测试、版本管理和发布。迁移期间可以共同使用 Excel 基础 crates，但两个产品的业务代码、配置、入口和交付流程必须保持独立，不得形成无法拆分的跨产品业务依赖。Excel-Core 提供清晰、通用、可由 Cargo 依赖的接口；最终按实际发布方式独立版本化共享或以独立项目依赖，确保 Audit 与 PyTools 都能独立离线构建。当前继续在一个 Workspace 内迁移，不提前拆仓库；拆分验收成功后，保留并归档原 Rust-WorkSpace。
 
 只有在两个产品都完成约定功能迁移及真实业务验收后，才开始独立仓库拆分；拆分后还须分别完成独立构建、离线安装和最终交付验证。

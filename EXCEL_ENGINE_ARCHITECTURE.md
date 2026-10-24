@@ -216,7 +216,7 @@ OOXML Patch 是狭窄的补丁工具，不是完整读写器。新建工作簿�
 - [x] 建立 §4.2 操作级能力矩阵初始版本；只登记现有证据，完整操作与真实样本验收仍待补齐。
 - [ ] 逐菜单/逐源函数建立完整读、写、修改调用链映射，确认所有输出文件/配置/失败行为。
 - [ ] 逐项比对 PyCode 与 NoComPyTools 的共有/独有工作簿行为，沿用 pytools-core/MIGRATION_INVENTORY.md 中的待确认口径。
-- [ ] 追踪 `ExcelSession`、pytools `*_com.py` 与菜单/dispatcher 的所有调用点；只把公式重算和同类格式转换留给 sidecar。
+- [ ] 追踪 `ExcelSession`、pytools `*_com.py` 与菜单/dispatcher 的所有调用点；旧 COM 业务工作流继续迁移到 Rust。未来经独立验收的 Windows COM 编辑仅通过 ExcelModifier，公式计算仅通过独立 ExcelCalculator；同类格式转换仍走显式 sidecar。
 - [ ] 取得/确认真实脱敏模板；无样本时只推进合成测试并持续标记真实模板未验证。
 
 ### 后续阶段
@@ -226,7 +226,7 @@ OOXML Patch 是狭窄的补丁工具，不是完整读写器。新建工作簿�
 3. **标准修改计划**：先定义语义操作模型、前置条件、保留契约、报告关联及计划校验；把现存直接调用 umya 的候选业务适配器收敛到该边界。
 4. **候选编辑器矩阵**：按已盘点的真实操作组合逐批测试 OOXML Patch、umya 与现有 openpyxl worker；只有结果显示 Excelize 有实际收益时，才开发批量 Go worker。不得把实现四种引擎作为迁移前置要求。
 5. **业务增量迁移**：每个功能独立 fixture、Python 基线、Rust 结果、差异分类、失败回退和旧实现保留/切换条件；不合并 audit-core 与 pytools-core。
-6. **交付验收**：两个 deb 分开，x86_64/glibc 2.28 构建；目标 Linux 离线运行不要求用户预装 Python、Go、Office/WPS/LO/JVM。产品若启用 openpyxl worker，将隔离 runtime 随包内置并做目标机动态依赖验收。允许的 Office/LO 外部功能仍只有用户显式触发的公式重算和同类格式转换；sidecar 缺失不阻塞其他功能。
+6. **交付验收**：两个 deb 分开，x86_64/glibc 2.28 构建；核心 Linux 路径不要求用户预装 Python、Go、Office/WPS/LO/JVM。产品若启用 openpyxl worker，将隔离 runtime 随包内置并做目标机动态依赖验收。未来 Windows COM 编辑不进入 Linux 包；若 Linux 启用 LibreOffice Calc 计算，先明确独立运行时来源并验证目标平台。外部能力缺失不阻塞其他功能。
 
 每个修改操作矩阵至少记录：输入扩展名与包特征、计划操作组合、候选引擎/版本、样本来源、保留/丢失/损坏/不适用/未验证状态、性能和峰值内存、失败类型、回退引擎、报告路径。API 不存在或样本缺失都不能写成“保留”。
 
@@ -236,5 +236,5 @@ OOXML Patch 是狭窄的补丁工具，不是完整读写器。新建工作簿�
 - 所有现存编辑器证据来自合成 xlsx；真实模板数为 0。umya 的 18/18 是带列定义补丁的单一合成场景。
 - S2 文件级 service 对拍只使用合成配置/工作簿；当前与上期复用同一报表内容并更改文件名日期。外部 reader 完成事件中的引擎/耗时消息未逐字对拍；该 service 仍未连接 CLI 或生产默认路由。
 - xls/xlsm/xlsb/csv/et 的业务样本与保存行为尚未形成统一矩阵；xlsb 的合并区域读取 API 存在已记录缺口。
-- ExcelModifier 已有 UmyaXlsxBackend/OoxmlHeaderTextBackend、OpenpyxlXlsxBackend 与对应 validator；pytools capability dispatcher 注册 openpyxl。没有已验收的生产 capability JSON；真实模板、runtime staging/deb、目标 glibc 和平台均未验收。Excelize worker 未实现；sidecar 同类转换已接入，公式重算未实现。最新只读代码复核见 `docs/architecture/audit-crosscheck-2026-10-23.md`，openpyxl 后续状态以日期化修改记录为准。
+- ExcelModifier 已有 UmyaXlsxBackend/OoxmlHeaderTextBackend、OpenpyxlXlsxBackend 与对应 validator；pytools capability dispatcher 注册 openpyxl。没有已验收的生产 capability JSON；真实模板、runtime staging/deb、目标 glibc 和平台均未验收。Excelize worker 与 Windows Excel/WPS COM 修改 worker 未实现。sidecar 同类转换已接入；`recalculate` 候选已实现，含 LibreOffice 合成 `SUM` 测试，但真实业务公式、Excel/WPS 等价性、超时和目标 Linux 离线运行时仍未验收。LibreOffice 基础公式测试另有用户实测反馈，范围待明确。最新状态以代码及日期化修改记录为准。
 - 当前没有首次 Git 提交。本轮不提交、不重置、不清理任何既有未跟踪文件。
