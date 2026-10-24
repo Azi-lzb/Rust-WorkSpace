@@ -9,7 +9,7 @@ use pytools_core::batch_ops::{
     build_village_split_plan,
 };
 use pytools_core::batch_rename::run_batch_rename_33;
-use pytools_core::config::{load_extract_tasks, load_global};
+use pytools_core::config::{load_extract_tasks, load_global, GlobalConfig};
 use pytools_core::config_admin::{build_config_repair_plan, initialize_new_config, view_config};
 use pytools_core::conversion::{
     convert_excel_files_in_source_folders, convert_excel_files_to, convert_one,
@@ -47,7 +47,7 @@ use pytools_core::timeline_ops::{
     validate_wide_target_replacement_candidate,
 };
 use std::fs::{self, File, OpenOptions};
-use std::io::Write;
+use std::io::{self, BufRead, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
@@ -61,8 +61,7 @@ fn main() {
 fn run() -> Result<()> {
     let mut arguments = std::env::args().skip(1);
     let Some(command) = arguments.next() else {
-        print_usage();
-        bail!("missing command");
+        return run_interactive_menu(Vec::new());
     };
     if command == "--help" || command == "-h" {
         print_usage();
@@ -77,6 +76,7 @@ fn run() -> Result<()> {
         return Ok(());
     }
     match command.as_str() {
+        "menu" | "interactive" => run_interactive_menu(arguments),
         "timeline-precheck" => run_timeline_precheck_cli(arguments),
         "timeline-compare" => run_timeline_compare_cli(arguments),
         "wide-summary" => run_wide_summary_cli(arguments, false),
@@ -130,6 +130,316 @@ fn run() -> Result<()> {
             bail!("unsupported command {command:?}")
         }
     }
+}
+
+fn run_interactive_menu(arguments: Vec<String>) -> Result<()> {
+    let options = parse_cli_arguments(arguments)?;
+    anyhow::ensure!(
+        options.positional.is_empty(),
+        "menu accepts options only; pass workbook paths after selecting a menu item"
+    );
+    let config_path = options
+        .values
+        .get("config")
+        .map(PathBuf::from)
+        .unwrap_or_else(default_app_config_path);
+    let log_view = options
+        .values
+        .get("log-view")
+        .map(String::as_str)
+        .unwrap_or("user");
+    anyhow::ensure!(
+        matches!(log_view, "user" | "developer" | "off"),
+        "--log-view must be user, developer, or off"
+    );
+    let global = load_global(&config_path).with_context(|| {
+        format!(
+            "load PyTools global configuration {}",
+            config_path.display()
+        )
+    })?;
+
+    let stdin = io::stdin();
+    let allow_native_dialog = stdin.is_terminal();
+    let mut input = stdin.lock();
+    let stdout = io::stdout();
+    let mut output = stdout.lock();
+    run_interactive_main_menu(
+        &mut input,
+        &mut output,
+        &global,
+        log_view,
+        allow_native_dialog,
+    )
+}
+
+fn default_app_config_path() -> PathBuf {
+    std::env::current_exe()
+        .ok()
+        .and_then(|executable| executable.parent().map(Path::to_path_buf))
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("config")
+        .join("config.xlsx")
+}
+
+fn run_interactive_main_menu<R, W>(
+    input: &mut R,
+    output: &mut W,
+    global: &GlobalConfig,
+    log_view: &str,
+    allow_native_dialog: bool,
+) -> Result<()>
+where
+    R: BufRead,
+    W: Write,
+{
+    loop {
+        writeln!(output, "======== PyTools 菜单 ========")?;
+        writeln!(output, "  6  汇总工具")?;
+        writeln!(output, "  0  退出")?;
+        writeln!(output, "==============================")?;
+        let Some(choice) = read_menu_choice(input, output, "主菜单选择> ")? else {
+            writeln!(output, "再见。")?;
+            return Ok(());
+        };
+        match choice.as_str() {
+            "6" => {
+                run_interactive_summary_menu(input, output, global, log_view, allow_native_dialog)?
+            }
+            "0" => {
+                writeln!(output, "再见。")?;
+                return Ok(());
+            }
+            _ => writeln!(output, "仅接受 6 或 0")?,
+        }
+    }
+}
+
+fn run_interactive_summary_menu<R, W>(
+    input: &mut R,
+    output: &mut W,
+    global: &GlobalConfig,
+    log_view: &str,
+    allow_native_dialog: bool,
+) -> Result<()>
+where
+    R: BufRead,
+    W: Write,
+{
+    loop {
+        writeln!(output, "------ 汇总工具 ------")?;
+        writeln!(output, "  1  按使用区域汇总（全量）")?;
+        writeln!(output, "  2  按批注汇总（模板+源文件）")?;
+        writeln!(output, "  0  返回")?;
+        writeln!(output, "----------------------")?;
+        let Some(choice) = read_menu_choice(input, output, "子菜单选择> ")? else {
+            return Ok(());
+        };
+        match choice.as_str() {
+            "1" => {
+                let Some(sources) = choose_workbooks(
+                    "选择按使用区域汇总的源文件（可多选）",
+                    true,
+                    input,
+                    output,
+                    allow_native_dialog,
+                )?
+                else {
+                    writeln!(output, "[已取消]")?;
+                    return Ok(());
+                };
+                let mut arguments = summary_cli_arguments(global, log_view);
+                arguments.extend(
+                    sources
+                        .into_iter()
+                        .map(|path| path.to_string_lossy().into_owned()),
+                );
+                run_summary_used_range_cli(arguments)?;
+                return Ok(());
+            }
+            "2" => {
+                let Some(template) = choose_workbooks(
+                    "选择批注汇总模板文件",
+                    false,
+                    input,
+                    output,
+                    allow_native_dialog,
+                )?
+                .and_then(|paths| paths.into_iter().next()) else {
+                    writeln!(output, "[已取消]")?;
+                    return Ok(());
+                };
+                let Some(sources) = choose_workbooks(
+                    "选择按批注汇总的源文件（可多选）",
+                    true,
+                    input,
+                    output,
+                    allow_native_dialog,
+                )?
+                else {
+                    writeln!(output, "[已取消]")?;
+                    return Ok(());
+                };
+                let mut arguments = summary_cli_arguments(global, log_view);
+                arguments.push("--template".to_owned());
+                arguments.push(template.to_string_lossy().into_owned());
+                arguments.extend(
+                    sources
+                        .into_iter()
+                        .map(|path| path.to_string_lossy().into_owned()),
+                );
+                run_summary_comments_cli(arguments)?;
+                return Ok(());
+            }
+            "0" => return Ok(()),
+            _ => writeln!(output, "输入无效，请重试。")?,
+        }
+    }
+}
+
+fn summary_cli_arguments(global: &GlobalConfig, log_view: &str) -> Vec<String> {
+    vec![
+        "--output-dir".to_owned(),
+        global.output_dir.to_string_lossy().into_owned(),
+        "--log-dir".to_owned(),
+        global.log_dir.to_string_lossy().into_owned(),
+        "--log-view".to_owned(),
+        log_view.to_owned(),
+    ]
+}
+
+fn read_menu_choice<R, W>(input: &mut R, output: &mut W, prompt: &str) -> Result<Option<String>>
+where
+    R: BufRead,
+    W: Write,
+{
+    write!(output, "{prompt}")?;
+    output.flush()?;
+    let mut line = String::new();
+    if input.read_line(&mut line)? == 0 {
+        return Ok(None);
+    }
+    Ok(Some(line.trim().to_owned()))
+}
+
+fn choose_workbooks<R, W>(
+    title: &str,
+    allow_multiple: bool,
+    input: &mut R,
+    output: &mut W,
+    allow_native_dialog: bool,
+) -> Result<Option<Vec<PathBuf>>>
+where
+    R: BufRead,
+    W: Write,
+{
+    writeln!(output, "→ 正在打开文件选择窗口：{title}")?;
+    if allow_native_dialog {
+        if let Some(paths) = native_file_dialog(title, allow_multiple) {
+            if !paths.is_empty() {
+                print_selected_paths(output, &paths)?;
+                return Ok(Some(paths));
+            }
+        }
+        writeln!(output, "[提示] 文件弹窗不可用或已取消。")?;
+    }
+    writeln!(output, "→ 可手动输入路径（分号分隔），或输入 0 取消：")?;
+    let Some(raw) = read_menu_choice(input, output, "文件路径> ")? else {
+        return Ok(None);
+    };
+    let Some(paths) = parse_manual_path_list(&raw) else {
+        return Ok(None);
+    };
+    print_selected_paths(output, &paths)?;
+    Ok(Some(paths))
+}
+
+fn parse_manual_path_list(raw: &str) -> Option<Vec<PathBuf>> {
+    let raw = raw.trim();
+    if raw.is_empty() || raw == "0" {
+        return None;
+    }
+    let paths = raw
+        .split(';')
+        .map(|part| {
+            part.trim()
+                .trim_matches(|character| matches!(character, '\"' | '\''))
+        })
+        .filter(|part| !part.is_empty())
+        .map(PathBuf::from)
+        .collect::<Vec<_>>();
+    (!paths.is_empty()).then_some(paths)
+}
+
+fn print_selected_paths<W: Write>(output: &mut W, paths: &[PathBuf]) -> Result<()> {
+    writeln!(output, "→ 已选择文件 {} 个：", paths.len())?;
+    for (index, path) in paths.iter().enumerate() {
+        writeln!(output, "  {}. {}", index + 1, path.display())?;
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn native_file_dialog(title: &str, allow_multiple: bool) -> Option<Vec<PathBuf>> {
+    use std::os::windows::ffi::OsStringExt;
+    use windows_sys::Win32::UI::Controls::Dialogs::{
+        GetOpenFileNameW, OFN_ALLOWMULTISELECT, OFN_EXPLORER, OFN_FILEMUSTEXIST, OFN_HIDEREADONLY,
+        OFN_NOCHANGEDIR, OFN_PATHMUSTEXIST, OPENFILENAMEW,
+    };
+
+    let mut filter =
+        "Excel files (*.xlsx;*.xlsm;*.xls)\0*.xlsx;*.xlsm;*.xls\0All files (*.*)\0*.*\0\0"
+            .encode_utf16()
+            .collect::<Vec<_>>();
+    let mut title = title
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect::<Vec<_>>();
+    let mut buffer = vec![0u16; 32_768];
+    let mut dialog = OPENFILENAMEW::default();
+    dialog.lStructSize = std::mem::size_of::<OPENFILENAMEW>() as u32;
+    dialog.lpstrFilter = filter.as_mut_ptr();
+    dialog.nFilterIndex = 1;
+    dialog.lpstrFile = buffer.as_mut_ptr();
+    dialog.nMaxFile = buffer.len() as u32;
+    dialog.lpstrTitle = title.as_mut_ptr();
+    dialog.Flags = OFN_EXPLORER
+        | OFN_FILEMUSTEXIST
+        | OFN_PATHMUSTEXIST
+        | OFN_NOCHANGEDIR
+        | OFN_HIDEREADONLY
+        | if allow_multiple {
+            OFN_ALLOWMULTISELECT
+        } else {
+            0
+        };
+
+    let selected = unsafe { GetOpenFileNameW(&mut dialog) };
+    if selected == 0 {
+        return None;
+    }
+    let parts = buffer
+        .split(|unit| *unit == 0)
+        .take_while(|part| !part.is_empty())
+        .collect::<Vec<_>>();
+    if parts.is_empty() {
+        return None;
+    }
+    if parts.len() == 1 {
+        return Some(vec![PathBuf::from(std::ffi::OsString::from_wide(parts[0]))]);
+    }
+    let directory = PathBuf::from(std::ffi::OsString::from_wide(parts[0]));
+    Some(
+        parts[1..]
+            .iter()
+            .map(|name| directory.join(std::ffi::OsString::from_wide(name)))
+            .collect(),
+    )
+}
+
+#[cfg(not(windows))]
+fn native_file_dialog(_title: &str, _allow_multiple: bool) -> Option<Vec<PathBuf>> {
+    None
 }
 
 fn run_quick_cli(arguments: Vec<String>, action: &str) -> Result<()> {
@@ -2368,6 +2678,8 @@ fn run_region_sum(arguments: Vec<String>) -> Result<()> {
 fn print_usage() {
     eprintln!(
         "Usage:\n\
+         pytools [menu] [--config <config.xlsx>] [--log-view user|developer|off]\n\
+         no command opens the migrated menu; currently available main category: 6 (summary)\n\
          timeline-precheck --config <workbook.xlsx>\n\
          timeline-compare --config <workbook.xlsx> --template <workbook.xlsx> <source.xlsx>...\n\
          wide-summary --config <workbook.xlsx> <source.xlsx>...\n\
