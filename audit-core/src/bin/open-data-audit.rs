@@ -28,10 +28,11 @@ use audit_core::{
     },
     s1_summary_merge::merge_s1_workbook_tables,
     s1_template::{recommend_template, recommend_template_for_workbooks, template_workbook_paths},
-    s1_template_rules::{load_s1_template_rule_plan, assess_s1_template_health},
+    s1_template_rules::{assess_s1_template_health, load_s1_template_rule_plan},
     s2_service::{run_s2_audit, S2ProgressEvent, S2RunRequest},
     s2_summary::S2AuditSummary,
     s3_explanation_export::export_selected_explanations,
+    s5_period_recognition::detect_s5_period,
     web_bridge::serve_web_ui,
 };
 use clap::{Args, Parser, Subcommand};
@@ -56,6 +57,8 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    /// Detect an S5 report period from selected workbooks and their source fields.
+    S5DetectPeriod(S5DetectPeriodArgs),
     /// Run the S2 period-report audit and create its three-sheet result workbook.
     S2(S2Args),
     /// Export S3-F02 comparison rows selected for institution explanation.
@@ -547,6 +550,21 @@ struct S2Args {
 }
 
 #[derive(Debug, Args)]
+struct S5DetectPeriodArgs {
+    /// S5 input directory used for the final report-period fallback.
+    #[arg(long)]
+    input_dir: PathBuf,
+
+    /// Selected S5 input workbook. Repeat once per selected .xlsx/.xlsm file.
+    #[arg(long = "input-file", required = true)]
+    selected_files: Vec<PathBuf>,
+
+    /// Emit developer-view JSON progress with the reader and elapsed time.
+    #[arg(long, default_value_t = false)]
+    developer_view: bool,
+}
+
+#[derive(Debug, Args)]
 struct S3ExportExplanationsArgs {
     /// S3 comparison workbook containing the output-explanation selection column.
     #[arg(long)]
@@ -582,6 +600,9 @@ fn main() {
 fn run() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
+        Command::S5DetectPeriod(arguments) => {
+            run_s5_detect_period(arguments)?;
+        }
         Command::Serve(arguments) => {
             let config_path = arguments.config.unwrap_or_else(default_s2_config_path);
             serve_web_ui(arguments.port, config_path)?;
@@ -771,6 +792,124 @@ fn run() -> Result<()> {
         Command::S1RegionSummary(arguments) => {
             run_s1_region_summary(arguments)?;
         }
+    }
+    Ok(())
+}
+
+#[derive(Debug, Serialize)]
+struct S5DetectPeriodOutput<'a> {
+    status: &'static str,
+    period: &'a str,
+    source: &'a str,
+    selected_file_count: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reader: Option<&'a str>,
+    elapsed_ms: u128,
+}
+
+fn run_s5_detect_period(arguments: S5DetectPeriodArgs) -> Result<()> {
+    anyhow::ensure!(
+        arguments.input_dir.is_dir(),
+        "S5 输入目录不存在或不是目录：{}",
+        arguments.input_dir.display()
+    );
+    for path in &arguments.selected_files {
+        anyhow::ensure!(path.is_file(), "S5 输入文件不存在：{}", path.display());
+        let extension = path
+            .extension()
+            .and_then(|value| value.to_str())
+            .unwrap_or_default();
+        anyhow::ensure!(
+            extension.eq_ignore_ascii_case("xlsx") || extension.eq_ignore_ascii_case("xlsm"),
+            "S5 报告期识别只支持 XLSX/XLSM：{}",
+            path.display()
+        );
+    }
+
+    let started = Instant::now();
+    if arguments.developer_view {
+        eprintln!(
+            "{}",
+            serde_json::to_string(&serde_json::json!({
+                "type": "progress",
+                "product": "open-data-audit",
+                "feature": "S5-F01",
+                "step": "report_period_recognition",
+                "status": "started",
+                "selected_file_count": arguments.selected_files.len(),
+                "started_at": chrono::Local::now().to_rfc3339()
+            }))?
+        );
+    } else {
+        eprintln!(
+            "正在识别 S5 报告期：{} 个已选工作簿…",
+            arguments.selected_files.len()
+        );
+    }
+
+    let result = match detect_s5_period(&arguments.selected_files, &arguments.input_dir) {
+        Ok(result) => result,
+        Err(error) => {
+            if arguments.developer_view {
+                eprintln!(
+                    "{}",
+                    serde_json::to_string(&serde_json::json!({
+                        "type": "progress",
+                        "product": "open-data-audit",
+                        "feature": "S5-F01",
+                        "step": "report_period_recognition",
+                        "status": "failed",
+                        "elapsed_ms": started.elapsed().as_millis(),
+                        "error": format!("{error:#}")
+                    }))?
+                );
+            } else {
+                eprintln!("S5 报告期识别失败，未启动规则审核。");
+            }
+            return Err(error);
+        }
+    };
+
+    let output = S5DetectPeriodOutput {
+        status: "completed",
+        period: &result.period,
+        source: &result.source,
+        selected_file_count: result.selected_file_count,
+        reader: result.reader.as_deref(),
+        elapsed_ms: started.elapsed().as_millis(),
+    };
+    if arguments.developer_view {
+        eprintln!(
+            "{}",
+            serde_json::to_string(&serde_json::json!({
+                "type": "progress",
+                "product": "open-data-audit",
+                "feature": "S5-F01",
+                "step": "report_period_recognition",
+                "status": "completed",
+                "period": result.period,
+                "source": result.source,
+                "selected_file_count": result.selected_file_count,
+                "reader": result.reader,
+                "engine": result.reader.as_deref().unwrap_or("none"),
+                "elapsed_ms": output.elapsed_ms,
+                "finished_at": chrono::Local::now().to_rfc3339()
+            }))?
+        );
+        println!("{}", serde_json::to_string_pretty(&output)?);
+    } else {
+        let engine = result.reader.as_deref().unwrap_or("无需读取工作簿");
+        eprintln!(
+            "已识别报告期 {}（{}）；引擎 {}，耗时 {} ms。",
+            result.period, result.source, engine, output.elapsed_ms
+        );
+        let user_output = serde_json::json!({
+            "status": output.status,
+            "period": output.period,
+            "source": output.source,
+            "selected_file_count": output.selected_file_count
+        });
+        println!("{}", serde_json::to_string_pretty(&user_output)?);
     }
     Ok(())
 }

@@ -1,0 +1,65 @@
+{
+  "schema_version": 1,
+  "feature": "S5-F01",
+  "scope": "report_period_recognition_only",
+  "full_feature_verified": false,
+  "platform": "Windows 11 x64 native Rust",
+  "toolchains": {
+    "rustc": "1.99.1",
+    "cargo": "1.99.1",
+    "python_baseline_runtime": "3.12.10 (source comparison helper; not the openpyxl worker)"
+  },
+  "python_parser_baseline": {
+    "report": "s5_period_parser_python_baseline.json",
+    "case_count": 20,
+    "rust_parity_test_passed": true
+  },
+  "synthetic_workbook_field_parity": {
+    "selected_file_count": 1,
+    "python_period": "2026-08-31",
+    "rust_period": "2026-08-31",
+    "python_source_kind": "workbook_period_field",
+    "rust_source_kind": "workbook_period_field",
+    "python_rust_equal": true,
+    "rust_reader": "calamine",
+    "developer_engine": "calamine",
+    "developer_elapsed_ms": 9,
+    "ordinary_view_includes_engine_and_elapsed": true,
+    "input_modified": false
+  },
+  "user_provided_real_sample": {
+    "selected_batches": [
+      {
+        "batch": "selection_1",
+        "selected_file_count": 7,
+        "python_period": "2026-07-31",
+        "rust_period": "2026-07-31",
+        "python_rust_equal": true,
+        "source_kind": "source_filename",
+        "rust_reader": null,
+        "developer_engine": "none",
+        "input_modified": false
+      },
+      {
+        "batch": "selection_2",
+        "selected_file_count": 7,
+        "python_period": "2026-07-31",
+        "rust_period": "2026-07-31",
+        "python_rust_equal": true,
+        "source_kind": "source_filename",
+        "rust_reader": null,
+        "developer_engine": "none",
+        "input_modified": false
+      }
+    ],
+    "filenames_and_cell_values_persisted": false
+  },
+  "validation": {
+    "period_module_unit_tests": 7,
+    "cli_dual_view_integration_tests": 1,
+    "date_typed_cell_reader_test": true,
+    "temporary_synthetic_workbook_removed": true,
+    "linux_and_deb_validation": "not run",
+    "gui_and_full_s5_rule_engine": "not implemented"
+  }
+}

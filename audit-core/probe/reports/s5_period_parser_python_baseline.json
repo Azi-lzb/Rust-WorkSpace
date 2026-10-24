@@ -1,0 +1,118 @@
+{
+  "schema_version": 1,
+  "source": "base_audit.systems.s5_configured_statistics.recognition.periods_in",
+  "case_count": 20,
+  "cases": [
+    {
+      "input": "甲机构_20260831_核查表",
+      "periods": [
+        "2026-08-31"
+      ]
+    },
+    {
+      "input": "reports#2026-08-31#institution",
+      "periods": [
+        "2026-08-31"
+      ]
+    },
+    {
+      "input": "报告2026年7月31日",
+      "periods": [
+        "2026-07-31"
+      ]
+    },
+    {
+      "input": "2026/7/3",
+      "periods": [
+        "2026-07-03"
+      ]
+    },
+    {
+      "input": "202608",
+      "periods": [
+        "2026-08-31"
+      ]
+    },
+    {
+      "input": "2024年2月",
+      "periods": [
+        "2024-02-29"
+      ]
+    },
+    {
+      "input": "2026.8.3",
+      "periods": [
+        "2026-08-03"
+      ]
+    },
+    {
+      "input": "2026_08_03",
+      "periods": [
+        "2026-08-03"
+      ]
+    },
+    {
+      "input": "2026-08",
+      "periods": [
+        "2026-08-31"
+      ]
+    },
+    {
+      "input": "2026年8月",
+      "periods": [
+        "2026-08-31"
+      ]
+    },
+    {
+      "input": "2026-08-31 and 2026-09-30",
+      "periods": [
+        "2026-08-31",
+        "2026-09-30"
+      ]
+    },
+    {
+      "input": "=DATE(2026,8,31)",
+      "periods": []
+    },
+    {
+      "input": "2026-02-30",
+      "error": "ValueError"
+    },
+    {
+      "input": "2026-13",
+      "error": "ValueError"
+    },
+    {
+      "input": "1202608319",
+      "periods": []
+    },
+    {
+      "input": "2026-08-311",
+      "periods": [
+        "2026-08-31"
+      ]
+    },
+    {
+      "input": "x202608311",
+      "periods": []
+    },
+    {
+      "input": "2026年08月31日",
+      "periods": [
+        "2026-08-31"
+      ]
+    },
+    {
+      "input": "2026-08-3",
+      "periods": [
+        "2026-08-03"
+      ]
+    },
+    {
+      "input": "2026/٠٨/٣١",
+      "periods": [
+        "2026-08-31"
+      ]
+    }
+  ]
+}

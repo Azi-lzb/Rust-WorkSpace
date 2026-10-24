@@ -1,0 +1,38 @@
+# Audit 修改记录
+
+- 时间：2026-10-25 05:12（Asia/Shanghai）
+- 执行者：Codex
+- 修改前 commit：`e658fc076eaf2e555cde37f6880e6101b06e4c94`
+- 修改后 commit：本记录与业务切片待提交；提交后以 `git log` 为准。
+- WIP：当前 `DEVELOPMENT_GOAL.md` 存在等待 main/用户解决的内容差异。本次业务提交明确排除此文件；不暂存、不提交、不推送该差异。其他列出的 Audit 文件为本切片。
+
+## 目的与变更
+
+- 将原 Python `base_audit.systems.s5_configured_statistics.recognition` 的报告期识别前置步骤迁入 Rust，并接入 `open-data-audit s5-detect-period` CLI。
+- 新增 `src/s5_period_recognition.rs`，实现文件名、报告期字段、目录祖先的优先识别，日期校验、月末归一、多期拒绝和公式值忽略；读取日期序列号时使用现有 Calamine ISO 日期投影。
+- 完善普通/开发者两种 CLI 输出，记录实际 reader/engine 和耗时。
+- 修改/新增：`audit-core/src/s5_period_recognition.rs`、`audit-core/src/bin/open-data-audit.rs`、`audit-core/src/lib.rs`、`audit-core/tests/s5_period_recognition_cli.rs`、`audit-core/MIGRATION_INVENTORY.md`、`audit-core/probe/reports/s5_period_parser_python_baseline.json`、`audit-core/probe/reports/s5_period_recognition_windows_native_20261025.json` 及本记录。
+- 未修改 Python 源目录、共享 crates、Cargo 配置或锁文件；无配置格式/VBA 迁移影响；未进行命名调整。
+- 【组件版本】不升级；本次仅按现有 workspace 版本约定新增 Audit 业务子切片。
+
+## 验证
+
+- Windows 原生 Rust：`rustc 1.99.1`、`cargo 1.99.1`。
+- `cargo test --offline --locked -p audit-core --lib s5_period_recognition`：7 项通过。
+- `cargo test --offline --locked -p audit-core --test s5_period_recognition_cli`：1 项通过。
+- `cargo build --offline --locked -p audit-core --bin open-data-audit`：通过；仅有现存 `umya-spreadsheet` 弃用 API 警告。
+- `cargo test --offline --locked -p audit-core -q`：107 项通过、2 项忽略、0 项失败。
+- Python/Rust 对拍：20 个 Python `periods_in` 基线向量由 Rust 单元测试逐项比对；含日期单元格的合成 XLSX 在 Python 与 Rust CLI 中识别同一报告期和来源，Rust 实际 reader 为 Calamine。
+- 用户提供的真实样本：两组各 7 份选中文件，Python/Rust 均识别 `2026-07-31`，来源均为文件名，输入未修改；探针仅保留汇总值，没有保存样本文件名或单元格内容。
+- 本轮命名审查为只读，未更改既有名称。
+
+## 未完成与已知问题
+
+- 此实现只迁移 S5 报告期识别前置步骤；S5 配置驱动审核、模板/业务匹配、规则执行、审核结果输出均未迁移，S5-F01 整体仍为 Unverified。
+- S1-F01 未在本轮改动；完整审核链路和 ImportRange 写回仍受 main 已说明的共享后端能力门槛限制，整体未验收。
+- 未执行 GUI、Linux、deb、麒麟 V10/UOS V20 验证。
+
+## 删除清单与回滚
+
+- 删除清单：无。
+- 回滚：提交后可对本次业务提交执行 `git revert <feature-commit>`；不要回滚或覆盖等待协调的 `DEVELOPMENT_GOAL.md` 工作树差异。
