@@ -199,6 +199,7 @@ where
         writeln!(output, "======== PyTools 菜单 ========")?;
         writeln!(output, "  1  时序工具（已接入 1、3、4、5）")?;
         writeln!(output, "  2  去重工具（检查与生成计划）")?;
+        writeln!(output, "  3  打印工具（生成页面设置计划）")?;
         writeln!(output, "  6  汇总工具")?;
         writeln!(output, "  0  退出")?;
         writeln!(output, "==============================")?;
@@ -211,6 +212,9 @@ where
             "2" => {
                 run_interactive_dedup_menu(input, output, config_path, global, allow_native_dialog)?
             }
+            "3" => {
+                run_interactive_print_menu(input, output, config_path, global, allow_native_dialog)?
+            }
             "6" => {
                 run_interactive_summary_menu(input, output, global, log_view, allow_native_dialog)?
             }
@@ -218,7 +222,7 @@ where
                 writeln!(output, "再见。")?;
                 return Ok(());
             }
-            _ => writeln!(output, "仅接受 1、2、6 或 0")?,
+            _ => writeln!(output, "仅接受 1、2、3、6 或 0")?,
         }
     }
 }
@@ -381,8 +385,7 @@ where
                 } else {
                     "comment-delete"
                 };
-                let action_output_dir =
-                    unique_dedup_menu_output_dir(&global.output_dir, action_name);
+                let action_output_dir = unique_menu_output_dir(&global.output_dir, action_name);
                 let plan_path = action_output_dir.join("plan.json");
                 arguments.push("--plan-output".to_owned());
                 arguments.push(plan_path.to_string_lossy().into_owned());
@@ -395,8 +398,7 @@ where
                 } else {
                     "config-delete"
                 };
-                let action_output_dir =
-                    unique_dedup_menu_output_dir(&global.output_dir, action_name);
+                let action_output_dir = unique_menu_output_dir(&global.output_dir, action_name);
                 let mut arguments = config_cli_arguments(config_path);
                 arguments.extend([
                     "--output-dir".to_owned(),
@@ -412,8 +414,7 @@ where
                 return Ok(());
             }
             "5" => {
-                let action_output_dir =
-                    unique_dedup_menu_output_dir(&global.output_dir, "config-append");
+                let action_output_dir = unique_menu_output_dir(&global.output_dir, "config-append");
                 let mut arguments = config_cli_arguments(config_path);
                 arguments.extend([
                     "--output-dir".to_owned(),
@@ -432,7 +433,7 @@ where
     }
 }
 
-fn unique_dedup_menu_output_dir(output_root: &Path, action: &str) -> PathBuf {
+fn unique_menu_output_dir(output_root: &Path, action: &str) -> PathBuf {
     let timestamp = Local::now().format("%Y%m%d_%H%M%S_%f");
     let stem = format!("dedup-{action}-{timestamp}");
     let mut candidate = output_root.join(&stem);
@@ -442,6 +443,90 @@ fn unique_dedup_menu_output_dir(output_root: &Path, action: &str) -> PathBuf {
         suffix += 1;
     }
     candidate
+}
+
+fn run_interactive_print_menu<R, W>(
+    input: &mut R,
+    output: &mut W,
+    config_path: &Path,
+    global: &GlobalConfig,
+    allow_native_dialog: bool,
+) -> Result<()>
+where
+    R: BufRead,
+    W: Write,
+{
+    loop {
+        writeln!(output, "------ 打印工具 ------")?;
+        writeln!(output, "  1  按批注保留格式（生成计划）")?;
+        writeln!(output, "  2  按批注快速复制（生成计划）")?;
+        writeln!(output, "  3  按配置准备打印文件（生成计划）")?;
+        writeln!(output, "  4  按配置预校验")?;
+        writeln!(output, "  0  返回")?;
+        writeln!(output, "----------------------")?;
+        let Some(choice) = read_menu_choice(input, output, "子菜单选择> ")? else {
+            return Ok(());
+        };
+        match choice.as_str() {
+            "1" | "2" => {
+                let Some(input_path) = choose_workbooks(
+                    if choice == "1" {
+                        "选择按批注保留格式准备打印的工作簿"
+                    } else {
+                        "选择快速复制准备打印的工作簿"
+                    },
+                    false,
+                    input,
+                    output,
+                    allow_native_dialog,
+                )?
+                .and_then(|paths| paths.into_iter().next()) else {
+                    writeln!(output, "[已取消]")?;
+                    return Ok(());
+                };
+                let output_path =
+                    unique_workbook_candidate(&input_path, &global.output_dir, "print");
+                let action = if choice == "1" {
+                    "comment-keep-format"
+                } else {
+                    "comment-fast-copy"
+                };
+                let plan_path =
+                    unique_menu_output_dir(&global.output_dir, action).join("plan.json");
+                let mut arguments = config_cli_arguments(config_path);
+                arguments.extend([
+                    "--input".to_owned(),
+                    input_path.to_string_lossy().into_owned(),
+                    "--output".to_owned(),
+                    output_path.to_string_lossy().into_owned(),
+                    "--drop-comments".to_owned(),
+                    (choice == "2").to_string(),
+                    "--hide-zero".to_owned(),
+                    (choice == "2").to_string(),
+                    "--plan-output".to_owned(),
+                    plan_path.to_string_lossy().into_owned(),
+                ]);
+                run_print_comment_plan(arguments)?;
+                return Ok(());
+            }
+            "3" => {
+                let output_dir = unique_menu_output_dir(&global.output_dir, "print-config");
+                let mut arguments = config_cli_arguments(config_path);
+                arguments.extend([
+                    "--output-dir".to_owned(),
+                    output_dir.to_string_lossy().into_owned(),
+                ]);
+                run_print_config_plan(arguments)?;
+                return Ok(());
+            }
+            "4" => {
+                run_print_config_precheck(config_cli_arguments(config_path))?;
+                return Ok(());
+            }
+            "0" => return Ok(()),
+            _ => writeln!(output, "仅接受 1、2、3、4 或 0")?,
+        }
+    }
 }
 
 fn run_interactive_summary_menu<R, W>(
@@ -2908,7 +2993,7 @@ fn print_usage() {
     eprintln!(
         "Usage:\n\
          pytools [menu] [--config <config.xlsx>] [--log-view user|developer|off]\n\
-         no command opens the migrated menu; available categories: 1 (timeline 1/3/4/5), 2 (dedup 1-6), and 6 (summary 1/2)\n\
+         no command opens the migrated menu; available categories: 1 (timeline 1/3/4/5), 2 (dedup 1-6), 3 (print 1-4), and 6 (summary 1/2)\n\
          timeline-precheck --config <workbook.xlsx>\n\
          timeline-compare --config <workbook.xlsx> --template <workbook.xlsx> <source.xlsx>...\n\
          wide-summary --config <workbook.xlsx> <source.xlsx>...\n\

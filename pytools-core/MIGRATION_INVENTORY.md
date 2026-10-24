@@ -484,3 +484,9 @@ Windows 原生测试：`cargo test --offline --locked -p pytools-core --lib comm
 增量主菜单类别 2 已接入 2-1 至 2-6 六项去重入口。批注检查和按配置检查按 PyCode 行为生成红色标记编辑计划；删除、配置追加也只生成计划，不在菜单中直接改写源或目标工作簿；每种菜单操作写入独立计划目录，避免覆盖既有计划。Windows 原生 Rust 菜单集成测试 1/1 覆盖六项入口、重复计数、计划文件、候选/目标未写入及源文件字节未变。底层业务语义的既有 PyCode/Rust 合成对拍见 probe/reports/dedup_parity_20261023.json。
 
 真实业务样本、生产 ExcelModifier capability、计划执行菜单、结构化用户/开发者/off 日志、麒麟/UOS、glibc 2.28 和 deb 仍未验证。
+
+### 2026-10-24 PT-3 打印交互菜单接入
+
+增量主菜单类别 3 已接入 3-1 按批注保留格式、3-2 按批注快速复制、3-3 按配置准备打印文件和 3-4 配置预校验。评论标记的两种计划分别映射保留批注/样式和快速模式；配置输出保持 plan-only，未生成候选文件，也不渲染或导出 PDF。Windows 原生 Rust 菜单集成测试 1/1 验证四个入口、两个打印区域、模式属性、目标未创建和配置预校验；底层 PyCode/Rust 合成对拍见 probe/reports/print_comment_plan_parity_20261023.json、print_comment_execution_parity_20261023.json、print_precheck_parity_20261023.json 和 print_config_execution_parity_20261023.json。
+
+真实业务模板、生产 capability、结构化用户/开发者/off 日志、麒麟/UOS、glibc 2.28 和 deb 仍未验证；页面设置工作流不包含打印渲染。
