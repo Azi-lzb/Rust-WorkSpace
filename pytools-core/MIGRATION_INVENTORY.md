@@ -22,6 +22,8 @@
 | 归档 | 按日期预览；按类型预览；执行归档计划；按日期直接复制；按类型直接复制 | 保留预览、冲突检查、复制结果和归档规则 | 五项 Rust CLI 已接入真实 `pytools menu` → 主菜单 8 → 1–5；选择支持多选文件或递归文件夹，目标目录、输出目录和日志目录走交互/全局配置。Windows 原生菜单集成 5 条路由、三种日志视图、预览只生成计划、计划执行与直接复制字节均通过；`archive_parity` 继续覆盖五项工作流对只读 Python 基线的合成对拍。运行历史记录处理计数、耗时及 Calamine、rust_xlsxwriter、Rust 文件复制引擎，不写输入路径/文件名。文件弹窗 UI 未直接操作；真实业务目录/配置与目标平台仍未验收，整体状态未验证 |
 | 快捷工具 | 打开配置文件；打开 output 最新文件；打开 output 文件夹 | 迁移到目标平台可用的文件打开/定位体验，系统集成细节待确认 | Rust 三个业务 CLI 已有 WSL 假 `xdg-open` 合成集成验证；现已接入 `pytools menu` → 主菜单 9 → 1–3，Windows 原生 CLI 测试覆盖三条菜单路由、配置打开失败/无最新文件/output 目录失败及返回主菜单。Windows Explorer 实际打开、旧版 Windows `os.startfile`、目标 Linux 桌面尚未实测，整体仍未验证 |
 
+PT-6-1 另于 2026-10-25 在当前 Windows MSVC HEAD `13c83fb` 经真实 `pytools menu → 6 → 1` 手工分号路径回退处理 2 份原项目只读 XLSX（1,102 行）；PyCode 与 Rust 完整工作簿投影精确一致，历史状态 succeeded，实际引擎为 Calamine 与 rust_xlsxwriter。该证据不覆盖 Win32 原生文件对话框，详见 `probe/reports/summary_used_range_real_menu_parity_20261025.json`。
+
 ## 输入与转换矩阵
 
 | 格式 | 计划 | 验收状态 |
