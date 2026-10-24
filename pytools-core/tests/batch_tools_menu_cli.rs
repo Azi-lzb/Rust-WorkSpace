@@ -3,7 +3,10 @@ use excel_editor::{
     BackendCapability, CapabilityEvidence, CapabilityStatus, EditOperation, EngineId,
 };
 use excel_reader::read_workbook;
-use pytools_core::batch_ops::{build_remove_foreign_plan, build_village_split_plan};
+use pytools_core::batch_ops::{
+    build_quarterly_rural_loan_plan, build_remove_foreign_plan, build_rural_loan_plan,
+    build_village_split_plan,
+};
 use rust_xlsxwriter::Workbook;
 use serde_json::Value;
 use std::{
@@ -388,7 +391,7 @@ fn interactive_foreign_bank_menu_saves_read_only_plans_and_user_history() -> Res
         String::from_utf8_lossy(&output.stderr)
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("当前接入 7-1 至 7-6"));
+    assert!(stdout.contains("当前接入 7-1 至 7-8"));
     assert!(stdout.contains("删除分机构表中的外资行"));
     assert!(stdout.contains("PT-7-3 当前只接受 .xlsx"));
     assert!(stdout.contains(r#""planned_files": 2"#));
@@ -843,6 +846,335 @@ fn interactive_institution_normalize_menu_applies_only_with_temporary_capability
     Ok(())
 }
 
+#[test]
+fn interactive_rural_loan_menu_plans_city_adjustment_and_writes_user_history() -> Result<()> {
+    let root = TestDirectory::new()?;
+    let config = create_config(root.path())?;
+    let (current, previous) = make_rural_loan_periods(root.path(), false, false)?;
+    let current_before = fs::read(&current)?;
+    let previous_before = fs::read(&previous)?;
+
+    let output = run_menu(&config, &rural_loan_menu_input(7, &current, &previous))?;
+    assert!(
+        output.status.success(),
+        "PT-7-7 menu failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stdout.contains("7  涉农贷款比上月修正"));
+    assert!(stdout.contains(r#""feature_id": "PT-7-7""#));
+    assert!(stdout.contains(r#""execution": "plan_only""#));
+    assert!(stdout.contains(r#""matched": 1"#));
+    assert!(stderr.contains("正在读取本期和上期工作簿"));
+    assert!(stderr.contains("分地区总数一致"));
+    assert_eq!(fs::read(&current)?, current_before);
+    assert_eq!(fs::read(&previous)?, previous_before);
+
+    let plan_path = find_file_recursively(
+        &root.path().join("app/output").join("plans").join("PT-7-7"),
+        ".plan.json",
+    )?
+    .context("PT-7-7 plan was not written")?;
+    let plan: Value = serde_json::from_slice(&fs::read(plan_path)?)?;
+    assert!(plan["operations"].as_array().is_some_and(|operations| {
+        operations.iter().any(|operation| {
+            operation["operation"] == "set_cell_value"
+                && operation["cell"] == "D3"
+                && operation["value"]["value"]
+                    .as_str()
+                    .and_then(|value| value.parse::<f64>().ok())
+                    .is_some_and(|value| (value - 5.123456789).abs() <= 1e-15)
+        })
+    }));
+
+    let history_path = find_file_recursively(&root.path().join("app/logs"), ".run.json")?
+        .context("PT-7-7 run history was not written")?;
+    let history_bytes = fs::read(history_path)?;
+    let history: Value = serde_json::from_slice(&history_bytes)?;
+    assert_eq!(history["feature_id"], "PT-7-7");
+    assert_eq!(history["status"], "succeeded");
+    assert_eq!(history["completed_inputs"], 2);
+    assert!(history["actual_engines"]
+        .as_array()
+        .is_some_and(|engines| { engines.iter().any(|engine| engine == "calamine") }));
+    let history_text = String::from_utf8_lossy(&history_bytes);
+    assert!(!history_text.contains("current.xlsx"));
+    assert!(!history_text.contains("甲行"));
+    assert!(!history_text.contains("5.123456789"));
+    Ok(())
+}
+
+#[test]
+fn interactive_quarterly_rural_loan_menu_records_region_errors_in_developer_view() -> Result<()> {
+    let root = TestDirectory::new()?;
+    let config = create_config(root.path())?;
+    let (current, previous) = make_rural_loan_periods(root.path(), true, false)?;
+    let current_before = fs::read(&current)?;
+    let previous_before = fs::read(&previous)?;
+    let args = ["--log-view".to_owned(), "developer".to_owned()];
+
+    let output = run_menu_with_arguments(
+        &config,
+        &rural_loan_menu_input(8, &current, &previous),
+        &args,
+    )?;
+    assert!(
+        output.status.success(),
+        "PT-7-8 menu failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stdout.contains("8  季度涉农贷款修正及分地区核对"));
+    assert!(stdout.contains(r#""feature_id": "PT-7-8""#));
+    assert!(stdout.contains(r#""failed_regions": 1"#));
+    assert!(stdout.contains("上期文件缺少江门市分机构表"));
+    assert!(stderr.contains(r#""actual_engine":"calamine""#));
+    assert!(stderr.contains(r#""phase":"planning""#));
+    assert_eq!(fs::read(&current)?, current_before);
+    assert_eq!(fs::read(&previous)?, previous_before);
+
+    let history_path = find_file_recursively(&root.path().join("app/logs"), ".run.json")?
+        .context("PT-7-8 run history was not written")?;
+    let history_bytes = fs::read(history_path)?;
+    let history: Value = serde_json::from_slice(&history_bytes)?;
+    assert_eq!(history["feature_id"], "PT-7-8");
+    assert_eq!(history["summary_metrics"]["failed_regions"], 1);
+    assert_eq!(history["summary_metrics"]["consistent"], false);
+    let history_text = String::from_utf8_lossy(&history_bytes);
+    assert!(!history_text.contains("current.xlsx"));
+    assert!(!history_text.contains("江门市"));
+    Ok(())
+}
+
+#[test]
+fn interactive_rural_loan_menu_off_view_does_not_write_run_history() -> Result<()> {
+    let root = TestDirectory::new()?;
+    let config = create_config(root.path())?;
+    let (current, previous) = make_rural_loan_periods(root.path(), false, false)?;
+    let current_before = fs::read(&current)?;
+    let previous_before = fs::read(&previous)?;
+    let args = ["--log-view".to_owned(), "off".to_owned()];
+
+    let output = run_menu_with_arguments(
+        &config,
+        &rural_loan_menu_input(7, &current, &previous),
+        &args,
+    )?;
+    assert!(
+        output.status.success(),
+        "PT-7-7 off-view menu failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(String::from_utf8_lossy(&output.stdout).contains(r#""execution": "plan_only""#));
+    assert!(!String::from_utf8_lossy(&output.stderr).contains("phase"));
+    assert_eq!(fs::read(&current)?, current_before);
+    assert_eq!(fs::read(&previous)?, previous_before);
+    let log_dir = root.path().join("app/logs");
+    assert!(!log_dir.exists() || fs::read_dir(log_dir)?.next().is_none());
+    Ok(())
+}
+
+#[test]
+fn interactive_rural_loan_menu_executes_capability_and_safely_replaces_current_workbook(
+) -> Result<()> {
+    let root = TestDirectory::new()?;
+    let config = create_config(root.path())?;
+    let (current, previous) = make_rural_loan_periods(root.path(), false, true)?;
+    let capability_path = root.path().join("temporary-rural-loan-capability.json");
+    let candidate_for_capability = root.path().join("capability-candidate.xlsx");
+    let plan = build_rural_loan_plan(&current, &previous, &candidate_for_capability)?
+        .0
+        .plan
+        .context("PT-7-7 capability plan missing")?;
+    fs::write(
+        &capability_path,
+        serde_json::to_vec_pretty(&rural_loan_capability(&plan, "PT-7-7"))?,
+    )?;
+    let current_before = read_workbook(&current)?;
+    let previous_before = fs::read(&previous)?;
+    let current_bytes_before = fs::read(&current)?;
+    let original_book = excel_editor::open_xlsx(&current)?;
+    let original_bold = original_book
+        .sheet_by_name("惠州市涉农贷款分机构")?
+        .cell("D3")
+        .and_then(|cell| cell.style().font())
+        .is_some_and(|font| font.bold());
+    assert!(original_bold);
+
+    let output = run_menu_with_capability(
+        &config,
+        &rural_loan_menu_input(7, &current, &previous),
+        &capability_path,
+        "synthetic-pt-7-7-umya-menu-test",
+        "developer",
+    )?;
+    assert!(
+        output.status.success(),
+        "PT-7-7 capability menu failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stdout.contains("[执行模式]"));
+    assert!(stdout.contains(r#""operation": "replaced""#));
+    assert!(stderr.contains(r#""actual_engine":"umya_spreadsheet""#));
+    assert!(stderr.contains(r#""phase":"safe_commit""#));
+    assert_ne!(fs::read(&current)?, current_bytes_before);
+    assert_eq!(fs::read(&previous)?, previous_before);
+
+    let updated = read_workbook(&current)?;
+    assert_eq!(updated.sheets.len(), current_before.sheets.len());
+    for (before, after) in current_before.sheets.iter().zip(&updated.sheets) {
+        assert_eq!(before.name, after.name);
+        assert_eq!(before.formulas, after.formulas);
+        assert_eq!(before.merges, after.merges);
+        assert_eq!(before.comments, after.comments);
+        for (address, expected) in &before.values {
+            if before.name == "惠州市涉农贷款分机构" && address == "D3" {
+                continue;
+            }
+            assert_eq!(after.values.get(address), Some(expected), "{address}");
+        }
+    }
+    let adjusted_sheet = updated
+        .sheets
+        .iter()
+        .find(|sheet| sheet.name == "惠州市涉农贷款分机构")
+        .context("adjusted institution sheet missing")?;
+    let difference = adjusted_sheet.values["D3"]["value"]
+        .as_f64()
+        .context("adjusted difference is not numeric")?;
+    assert!((difference - 5.123456789).abs() <= 1e-15);
+    let updated_book = excel_editor::open_xlsx(&current)?;
+    let adjusted_sheet = updated_book.sheet_by_name("惠州市涉农贷款分机构")?;
+    let adjusted_bold = adjusted_sheet
+        .cell("D3")
+        .and_then(|cell| cell.style().font())
+        .is_some_and(|font| font.bold());
+    assert_eq!(adjusted_bold, original_bold);
+    assert!(adjusted_sheet
+        .merge_cells()
+        .iter()
+        .any(|range| range.range() == "G1:H1"));
+    assert!(adjusted_sheet
+        .comments()
+        .iter()
+        .any(|comment| comment.coordinate().to_string() == "E3"));
+
+    let history_path = find_file_recursively(&root.path().join("app/logs"), ".run.json")?
+        .context("PT-7-7 execution history was not written")?;
+    let history: Value = serde_json::from_slice(&fs::read(history_path)?)?;
+    assert!(history["actual_engines"].as_array().is_some_and(|engines| {
+        engines.iter().any(|engine| engine == "calamine")
+            && engines.iter().any(|engine| engine == "umya_spreadsheet")
+    }));
+    Ok(())
+}
+
+#[test]
+fn interactive_quarterly_rural_loan_menu_executes_capability_and_safely_replaces_current_workbook(
+) -> Result<()> {
+    let root = TestDirectory::new()?;
+    let config = create_config(root.path())?;
+    let (current, previous) = make_rural_loan_periods(root.path(), true, true)?;
+    let capability_path = root
+        .path()
+        .join("temporary-quarterly-rural-loan-capability.json");
+    let candidate_for_capability = root.path().join("quarterly-capability-candidate.xlsx");
+    let plan = build_quarterly_rural_loan_plan(&current, &previous, &candidate_for_capability)?
+        .0
+        .plan
+        .context("PT-7-8 capability plan missing")?;
+    fs::write(
+        &capability_path,
+        serde_json::to_vec_pretty(&rural_loan_capability(&plan, "PT-7-8"))?,
+    )?;
+    let current_before = read_workbook(&current)?;
+    let current_bytes_before = fs::read(&current)?;
+    let previous_before = fs::read(&previous)?;
+
+    let output = run_menu_with_capability(
+        &config,
+        &rural_loan_menu_input(8, &current, &previous),
+        &capability_path,
+        "synthetic-pt-7-8-umya-menu-test",
+        "developer",
+    )?;
+    assert!(
+        output.status.success(),
+        "PT-7-8 capability menu failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stdout.contains("[执行模式]"));
+    assert!(stdout.contains(r#""operation": "replaced""#));
+    assert!(
+        stdout.contains(r#""failed_regions": 1"#),
+        "quarterly summary metrics missing from output: {stdout}"
+    );
+    assert!(stderr.contains(r#""actual_engine":"umya_spreadsheet""#));
+    assert!(stderr.contains(r#""phase":"safe_commit""#));
+    assert_ne!(fs::read(&current)?, current_bytes_before);
+    assert_eq!(fs::read(&previous)?, previous_before);
+
+    let updated = read_workbook(&current)?;
+    assert_eq!(updated.sheets.len(), current_before.sheets.len());
+    for (before, after) in current_before.sheets.iter().zip(&updated.sheets) {
+        assert_eq!(before.name, after.name);
+        assert_eq!(before.formulas, after.formulas);
+        assert_eq!(before.merges, after.merges);
+        assert_eq!(before.comments, after.comments);
+        for (address, expected) in &before.values {
+            if before.name == "惠州市涉农贷款分机构" && address == "D3" {
+                continue;
+            }
+            assert_eq!(
+                after.values.get(address),
+                Some(expected),
+                "{}!{address}",
+                before.name
+            );
+        }
+    }
+    let hui_zhou_values = updated
+        .sheets
+        .iter()
+        .find(|sheet| sheet.name == "惠州市涉农贷款分机构")
+        .context("quarterly adjusted sheet missing")?;
+    let difference = hui_zhou_values.values["D3"]["value"]
+        .as_f64()
+        .context("quarterly adjustment is not numeric")?;
+    assert!((difference - 5.123456789).abs() <= 1e-15);
+    let updated_book = excel_editor::open_xlsx(&current)?;
+    let hui_zhou = updated_book.sheet_by_name("惠州市涉农贷款分机构")?;
+    assert!(hui_zhou
+        .cell("D3")
+        .and_then(|cell| cell.style().font())
+        .is_some_and(|font| font.bold()));
+    assert!(hui_zhou
+        .merge_cells()
+        .iter()
+        .any(|range| range.range() == "G1:H1"));
+    assert!(hui_zhou
+        .comments()
+        .iter()
+        .any(|comment| comment.coordinate().to_string() == "E3"));
+
+    let history_path = find_file_recursively(&root.path().join("app/logs"), ".run.json")?
+        .context("PT-7-8 execution history was not written")?;
+    let history: Value = serde_json::from_slice(&fs::read(history_path)?)?;
+    assert_eq!(history["feature_id"], "PT-7-8");
+    assert_eq!(history["summary_metrics"]["failed_regions"], 1);
+    assert!(history["actual_engines"].as_array().is_some_and(|engines| {
+        engines.iter().any(|engine| engine == "calamine")
+            && engines.iter().any(|engine| engine == "umya_spreadsheet")
+    }));
+    Ok(())
+}
+
 fn create_config(root: &Path) -> Result<PathBuf> {
     let app = root.join("app");
     let config = app.join("config/config.xlsx");
@@ -882,6 +1214,110 @@ fn create_config(root: &Path) -> Result<PathBuf> {
     }
     workbook.save(&config)?;
     Ok(config)
+}
+
+fn make_rural_loan_periods(
+    root: &Path,
+    quarterly: bool,
+    preserve_features: bool,
+) -> Result<(PathBuf, PathBuf)> {
+    let current = root.join("rural-current.xlsx");
+    let previous = root.join("rural-previous.xlsx");
+    make_rural_loan_workbook(&current, quarterly, true, preserve_features)?;
+    make_rural_loan_workbook(&previous, quarterly, false, false)?;
+    Ok((current, previous))
+}
+
+fn make_rural_loan_workbook(
+    path: &Path,
+    quarterly: bool,
+    current_period: bool,
+    preserve_features: bool,
+) -> Result<()> {
+    let mut workbook = Workbook::new();
+    let regions = if quarterly && current_period {
+        vec![
+            ("惠州市", "甲行", 14.123456789, 9.0),
+            ("江门市", "江门行", 8.0, 4.0),
+        ]
+    } else {
+        vec![("惠州市", "甲行", 14.123456789, 9.0)]
+    };
+    for (region, institution, current_balance, previous_balance) in &regions {
+        let sheet = workbook.add_worksheet();
+        sheet.set_name(format!("{region}涉农贷款分机构"))?;
+        for row in 0..2 {
+            sheet.write_string(row, 0, "序号")?;
+            sheet.write_string(row, 1, "机构名称")?;
+            sheet.write_string(row, 2, "涉农贷款余额")?;
+            sheet.write_string(row, 3, "比上月")?;
+        }
+        sheet.write_number(2, 0, 1.0)?;
+        sheet.write_string(2, 1, *institution)?;
+        let balance = if current_period {
+            *current_balance
+        } else {
+            *previous_balance
+        };
+        sheet.write_number(2, 2, balance)?;
+        if preserve_features && *region == "惠州市" {
+            sheet.write_number_with_format(
+                2,
+                3,
+                999.0,
+                &rust_xlsxwriter::Format::new().set_bold(),
+            )?;
+            sheet.insert_note(2, 4, &rust_xlsxwriter::Note::new("保留批注"))?;
+            sheet.write_formula(2, 5, "=C3*2")?;
+            sheet.merge_range(
+                0,
+                6,
+                0,
+                7,
+                "合并标题",
+                &rust_xlsxwriter::Format::new().set_bold(),
+            )?;
+            sheet.set_row_height(8, 21.0)?;
+        } else {
+            sheet.write_number(2, 3, 999.0)?;
+        }
+    }
+
+    let area = workbook.add_worksheet();
+    area.set_name(if quarterly {
+        "涉农贷款分地区统计表"
+    } else {
+        "本外币涉农贷款分地区"
+    })?;
+    area.write_string(0, 0, "地区")?;
+    area.write_string(0, 1, "涉农贷款比上月")?;
+    for (index, (region, _, current_balance, previous_balance)) in regions.iter().enumerate() {
+        area.write_string((index + 1) as u32, 0, *region)?;
+        let difference = if *region == "江门市" {
+            4.0
+        } else {
+            current_balance - previous_balance
+        };
+        area.write_number((index + 1) as u32, 1, difference)?;
+    }
+
+    if preserve_features {
+        let untouched = workbook.add_worksheet();
+        untouched.set_name("非目标工作表")?;
+        untouched.write_string(0, 0, "保持不变")?;
+        untouched.write_formula(1, 0, "='惠州市涉农贷款分机构'!C3")?;
+        untouched.merge_range(
+            3,
+            0,
+            3,
+            1,
+            "非目标合并区域",
+            &rust_xlsxwriter::Format::new(),
+        )?;
+        untouched.insert_note(0, 2, &rust_xlsxwriter::Note::new("非目标批注"))?;
+    }
+    workbook.save(path)?;
+    Ok(())
 }
 
 fn make_village_period(path: &Path, current: bool) -> Result<()> {
@@ -976,6 +1412,38 @@ fn institution_normalize_capability(plan: &excel_editor::ExcelEditPlan) -> Backe
             platform: "synthetic-pt-7-2-menu-test".to_owned(),
         }),
     }
+}
+
+fn rural_loan_capability(
+    plan: &excel_editor::ExcelEditPlan,
+    feature_id: &str,
+) -> BackendCapability {
+    let evidence_id = feature_id.to_ascii_lowercase();
+    let platform = format!("synthetic-{evidence_id}-umya-menu-test");
+    BackendCapability {
+        engine: EngineId::UmyaSpreadsheet,
+        status: CapabilityStatus::Passed,
+        format: plan.format,
+        operations: plan.operations.iter().map(EditOperation::kind).collect(),
+        supported_features: plan.workbook.features_present.clone(),
+        preserved: plan.preserve.clone(),
+        platform: platform.clone(),
+        evidence: Some(CapabilityEvidence {
+            sample_id: format!("synthetic-{evidence_id}-rural-loan-menu"),
+            report_path: "pytools-core/tests/batch_tools_menu_cli.rs".to_owned(),
+            adapter_version: "umya-spreadsheet-3.1.1".to_owned(),
+            engine_version: "umya-spreadsheet-3.1.1".to_owned(),
+            platform,
+        }),
+    }
+}
+
+fn rural_loan_menu_input(choice: u8, current: &Path, previous: &Path) -> String {
+    format!(
+        "7\n{choice}\n{}\n{}\n0\n0\n",
+        current.display(),
+        previous.display()
+    )
 }
 
 fn village_menu_input(current: &Path, previous: &Path, target: &Path) -> String {

@@ -216,7 +216,7 @@ where
         writeln!(output, "  3  打印工具（生成页面设置计划）")?;
         writeln!(output, "  4  转换与文件命名工具")?;
         writeln!(output, "  6  汇总工具")?;
-        writeln!(output, "  7  一二批处理工具（当前接入 7-1 至 7-6）")?;
+        writeln!(output, "  7  一二批处理工具（当前接入 7-1 至 7-8）")?;
         writeln!(output, "  0  退出")?;
         writeln!(output, "==============================")?;
         let Some(choice) = read_menu_choice(input, output, "主菜单选择> ")? else {
@@ -876,6 +876,11 @@ where
         )?;
         writeln!(output, "  5  地区总分校验（读取并生成核对结果）")?;
         writeln!(output, "  6  工作表数据提取（普通无批注版）")?;
+        writeln!(output, "  7  涉农贷款比上月修正（计划/能力门控执行）")?;
+        writeln!(
+            output,
+            "  8  季度涉农贷款修正及分地区核对（计划/能力门控执行）"
+        )?;
         writeln!(output, "  0  返回")?;
         writeln!(output, "----------------------------")?;
         let Some(choice) = read_menu_choice(input, output, "子菜单选择> ")? else {
@@ -1348,8 +1353,70 @@ where
                 run_extract_sheets(arguments)?;
                 return Ok(());
             }
+            "7" | "8" => {
+                let quarterly = choice == "8";
+                let feature_id = if quarterly { "PT-7-8" } else { "PT-7-7" };
+                let operation = if quarterly {
+                    "季度涉农贷款比上月修正及分地区核对"
+                } else {
+                    "涉农贷款比上月修正"
+                };
+                let current_title = if quarterly {
+                    "选择本期季度涉农贷款工作簿"
+                } else {
+                    "选择本期涉农贷款工作簿"
+                };
+                let previous_title = if quarterly {
+                    "选择上期季度涉农贷款工作簿"
+                } else {
+                    "选择上期涉农贷款工作簿"
+                };
+                let Some(current) = choose_single_rural_loan_workbook(
+                    current_title,
+                    feature_id,
+                    input,
+                    output,
+                    allow_native_dialog,
+                )?
+                else {
+                    writeln!(output, "[已取消] 未选择本期工作簿。")?;
+                    return Ok(());
+                };
+                let Some(previous) = choose_single_rural_loan_workbook(
+                    previous_title,
+                    feature_id,
+                    input,
+                    output,
+                    allow_native_dialog,
+                )?
+                else {
+                    writeln!(output, "[已取消] 未选择上期工作簿。")?;
+                    return Ok(());
+                };
+                if capabilities.is_none() {
+                    writeln!(
+                        output,
+                        "[计划模式] {operation} 将生成 ExcelEditPlan；本期工作簿不会修改。"
+                    )?;
+                } else {
+                    writeln!(
+                        output,
+                        "[执行模式] {operation} 将经 ExcelModifier 验证候选，再安全替换本期工作簿；提交失败会恢复原文件。"
+                    )?;
+                }
+                run_rural_loan_menu(
+                    &current,
+                    &previous,
+                    global,
+                    log_view,
+                    capabilities,
+                    platform,
+                    quarterly,
+                )?;
+                return Ok(());
+            }
             "0" => return Ok(()),
-            _ => writeln!(output, "仅接受 1、2、3、4、5、6 或 0")?,
+            _ => writeln!(output, "仅接受 1、2、3、4、5、6、7、8 或 0")?,
         }
     }
 }
@@ -1433,6 +1500,50 @@ where
         writeln!(
             output,
             "[跳过] {}：PT-7-1 当前只接受 .xlsx；未验收的格式请勿直接修改。",
+            path.display()
+        )?;
+        return Ok(None);
+    }
+    Ok(Some(path))
+}
+
+fn choose_single_rural_loan_workbook<R, W>(
+    title: &str,
+    feature_id: &str,
+    input: &mut R,
+    output: &mut W,
+    allow_native_dialog: bool,
+) -> Result<Option<PathBuf>>
+where
+    R: BufRead,
+    W: Write,
+{
+    let Some(mut selected) = choose_input_paths(
+        title,
+        false,
+        NativeFileFilter::XlsxOnly,
+        input,
+        output,
+        allow_native_dialog,
+    )?
+    else {
+        return Ok(None);
+    };
+    if selected.len() != 1 {
+        writeln!(
+            output,
+            "[提示] {feature_id} 此步骤需要且只需要一个 .xlsx 工作簿。"
+        )?;
+        return Ok(None);
+    }
+    let path = selected.remove(0);
+    if !path
+        .extension()
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("xlsx"))
+    {
+        writeln!(
+            output,
+            "[跳过] {}：{feature_id} 当前只接受 .xlsx；请先显式转换，未验收格式不执行修改。",
             path.display()
         )?;
         return Ok(None);
@@ -3522,6 +3633,576 @@ fn foreign_bank_copy_path(input: &Path) -> Result<PathBuf> {
     file_name.push("(金融局).");
     file_name.push(extension);
     Ok(input.with_file_name(file_name))
+}
+
+#[derive(Clone, Debug, serde::Serialize)]
+struct RuralLoanMenuProgress {
+    total_inputs: usize,
+    processed_inputs: usize,
+    completed_inputs: usize,
+    matched_entities: usize,
+    failed_regions: usize,
+}
+
+#[derive(Clone, Debug, serde::Serialize)]
+struct RuralLoanMenuEvent {
+    sequence: usize,
+    timestamp: String,
+    feature_id: String,
+    phase: String,
+    status: String,
+    user_message: String,
+    progress: RuralLoanMenuProgress,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stage_elapsed_ms: Option<u128>,
+    total_elapsed_ms: u128,
+    components: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    actual_engine: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error_type: Option<String>,
+}
+
+fn new_rural_loan_menu_event(
+    run_started: &Instant,
+    feature_id: &str,
+    phase: &str,
+    status: &str,
+    user_message: impl Into<String>,
+    progress: &RuralLoanMenuProgress,
+    stage_elapsed_ms: Option<u128>,
+    components: &[&str],
+    actual_engine: Option<&str>,
+    error_type: Option<&str>,
+) -> RuralLoanMenuEvent {
+    RuralLoanMenuEvent {
+        sequence: 0,
+        timestamp: Local::now().to_rfc3339(),
+        feature_id: feature_id.to_owned(),
+        phase: phase.to_owned(),
+        status: status.to_owned(),
+        user_message: user_message.into(),
+        progress: progress.clone(),
+        stage_elapsed_ms,
+        total_elapsed_ms: run_started.elapsed().as_millis(),
+        components: components
+            .iter()
+            .map(|component| (*component).to_owned())
+            .collect(),
+        actual_engine: actual_engine.map(str::to_owned),
+        error_type: error_type.map(str::to_owned),
+    }
+}
+
+fn emit_rural_loan_menu_event(
+    log_view: &str,
+    events: &mut Vec<RuralLoanMenuEvent>,
+    mut event: RuralLoanMenuEvent,
+) {
+    if log_view == "off" {
+        return;
+    }
+    event.sequence = events.len() + 1;
+    match log_view {
+        "user" => eprintln!("{}", event.user_message),
+        "developer" => match serde_json::to_string(&event) {
+            Ok(encoded) => eprintln!("{encoded}"),
+            Err(_) => {
+                eprintln!("{{\"phase\":\"progress_event\",\"status\":\"serialization_failed\"}}")
+            }
+        },
+        _ => unreachable!("log view validated before event emission"),
+    }
+    events.push(event);
+}
+
+fn rural_loan_output_metrics(summary: &serde_json::Value, quarterly: bool) -> (usize, usize, bool) {
+    if quarterly {
+        let regions = summary
+            .get("regions")
+            .and_then(serde_json::Value::as_array)
+            .map(Vec::as_slice)
+            .unwrap_or_default();
+        let failed_regions = regions
+            .iter()
+            .filter(|region| !region.get("error").is_none_or(serde_json::Value::is_null))
+            .count();
+        (
+            summary
+                .get("matched")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or_default() as usize,
+            failed_regions,
+            summary
+                .get("consistent")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false),
+        )
+    } else {
+        (
+            summary
+                .get("matched")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or_default() as usize,
+            0,
+            summary
+                .get("consistent")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false),
+        )
+    }
+}
+
+fn rural_loan_paths_equal(left: &Path, right: &Path) -> Result<bool> {
+    let left = fs::canonicalize(left)
+        .with_context(|| format!("resolve current workbook path {}", left.display()))?;
+    let right_parent = right.parent().unwrap_or_else(|| Path::new("."));
+    let right_parent = fs::canonicalize(right_parent)
+        .with_context(|| format!("resolve output directory {}", right_parent.display()))?;
+    let right_name = right
+        .file_name()
+        .context("candidate workbook path has no file name")?;
+    let right = right_parent.join(right_name);
+    #[cfg(windows)]
+    {
+        Ok(left
+            .to_string_lossy()
+            .eq_ignore_ascii_case(&right.to_string_lossy()))
+    }
+    #[cfg(not(windows))]
+    {
+        Ok(left == right)
+    }
+}
+
+fn run_rural_loan_menu(
+    current: &Path,
+    previous: &Path,
+    global: &GlobalConfig,
+    log_view: &str,
+    capabilities: Option<&Path>,
+    platform: Option<&str>,
+    quarterly: bool,
+) -> Result<()> {
+    let (feature_id, function_name, suffix, operation_name) = if quarterly {
+        (
+            "PT-7-8",
+            "quarterly-rural-loan-plan",
+            "quarterly_rural_loan",
+            "季度涉农贷款修正及分地区核对",
+        )
+    } else {
+        (
+            "PT-7-7",
+            "rural-loan-plan",
+            "rural_loan",
+            "涉农贷款比上月修正",
+        )
+    };
+    anyhow::ensure!(
+        matches!(log_view, "user" | "developer" | "off"),
+        "--log-view must be user, developer, or off"
+    );
+    anyhow::ensure!(
+        capabilities.is_some() == platform.is_some(),
+        "--capabilities and --platform must be provided together"
+    );
+    anyhow::ensure!(
+        current
+            .extension()
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("xlsx")),
+        "{feature_id} current-period input currently supports .xlsx only"
+    );
+    anyhow::ensure!(
+        previous
+            .extension()
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("xlsx")),
+        "{feature_id} prior-period input currently supports .xlsx only"
+    );
+
+    let run_started = Instant::now();
+    let started_at = Local::now().to_rfc3339();
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or_default();
+    let run_id = format!(
+        "pytools-{}-{}-{nonce}",
+        feature_id.to_ascii_lowercase(),
+        std::process::id()
+    );
+    let mut events = Vec::<RuralLoanMenuEvent>::new();
+    let mut progress = RuralLoanMenuProgress {
+        total_inputs: 2,
+        processed_inputs: 0,
+        completed_inputs: 0,
+        matched_entities: 0,
+        failed_regions: 0,
+    };
+    emit_rural_loan_menu_event(
+        log_view,
+        &mut events,
+        new_rural_loan_menu_event(
+            &run_started,
+            feature_id,
+            "planning",
+            "started",
+            format!("正在读取本期和上期工作簿并执行{operation_name}"),
+            &progress,
+            None,
+            &["Rust", "pytools-core", "excel-reader", "calamine"],
+            None,
+            None,
+        ),
+    );
+
+    let mut phase = "planning";
+    let mut phase_started = Instant::now();
+    let mut safe_summary = None::<serde_json::Value>;
+    let result = (|| -> Result<serde_json::Value> {
+        fs::create_dir_all(&global.output_dir)
+            .with_context(|| format!("create output directory {}", global.output_dir.display()))?;
+        let candidate = unique_workbook_candidate(current, &global.output_dir, suffix);
+        anyhow::ensure!(
+            !rural_loan_paths_equal(current, &candidate)?,
+            "candidate output must not be the current-period workbook"
+        );
+        let plan_dir =
+            unique_menu_action_dir(&global.output_dir.join("plans").join(feature_id), "run");
+        fs::create_dir_all(&plan_dir)
+            .with_context(|| format!("create plan directory {}", plan_dir.display()))?;
+        let plan_path = plan_dir.join("rural-loan-adjustment.plan.json");
+        let expected_target_hash = if capabilities.is_some() {
+            Some(sha256_file(current)?)
+        } else {
+            None
+        };
+
+        phase_started = Instant::now();
+        let (report, summary) = if quarterly {
+            let (report, summary) = build_quarterly_rural_loan_plan(current, previous, &candidate)?;
+            (report, serde_json::to_value(summary)?)
+        } else {
+            let (report, summary) = build_rural_loan_plan(current, previous, &candidate)?;
+            (report, serde_json::to_value(summary)?)
+        };
+        if let Some(expected_hash) = expected_target_hash.as_deref() {
+            verify_planning_snapshot(current, Some(expected_hash))?;
+        }
+        let (matched_entities, failed_regions, consistent) =
+            rural_loan_output_metrics(&summary, quarterly);
+        let summary_metrics = serde_json::json!({
+            "matched_entities": matched_entities,
+            "failed_regions": failed_regions,
+            "consistent": consistent
+        });
+        safe_summary = Some(summary_metrics.clone());
+        progress.processed_inputs = 2;
+        progress.completed_inputs = 2;
+        progress.matched_entities = matched_entities;
+        progress.failed_regions = failed_regions;
+        let plan_elapsed_ms = phase_started.elapsed().as_millis();
+        let plan_file = if let Some(plan) = report.plan.as_ref() {
+            write_json_report_create_new(&plan_path, plan)?;
+            Some(plan_path.clone())
+        } else {
+            None
+        };
+        emit_rural_loan_menu_event(
+            log_view,
+            &mut events,
+            new_rural_loan_menu_event(
+                &run_started,
+                feature_id,
+                "planning",
+                "completed",
+                if quarterly {
+                    format!(
+                        "季度计算完成：地区 {} 个、匹配机构 {} 个；{}",
+                        summary["regions"].as_array().map_or(0, Vec::len),
+                        matched_entities,
+                        if consistent {
+                            "汇总一致"
+                        } else {
+                            "存在差异或地区错误"
+                        }
+                    )
+                } else {
+                    format!(
+                        "计算完成：匹配机构 {} 个；{}",
+                        matched_entities,
+                        if consistent {
+                            "分地区总数一致"
+                        } else {
+                            "分地区总数不一致"
+                        }
+                    )
+                },
+                &progress,
+                Some(plan_elapsed_ms),
+                &["Rust", "pytools-core", "excel-reader", "calamine"],
+                Some("calamine"),
+                None,
+            ),
+        );
+
+        let mut execution = serde_json::json!("no_changes");
+        let mut target_commit = None::<serde_json::Value>;
+        if let Some(plan) = report.plan.as_ref() {
+            match (capabilities, platform) {
+                (Some(capabilities), Some(platform)) => {
+                    phase = "engine_execution";
+                    phase_started = Instant::now();
+                    emit_rural_loan_menu_event(
+                        log_view,
+                        &mut events,
+                        new_rural_loan_menu_event(
+                            &run_started,
+                            feature_id,
+                            "engine_execution",
+                            "started",
+                            "正在通过 ExcelModifier 生成并校验候选工作簿",
+                            &progress,
+                            None,
+                            &["Rust", "pytools-core", "excel-editor", "ExcelModifier"],
+                            None,
+                            None,
+                        ),
+                    );
+                    let edit_result = apply_plan_with_capability_file(plan, capabilities, platform)
+                        .context("stage=excel_modifier")?;
+                    execution = serde_json::to_value(&edit_result)?;
+                    let actual_engine = edit_result.engine.to_string();
+                    emit_rural_loan_menu_event(
+                        log_view,
+                        &mut events,
+                        new_rural_loan_menu_event(
+                            &run_started,
+                            feature_id,
+                            "engine_execution",
+                            "completed",
+                            "候选工作簿已生成并通过 ExcelModifier 校验",
+                            &progress,
+                            Some(phase_started.elapsed().as_millis()),
+                            &["Rust", "pytools-core", "excel-editor", "ExcelModifier"],
+                            Some(&actual_engine),
+                            None,
+                        ),
+                    );
+
+                    phase = "safe_commit";
+                    phase_started = Instant::now();
+                    emit_rural_loan_menu_event(
+                        log_view,
+                        &mut events,
+                        new_rural_loan_menu_event(
+                            &run_started,
+                            feature_id,
+                            "safe_commit",
+                            "started",
+                            "正在按计划快照安全更新本期工作簿",
+                            &progress,
+                            None,
+                            &["Rust", "pytools-core"],
+                            None,
+                            None,
+                        ),
+                    );
+                    let expected_hash = expected_target_hash
+                        .as_deref()
+                        .context("missing current-period planning snapshot")?;
+                    let commit = replace_target_from_candidate(&candidate, current, expected_hash)
+                        .context("stage=target_commit")?;
+                    target_commit = Some(serde_json::to_value(commit)?);
+                    emit_rural_loan_menu_event(
+                        log_view,
+                        &mut events,
+                        new_rural_loan_menu_event(
+                            &run_started,
+                            feature_id,
+                            "safe_commit",
+                            "completed",
+                            "本期工作簿已安全更新，目标快照校验通过",
+                            &progress,
+                            Some(phase_started.elapsed().as_millis()),
+                            &["Rust", "pytools-core"],
+                            None,
+                            None,
+                        ),
+                    );
+                }
+                _ => {
+                    execution = serde_json::json!("plan_only");
+                    emit_rural_loan_menu_event(
+                        log_view,
+                        &mut events,
+                        new_rural_loan_menu_event(
+                            &run_started,
+                            feature_id,
+                            "engine_execution",
+                            "skipped",
+                            "未提供匹配的修改能力；计划已保存，本期工作簿未修改",
+                            &progress,
+                            None,
+                            &["Rust", "pytools-core"],
+                            None,
+                            None,
+                        ),
+                    );
+                }
+            }
+        } else {
+            emit_rural_loan_menu_event(
+                log_view,
+                &mut events,
+                new_rural_loan_menu_event(
+                    &run_started,
+                    feature_id,
+                    "engine_execution",
+                    "skipped",
+                    "没有需要写入的单元格；本期工作簿未修改",
+                    &progress,
+                    None,
+                    &["Rust", "pytools-core"],
+                    None,
+                    None,
+                ),
+            );
+        }
+
+        emit_rural_loan_menu_event(
+            log_view,
+            &mut events,
+            new_rural_loan_menu_event(
+                &run_started,
+                feature_id,
+                "completed",
+                "succeeded",
+                format!(
+                    "{operation_name}处理完成，总耗时 {} ms",
+                    run_started.elapsed().as_millis()
+                ),
+                &progress,
+                Some(run_started.elapsed().as_millis()),
+                &["Rust", "pytools-core"],
+                None,
+                None,
+            ),
+        );
+
+        Ok(serde_json::json!({
+            "feature_id": feature_id,
+            "function": function_name,
+            "matched_sheets": report.matched_sheets,
+            "changed_cells": report.changed_cells,
+            "warnings": report.warnings,
+            "candidate": candidate,
+            "plan_file": plan_file,
+            "summary_metrics": summary_metrics,
+            "summary": summary,
+            "execution": execution,
+            "target_commit": target_commit
+        }))
+    })();
+
+    if result.is_err() && log_view != "off" {
+        let error_type = match phase {
+            "engine_execution" => "excel_modifier_error",
+            "safe_commit" => "target_commit_error",
+            _ => "rural_loan_planning_error",
+        };
+        emit_rural_loan_menu_event(
+            log_view,
+            &mut events,
+            new_rural_loan_menu_event(
+                &run_started,
+                feature_id,
+                phase,
+                "failed",
+                "涉农贷款处理失败；请查看运行记录中的错误阶段",
+                &progress,
+                Some(phase_started.elapsed().as_millis()),
+                &["Rust", "pytools-core"],
+                None,
+                Some(error_type),
+            ),
+        );
+    }
+
+    let run_log_path = if log_view == "off" {
+        None
+    } else {
+        let mut actual_engines = Vec::<String>::new();
+        for engine in events
+            .iter()
+            .filter_map(|event| event.actual_engine.as_ref())
+        {
+            if !actual_engines.contains(engine) {
+                actual_engines.push(engine.clone());
+            }
+        }
+        let failure = result.as_ref().err().map(|_| {
+            serde_json::json!({
+                "phase": phase,
+                "error_type": events.last().and_then(|event| event.error_type.as_deref()).unwrap_or("rural_loan_error")
+            })
+        });
+        let history = serde_json::json!({
+            "schema_version": 1,
+            "product": "pytools",
+            "feature_id": feature_id,
+            "function": function_name,
+            "run_id": run_id,
+            "started_at": started_at,
+            "status": if result.is_err() { "failed" } else { "succeeded" },
+            "total_inputs": 2,
+            "completed_inputs": progress.completed_inputs,
+            "failed_inputs": if result.is_err() { 1 } else { 0 },
+            "summary_metrics": safe_summary,
+            "actual_engines": actual_engines,
+            "failure": failure,
+            "elapsed_ms": run_started.elapsed().as_millis(),
+            "events": events
+        });
+        let path = global
+            .log_dir
+            .join(format!("{feature_id}_{run_id}.run.json"));
+        match write_json_report_create_new(&path, &history) {
+            Ok(()) => Some(path),
+            Err(error) => {
+                eprintln!("pytools: warning: could not save {feature_id} run history: {error:#}");
+                None
+            }
+        }
+    };
+
+    match result {
+        Ok(mut result) => {
+            if log_view != "off" {
+                result["run_id"] = serde_json::Value::String(run_id);
+                if let Some(path) = run_log_path {
+                    result["run_log_path"] = serde_json::Value::String(path.display().to_string());
+                    if log_view == "user" {
+                        eprintln!("运行记录已保存：{}", path.display());
+                    }
+                }
+            }
+            println!("{}", serde_json::to_string_pretty(&result)?);
+            Ok(())
+        }
+        Err(error) => {
+            if log_view == "user" {
+                if let Some(path) = run_log_path {
+                    eprintln!("运行记录已保存：{}", path.display());
+                }
+                Err(anyhow::anyhow!(
+                    "涉农贷款处理失败；请查看运行记录中的错误阶段。"
+                ))
+            } else {
+                Err(error)
+            }
+        }
+    }
 }
 
 fn run_rural_loan_plan(arguments: Vec<String>) -> Result<()> {
@@ -6111,7 +6792,7 @@ fn print_usage() {
     eprintln!(
         "Usage:\n\
          pytools [menu] [--config <config.xlsx>] [--log-view user|developer|off] [--capabilities <json> --platform <id>]\n\
-         no command opens the migrated menu; available categories: 1 (timeline 1/3/4/5), 2 (dedup 1-6), 3 (print 1-4), 4 (conversion and file naming 1-10), 6 (summary 1/2), and 7 (batch 7-1/7-6)\n\
+         no command opens the migrated menu; available categories: 1 (timeline 1/3/4/5), 2 (dedup 1-6), 3 (print 1-4), 4 (conversion and file naming 1-10), 6 (summary 1/2), and 7 (batch 7-1/7-8)\n\
          timeline-precheck --config <workbook.xlsx>\n\
          timeline-compare --config <workbook.xlsx> --template <workbook.xlsx> <source.xlsx>...\n\
          wide-summary --config <workbook.xlsx> <source.xlsx>...\n\
