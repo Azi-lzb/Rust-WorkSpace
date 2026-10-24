@@ -57,6 +57,239 @@ pub struct FormulaCachePatchReport {
     pub package_parts: usize,
 }
 
+/// Calculation flags stored in the workbook's `calcPr` element. `None`
+/// means the caller does not request a change to that attribute.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct WorkbookCalculationProperties {
+    pub full_calc_on_load: Option<bool>,
+    pub force_full_calc: Option<bool>,
+}
+
+/// Read the explicit workbook calculation flags. `None` means the attribute
+/// is absent (which is distinct from an explicit `false`).
+pub fn read_workbook_calculation_properties(
+    path: impl AsRef<Path>,
+) -> Result<WorkbookCalculationProperties> {
+    let path = path.as_ref();
+    let mut zip = ZipArchive::new(fs::File::open(path)?)?;
+    let workbook_part = workbook_part_from_zip(&mut zip)?;
+    let xml = read_zip_part(&mut zip, &workbook_part)?;
+    let document = Document::parse(std::str::from_utf8(&xml)?)?;
+    let workbook = document.root_element();
+    let calc_prs = workbook
+        .children()
+        .filter(|node| {
+            node.is_element()
+                && node.tag_name().namespace() == Some(MAIN_NS)
+                && node.tag_name().name() == "calcPr"
+        })
+        .collect::<Vec<_>>();
+    ensure!(
+        calc_prs.len() <= 1,
+        "workbook contains duplicate calcPr elements"
+    );
+    let Some(calc_pr) = calc_prs.first() else {
+        return Ok(WorkbookCalculationProperties::default());
+    };
+    Ok(WorkbookCalculationProperties {
+        full_calc_on_load: calc_pr
+            .attribute("fullCalcOnLoad")
+            .map(parse_xml_bool)
+            .transpose()?,
+        force_full_calc: calc_pr
+            .attribute("forceFullCalc")
+            .map(parse_xml_bool)
+            .transpose()?,
+    })
+}
+
+/// Write an XLSX candidate with targeted updates to workbook calculation flags.
+/// The source remains untouched and an existing output is rejected. All
+/// package parts except the workbook part are copied without XML modification.
+pub fn patch_workbook_calculation_properties(
+    source: impl AsRef<Path>,
+    output: impl AsRef<Path>,
+    requested: WorkbookCalculationProperties,
+) -> Result<()> {
+    let source = source.as_ref();
+    let output = output.as_ref();
+    ensure!(
+        requested.full_calc_on_load.is_some() || requested.force_full_calc.is_some(),
+        "calculation-property patch must request at least one attribute"
+    );
+    let canonical_source = fs::canonicalize(source).context("resolve source workbook")?;
+    ensure!(
+        source != output && (!output.exists() || fs::canonicalize(output)? != canonical_source),
+        "calculation-property patch requires a distinct output path"
+    );
+    ensure!(
+        !output.exists(),
+        "calculation-property patch refuses to overwrite an existing output"
+    );
+
+    let mut input_zip = ZipArchive::new(fs::File::open(source)?)?;
+    let workbook_part = workbook_part_from_zip(&mut input_zip)?;
+    let original = read_zip_part(&mut input_zip, &workbook_part)?;
+    let patched = patch_calc_pr_xml(&original, requested)?;
+    let parent = output.parent().filter(|p| !p.as_os_str().is_empty());
+    if let Some(parent) = parent {
+        fs::create_dir_all(parent)?;
+    }
+    let mut created = false;
+    let result = (|| -> Result<()> {
+        let file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(output)?;
+        created = true;
+        let mut writer = ZipWriter::new(file);
+        for index in 0..input_zip.len() {
+            let mut entry = input_zip.by_index(index)?;
+            let name = entry.name().to_owned();
+            let mut options = SimpleFileOptions::default().compression_method(entry.compression());
+            if let Some(modified) = entry.last_modified() {
+                options = options.last_modified_time(modified);
+            }
+            if entry.is_dir() {
+                writer.add_directory(name, options)?;
+                continue;
+            }
+            writer.start_file(&name, options)?;
+            if name == workbook_part {
+                writer.write_all(&patched)?;
+            } else {
+                std::io::copy(&mut entry, &mut writer)?;
+            }
+        }
+        writer.finish()?;
+        let readback = read_workbook_calculation_properties(output)?;
+        ensure!(
+            requested
+                .full_calc_on_load
+                .is_none_or(|v| readback.full_calc_on_load == Some(v)),
+            "fullCalcOnLoad readback mismatch"
+        );
+        ensure!(
+            requested
+                .force_full_calc
+                .is_none_or(|v| readback.force_full_calc == Some(v)),
+            "forceFullCalc readback mismatch"
+        );
+        Ok(())
+    })();
+    if result.is_err() && created {
+        let _ = fs::remove_file(output);
+    }
+    result
+}
+
+fn parse_xml_bool(value: &str) -> Result<bool> {
+    match value {
+        "1" | "true" => Ok(true),
+        "0" | "false" => Ok(false),
+        _ => bail!("invalid OOXML boolean {value:?}"),
+    }
+}
+
+fn workbook_part_from_zip(zip: &mut ZipArchive<fs::File>) -> Result<String> {
+    let root_rels_xml = read_zip_part(zip, "_rels/.rels")?;
+    let root_rels = Document::parse(std::str::from_utf8(&root_rels_xml)?)?;
+    let target = root_rels
+        .descendants()
+        .find(|node| {
+            node.is_element()
+                && node.tag_name().namespace() == Some(PACKAGE_REL_NS)
+                && node.tag_name().name() == "Relationship"
+                && node
+                    .attribute("Type")
+                    .is_some_and(|kind| kind.ends_with("/officeDocument"))
+                && !node
+                    .attribute("TargetMode")
+                    .is_some_and(|mode| mode.eq_ignore_ascii_case("External"))
+        })
+        .and_then(|node| node.attribute("Target"))
+        .context("package relationships do not identify an internal workbook part")?;
+    Ok(normalize_part("", target))
+}
+
+fn patch_calc_pr_xml(xml: &[u8], requested: WorkbookCalculationProperties) -> Result<Vec<u8>> {
+    let document = Document::parse(std::str::from_utf8(xml)?)?;
+    let root = document.root_element();
+    ensure!(
+        root.tag_name().namespace() == Some(MAIN_NS) && root.tag_name().name() == "workbook",
+        "workbook part has an unexpected root element"
+    );
+    let calc_prs = root
+        .children()
+        .filter(|node| {
+            node.is_element()
+                && node.tag_name().namespace() == Some(MAIN_NS)
+                && node.tag_name().name() == "calcPr"
+        })
+        .collect::<Vec<_>>();
+    ensure!(
+        calc_prs.len() <= 1,
+        "workbook contains duplicate calcPr elements"
+    );
+    if let Some(calc_pr) = calc_prs.first() {
+        let mut edits = Vec::new();
+        if let Some(value) = requested.full_calc_on_load {
+            edits.push(attribute_update(
+                xml,
+                *calc_pr,
+                "fullCalcOnLoad",
+                if value { "1" } else { "0" },
+            )?);
+        }
+        if let Some(value) = requested.force_full_calc {
+            edits.push(attribute_update(
+                xml,
+                *calc_pr,
+                "forceFullCalc",
+                if value { "1" } else { "0" },
+            )?);
+        }
+        return apply_xml_edits(xml, edits);
+    }
+    let qname = child_qname(xml, root, "calcPr");
+    let mut attributes = String::new();
+    if let Some(value) = requested.full_calc_on_load {
+        attributes.push_str(&format!(
+            " fullCalcOnLoad=\"{}\"",
+            if value { "1" } else { "0" }
+        ));
+    }
+    if let Some(value) = requested.force_full_calc {
+        attributes.push_str(&format!(
+            " forceFullCalc=\"{}\"",
+            if value { "1" } else { "0" }
+        ));
+    }
+    let element = format!("<{qname}{attributes}/>");
+    let insertion = root
+        .children()
+        .filter(|node| {
+            node.is_element()
+                && node.tag_name().namespace() == Some(MAIN_NS)
+                && matches!(
+                    node.tag_name().name(),
+                    "oleSize"
+                        | "customWorkbookViews"
+                        | "pivotCaches"
+                        | "smartTagPr"
+                        | "smartTagTypes"
+                        | "webPublishing"
+                        | "fileRecoveryPr"
+                        | "webPublishObjects"
+                        | "extLst"
+                )
+        })
+        .map(|node| node.range().start)
+        .min()
+        .unwrap_or(closing_tag_start(xml, root.range())?);
+    apply_xml_edits(xml, vec![(insertion..insertion, element.into_bytes())])
+}
+
 /// The three worksheet header variants stored in a SpreadsheetML worksheet.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
 pub enum HeaderVariant {
@@ -2152,6 +2385,436 @@ mod outline_copy_tests {
                 (5, 5, None, Some("10".to_owned())),
             ]
         );
+
+        fs::remove_file(source)?;
+        fs::remove_file(output)?;
+        Ok(())
+    }
+}
+#[cfg(test)]
+mod calculation_properties_tests {
+    use super::{
+        patch_calc_pr_xml, patch_workbook_calculation_properties,
+        read_workbook_calculation_properties, WorkbookCalculationProperties, MAIN_NS,
+        PACKAGE_REL_NS,
+    };
+    use anyhow::Result;
+    use std::{
+        fs::{self, File},
+        io::Write,
+        path::PathBuf,
+    };
+    use zip::{write::SimpleFileOptions, CompressionMethod, ZipArchive, ZipWriter};
+
+    fn temp_path(label: &str) -> PathBuf {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "ooxml_calcpr_{}_{}_{}",
+            std::process::id(),
+            nonce,
+            label
+        ))
+    }
+
+    #[test]
+    fn patches_existing_flags_and_inserts_missing_calc_pr_with_namespace_prefix() -> Result<()> {
+        let existing = format!(
+            r#"<s:workbook xmlns:s="{MAIN_NS}"><s:calcPr calcMode="auto" forceFullCalc="0"/><s:sheets/></s:workbook>"#
+        );
+        let changed = patch_calc_pr_xml(
+            existing.as_bytes(),
+            WorkbookCalculationProperties {
+                full_calc_on_load: Some(true),
+                force_full_calc: Some(false),
+            },
+        )?;
+        let text = String::from_utf8(changed)?;
+        assert!(text.contains("calcMode=\"auto\""));
+        assert!(text.contains("fullCalcOnLoad=\"1\""));
+        assert!(text.contains("forceFullCalc=\"0\""));
+
+        let absent = format!(r#"<s:workbook xmlns:s="{MAIN_NS}"><s:sheets/></s:workbook>"#);
+        let inserted = patch_calc_pr_xml(
+            absent.as_bytes(),
+            WorkbookCalculationProperties {
+                full_calc_on_load: Some(true),
+                force_full_calc: Some(true),
+            },
+        )?;
+        let document = roxmltree::Document::parse(std::str::from_utf8(&inserted)?)?;
+        let calc = document
+            .descendants()
+            .find(|node| {
+                node.is_element()
+                    && node.tag_name().namespace() == Some(MAIN_NS)
+                    && node.tag_name().name() == "calcPr"
+            })
+            .unwrap();
+        assert_eq!(calc.attribute("fullCalcOnLoad"), Some("1"));
+        assert_eq!(calc.attribute("forceFullCalc"), Some("1"));
+        Ok(())
+    }
+
+    #[test]
+    fn package_patch_reads_back_flags_preserves_unspecified_flags_and_other_parts() -> Result<()> {
+        let source = temp_path("source.xlsx");
+        let output = temp_path("output.xlsx");
+        let workbook = format!(
+            r#"<x:workbook xmlns:x="{MAIN_NS}"><x:calcPr calcMode="auto" forceFullCalc="0"/><x:sheets/></x:workbook>"#
+        );
+        let mut zip = ZipWriter::new(File::create(&source)?);
+        let options = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
+        zip.start_file("_rels/.rels", options)?;
+        zip.write_all(format!(r#"<Relationships xmlns="{PACKAGE_REL_NS}"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>"#).as_bytes())?;
+        zip.start_file("xl/workbook.xml", options)?;
+        zip.write_all(workbook.as_bytes())?;
+        zip.start_file("xl/untouched.bin", options)?;
+        zip.write_all(b"keep me")?;
+        zip.finish()?;
+
+        patch_workbook_calculation_properties(
+            &source,
+            &output,
+            WorkbookCalculationProperties {
+                full_calc_on_load: Some(true),
+                force_full_calc: None,
+            },
+        )?;
+        let actual = read_workbook_calculation_properties(&output)?;
+        assert_eq!(actual.full_calc_on_load, Some(true));
+        assert_eq!(actual.force_full_calc, Some(false));
+        let mut archive = ZipArchive::new(File::open(&output)?)?;
+        let mut untouched = String::new();
+        use std::io::Read;
+        archive
+            .by_name("xl/untouched.bin")?
+            .read_to_string(&mut untouched)?;
+        assert_eq!(untouched, "keep me");
+        let mut original = ZipArchive::new(File::open(&source)?)?;
+        let mut original_workbook = Vec::new();
+        original
+            .by_name("xl/workbook.xml")?
+            .read_to_end(&mut original_workbook)?;
+        assert_eq!(original_workbook, workbook.as_bytes());
+        fs::remove_file(source)?;
+        fs::remove_file(output)?;
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod external_hyperlink_tests {
+    use super::{
+        patch_external_hyperlink, patch_external_hyperlinks, prepare_external_hyperlinks_parts,
+        ExternalHyperlinkPatch, MAIN_NS, PACKAGE_REL_NS, REL_NS,
+    };
+    use anyhow::Result;
+    use roxmltree::Document;
+    use std::{
+        collections::BTreeMap,
+        fs::{self, File},
+        io::{Read, Write},
+        path::PathBuf,
+    };
+    use zip::{write::SimpleFileOptions, CompressionMethod, ZipArchive, ZipWriter};
+
+    fn temp_path(label: &str) -> PathBuf {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock after epoch")
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "ooxml_hyperlink_{}_{}_{}",
+            std::process::id(),
+            nonce,
+            label
+        ))
+    }
+
+    fn fixture_entries() -> BTreeMap<String, Vec<u8>> {
+        let workbook = format!(
+            r#"<s:workbook xmlns:s="{MAIN_NS}" xmlns:r="{REL_NS}"><s:sheets><s:sheet name="审计" sheetId="1" r:id="rId1"/><s:sheet name="其他" sheetId="2" r:id="rId2"/></s:sheets></s:workbook>"#
+        );
+        let workbook_rels = format!(
+            r#"<Relationships xmlns="{PACKAGE_REL_NS}"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheetA.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheetB.xml"/></Relationships>"#
+        );
+        let sheet_a = format!(
+            r#"<s:worksheet xmlns:s="{MAIN_NS}" xmlns:r="{REL_NS}"><s:sheetData/><s:hyperlinks><s:hyperlink ref="A1" r:id="rId1" display="旧显示"/><s:hyperlink ref="B1" r:id="rId2" display="保留显示"/></s:hyperlinks></s:worksheet>"#
+        );
+        let sheet_a_rels = format!(
+            r#"<Relationships xmlns="{PACKAGE_REL_NS}"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="mnt/c/reports/old.xlsx"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="file:///mnt/c/keep.xlsx" TargetMode="External"/></Relationships>"#
+        );
+        BTreeMap::from([
+            (
+                "_rels/.rels".to_owned(),
+                format!(
+                    r#"<Relationships xmlns="{PACKAGE_REL_NS}"><Relationship Id="rId0" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>"#
+                )
+                .into_bytes(),
+            ),
+            ("xl/workbook.xml".to_owned(), workbook.into_bytes()),
+            (
+                "xl/_rels/workbook.xml.rels".to_owned(),
+                workbook_rels.into_bytes(),
+            ),
+            (
+                "xl/worksheets/sheetA.xml".to_owned(),
+                sheet_a.into_bytes(),
+            ),
+            (
+                "xl/worksheets/sheetB.xml".to_owned(),
+                format!(r#"<s:worksheet xmlns:s="{MAIN_NS}" xmlns:r="{REL_NS}"><s:sheetData/><s:hyperlinks><s:hyperlink ref="A1" r:id="h1"/></s:hyperlinks></s:worksheet>"#).into_bytes(),
+            ),
+            (
+                "xl/worksheets/_rels/sheetA.xml.rels".to_owned(),
+                sheet_a_rels.into_bytes(),
+            ),
+            (
+                "xl/worksheets/_rels/sheetB.xml.rels".to_owned(),
+                format!(
+                    r#"<Relationships xmlns="{PACKAGE_REL_NS}"><Relationship Id="h1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="mnt/c/old.xlsx"/></Relationships>"#
+                )
+                .into_bytes(),
+            ),
+            ("custom/opaque.bin".to_owned(), vec![0, 1, 2, 255]),
+        ])
+    }
+
+    fn write_entries(path: &PathBuf, entries: &BTreeMap<String, Vec<u8>>) -> Result<()> {
+        let mut archive = ZipWriter::new(File::create(path)?);
+        for (name, data) in entries {
+            archive.start_file(
+                name,
+                SimpleFileOptions::default().compression_method(CompressionMethod::Deflated),
+            )?;
+            archive.write_all(data)?;
+        }
+        archive.finish()?;
+        Ok(())
+    }
+
+    fn read_entries(path: &PathBuf) -> Result<BTreeMap<String, Vec<u8>>> {
+        let mut archive = ZipArchive::new(File::open(path)?)?;
+        let mut entries = BTreeMap::new();
+        for index in 0..archive.len() {
+            let mut entry = archive.by_index(index)?;
+            let mut data = Vec::new();
+            entry.read_to_end(&mut data)?;
+            entries.insert(entry.name().to_owned(), data);
+        }
+        Ok(entries)
+    }
+
+    #[test]
+    fn patches_one_external_link_and_preserves_other_package_parts_and_links() -> Result<()> {
+        let source = temp_path("source.xlsx");
+        let output = temp_path("output.xlsx");
+        let original = fixture_entries();
+        write_entries(&source, &original)?;
+        let mut patch =
+            ExternalHyperlinkPatch::new("审计", "$a$1", "file:///mnt/c/reports/a%20%26b.xlsx")?;
+        patch.location = Some("摘要!A1".to_owned());
+        patch.display = Some("审计 & 复核".to_owned());
+
+        let report = patch_external_hyperlink(&source, &output, &patch)?;
+        assert_eq!(report.sheet_name, "审计");
+        assert_eq!(report.cell_reference, "A1");
+        assert_eq!(report.worksheet_part, "xl/worksheets/sheetA.xml");
+        assert_eq!(
+            report.relationships_part,
+            "xl/worksheets/_rels/sheetA.xml.rels"
+        );
+        assert_eq!(report.relationship_id, "rId1");
+        assert_eq!(report.package_parts, original.len());
+
+        let actual = read_entries(&output)?;
+        assert_eq!(
+            original.keys().collect::<Vec<_>>(),
+            actual.keys().collect::<Vec<_>>()
+        );
+        let existing_output = fs::read(&output)?;
+        assert!(patch_external_hyperlink(&source, &output, &patch).is_err());
+        assert_eq!(fs::read(&output)?, existing_output);
+        for (name, bytes) in &original {
+            if name != "xl/worksheets/sheetA.xml" && name != "xl/worksheets/_rels/sheetA.xml.rels" {
+                assert_eq!(actual[name], *bytes, "unexpected package change: {name}");
+            }
+        }
+        let source_after = read_entries(&source)?;
+        assert_eq!(
+            source_after, original,
+            "source package must remain unchanged"
+        );
+
+        let sheet_xml = std::str::from_utf8(&actual["xl/worksheets/sheetA.xml"])?;
+        let sheet_doc = Document::parse(sheet_xml)?;
+        let links = sheet_doc
+            .descendants()
+            .filter(|node| {
+                node.is_element()
+                    && node.tag_name().namespace() == Some(MAIN_NS)
+                    && node.tag_name().name() == "hyperlink"
+            })
+            .collect::<Vec<_>>();
+        let target_link = links
+            .iter()
+            .find(|node| node.attribute("ref") == Some("A1"))
+            .unwrap();
+        assert_eq!(target_link.attribute("display"), Some("审计 & 复核"));
+        assert_eq!(target_link.attribute("location"), Some("摘要!A1"));
+        assert_eq!(target_link.attribute((REL_NS, "id")), Some("rId1"));
+        let untouched_link = links
+            .iter()
+            .find(|node| node.attribute("ref") == Some("B1"))
+            .unwrap();
+        assert_eq!(untouched_link.attribute("display"), Some("保留显示"));
+
+        let rels_xml = std::str::from_utf8(&actual["xl/worksheets/_rels/sheetA.xml.rels"])?;
+        let rels_doc = Document::parse(rels_xml)?;
+        let relationships = rels_doc
+            .descendants()
+            .filter(|node| {
+                node.is_element()
+                    && node.tag_name().namespace() == Some(PACKAGE_REL_NS)
+                    && node.tag_name().name() == "Relationship"
+            })
+            .collect::<Vec<_>>();
+        let changed = relationships
+            .iter()
+            .find(|node| node.attribute("Id") == Some("rId1"))
+            .unwrap();
+        assert_eq!(
+            changed.attribute("Target"),
+            Some("file:///mnt/c/reports/a%20%26b.xlsx")
+        );
+        assert_eq!(changed.attribute("TargetMode"), Some("External"));
+        let untouched = relationships
+            .iter()
+            .find(|node| node.attribute("Id") == Some("rId2"))
+            .unwrap();
+        assert_eq!(
+            untouched.attribute("Target"),
+            Some("file:///mnt/c/keep.xlsx")
+        );
+        assert_eq!(untouched.attribute("TargetMode"), Some("External"));
+
+        fs::remove_file(source)?;
+        fs::remove_file(output)?;
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_missing_or_ambiguous_hyperlink_and_invalid_targets() -> Result<()> {
+        let patch = ExternalHyperlinkPatch::new("审计", "A1", "file:///tmp/a.xlsx")?;
+        let duplicate = format!(
+            r#"<s:worksheet xmlns:s="{MAIN_NS}" xmlns:r="{REL_NS}"><s:hyperlinks><s:hyperlink ref="A1" r:id="rId1"/><s:hyperlink ref="A1" r:id="rId1"/></s:hyperlinks></s:worksheet>"#
+        );
+        let rels = format!(
+            r#"<Relationships xmlns="{PACKAGE_REL_NS}"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="file:///tmp/old.xlsx" TargetMode="External"/></Relationships>"#
+        );
+        assert!(prepare_external_hyperlinks_parts(
+            duplicate.as_bytes(),
+            rels.as_bytes(),
+            &[&patch]
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("exactly one hyperlink"));
+
+        let missing_relationship = format!(
+            r#"<s:worksheet xmlns:s="{MAIN_NS}" xmlns:r="{REL_NS}"><s:hyperlinks><s:hyperlink ref="A1" r:id="missing"/></s:hyperlinks></s:worksheet>"#
+        );
+        assert!(prepare_external_hyperlinks_parts(
+            missing_relationship.as_bytes(),
+            rels.as_bytes(),
+            &[&patch]
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("missing or ambiguous"));
+        assert!(ExternalHyperlinkPatch::new("审计", "A1", "relative/path.xlsx").is_err());
+        assert!(ExternalHyperlinkPatch::new("审计", "A1", "file://server").is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn batch_patches_multiple_links_once_and_rejects_a_missing_member_before_output() -> Result<()>
+    {
+        let source = temp_path("batch-source.xlsx");
+        let output = temp_path("batch-output.xlsx");
+        let original = fixture_entries();
+        write_entries(&source, &original)?;
+
+        let valid = ExternalHyperlinkPatch::new("审计", "A1", "file:///mnt/c/a.xlsx")?;
+        let missing = ExternalHyperlinkPatch::new("审计", "C9", "file:///mnt/c/missing.xlsx")?;
+        assert!(patch_external_hyperlinks(&source, &output, &[valid.clone(), missing]).is_err());
+        assert!(!output.exists(), "failed batch must not create a candidate");
+        assert_eq!(
+            read_entries(&source)?,
+            original,
+            "source must remain unchanged"
+        );
+
+        let mut second = ExternalHyperlinkPatch::new("审计", "B1", "file:///mnt/c/b.xlsx")?;
+        second.display = Some("第二个链接".to_owned());
+        second.location = Some("结果!B1".to_owned());
+        let third = ExternalHyperlinkPatch::new("其他", "A1", "file:///mnt/c/c.xlsx")?;
+        let reports = patch_external_hyperlinks(&source, &output, &[valid, second, third])?;
+        assert_eq!(reports.len(), 3);
+        assert_eq!(reports[0].relationship_id, "rId1");
+        assert_eq!(reports[1].relationship_id, "rId2");
+        assert_eq!(reports[2].relationship_id, "h1");
+
+        let actual = read_entries(&output)?;
+        for (name, bytes) in &original {
+            if name != "xl/worksheets/sheetA.xml"
+                && name != "xl/worksheets/_rels/sheetA.xml.rels"
+                && name != "xl/worksheets/sheetB.xml"
+                && name != "xl/worksheets/_rels/sheetB.xml.rels"
+            {
+                assert_eq!(actual[name], *bytes, "unexpected package change: {name}");
+            }
+        }
+        let worksheet = Document::parse(std::str::from_utf8(&actual["xl/worksheets/sheetA.xml"])?)?;
+        let link_a1 = worksheet
+            .descendants()
+            .find(|node| node.is_element() && node.attribute("ref") == Some("A1"))
+            .unwrap();
+        let link_b1 = worksheet
+            .descendants()
+            .find(|node| node.is_element() && node.attribute("ref") == Some("B1"))
+            .unwrap();
+        assert_eq!(link_a1.attribute("display"), Some("旧显示"));
+        assert_eq!(link_b1.attribute("display"), Some("第二个链接"));
+        assert_eq!(link_b1.attribute("location"), Some("结果!B1"));
+
+        let rels = Document::parse(std::str::from_utf8(
+            &actual["xl/worksheets/_rels/sheetA.xml.rels"],
+        )?)?;
+        let target_a = rels
+            .descendants()
+            .find(|node| node.is_element() && node.attribute("Id") == Some("rId1"))
+            .unwrap();
+        let target_b = rels
+            .descendants()
+            .find(|node| node.is_element() && node.attribute("Id") == Some("rId2"))
+            .unwrap();
+        assert_eq!(target_a.attribute("Target"), Some("file:///mnt/c/a.xlsx"));
+        assert_eq!(target_a.attribute("TargetMode"), Some("External"));
+        assert_eq!(target_b.attribute("Target"), Some("file:///mnt/c/b.xlsx"));
+        assert_eq!(target_b.attribute("TargetMode"), Some("External"));
+        let rels_b = Document::parse(std::str::from_utf8(
+            &actual["xl/worksheets/_rels/sheetB.xml.rels"],
+        )?)?;
+        let target_c = rels_b
+            .descendants()
+            .find(|node| node.is_element() && node.attribute("Id") == Some("h1"))
+            .unwrap();
+        assert_eq!(target_c.attribute("Target"), Some("file:///mnt/c/c.xlsx"));
+        assert_eq!(target_c.attribute("TargetMode"), Some("External"));
 
         fs::remove_file(source)?;
         fs::remove_file(output)?;
