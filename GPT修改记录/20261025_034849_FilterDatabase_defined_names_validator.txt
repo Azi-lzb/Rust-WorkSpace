@@ -1,0 +1,34 @@
+时间：2026-10-25 03:48:49 Asia/Shanghai
+执行者：Codex main
+修改前 commit：fa8a03e（main）
+修改后 commit：本记录与 validator 修改由同一代码提交承载；具体提交 ID 见本轮汇报。
+WIP 情况：修改前 main 仅有 `crates/excel-editor/src/openpyxl_backend.rs` 的未提交 validator 变更；已完成测试后与本记录一并提交。未触碰 Audit/PyTools 工作树。
+
+目的：修复 openpyxl 保存时对 Excel 自动筛选内置名称 `_xlnm._FilterDatabase` 的语义重序列化导致的误报，同时保留对用户定义名称及无关名称的严格检查。
+
+修改文件：
+- `crates/excel-editor/src/openpyxl_backend.rs`
+- 本记录
+
+变化：
+- 只在名称作用域与工作表身份一致，且公式中的区域与对应 worksheet `autoFilter ref` 规范化后相同的情况下，将 `_xlnm._FilterDatabase` 作为筛选派生名称处理。
+- 保留 AutoFilter 的工作表或显式 `SetAutoFilter` 操作按实际输出范围校验名称数量，拒绝不匹配、缺失和重复名称；其他 definedName 继续严格比较。
+- 新增工作表重建及其他工作表筛选范围保留的单元测试，并检查损坏的筛选范围会失败。
+
+配置及业务路由影响：无。未改默认引擎、capability 状态或 ExcelEditPlan 语义。Audit S1 真实样本仍需 Agent 在同步后验证，不因单测通过而标记验收。
+
+组件版本：不升级。
+
+测试：
+- `cargo test --offline --locked -p excel-editor --lib filter_database_names_are_checked_against_validated_auto_filter_ranges`：1 项通过。
+- `cargo test --offline --locked -p excel-editor --lib defined_names`：2 项通过。
+- `cargo test --offline --locked -p excel-editor --lib`：22 项通过。
+- `git diff --check`：通过。
+- 编译输出存在已有 `umya_spreadsheet` deprecated API 警告；本次无测试失败。
+
+未执行项：未运行 Audit S1 真实工作簿、Python/Rust 端到端对拍或 Linux/deb 验收；未重跑 PyTools。
+
+已知问题：Audit 报告的 855 个 target merged non-anchor payload 均位于四个 ImportRange 目标范围外。openpyxl 会重写整个 target 工作簿，且 S1 plan 保留 `CellValuesAndTypes`、不删除/重建相应工作表；仅将写前检测缩小到 ImportRange 范围可能导致写后值丢失或由 validator 延迟失败。因此本次保留 target workbook 的全局 merged-payload guard。若要开放该批次，需证明这些单元格所在工作表被明确删除/允许丢弃，或提供并完整验证可保留它们的恢复/修改路径。ImportRange source payload guard 仍只检查实际选定的源表和源区域。
+
+删除清单：无。
+回滚：回退本次代码提交可恢复原有 definedName 逐项比较；不回滚、不重写既有提交，不修改输入工作簿。
