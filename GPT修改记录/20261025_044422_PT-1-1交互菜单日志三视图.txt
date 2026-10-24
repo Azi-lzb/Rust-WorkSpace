@@ -1,0 +1,34 @@
+时间：2026-10-25 04:44:22 Asia/Shanghai
+执行者：Codex PyTools Agent
+修改前 commit：94ba655
+修改后代码 commit：2042eb5
+WIP 情况：开始时 pytools-dev 有三个未提交文件（pytools.rs、timeline_ops.rs、timeline_menu_cli.rs），均属于 PT-1-1 日志接入；检查记录目录未发现 WIP 文件。本次在原有 WIP 上完成实现、回归和提交，未覆盖或丢弃其他内容。
+
+目的：
+将 PT-1-1 表头路径比对接入已迁移菜单的普通用户、开发者、关闭日志三视图，并从同一运行事件生成进度和开发者历史。
+
+修改文件：
+- pytools-core/src/timeline_ops.rs：新增表头路径比对进度/事件结构和带回调运行入口；旧入口委托到新入口，保持输出契约。记录模板/源读取、比较、报表写入、任务摘要阶段及实际 Calamine、rust_xlsxwriter 引擎。
+- pytools-core/src/bin/pytools.rs：菜单 1→1 将全局日志目录与视图传给 timeline-compare；user 输出业务步骤、数量和耗时；developer 输出 JSON 事件并保存历史；off 不输出运行事件或写历史。fatal 错误新增任务结束事件，CLI 错误提示不回显源路径/原始文件错误。
+- pytools-core/tests/timeline_menu_cli.rs：覆盖菜单成功流程的 user/developer/off 视图、partial 处理、历史事件/实际引擎，以及损坏模板失败摘要和路径脱敏。
+- pytools-core/MIGRATION_INVENTORY.md：补充 PT-1-1 状态，保持真实样本未验收。
+
+真实入口：
+pytools menu → 时序工具 1 → 表头路径比对 1 → timeline-compare → run_header_path_compare_with_progress；CLI 也可直接调用 timeline-compare。Python 基线为只读 PyCode/core/compare_393.py::run_compare。
+
+验证：
+- cargo test --offline --locked -p pytools-core --lib --test timeline_menu_cli -j 1：30/30 lib、8/8 CLI 测试通过。
+- cargo fmt --manifest-path pytools-core/Cargo.toml -- --check：通过。
+- git diff --check：通过。
+- cargo build --offline --locked -p pytools-core --bin pytools -j 1：通过；仅有既有 Excel 依赖弃用警告及 pytools-core 两条未使用 import 警告。
+- 使用原 PyTools Python venv 运行 probe/compare_timeline_compare.py：5 个合成输入的 PyCode/Rust 输出值、类型、结构一致；17 个表头样式格无差异。3 个源匹配、1 个未匹配、与模板同路径的 1 个源跳过。机器报告沿用 probe/reports/timeline_compare_keyword_parity_20261024.json，本次结果与既有报告一致。
+
+未执行及限制：
+- 当前真实 PyTools 配置输入目录不存在；源 xlsx/ 中 70 份 XLSX 均未命中 PT-1-1 规则，因此没有真实匹配样本，PT-1-1 仍未通过完整验收。
+- 未手动操作 Windows 原生文件选择器；未做麒麟/UOS、glibc 2.28、离线 deb 验收。
+- 没有修改 Excel 读写路由、共享 crate、Cargo.toml/Cargo.lock、DEVELOPMENT_GOAL.md 或源 Python 项目；未提升生产 capability 或默认路由。
+- fetch 后 origin/main 比 pytools-dev 多三个提交；本功能不依赖其唯一不同的 crates/ooxml-patch/src/lib.rs 改动，未合并公共代码。
+
+组件版本：pytools-core 0.1.0，不升级。
+删除清单：无。
+回滚：需要回退本功能时使用 git revert 2042eb5；不要 reset/clean，也不要覆盖后续工作。
