@@ -478,3 +478,9 @@ Windows 原生测试：`cargo test --offline --locked -p pytools-core --lib comm
 增量主菜单类别 1 已接入 1-1 表头路径比对、1-3/1-4 两种宽表汇总和 1-5 预校验，入口复用既有 Rust CLI 业务处理。Windows 原生 Rust CLI 的合成 PyCode/Rust 菜单对拍通过：1-1 五个所选文件中三个匹配，输出结构、值/类型及有效样式一致；1-3/1-4 工作簿投影与有效样式一致并生成目标追加计划，配置目标未改写；1-5 的有效、详细错误和缺必需列三种场景计数一致。tests/timeline_menu_cli.rs 1/1 通过。机器摘要见 probe/reports/timeline_menu_parity_20261024.json。
 
 证据仅覆盖合成 XLSX 和手工路径输入。真实业务样本、原生文件弹窗、目标追加生产 capability、结构化用户/开发者/off 日志、麒麟/UOS、glibc 2.28 和 deb 仍未验证。
+
+### 2026-10-24 PT-2 去重交互菜单接入
+
+增量主菜单类别 2 已接入 2-1 至 2-6 六项去重入口。批注检查和按配置检查按 PyCode 行为生成红色标记编辑计划；删除、配置追加也只生成计划，不在菜单中直接改写源或目标工作簿；每种菜单操作写入独立计划目录，避免覆盖既有计划。Windows 原生 Rust 菜单集成测试 1/1 覆盖六项入口、重复计数、计划文件、候选/目标未写入及源文件字节未变。底层业务语义的既有 PyCode/Rust 合成对拍见 probe/reports/dedup_parity_20261023.json。
+
+真实业务样本、生产 ExcelModifier capability、计划执行菜单、结构化用户/开发者/off 日志、麒麟/UOS、glibc 2.28 和 deb 仍未验证。

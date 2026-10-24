@@ -198,6 +198,7 @@ where
     loop {
         writeln!(output, "======== PyTools 菜单 ========")?;
         writeln!(output, "  1  时序工具（已接入 1、3、4、5）")?;
+        writeln!(output, "  2  去重工具（检查与生成计划）")?;
         writeln!(output, "  6  汇总工具")?;
         writeln!(output, "  0  退出")?;
         writeln!(output, "==============================")?;
@@ -207,6 +208,9 @@ where
         };
         match choice.as_str() {
             "1" => run_interactive_timeline_menu(input, output, config_path, allow_native_dialog)?,
+            "2" => {
+                run_interactive_dedup_menu(input, output, config_path, global, allow_native_dialog)?
+            }
             "6" => {
                 run_interactive_summary_menu(input, output, global, log_view, allow_native_dialog)?
             }
@@ -214,12 +218,12 @@ where
                 writeln!(output, "再见。")?;
                 return Ok(());
             }
-            _ => writeln!(output, "仅接受 1、6 或 0")?,
+            _ => writeln!(output, "仅接受 1、2、6 或 0")?,
         }
     }
 }
 
-fn timeline_cli_arguments(config_path: &Path) -> Vec<String> {
+fn config_cli_arguments(config_path: &Path) -> Vec<String> {
     vec![
         "--config".to_owned(),
         config_path.to_string_lossy().into_owned(),
@@ -271,7 +275,7 @@ where
                     writeln!(output, "[已取消]")?;
                     return Ok(());
                 };
-                let mut arguments = timeline_cli_arguments(config_path);
+                let mut arguments = config_cli_arguments(config_path);
                 arguments.push("--template".to_owned());
                 arguments.push(template.to_string_lossy().into_owned());
                 arguments.extend(
@@ -298,7 +302,7 @@ where
                     writeln!(output, "[已取消]")?;
                     return Ok(());
                 };
-                let mut arguments = timeline_cli_arguments(config_path);
+                let mut arguments = config_cli_arguments(config_path);
                 arguments.extend(
                     sources
                         .into_iter()
@@ -308,13 +312,136 @@ where
                 return Ok(());
             }
             "5" => {
-                run_timeline_precheck_cli(timeline_cli_arguments(config_path))?;
+                run_timeline_precheck_cli(config_cli_arguments(config_path))?;
                 return Ok(());
             }
             "0" => return Ok(()),
             _ => writeln!(output, "仅接受 1、3、4、5 或 0")?,
         }
     }
+}
+
+fn run_interactive_dedup_menu<R, W>(
+    input: &mut R,
+    output: &mut W,
+    config_path: &Path,
+    global: &GlobalConfig,
+    allow_native_dialog: bool,
+) -> Result<()>
+where
+    R: BufRead,
+    W: Write,
+{
+    loop {
+        writeln!(output, "------ 去重工具 ------")?;
+        writeln!(output, "  1  按批注检查并标记重复（生成计划）")?;
+        writeln!(output, "  2  按批注删除重复（生成计划）")?;
+        writeln!(output, "  3  按配置检查并标记重复（生成计划）")?;
+        writeln!(output, "  4  按配置删除重复（生成计划）")?;
+        writeln!(output, "  5  按配置追加到目标（生成计划）")?;
+        writeln!(output, "  6  按配置预校验")?;
+        writeln!(output, "  0  返回")?;
+        writeln!(output, "----------------------")?;
+        let Some(choice) = read_menu_choice(input, output, "子菜单选择> ")? else {
+            return Ok(());
+        };
+        match choice.as_str() {
+            "1" | "2" => {
+                let Some(input_path) = choose_workbooks(
+                    if choice == "1" {
+                        "选择按批注检查并标记重复的工作簿"
+                    } else {
+                        "选择按批注删除重复的工作簿"
+                    },
+                    false,
+                    input,
+                    output,
+                    allow_native_dialog,
+                )?
+                .and_then(|paths| paths.into_iter().next()) else {
+                    writeln!(output, "[已取消]")?;
+                    return Ok(());
+                };
+                let candidate = unique_workbook_candidate(&input_path, &global.output_dir, "dedup");
+                let mut arguments = config_cli_arguments(config_path);
+                arguments.extend([
+                    "--input".to_owned(),
+                    input_path.to_string_lossy().into_owned(),
+                    "--output".to_owned(),
+                    candidate.to_string_lossy().into_owned(),
+                    "--action".to_owned(),
+                    if choice == "1" {
+                        "check".to_owned()
+                    } else {
+                        "delete".to_owned()
+                    },
+                ]);
+                let action_name = if choice == "1" {
+                    "comment-check"
+                } else {
+                    "comment-delete"
+                };
+                let action_output_dir =
+                    unique_dedup_menu_output_dir(&global.output_dir, action_name);
+                let plan_path = action_output_dir.join("plan.json");
+                arguments.push("--plan-output".to_owned());
+                arguments.push(plan_path.to_string_lossy().into_owned());
+                run_dedup_comment_plan(arguments)?;
+                return Ok(());
+            }
+            "3" | "4" => {
+                let action_name = if choice == "3" {
+                    "config-check"
+                } else {
+                    "config-delete"
+                };
+                let action_output_dir =
+                    unique_dedup_menu_output_dir(&global.output_dir, action_name);
+                let mut arguments = config_cli_arguments(config_path);
+                arguments.extend([
+                    "--output-dir".to_owned(),
+                    action_output_dir.to_string_lossy().into_owned(),
+                    "--action".to_owned(),
+                    if choice == "3" {
+                        "check".to_owned()
+                    } else {
+                        "delete".to_owned()
+                    },
+                ]);
+                run_dedup_config_plan(arguments)?;
+                return Ok(());
+            }
+            "5" => {
+                let action_output_dir =
+                    unique_dedup_menu_output_dir(&global.output_dir, "config-append");
+                let mut arguments = config_cli_arguments(config_path);
+                arguments.extend([
+                    "--output-dir".to_owned(),
+                    action_output_dir.to_string_lossy().into_owned(),
+                ]);
+                run_dedup_append_plan(arguments)?;
+                return Ok(());
+            }
+            "6" => {
+                run_dedup_precheck(config_cli_arguments(config_path))?;
+                return Ok(());
+            }
+            "0" => return Ok(()),
+            _ => writeln!(output, "仅接受 1、2、3、4、5、6 或 0")?,
+        }
+    }
+}
+
+fn unique_dedup_menu_output_dir(output_root: &Path, action: &str) -> PathBuf {
+    let timestamp = Local::now().format("%Y%m%d_%H%M%S_%f");
+    let stem = format!("dedup-{action}-{timestamp}");
+    let mut candidate = output_root.join(&stem);
+    let mut suffix = 2;
+    while candidate.exists() {
+        candidate = output_root.join(format!("{stem}-{suffix}"));
+        suffix += 1;
+    }
+    candidate
 }
 
 fn run_interactive_summary_menu<R, W>(
@@ -2781,7 +2908,7 @@ fn print_usage() {
     eprintln!(
         "Usage:\n\
          pytools [menu] [--config <config.xlsx>] [--log-view user|developer|off]\n\
-         no command opens the migrated menu; available categories: 1 (timeline 1/3/4/5) and 6 (summary 1/2)\n\
+         no command opens the migrated menu; available categories: 1 (timeline 1/3/4/5), 2 (dedup 1-6), and 6 (summary 1/2)\n\
          timeline-precheck --config <workbook.xlsx>\n\
          timeline-compare --config <workbook.xlsx> --template <workbook.xlsx> <source.xlsx>...\n\
          wide-summary --config <workbook.xlsx> <source.xlsx>...\n\
