@@ -1,9 +1,12 @@
 //! S1 issue history classification and manual feedback carry-over.
 
 use crate::models::Issue;
-use anyhow::{ensure, Context, Result};
-use excel_editor::CellValue as EditCellValue;
-use excel_reader::{read_value_columns_with_iso_dates, CellValue, SheetValues};
+use anyhow::{Context, Result, ensure};
+use excel_editor::{
+    CellValue as EditCellValue, EditOperation, ExcelEditPlan, PreservationRequirement,
+    WorkbookFormat, inspect_xlsx_profile,
+};
+use excel_reader::{CellValue, SheetValues, read_value_columns_with_iso_dates};
 use excel_writer::Workbook as XlsxWorkbook;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -76,6 +79,173 @@ pub struct S1HistoryWorkbookWriteSummary {
     pub issue_count: usize,
     pub engine: &'static str,
     pub elapsed_ms: u128,
+}
+
+#[derive(Clone, Debug)]
+pub struct S1HistoryWorkbookEditPlan {
+    pub edit_plan: ExcelEditPlan,
+    pub issue_count: usize,
+    pub replaces_existing_history_sheet: bool,
+}
+
+/// Build the ExcelModifier batch corresponding to Python's
+/// `write_history_xlsx`: replace only the managed history worksheet, keep other
+/// workbook sheets under the preservation contract, and place the new history
+/// sheet first. This prepares Audit business data and does not execute an
+/// editor or qualify a production capability.
+pub fn build_s1_history_workbook_edit_plan(
+    input_path: impl AsRef<Path>,
+    output_path: impl AsRef<Path>,
+    issues: &[Issue],
+) -> Result<S1HistoryWorkbookEditPlan> {
+    let input_path = input_path.as_ref();
+    let output_path = output_path.as_ref();
+    ensure!(input_path.is_file(), "S1 历史工作簿不存在");
+    ensure!(
+        xlsx_extension(input_path),
+        "S1 历史工作簿更新目前仅支持 .xlsx"
+    );
+    ensure!(
+        xlsx_extension(output_path),
+        "S1 历史工作簿输出目前仅支持 .xlsx"
+    );
+    ensure!(
+        !output_path.exists(),
+        "拒绝覆盖已有 S1 历史工作簿输出：{}",
+        output_path.display()
+    );
+    let output_parent = output_path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    ensure!(output_parent.is_dir(), "S1 历史工作簿输出目录不存在");
+    ensure!(
+        issues.len() <= 1_048_575,
+        "S1 历史工作簿超过 Excel 的最大数据行数"
+    );
+
+    let input_path = fs::canonicalize(input_path).context("规范化 S1 历史工作簿路径")?;
+    let output_parent = fs::canonicalize(output_parent).context("规范化 S1 历史工作簿输出目录")?;
+    let output_name = output_path
+        .file_name()
+        .context("S1 历史工作簿输出路径缺少文件名")?;
+    let output_path = output_parent.join(output_name);
+    ensure!(
+        !output_path.exists(),
+        "拒绝覆盖已有 S1 历史工作簿输出：{}",
+        output_path.display()
+    );
+
+    let workbook_profile = inspect_xlsx_profile(&input_path).context("检查 S1 历史工作簿结构")?;
+    ensure!(
+        workbook_profile.format == WorkbookFormat::Xlsx,
+        "S1 历史工作簿更新目前仅支持 XLSX"
+    );
+    ensure!(
+        workbook_profile.inventory_complete,
+        "S1 历史工作簿 OOXML 对象清单不完整，拒绝准备更新计划"
+    );
+    let sheet_names =
+        excel_reader::read_sheet_names(&input_path).context("读取 S1 历史工作簿工作表名称")?;
+    let replaces_existing_history_sheet =
+        sheet_names.iter().any(|name| name == HISTORY_AUDIT_SHEET);
+
+    let mut operations = Vec::new();
+    if replaces_existing_history_sheet {
+        operations.push(EditOperation::DeleteSheet {
+            name: HISTORY_AUDIT_SHEET.to_owned(),
+        });
+    }
+    operations.push(EditOperation::CreateSheetAt {
+        name: HISTORY_AUDIT_SHEET.to_owned(),
+        index: 0,
+    });
+    for (column, value) in s1_history_header_row().into_iter().enumerate() {
+        operations.push(EditOperation::SetCellValue {
+            sheet: HISTORY_AUDIT_SHEET.to_owned(),
+            cell: s1_history_cell_address(0, column),
+            value,
+        });
+    }
+    for (row_index, issue) in issues.iter().enumerate() {
+        for (column, value) in s1_history_workbook_row(issue)?.into_iter().enumerate() {
+            if matches!(value, EditCellValue::Blank)
+                || matches!(&value, EditCellValue::Text(text) if text.is_empty())
+            {
+                continue;
+            }
+            operations.push(EditOperation::SetCellValue {
+                sheet: HISTORY_AUDIT_SHEET.to_owned(),
+                cell: s1_history_cell_address(row_index + 1, column),
+                value,
+            });
+        }
+    }
+    let last_row = issues.len() + 1;
+    operations.push(EditOperation::SetFreezePanes {
+        sheet: HISTORY_AUDIT_SHEET.to_owned(),
+        cell: Some("A2".to_owned()),
+    });
+    operations.push(EditOperation::SetAutoFilter {
+        sheet: HISTORY_AUDIT_SHEET.to_owned(),
+        range: Some(format!("A1:M{last_row}")),
+    });
+    for column_index in 1..=S1_HISTORY_HEADERS.len() {
+        operations.push(EditOperation::SetColumnWidth {
+            sheet: HISTORY_AUDIT_SHEET.to_owned(),
+            column_index: column_index as u32,
+            width: 22.0,
+        });
+    }
+
+    let preserve: std::collections::BTreeSet<_> = [
+        PreservationRequirement::CellValuesAndTypes,
+        PreservationRequirement::FormulaText,
+        PreservationRequirement::CommentsAndPositions,
+        PreservationRequirement::Styles,
+        PreservationRequirement::MergedRanges,
+        PreservationRequirement::ConditionalFormatting,
+        PreservationRequirement::DataValidations,
+        PreservationRequirement::DefinedNames,
+        PreservationRequirement::RowAndColumnDimensions,
+        PreservationRequirement::PageSettings,
+        PreservationRequirement::HeaderFooterText,
+        PreservationRequirement::Relationships,
+        PreservationRequirement::SheetIdentityAndOrder,
+        PreservationRequirement::FreezePanes,
+        PreservationRequirement::AutoFilter,
+    ]
+    .into_iter()
+    .collect();
+    let mut drop_allowed = BTreeMap::new();
+    if replaces_existing_history_sheet {
+        drop_allowed.insert(HISTORY_AUDIT_SHEET.to_owned(), preserve.clone());
+    }
+    let edit_plan = ExcelEditPlan {
+        request_id: "audit-s1-history-workbook-update".to_owned(),
+        input: input_path,
+        output: output_path,
+        format: WorkbookFormat::Xlsx,
+        workbook: workbook_profile,
+        operations,
+        preserve,
+        drop_allowed,
+    };
+    edit_plan
+        .validate()
+        .context("校验 S1 历史工作簿 ExcelEditPlan")?;
+
+    Ok(S1HistoryWorkbookEditPlan {
+        edit_plan,
+        issue_count: issues.len(),
+        replaces_existing_history_sheet,
+    })
+}
+
+fn xlsx_extension(path: &Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("xlsx"))
 }
 
 /// Create a standalone XLSX containing the merged S1 history rows.
@@ -1017,6 +1187,10 @@ fn days_in_month(year: i32, month: u32) -> Option<u32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use excel_editor::{
+        BackendCapability, CapabilityStatus, EditBackend, EngineId, OpenpyxlXlsxValidator,
+        OutputValidator, UmyaXlsxBackend,
+    };
     use serde_json::json;
 
     fn issue(issue_id: &str, period: &str, triggered: bool) -> Issue {
@@ -1052,6 +1226,207 @@ mod tests {
             institution_feedback: String::new(),
             auditor_opinion: String::new(),
         }
+    }
+
+    fn history_fixture_path(name: &str) -> (std::path::PathBuf, std::path::PathBuf) {
+        let directory = std::env::temp_dir().join(format!(
+            "audit_s1_history_plan_{}_{}",
+            std::process::id(),
+            name
+        ));
+        fs::create_dir_all(&directory).expect("create S1 history plan fixture directory");
+        (directory.clone(), directory.join("input.xlsx"))
+    }
+
+    fn save_history_plan_fixture(path: &Path, sheet_names: &[&str]) {
+        let mut workbook = XlsxWorkbook::new();
+        for sheet_name in sheet_names {
+            let worksheet = workbook.add_worksheet();
+            worksheet
+                .set_name(*sheet_name)
+                .expect("set history plan fixture sheet name");
+            worksheet
+                .write_string(0, 0, format!("{sheet_name} existing"))
+                .expect("write history plan fixture cell");
+        }
+        workbook.save(path).expect("save history plan fixture");
+    }
+
+    #[test]
+    fn history_workbook_edit_plan_replaces_only_the_managed_sheet() {
+        let (directory, input) = history_fixture_path("replace");
+        let output = directory.join("updated.xlsx");
+        save_history_plan_fixture(&input, &[HISTORY_AUDIT_SHEET, "业务说明"]);
+        let original = fs::read(&input).expect("read original history plan fixture");
+        let mut current = issue("RULE-1", "2026-10", true);
+        current.target_value = json!(0);
+        current.comparison_value = json!(false);
+        current.difference_value = serde_json::Value::Null;
+
+        let result = build_s1_history_workbook_edit_plan(&input, &output, &[current])
+            .expect("build history workbook edit plan");
+        let plan = result.edit_plan;
+        assert!(result.replaces_existing_history_sheet);
+        assert_eq!(result.issue_count, 1);
+        assert_eq!(plan.input, fs::canonicalize(&input).unwrap());
+        assert_eq!(
+            plan.output,
+            fs::canonicalize(&directory).unwrap().join("updated.xlsx")
+        );
+        assert!(plan.workbook.inventory_complete);
+        assert!(matches!(
+            plan.operations.first(),
+            Some(EditOperation::DeleteSheet { name }) if name == HISTORY_AUDIT_SHEET
+        ));
+        assert!(matches!(
+            plan.operations.get(1),
+            Some(EditOperation::CreateSheetAt { name, index: 0 }) if name == HISTORY_AUDIT_SHEET
+        ));
+        assert!(plan.operations.iter().any(|operation| matches!(
+            operation,
+            EditOperation::SetCellValue {
+                sheet,
+                cell,
+                value: EditCellValue::Decimal(value),
+            } if sheet == HISTORY_AUDIT_SHEET && cell == "H2" && value == "0"
+        )));
+        assert!(plan.operations.iter().any(|operation| matches!(
+            operation,
+            EditOperation::SetCellValue {
+                sheet,
+                cell,
+                value: EditCellValue::Boolean(false),
+            } if sheet == HISTORY_AUDIT_SHEET && cell == "I2"
+        )));
+        assert!(!plan.operations.iter().any(|operation| matches!(
+            operation,
+            EditOperation::SetCellValue { cell, .. } if cell == "J2"
+        )));
+        assert!(plan.operations.iter().any(|operation| matches!(
+            operation,
+            EditOperation::SetAutoFilter { sheet, range: Some(range) }
+                if sheet == HISTORY_AUDIT_SHEET && range == "A1:M2"
+        )));
+        assert!(plan.operations.iter().any(|operation| matches!(
+            operation,
+            EditOperation::SetFreezePanes { sheet, cell: Some(cell) }
+                if sheet == HISTORY_AUDIT_SHEET && cell == "A2"
+        )));
+        assert_eq!(
+            plan.operations
+                .iter()
+                .filter(|operation| matches!(operation, EditOperation::SetColumnWidth { .. }))
+                .count(),
+            S1_HISTORY_HEADERS.len()
+        );
+        assert!(
+            plan.preserve
+                .contains(&PreservationRequirement::CellValuesAndTypes)
+        );
+        assert!(
+            plan.preserve
+                .contains(&PreservationRequirement::FormulaText)
+        );
+        assert_eq!(
+            plan.drop_allowed.get(HISTORY_AUDIT_SHEET),
+            Some(&plan.preserve)
+        );
+        assert_eq!(fs::read(&input).unwrap(), original);
+        assert!(!output.exists());
+        fs::remove_dir_all(directory).expect("remove S1 history plan fixture directory");
+    }
+
+    #[test]
+    fn history_workbook_edit_plan_creates_the_managed_sheet_when_missing() {
+        let (directory, input) = history_fixture_path("create");
+        let output = directory.join("updated.xlsx");
+        save_history_plan_fixture(&input, &["业务说明"]);
+
+        let result = build_s1_history_workbook_edit_plan(&input, &output, &[])
+            .expect("build history workbook create plan");
+        assert!(!result.replaces_existing_history_sheet);
+        assert!(matches!(
+            result.edit_plan.operations.first(),
+            Some(EditOperation::CreateSheetAt { name, index: 0 }) if name == HISTORY_AUDIT_SHEET
+        ));
+        assert!(matches!(
+            result.edit_plan.operations.iter().find(|operation| matches!(
+                operation,
+                EditOperation::SetAutoFilter { .. }
+            )),
+            Some(EditOperation::SetAutoFilter { range: Some(range), .. }) if range == "A1:M1"
+        ));
+        assert!(result.edit_plan.drop_allowed.is_empty());
+        assert!(!output.exists());
+        fs::remove_dir_all(directory).expect("remove S1 history plan fixture directory");
+    }
+
+    #[test]
+    #[ignore = "set AUDIT_S1_HISTORY_REAL_WORKBOOK to an authorized XLSX sample; candidate only"]
+    fn real_s1_history_workbook_engine_candidate_only() {
+        let source = std::env::var_os("AUDIT_S1_HISTORY_REAL_WORKBOOK")
+            .map(std::path::PathBuf::from)
+            .expect("AUDIT_S1_HISTORY_REAL_WORKBOOK must identify a read-only sample");
+        assert!(
+            source.is_file(),
+            "real S1 history workbook sample is missing"
+        );
+        let source_bytes = fs::read(&source).expect("read source sample for immutability check");
+        let (directory, input) = history_fixture_path("real_candidate");
+        fs::copy(&source, &input).expect("copy real sample into the temporary candidate directory");
+        let input_bytes = fs::read(&input).expect("read temporary candidate input");
+        let output = directory.join("candidate-output.xlsx");
+        let mut candidate_issue = issue("CANDIDATE-ONLY", "2026-10", true);
+        candidate_issue.source_file = "candidate-source.xlsx".to_owned();
+        candidate_issue.target_value = json!(0);
+        let result = build_s1_history_workbook_edit_plan(&input, &output, &[candidate_issue])
+            .expect("build real-sample history edit plan");
+        let plan = &result.edit_plan;
+        let sheet_count = excel_reader::read_sheet_names(&input)
+            .expect("read real-sample worksheet names")
+            .len();
+        println!(
+            "candidate_profile format={:?} inventory_complete={} features={:?} history_sheet_present={} other_sheet_count={} operations={:?} preserve={:?}",
+            plan.workbook.format,
+            plan.workbook.inventory_complete,
+            plan.workbook.features_present,
+            result.replaces_existing_history_sheet,
+            sheet_count.saturating_sub(usize::from(result.replaces_existing_history_sheet)),
+            plan.operations
+                .iter()
+                .map(EditOperation::kind)
+                .collect::<Vec<_>>(),
+            plan.preserve
+        );
+
+        let capability = BackendCapability {
+            engine: EngineId::UmyaSpreadsheet,
+            status: CapabilityStatus::Unverified,
+            format: plan.format,
+            operations: plan.operations.iter().map(EditOperation::kind).collect(),
+            supported_features: plan.workbook.features_present.clone(),
+            preserved: plan.preserve.clone(),
+            platform: std::env::consts::OS.to_owned(),
+            evidence: None,
+        };
+        let backend = UmyaXlsxBackend::new(capability).expect("construct unverified candidate");
+        match backend.apply(plan) {
+            Ok(()) => match OpenpyxlXlsxValidator.validate(plan, &output) {
+                Ok(()) => println!(
+                    "candidate_validation=passed engine=umya_spreadsheet production_capability=unverified"
+                ),
+                Err(error) => println!(
+                    "candidate_validation=rejected engine=umya_spreadsheet production_capability=unverified reason={error:#}"
+                ),
+            },
+            Err(error) => println!(
+                "candidate_apply=rejected engine=umya_spreadsheet kind={:?} production_capability=unverified reason={}",
+                error.kind, error.message
+            ),
+        }
+        assert_eq!(fs::read(&input).unwrap(), input_bytes);
+        assert_eq!(fs::read(&source).unwrap(), source_bytes);
+        fs::remove_dir_all(directory).expect("remove temporary real-sample candidate directory");
     }
 
     #[test]
