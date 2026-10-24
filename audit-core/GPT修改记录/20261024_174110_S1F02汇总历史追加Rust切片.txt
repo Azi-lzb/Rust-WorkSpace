@@ -1,0 +1,44 @@
+时间：2026-10-24 17:41:10 +08:00
+执行者：Codex Audit migration agent
+修改前 commit：9cfeb556da11e99e4cd8b134aad30cdcacf0e085
+修改后 commit：4b81c81（业务代码、测试、对拍报告和迁移清单）
+WIP：开始时 audit-dev 工作树干净；修改限于 audit-core。
+
+## 目的
+
+继续 S1-F02 命名区域汇总迁移，恢复 Python `region_summary._history_context` 对本地校验结果、业务说明和任务说明的内置历史字段追加行为。S1-F01 公式复制能力继续受共享 ExcelModifier 通过门禁约束，本次未调整路由或共享代码。
+
+## 修改文件
+
+- `audit-core/src/s1_region_summary.rs`：添加内置历史键/字段规则，使用 Calamine 读 XLSX 历史表；按 Python 复合键语义归一化数值/文本键，按原顺序合并重复历史值；无匹配项留空；遇到历史表公式时失败关闭；新增匹配计数、引擎和耗时摘要。
+- `audit-core/src/bin/open-data-audit.rs`：`s1-region-summary` 增加可选 `--history-workbook` 并将执行结果接入用户/开发者日志。
+- `audit-core/tests/s1_region_summary_cli.rs`：增加 CLI 级历史追加、数值/文本键匹配、重复值顺序、未匹配留空及公式历史表拒绝测试。
+- `audit-core/tests/compare/compare_s1_region_summary.py`：增加历史追加 Python/Rust 文件级对拍样本。
+- `audit-core/probe/reports/s1_f02_named_region_history_synthetic_parity_20261024.json`：记录合成样本对拍结果。
+- `audit-core/MIGRATION_INVENTORY.md`：更新 S1-F02 局部状态，整体保持未验证。
+
+## 行为、配置与版本影响
+
+- 新参数为可选项；省略时现有汇总输出不变。
+- 仅支持普通存储值 `.xlsx` 历史表；本地校验结果使用 8 列复合键和 3 个历史字段，业务说明/任务说明使用各自 Python 内置键和“历史说明”字段。
+- 本次未更改配置格式、模板或 VBA；不修改源 Python、用户业务文件、共享 crates、根 Cargo 配置或 `Cargo.lock`。
+- 【组件版本】不升级；沿用 workspace crate 版本治理。
+
+## 测试证据
+
+- `cargo fmt --all -- --check`：通过。
+- `cargo build -p audit-core --locked`：通过，Windows 原生 Rust 工具链。
+- `cargo test -p audit-core --locked`：通过；包含 86 个 Audit library 单测及 S1/S2 CLI、集成和对拍测试。新增公式历史表拒绝回归通过。
+- `python audit-core/tests/compare/compare_s1_region_summary.py --audit-binary target/debug/open-data-audit.exe --report audit-core/probe/reports/s1_f02_named_region_history_synthetic_parity_20261024.json`：通过。Python 使用 Microsoft Excel，Rust 使用 Calamine/namespace-aware OOXML reader 与 rust_xlsxwriter；本地校验结果历史输出值/类型、表序、尺寸、表头样式、筛选和冻结差异均为 0；历史匹配 1 行，数字键 `1.0` 与文本键 `1` 匹配、重复历史按顺序拼接、另一行无匹配并留空；模板、源文件和历史文件未变化。列宽最大偏差 4.5703125 字符。
+- `git diff --check`：通过。
+
+## 未执行项与已知限制
+
+- 未用用户提供的 2026-07-31 真实目录验证本次 S1-F02 历史追加；该目录不是本轮合成配对测试的输入。没有真实 F02 模板/历史工作簿验收，也未进行 Linux、麒麟/UOS 或 deb 验证。
+- 历史表含公式时当前拒绝，不读取或冒用公式缓存；S1-F02 兜底模板和公式源文件仍未迁移。S1-F02 整体仍为未验证。
+- S1-F01 公式复制生产路由仍保持 Unverified，未重新运行已完成的真实样本批次。
+
+## 删除清单与回滚
+
+- 删除清单：无。
+- 回滚业务切片：`git revert 4b81c81`；本记录单独提交，若需一并撤回，再回滚包含本记录的提交。
