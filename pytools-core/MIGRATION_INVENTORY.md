@@ -524,3 +524,9 @@ Windows 原生 `cargo fmt --manifest-path pytools-core/Cargo.toml -- --check` �
 共享修复由 main 完成并提交，本分支经 Git cherry-pick 包含 `4a08852`（目标 worksheet 范围内插行及共享回归）和 `afaed4f`（共享修改记录终结）。共享回归由 main 报告 `excel-editor/tests/insert_rows` 1/1 通过；本分支没有重复运行该共享测试，以上 PT-7-1 菜单测试和多工作表执行对拍验证了业务调用链。
 
 仍未取得授权的真实业务模板或真实业务样本；synthetic capability 仅用于隔离测试，不登记为生产 Passed 能力或默认路由。真实模板/平台、Windows 弹窗手工验收、目标 Linux/glibc 2.28/deb 验收未执行；PT-7-1 的生产验收状态仍为未验证。
+
+### 2026-10-24 PT-7-2 机构名称规范化菜单入口
+
+在既有 `institution-normalize` CLI/计划实现上接入主菜单 7→2，映射从全局配置读取；默认仅生成计划，显式 capability 才能执行候选验证和安全替换。菜单拒绝未验收格式；PT-7-2 当前只允许 `.xlsx`，原 Python 的 `.xlsm`/VBA 路径仍未迁移。普通用户与开发者视图沿用现有结构化事件；新增 `off` 视图，不输出阶段事件、不写历史文件。
+
+Windows 原生验证：`batch_tools_menu_cli` 6/6、`institution_normalize_batch_cli` 5/5、`institution_normalize_plan_parity` 1/1 通过，格式检查通过。真实菜单覆盖计划只读、配置映射、`.xlsm` 跳过、user/developer/off 视图与临时 synthetic capability 的真实 CLI→ExcelModifier 执行；计划语义及执行后所有工作表的值、公式、合并区域、批注投影均与既有 PyCode 基线一致，编辑器候选校验通过计划声明的样式与未修改包部件保留项。以上均为合成 XLSX 证据；真实模板/样本、`.xlsm` 保真、生产 capability、目标平台和 deb 未验收，PT-7-2 仍为未验证。

@@ -366,6 +366,163 @@ fn interactive_village_split_menu_executes_capability_and_safely_commits_target(
     Ok(())
 }
 
+#[test]
+fn interactive_institution_normalize_menu_supports_user_developer_and_off_views() -> Result<()> {
+    let root = TestDirectory::new()?;
+    let fixture =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/institution_normalize.xlsx");
+    let unsupported = root.path().join("unsupported.xlsm");
+    fs::write(&unsupported, b"synthetic unverified XLSM placeholder")?;
+
+    for view in ["user", "developer", "off"] {
+        let view_root = root.path().join(view);
+        let config = create_config(&view_root)?;
+        let target = view_root.join("institution-target.xlsx");
+        fs::copy(&fixture, &target)?;
+        let target_before = fs::read(&target)?;
+        let input_paths = if view == "user" {
+            format!("{};{}", target.display(), unsupported.display())
+        } else {
+            target.display().to_string()
+        };
+        let input = format!("7\n2\n1\n{input_paths}\n0\n");
+        let output =
+            run_menu_with_arguments(&config, &input, &["--log-view".to_owned(), view.to_owned()])?;
+        assert!(
+            output.status.success(),
+            "PT-7-2 menu ({view}) failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(
+            fs::read(&target)?,
+            target_before,
+            "{view} plan mode modified input"
+        );
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(stdout.contains("2  机构名称规范化"));
+        assert!(stdout.contains(r#""feature_id": "PT-7-2""#));
+        assert!(stdout.contains(r#""mapped_rows": 3"#));
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if view == "off" {
+            assert!(stderr.trim().is_empty(), "off view emitted logs: {stderr}");
+            assert!(!stdout.contains("history_report"));
+            assert!(!stdout.contains("\"events\""));
+        } else {
+            assert!(find_file_recursively(&view_root.join("app/logs"), ".json")?.is_some());
+            assert!(
+                find_file_recursively(&view_root.join("app/output/plans/PT-7-2"), ".json")?
+                    .is_some()
+            );
+            if view == "user" {
+                assert!(stderr.contains("正在处理 1/1"));
+                assert!(stdout.contains("[跳过]"));
+                assert!(!stdout.contains("calamine"));
+            } else {
+                assert!(stderr.contains("\"phase\":\"plan_build\""));
+                assert!(stdout.contains("\"actual_engine\": null"));
+            }
+        }
+        if view == "off" {
+            let log_dir = view_root.join("app/logs");
+            assert!(!log_dir.exists() || fs::read_dir(log_dir)?.next().is_none());
+            assert!(
+                find_file_recursively(&view_root.join("app/output/plans/PT-7-2"), ".json")?
+                    .is_some()
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn interactive_institution_normalize_menu_applies_only_with_temporary_capability() -> Result<()> {
+    let root = TestDirectory::new()?;
+    let config = create_config(root.path())?;
+    let fixture =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/institution_normalize.xlsx");
+    let target = root.path().join("institution-target.xlsx");
+    let candidate = root.path().join("plan-candidate.xlsx");
+    let capability_path = root.path().join("temporary-test-capability.json");
+    fs::copy(&fixture, &target)?;
+    let original = fs::read(&target)?;
+    let mapping = pytools_core::config::load_institution_mapping_ordered(&config)?;
+    let profile = excel_editor::inspect_xlsx_profile(&target)?;
+    let plan = pytools_core::institution_normalize::build_institution_normalize_plan(
+        &target,
+        &candidate,
+        profile,
+        "synthetic-pt-7-2-menu-capability",
+        &mapping,
+    )?
+    .plan
+    .context("institution normalization plan missing")?;
+    fs::write(
+        &capability_path,
+        serde_json::to_vec_pretty(&institution_normalize_capability(&plan))?,
+    )?;
+
+    let input = format!("7\n2\n1\n{}\n0\n", target.display());
+    let output = run_menu_with_capability(
+        &config,
+        &input,
+        &capability_path,
+        "synthetic-pt-7-2-menu-test",
+        "developer",
+    )?;
+    assert!(
+        output.status.success(),
+        "PT-7-2 menu apply failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stdout.contains("[执行模式]"));
+    assert!(stdout.contains(r#""modified_files": 1"#));
+    assert!(stderr.contains("\"actual_engine\":\"umya_spreadsheet\""));
+    assert_ne!(
+        fs::read(&target)?,
+        original,
+        "capability mode did not commit target"
+    );
+    let workbook = read_workbook(&target)?;
+    let branch = workbook
+        .sheets
+        .iter()
+        .find(|sheet| sheet.name == "报表分机构本外币")
+        .context("institution branch sheet missing after menu apply")?;
+    assert_eq!(branch.values["A2"]["value"], "Exact Standard");
+    let baseline: Value = serde_json::from_slice(&fs::read(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("probe/reports/institution_normalize_baseline.json"),
+    )?)?;
+    let expected_sheets = baseline["sheets"]
+        .as_array()
+        .context("institution baseline sheets missing")?;
+    assert_eq!(workbook.sheets.len(), expected_sheets.len());
+    for expected in expected_sheets {
+        let name = expected["name"]
+            .as_str()
+            .context("baseline sheet name missing")?;
+        let actual = workbook
+            .sheets
+            .iter()
+            .find(|sheet| sheet.name == name)
+            .with_context(|| format!("output sheet {name:?} missing"))?;
+        assert_eq!(serde_json::to_value(&actual.values)?, expected["values"]);
+        assert_eq!(
+            serde_json::to_value(&actual.formulas)?,
+            expected["formulas"]
+        );
+        assert_eq!(serde_json::to_value(&actual.merges)?, expected["merges"]);
+        assert_eq!(
+            serde_json::to_value(&actual.comments)?,
+            expected["comments"]
+        );
+    }
+    Ok(())
+}
+
 fn create_config(root: &Path) -> Result<PathBuf> {
     let app = root.join("app");
     let config = app.join("config/config.xlsx");
@@ -387,6 +544,21 @@ fn create_config(root: &Path) -> Result<PathBuf> {
     for (index, (key, value)) in settings.iter().enumerate() {
         global.write_string((index + 1) as u32, 0, *key)?;
         global.write_string((index + 1) as u32, 1, value)?;
+    }
+    let mapping = workbook.add_worksheet();
+    mapping.set_name("机构映射表")?;
+    mapping.write_string(0, 0, "原始机构")?;
+    mapping.write_string(0, 1, "标准机构")?;
+    for (row, (source, target)) in [
+        ("AB", "Short Standard"),
+        ("ABC Bank", "Exact Standard"),
+        ("branch", "Branch Standard"),
+    ]
+    .iter()
+    .enumerate()
+    {
+        mapping.write_string((row + 1) as u32, 0, *source)?;
+        mapping.write_string((row + 1) as u32, 1, *target)?;
     }
     workbook.save(&config)?;
     Ok(config)
@@ -463,6 +635,25 @@ fn village_split_capability(plan: &excel_editor::ExcelEditPlan) -> BackendCapabi
             adapter_version: "umya-spreadsheet-3.1.1".to_owned(),
             engine_version: "umya-spreadsheet-3.1.1".to_owned(),
             platform: "synthetic-pt-7-1-umya-menu-test".to_owned(),
+        }),
+    }
+}
+
+fn institution_normalize_capability(plan: &excel_editor::ExcelEditPlan) -> BackendCapability {
+    BackendCapability {
+        engine: EngineId::UmyaSpreadsheet,
+        status: CapabilityStatus::Passed,
+        format: plan.format,
+        operations: plan.operations.iter().map(EditOperation::kind).collect(),
+        supported_features: plan.workbook.features_present.clone(),
+        preserved: plan.preserve.clone(),
+        platform: "synthetic-pt-7-2-menu-test".to_owned(),
+        evidence: Some(CapabilityEvidence {
+            sample_id: "synthetic-pt-7-2-institution-normalize-menu".to_owned(),
+            report_path: "pytools-core/tests/batch_tools_menu_cli.rs".to_owned(),
+            adapter_version: "umya-spreadsheet-3.1.1".to_owned(),
+            engine_version: "umya-spreadsheet-3.1.1".to_owned(),
+            platform: "synthetic-pt-7-2-menu-test".to_owned(),
         }),
     }
 }

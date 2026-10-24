@@ -214,7 +214,7 @@ where
         writeln!(output, "  3  打印工具（生成页面设置计划）")?;
         writeln!(output, "  4  转换与文件命名工具")?;
         writeln!(output, "  6  汇总工具")?;
-        writeln!(output, "  7  一二批处理工具（当前接入 7-1、7-5）")?;
+        writeln!(output, "  7  一二批处理工具（当前接入 7-1、7-2、7-5）")?;
         writeln!(output, "  0  退出")?;
         writeln!(output, "==============================")?;
         let Some(choice) = read_menu_choice(input, output, "主菜单选择> ")? else {
@@ -853,6 +853,7 @@ where
     loop {
         writeln!(output, "------ 一二批处理工具 ------")?;
         writeln!(output, "  1  拆分村镇银行数据（Rust 计划/能力门控执行）")?;
+        writeln!(output, "  2  机构名称规范化（Rust 计划/能力门控执行）")?;
         writeln!(output, "  5  地区总分校验（读取并生成核对结果）")?;
         writeln!(output, "  0  返回")?;
         writeln!(output, "----------------------------")?;
@@ -951,6 +952,91 @@ where
                 run_village_split_batch(arguments)?;
                 return Ok(());
             }
+            "2" => {
+                let Some(selected) = choose_source_files_or_folders(
+                    "选择需要规范化机构名称的目标工作簿",
+                    NativeFileFilter::XlsxOnly,
+                    input,
+                    output,
+                    allow_native_dialog,
+                )?
+                else {
+                    writeln!(output, "[已取消]")?;
+                    return Ok(());
+                };
+                let mut targets = Vec::new();
+                for path in selected {
+                    if path
+                        .extension()
+                        .is_some_and(|extension| extension.eq_ignore_ascii_case("xlsx"))
+                    {
+                        targets.push(path);
+                    } else {
+                        writeln!(
+                            output,
+                            "[跳过] {}：PT-7-2 当前只接受已验证的 .xlsx；未验收格式不执行修改。",
+                            path.display()
+                        )?;
+                    }
+                }
+                if targets.is_empty() {
+                    writeln!(output, "[提示] 没有可处理的 .xlsx 目标工作簿。")?;
+                    return Ok(());
+                }
+                if capabilities.is_none() {
+                    writeln!(output, "[计划模式] 从配置读取机构映射；原目标不会修改。")?;
+                } else {
+                    writeln!(
+                        output,
+                        "[执行模式] 将按 capability 生成并验证候选，再安全替换目标并保留备份。"
+                    )?;
+                }
+
+                let plan_dir = global.output_dir.join("plans").join("PT-7-2");
+                let mut arguments = vec![
+                    "--config".to_owned(),
+                    config_path.to_string_lossy().into_owned(),
+                    "--view".to_owned(),
+                    log_view.to_owned(),
+                ];
+                if log_view != "off" {
+                    let nonce = SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .map(|duration| duration.as_nanos())
+                        .unwrap_or_default();
+                    let report_path = global.log_dir.join(format!(
+                        "PT-7-2_{}_{}_{}.json",
+                        Local::now().format("%Y%m%dT%H%M%S"),
+                        std::process::id(),
+                        nonce
+                    ));
+                    arguments.extend([
+                        "--report-output".to_owned(),
+                        report_path.to_string_lossy().into_owned(),
+                    ]);
+                }
+                if let (Some(capabilities), Some(platform)) = (capabilities, platform) {
+                    arguments.extend([
+                        "--apply".to_owned(),
+                        "--capabilities".to_owned(),
+                        capabilities.to_string_lossy().into_owned(),
+                        "--platform".to_owned(),
+                        platform.to_owned(),
+                    ]);
+                } else {
+                    arguments.extend([
+                        "--plan-dir".to_owned(),
+                        plan_dir.to_string_lossy().into_owned(),
+                    ]);
+                }
+                arguments.extend(
+                    targets
+                        .into_iter()
+                        .map(|path| path.to_string_lossy().into_owned()),
+                );
+                run_institution_normalize_batch(arguments)?;
+                return Ok(());
+            }
             "5" => {
                 let Some(selected) = choose_source_files_or_folders(
                     "选择要做地区总分校验的 Excel 文件",
@@ -998,7 +1084,7 @@ where
                 return Ok(());
             }
             "0" => return Ok(()),
-            _ => writeln!(output, "仅接受 1、5 或 0")?,
+            _ => writeln!(output, "仅接受 1、2、5 或 0")?,
         }
     }
 }
@@ -2737,45 +2823,53 @@ fn run_institution_normalize_batch(arguments: Vec<String>) -> Result<()> {
         .map(String::as_str)
         .unwrap_or("user");
     anyhow::ensure!(
-        matches!(view, "user" | "developer"),
-        "--view must be either user or developer"
+        matches!(view, "user" | "developer" | "off"),
+        "--view must be user, developer, or off"
     );
     let plan_dir = options.values.get("plan-dir").map(PathBuf::from);
-    let report_output = options
-        .values
-        .get("report-output")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            let nonce = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|duration| duration.as_nanos())
-                .unwrap_or_default();
-            PathBuf::from("logs").join(format!(
-                "PT-7-2_{}_{}_{}.json",
-                chrono::Local::now().format("%Y%m%dT%H%M%S"),
-                std::process::id(),
-                nonce
-            ))
-        });
-    anyhow::ensure!(
-        report_output
-            .extension()
-            .and_then(|extension| extension.to_str())
-            .is_some_and(|extension| extension.eq_ignore_ascii_case("json")),
-        "--report-output must use a .json extension"
-    );
-    anyhow::ensure!(
-        !report_output.exists(),
-        "run history file already exists; refusing to overwrite {}",
-        report_output.display()
-    );
-    if let Some(parent) = report_output
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-    {
-        fs::create_dir_all(parent)
-            .with_context(|| format!("create history directory {}", parent.display()))?;
-    }
+    let report_output = if view == "off" {
+        anyhow::ensure!(
+            !options.values.contains_key("report-output"),
+            "--report-output cannot be used with --view off"
+        );
+        None
+    } else {
+        let path = options
+            .values
+            .get("report-output")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| {
+                let nonce = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|duration| duration.as_nanos())
+                    .unwrap_or_default();
+                PathBuf::from("logs").join(format!(
+                    "PT-7-2_{}_{}_{}.json",
+                    chrono::Local::now().format("%Y%m%dT%H%M%S"),
+                    std::process::id(),
+                    nonce
+                ))
+            });
+        anyhow::ensure!(
+            path.extension()
+                .and_then(|extension| extension.to_str())
+                .is_some_and(|extension| extension.eq_ignore_ascii_case("json")),
+            "--report-output must use a .json extension"
+        );
+        anyhow::ensure!(
+            !path.exists(),
+            "run history file already exists; refusing to overwrite {}",
+            path.display()
+        );
+        if let Some(parent) = path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+        {
+            fs::create_dir_all(parent)
+                .with_context(|| format!("create history directory {}", parent.display()))?;
+        }
+        Some(path)
+    };
     let capability = options.values.get("capabilities").map(PathBuf::from);
     let platform = options.values.get("platform").cloned();
     anyhow::ensure!(
@@ -2798,7 +2892,7 @@ fn run_institution_normalize_batch(arguments: Vec<String>) -> Result<()> {
                 if let Ok(encoded) = serde_json::to_string(event) {
                     eprintln!("{encoded}");
                 }
-            } else {
+            } else if view == "user" {
                 let current = event
                     .progress
                     .current_file
@@ -2819,14 +2913,23 @@ fn run_institution_normalize_batch(arguments: Vec<String>) -> Result<()> {
         "internal progress event count mismatch"
     );
 
-    write_json_report_create_new(&report_output, &report)?;
+    if let Some(report_output) = report_output.as_deref() {
+        write_json_report_create_new(report_output, &report)?;
+    }
     let output = if view == "developer" {
         serde_json::to_value(&report)?
     } else {
         institution_normalize_user_view(&report)
     };
     let mut output = output;
-    output["history_report"] = serde_json::Value::String(report_output.display().to_string());
+    if view == "off" {
+        if let Some(object) = output.as_object_mut() {
+            object.remove("events");
+        }
+    }
+    if let Some(report_output) = report_output {
+        output["history_report"] = serde_json::Value::String(report_output.display().to_string());
+    }
     println!("{}", serde_json::to_string_pretty(&output)?);
     Ok(())
 }
@@ -4159,8 +4262,8 @@ fn print_usage() {
          rural-loan-plan --current <xlsx> --previous <xlsx> --output <candidate.xlsx> [--plan-output <json>] [--capabilities <json> --platform <id>]\n\
          quarterly-rural-loan-plan --current <xlsx> --previous <xlsx> --output <candidate.xlsx> [--plan-output <json>] [--capabilities <json> --platform <id>]\n\
          institution-normalize-plan --config <config.xlsx> --input <xlsx> --output <candidate.xlsx> [--plan-output <json>] [--capabilities <json> --platform <id>]\n\
-         institution-normalize --config <config.xlsx> --plan-dir <dir> [--view user|developer] [--report-output <json>] <workbook.xlsx>...\n\
-         institution-normalize --config <config.xlsx> --apply --capabilities <json> --platform <id> [--view user|developer] [--report-output <json>] <workbook.xlsx>...\n\
+         institution-normalize --config <config.xlsx> --plan-dir <dir> [--view user|developer|off] [--report-output <json>] <workbook.xlsx>...\n\
+         institution-normalize --config <config.xlsx> --apply --capabilities <json> --platform <id> [--view user|developer|off] [--report-output <json>] <workbook.xlsx>...\n\
          fx-header-plan --input <xlsx> --output <candidate.xlsx> [--plan-output <json>] [--capabilities <json> --platform <id>]\n\
          rename-sheets-plan --config <config.xlsx> --input <xlsx> --output <candidate.xlsx> [--plan-output <json>] [--capabilities <json> --platform <id>]\n\
          rename-sheets --config <config.xlsx> --capabilities <json> --platform <id> [--recursive] <file-or-directory>...\n\
