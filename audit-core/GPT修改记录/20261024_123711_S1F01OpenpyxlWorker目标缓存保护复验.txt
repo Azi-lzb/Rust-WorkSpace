@@ -1,0 +1,43 @@
+# S1-F01 OpenPyXL worker 目标公式缓存保护真实批次复验
+
+- 日期：2026-10-24 12:41:21 +08:00
+- 修改前 commit：c4ad6f4（main 的共享 worker 修复已按协调同步到 audit-dev；工作区干净，分支仅比 origin/audit-dev 超前该同步提交）
+- 修改后 commit：本记录随本轮提交，提交号由 Git 历史追溯。
+- WIP：无未提交 Audit 修改；未改 DEVELOPMENT_GOAL.md、源 Python 项目、真实样本、pytools-core、Cargo.lock 或 main 分支。共享代码由 main 提交，本轮只消费其已同步能力。
+
+## 目的与修改文件
+
+在 main 修复完整 worker 批次操作后，复验用户提供的 2026-07-31 S1 同批样本，确认模板公式缓存读取策略、计算属性批处理和目标公式缓存拒绝保护；将真实结果记入迁移清单和脱敏机器报告。
+
+- 新增 `audit-core/probe/reports/s1_formula_copy_candidate_openpyxl_target_cache_guard_real.json`。
+- 更新 `audit-core/MIGRATION_INVENTORY.md` 中 S1-F01 的最新候选状态。
+- 本记录。
+
+报告只保存样本序号、操作数、错误分类、耗时和安全状态；不保存工作簿路径、机构名、单元格内容、公式文本或哈希。
+
+## 样本与结果
+
+- 同一默认映射模板：1,072 个公式单元格、4 个复制范围、8 个结构区域；7 个真实源审核工作簿，计划为 4 个 `ImportRange` 加 1 个 `SetWorkbookCalculationProperties`，共 5 个操作。
+- 同步后的完整批次已通过共享 worker 操作 allowlist；模板作为 ImportRange 来源的缓存不再被误当成输出目标缓存。
+- 7/7 真实目标均在写入前被目标公式缓存保护拒绝，分类 `UnsupportedBeforeWrite / formula_cache_not_preserved`；7/7 无输出，且模板和目标输入保持不变。Rust 输出为 0，因此未进行范围内样式/公式、范围外对象或包部件对拍。
+- 额外使用 Rust `s1-formula-audit`（Calamine）读取首个目标：非空公式结果 264 格；其已有审核副本为 265 格。该业务读数不是 OOXML 全工作簿缓存盘点，未据此外推到其余样本缓存数量。
+- 隔离对拍 helper 仅统计缓存坐标：7 本目标共有 688/692/686/692/686/688/983 格非空公式缓存，全部位于四个将被覆盖的 ImportRange 目标范围内，范围外均为 0。只输出计数，不保存坐标、公式或缓存值；此结果支持按修改范围保护缓存，不能降低未修改区保护。
+- 能力仍为 `Unverified`，生产路由未登记，未执行公式重算。
+
+## 验证
+
+- 隔离 WSL venv 中 `test_openpyxl_worker.py`：4 项通过。
+- `cargo test -p excel-editor --locked --test openpyxl_worker rust_modifier_invokes_one_batch_worker_and_preserves_source -- --ignored --nocapture`（WSL，隔离 runtime）：1 项通过，验证模板公式来源、计算属性操作、Rust OOXML 读回及输入不变。
+- `compare_s1_formula_copy_candidate.py --engine openpyxl-worker --scope full-s1` 对 7 个真实输入逐本执行：7/7 候选被目标缓存保护拒绝，7/7 输入/模板未变，输出 0；不是公式复制成功或保留契约通过。
+- `open-data-audit s1-formula-audit`（Rust Calamine）首个源工作簿摘要：非空结果 264 格；已有审核副本 265 格。
+- 麒/统信目标 Linux、Windows 原生 Rust、deb 和离线交付未验证。
+
+## 已知问题与下一项
+
+OpenPyXL 会丢弃目标工作簿非空公式缓存；当前全工作簿拒绝策略虽安全，却连本批将被覆盖范围内的旧公式缓存也一并阻止。main 需评估 ImportRange 目标坐标感知的共享保护与 Rust readback：只允许缓存全部在本批明确覆盖区内的情况，范围外仍必须保留或拒绝。此评估完成前不添加 Audit 生产路由、不降低未修改区缓存保护。
+
+## 回滚与版本
+
+- 无文件删除；候选输出仅位于临时目录并由比较器清理，真实输入未变。
+- 本轮 Audit 报告、清单和记录可由一个普通 `git revert <本轮提交>` 回滚；不改写历史，也不回滚 main 共享提交。
+- 【组件版本】不升级。
