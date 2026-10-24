@@ -1,0 +1,46 @@
+# S1-F01 真实历史重跑对拍与公式复制候选诊断
+
+- 时间：2026-10-24 11:12（Asia/Shanghai）
+- 执行者：Codex audit-dev Agent
+- 分支：audit-dev
+- 修改前 commit：51ca284
+- 修改后 commit：本记录随本轮提交，提交号由 Git 历史追溯。
+- WIP：开始时保留上一轮尚未提交的 `s1_formula_copy_candidate.rs` 失败分类诊断；未覆盖现有改动。未修改根 `DEVELOPMENT_GOAL.md`、源 Python 目录、用户工作簿、`pytools-core/**`、公共 crates 或 `Cargo.lock`。未发现 `audit-core/GPT修改记录/WIP.md`。
+
+## 目的与范围
+
+继续验证 S1-F01 可独立完成的历史流程，并在真实模板/审核输入上确认公式复制候选的安全门拒绝原因。历史结果簿保持 Python 的 13 列契约，Rust 只读取已有历史或创建独立结果簿；本轮没有新增原位编辑路由、公式复制生产入口、重算或 capability。
+
+## 修改文件
+
+- `audit-core/tests/s1_audit_directory_cli.rs`：增加合成 CLI 重跑回归；首轮写出的历史结果簿作为第二轮输入，断言读回、分类与合并行数。
+- `audit-core/tests/compare/compare_s1_audit_directory.py`：支持可选历史簿输入；Python 基线读取并分类同一历史，Rust 比较器核对读入行数与分类统计；选中源位于输入子目录时自动启用递归发现；失败时保留有用的 CLI 错误诊断。
+- `audit-core/tests/s1_formula_copy_candidate.rs`：报告 direct Umya 候选的安全失败类别，不记录原始错误文本或路径。
+- `audit-core/probe/reports/s1_history_repeated_run_real.json`：保存真实首跑/回放的脱敏汇总。
+- `audit-core/probe/reports/s1_formula_copy_candidate_real_batch.json`：保存同批 7 个目标工作簿的脱敏候选结果与 ZIP 部件类别计数。
+- `audit-core/MIGRATION_INVENTORY.md`：更新 S1-F01 历史回放证据及公式复制共享层阻塞项。
+- 本记录。
+
+## 测试与证据
+
+- WSL Ubuntu：`cargo fmt -p audit-core -- --check` 通过。
+- WSL Ubuntu：`cargo test -p audit-core --locked --test s1_audit_directory_cli`，3 passed；覆盖两种日志视图、历史读取以及首轮写出的历史簿再次作为输入。
+- Windows Python 3.12：`python -m py_compile audit-core/tests/compare/compare_s1_audit_directory.py` 通过。
+- 真实历史回放：首轮与回放的 Python/Rust 当前 Issue、历史合并、历史结果簿差异均为 0；每轮 297 条公式 Issue + 2 条条件格式 Issue。回放时 Python 与 Calamine 均读 299 行，合并仍为 299 行，299 条“再次出现”与旧 Python 一致；输入源、审核副本、模板和首轮历史簿均未变化。公式重算未执行。
+- 公式复制候选：同批 7 个审核目标均为 `unsupported_before_write / unverified_target_workbook_structure`，未创建候选输出，输入均未变化。对照当前 Rust package 检查规则，7 个阻断项都是 `xl/drawings/` ZIP 目录标记；profile 的 21 个未识别项也全为目录标记，未发现未识别文件部件。候选仍为 Unverified，不能接入生产路由。
+- 为确认失败不是过期 Release CLI，本轮从当前 `audit-dev` 源码重建了被忽略的 `target/release/open-data-audit`；该构建只产生既有 `umya-spreadsheet` 弃用警告。
+
+## 未执行项、已知问题与协调需求
+
+- `crates/excel-editor/src/workbook_profile.rs` 将 ZIP 目录项算作未识别 package part；`crates/ooxml-patch/src/lib.rs::unverified_parts` 也把 `xl/drawings/` 目录标记视作被拒绝部件。两个都是共享 crate，本分支未修改。需要 main 协调它们忽略 ZIP 目录标记、继续严格校验实际文件部件；修复后必须对同一批真实输入重新完成 ImportRange 全量保留对拍，仍不能仅凭此清点将 capability 标为 Passed。
+- Python/Rust 对同期间回放均得到“再次出现”。现有 13 列历史输出契约没有“数据期”列，读取出的旧记录期间为空；本轮保持旧 Python 行为，没有改变格式或分类语义。
+- Windows 原生 Rust、麒麟 V10/UOS V20、glibc 2.28、deb 和离线运行未验证；S1-F01 整体仍未验收。
+
+## 删除与回滚
+
+- 删除项：无。真实运行的临时工作簿和逐次比较器文件已从临时目录移除；输入数据未变。
+- 回滚：提交后按本功能提交执行 `git revert`；无需回滚公共 crate。
+
+## 组件版本
+
+不升级；沿用当前 `audit-core` crate 版本。

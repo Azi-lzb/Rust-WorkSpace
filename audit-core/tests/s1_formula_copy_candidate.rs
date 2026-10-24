@@ -6,9 +6,9 @@
 
 use audit_core::s1_template_rules::load_s1_template_rule_plan;
 use excel_editor::{
-    inspect_xlsx_profile, BackendCapability, CapabilityStatus, EditBackend, EditOperation,
-    EditOperationKind, EngineId, ExcelEditPlan, PreservationRequirement, RangeStyleMode,
-    UmyaXlsxBackend, WorkbookFormat,
+    inspect_xlsx_profile, BackendCapability, BackendErrorKind, CapabilityStatus, EditBackend,
+    EditOperation, EditOperationKind, EngineId, ExcelEditPlan, PreservationRequirement,
+    RangeStyleMode, UmyaXlsxBackend, WorkbookFormat,
 };
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -134,6 +134,33 @@ fn probes_s1_formula_copy_import_ranges_without_claiming_capability() {
     let started = Instant::now();
     let apply_result = backend.apply(&plan);
     let output_created = Path::new(&output).is_file();
+    let apply_failure_kind = apply_result
+        .as_ref()
+        .err()
+        .map(|failure| match failure.kind {
+            BackendErrorKind::UnsupportedBeforeWrite => "unsupported_before_write",
+            BackendErrorKind::Failed => "backend_failed",
+        });
+    let apply_failure_category = apply_result.as_ref().err().map(|failure| {
+        let message = failure.message.to_ascii_lowercase();
+        if message.contains("unverified workbook structure") {
+            "unverified_target_workbook_structure"
+        } else if message.contains("unverified range import source structure") {
+            "unverified_template_workbook_structure"
+        } else if message.contains("does not exist") {
+            "missing_candidate_input"
+        } else if message.contains("supports xlsx only") {
+            "unsupported_input_format"
+        } else if message.contains("open xlsx") {
+            "target_open_failed"
+        } else if message.contains("apply import_range") {
+            "range_import_failed"
+        } else if message.contains("save xlsx") {
+            "candidate_save_failed"
+        } else {
+            "other_candidate_failure"
+        }
+    });
     let status = if apply_result.is_ok() && output_created {
         "written_unverified_candidate"
     } else {
@@ -151,6 +178,8 @@ fn probes_s1_formula_copy_import_ranges_without_claiming_capability() {
         "formula_recalculation_performed": false,
         "target_inventory_complete": workbook_profile.inventory_complete,
         "output_created": output_created,
+        "apply_failure_kind": apply_failure_kind,
+        "apply_failure_category": apply_failure_category,
         "elapsed_ms": started.elapsed().as_millis(),
     });
     fs::write(

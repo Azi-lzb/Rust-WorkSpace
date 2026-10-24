@@ -1,0 +1,122 @@
+{
+  "schema_version": 1,
+  "suite": "audit.s1_formula_copy_candidate_real_batch",
+  "status": "blocked_before_write",
+  "sample_scope": {
+    "source_audit_pairs": 7,
+    "same_selected_s1_template": true,
+    "mapping": "source_project_default",
+    "operation": "four cross-workbook formula-range imports plus calculation flags",
+    "formula_recalculation": "not requested"
+  },
+  "candidate": [
+    {
+      "sample_ordinal": 1,
+      "status": "candidate_backend_rejected_or_failed",
+      "failure_kind": "unsupported_before_write",
+      "failure_category": "unverified_target_workbook_structure",
+      "target_inventory_complete": false,
+      "output_created": false,
+      "inputs_unchanged": true,
+      "capability_status": "unverified",
+      "production_route_eligible": false,
+      "copy_range_count": 4,
+      "template_formula_cell_count": 1072
+    },
+    {
+      "sample_ordinal": 2,
+      "status": "candidate_backend_rejected_or_failed",
+      "failure_kind": "unsupported_before_write",
+      "failure_category": "unverified_target_workbook_structure",
+      "target_inventory_complete": false,
+      "output_created": false,
+      "inputs_unchanged": true,
+      "capability_status": "unverified",
+      "production_route_eligible": false,
+      "copy_range_count": 4,
+      "template_formula_cell_count": 1072
+    },
+    {
+      "sample_ordinal": 3,
+      "status": "candidate_backend_rejected_or_failed",
+      "failure_kind": "unsupported_before_write",
+      "failure_category": "unverified_target_workbook_structure",
+      "target_inventory_complete": false,
+      "output_created": false,
+      "inputs_unchanged": true,
+      "capability_status": "unverified",
+      "production_route_eligible": false,
+      "copy_range_count": 4,
+      "template_formula_cell_count": 1072
+    },
+    {
+      "sample_ordinal": 4,
+      "status": "candidate_backend_rejected_or_failed",
+      "failure_kind": "unsupported_before_write",
+      "failure_category": "unverified_target_workbook_structure",
+      "target_inventory_complete": false,
+      "output_created": false,
+      "inputs_unchanged": true,
+      "capability_status": "unverified",
+      "production_route_eligible": false,
+      "copy_range_count": 4,
+      "template_formula_cell_count": 1072
+    },
+    {
+      "sample_ordinal": 5,
+      "status": "candidate_backend_rejected_or_failed",
+      "failure_kind": "unsupported_before_write",
+      "failure_category": "unverified_target_workbook_structure",
+      "target_inventory_complete": false,
+      "output_created": false,
+      "inputs_unchanged": true,
+      "capability_status": "unverified",
+      "production_route_eligible": false,
+      "copy_range_count": 4,
+      "template_formula_cell_count": 1072
+    },
+    {
+      "sample_ordinal": 6,
+      "status": "candidate_backend_rejected_or_failed",
+      "failure_kind": "unsupported_before_write",
+      "failure_category": "unverified_target_workbook_structure",
+      "target_inventory_complete": false,
+      "output_created": false,
+      "inputs_unchanged": true,
+      "capability_status": "unverified",
+      "production_route_eligible": false,
+      "copy_range_count": 4,
+      "template_formula_cell_count": 1072
+    },
+    {
+      "sample_ordinal": 7,
+      "status": "candidate_backend_rejected_or_failed",
+      "failure_kind": "unsupported_before_write",
+      "failure_category": "unverified_target_workbook_structure",
+      "target_inventory_complete": false,
+      "output_created": false,
+      "inputs_unchanged": true,
+      "capability_status": "unverified",
+      "production_route_eligible": false,
+      "copy_range_count": 4,
+      "template_formula_cell_count": 1072
+    }
+  ],
+  "package_inventory_observation": {
+    "target_workbooks_with_incomplete_rust_inventory": 7,
+    "profile_unrecognized_directory_entries": 21,
+    "profile_unrecognized_file_parts": 0,
+    "reject_unverified_directory_markers": 7,
+    "reject_unverified_file_parts": 0,
+    "blocker": "zip_directory_marker"
+  },
+  "conclusion": {
+    "capability_status": "unverified",
+    "production_route_eligible": false,
+    "user_workbooks_modified": false,
+    "candidate_outputs_created": 0,
+    "shared_layer_coordination_required": "Skip ZIP directory entries in both excel-editor workbook profiling and ooxml-patch unverified-part rejection; retain file-part checks and re-run full ImportRange preservation comparison.",
+    "target_linux_validation": "not performed",
+    "raw_values_paths_or_hashes_persisted": false
+  }
+}

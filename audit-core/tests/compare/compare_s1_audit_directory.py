@@ -120,6 +120,11 @@ def invoke_rust(args: argparse.Namespace, manifest: Path, source: Path) -> tuple
             if args.history_result_workbook
             else None
         )
+        history_arg = (
+            wsl_path(args.history_workbook.resolve(strict=True))
+            if args.history_workbook
+            else None
+        )
     else:
         command = [str(binary)]
         input_arg = str(args.input_dir.resolve(strict=True))
@@ -134,6 +139,9 @@ def invoke_rust(args: argparse.Namespace, manifest: Path, source: Path) -> tuple
         result_arg = str(args.result_workbook.resolve()) if args.result_workbook else None
         history_result_arg = (
             str(args.history_result_workbook.resolve()) if args.history_result_workbook else None
+        )
+        history_arg = (
+            str(args.history_workbook.resolve(strict=True)) if args.history_workbook else None
         )
 
     command.extend(
@@ -154,12 +162,16 @@ def invoke_rust(args: argparse.Namespace, manifest: Path, source: Path) -> tuple
             "--developer-view",
         ]
     )
+    if len(source.relative_to(args.input_dir.resolve(strict=True)).parts) > 1:
+        command.append("--recursive")
     if template_dir_arg:
         command.extend(["--template-dir", template_dir_arg])
     else:
         command.extend(["--template-workbook", template_arg])
     if mapping_arg:
         command.extend(["--mapping-config", mapping_arg])
+    if history_arg:
+        command.extend(["--history-workbook", history_arg])
     if result_arg:
         command.extend(["--result-workbook", result_arg])
     if history_result_arg:
@@ -175,9 +187,20 @@ def invoke_rust(args: argparse.Namespace, manifest: Path, source: Path) -> tuple
     )
     elapsed_ms = round((time.perf_counter() - started) * 1000)
     if completed.returncode:
+        stderr_lines = [line.strip() for line in completed.stderr.splitlines() if line.strip()]
+        useful_error_lines = [
+            line
+            for line in stderr_lines
+            if not line.lower().startswith("wsl:")
+            and "for more information, try" not in line.lower()
+        ]
+        diagnostic = (
+            useful_error_lines[-1]
+            if useful_error_lines
+            else (stderr_lines[-1] if stderr_lines else "no stderr")
+        )
         raise RuntimeError(
-            "Rust S1 issue-chain CLI failed: "
-            + completed.stderr.strip().splitlines()[-1]
+            "Rust S1 issue-chain CLI failed: " + diagnostic
         )
     output = json.loads(completed.stdout)
     return output, completed.stderr, elapsed_ms
@@ -415,6 +438,7 @@ def main() -> int:
     parser.add_argument("--template-dir", type=Path)
     parser.add_argument("--protected-original", action="append", type=Path, default=[])
     parser.add_argument("--mapping-config", type=Path)
+    parser.add_argument("--history-workbook", type=Path)
     parser.add_argument("--result-workbook", type=Path)
     parser.add_argument("--history-result-workbook", type=Path)
     parser.add_argument("--rust-cli-peak-rss-file", type=Path)
@@ -436,8 +460,11 @@ def main() -> int:
     )
     if history_result_path is not None and history_result_path.exists():
         raise ValueError("Rust S1 history result output path already exists")
+    history_path = args.history_workbook.resolve(strict=True) if args.history_workbook else None
     mapping_config = args.mapping_config.resolve(strict=True) if args.mapping_config else None
     protected_paths = [source, audit, template]
+    if history_path is not None:
+        protected_paths.append(history_path)
     protected_paths.extend(path.resolve(strict=True) for path in args.protected_original)
     before = {
         path: sha256_file(path) for path in protected_paths
@@ -461,7 +488,7 @@ def main() -> int:
     from base_audit.service import _organisation_from_name
     from base_audit.history import classify_current_issues, merge_history
     from base_audit.native.result_writer import write_audit_summary
-    from base_audit.native.history_io import write_history_xlsx
+    from base_audit.native.history_io import read_history_xlsx, write_history_xlsx
     from openpyxl import load_workbook
 
     mappings = load_feature_mappings(mapping_config, template)
@@ -506,11 +533,12 @@ def main() -> int:
         dataclasses.replace(issue, audit_file=str(audit))
         for issue in conditional_issues
     ]
-    python_merged_history = merge_history([], formula_and_conditional)
+    python_history_rows = read_history_xlsx(history_path) if history_path else []
+    python_merged_history = merge_history(python_history_rows, formula_and_conditional)
     python_current, python_resolved = classify_current_issues(
         args.period,
         formula_and_conditional,
-        [],
+        python_history_rows,
         batch_id=args.batch_id,
         audit_time=args.audit_time,
     )
@@ -601,6 +629,41 @@ def main() -> int:
     history_comparison = compare_issues(python_merged_history, rust.get("merged_history", []))
     actual_formula_count = rust["formula_summary"]["issues"]
     actual_conditional_count = rust["conditional_summary"]["issues"]
+    python_current_statuses = Counter(issue.status for issue in python_current)
+    python_resolved_statuses = Counter(issue.status for issue in python_resolved)
+    rust_history_result_summary = rust.get("summary") or {}
+    history_classification = {
+        "python": {
+            "history_rows": len(python_history_rows),
+            "merged_history_rows": len(python_merged_history),
+            "new_issues": python_current_statuses.get("新增", 0),
+            "continuous_issues": python_current_statuses.get("连续出现", 0),
+            "recurring_issues": python_current_statuses.get("再次出现", 0),
+            "resolved_issues": len(python_resolved),
+            "resolved_statuses": dict(sorted(python_resolved_statuses.items())),
+        },
+        "rust": {
+            name: rust_history_result_summary.get(name)
+            for name in (
+                "history_rows",
+                "merged_history_rows",
+                "current_issues",
+                "new_issues",
+                "continuous_issues",
+                "recurring_issues",
+                "resolved_issues",
+            )
+        },
+    }
+    history_input_comparison = None
+    if history_path is not None:
+        rust_history_summary = rust.get("history_workbook_summary") or {}
+        rust_rows_read = rust_history_summary.get("rows_read")
+        history_input_comparison = {
+            "python_rows_read": len(python_history_rows),
+            "rust_rows_read": rust_rows_read,
+            "mismatch_count": int(rust_rows_read != len(python_history_rows)),
+        }
     actual_preflight = rust.get("structure_preflight")
     if actual_preflight and actual_preflight["files_accepted"] != 1:
         raise ValueError("Rust structure preflight did not accept the selected real source")
@@ -624,6 +687,8 @@ def main() -> int:
         mismatch_count += sum(result_workbook_comparison["mismatch_counts"].values())
     if history_result_workbook_comparison:
         mismatch_count += sum(history_result_workbook_comparison["mismatch_counts"].values())
+    if history_input_comparison:
+        mismatch_count += history_input_comparison["mismatch_count"]
     log_events = [
         json.loads(line)
         for line in rust_log.splitlines()
@@ -638,6 +703,7 @@ def main() -> int:
                 "formula_result_issue_extraction",
                 "conditional_format_issue_extraction",
                 "issue_merge_and_history_classification",
+                "history_workbook_read",
             }
             and (event.get("status") == "completed" or event.get("engine"))
         }
@@ -652,6 +718,7 @@ def main() -> int:
             "conditional_issues": len(conditional_issues),
             "conditional_evaluated_cells": conditional_stats.get("evaluated_cells", 0),
             "merged_issues": len(formula_and_conditional),
+            "history_rows_read": len(python_history_rows),
         },
         "rust": {
             "formula_issues": actual_formula_count,
@@ -659,6 +726,9 @@ def main() -> int:
             "merged_issues": len(rust.get("issues", [])),
             "resolved_issues": len(rust.get("resolved_issues", [])),
             "readers": actual_readers,
+            "history_rows_read": (
+                (rust.get("history_workbook_summary") or {}).get("rows_read")
+            ),
             "cli_elapsed_ms": rust_elapsed_ms,
             "cli_peak_rss_kib": rust_cli_peak_rss_kib,
             "template_selection_mode": template_selection.get("mode"),
@@ -689,12 +759,15 @@ def main() -> int:
             "current_issues": formula_comparison,
             "resolved_issues": resolved_comparison,
             "merged_history": history_comparison,
+            "history_classification": history_classification,
+            "history_input": history_input_comparison,
             "result_workbook": result_workbook_comparison,
             "history_result_workbook": history_result_workbook_comparison,
             "mismatch_count": mismatch_count,
         },
         "verification": {
             "all_workbooks_unchanged": inputs_unchanged,
+            "history_workbook_input_provided": history_path is not None,
             "formula_recalculation": "not performed; saved audit-copy values only",
             "raw_issue_values_or_paths_persisted": False,
             "python_conditional_metadata_source": "workflow.adapters.native_audit_handlers.handle_conditional_issue_extract",

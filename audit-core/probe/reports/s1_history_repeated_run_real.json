@@ -1,0 +1,116 @@
+{
+  "schema_version": 1,
+  "suite": "audit.s1_history_repeated_run_real",
+  "status": "passed",
+  "sample_scope": {
+    "source_audit_pairs": 1,
+    "same_business_period_replayed": true,
+    "selected_template_used_for_both_runs": true,
+    "mapping": "source_project_default"
+  },
+  "first_run": {
+    "status": "passed",
+    "mismatch_count": 0,
+    "current_issues": 299,
+    "formula_issues": 297,
+    "conditional_issues": 2,
+    "history_input_rows_python": 0,
+    "history_input_rows_rust": null,
+    "history_classification": {
+      "python": {
+        "history_rows": 0,
+        "merged_history_rows": 299,
+        "new_issues": 299,
+        "continuous_issues": 0,
+        "recurring_issues": 0,
+        "resolved_issues": 0,
+        "resolved_statuses": {}
+      },
+      "rust": {
+        "history_rows": 0,
+        "merged_history_rows": 299,
+        "current_issues": 299,
+        "new_issues": 299,
+        "continuous_issues": 0,
+        "recurring_issues": 0,
+        "resolved_issues": 0
+      }
+    },
+    "history_result_comparison": {
+      "status": "passed",
+      "rows": 299,
+      "mismatch_counts": {}
+    },
+    "history_result_writer": {
+      "engine": "rust_xlsxwriter 0.101.0",
+      "issue_count": 299,
+      "elapsed_ms": 128
+    },
+    "readers": [
+      "calamine",
+      "calamine+namespace_aware_ooxml",
+      "rust_s1_issue_chain+rust_s1_history"
+    ],
+    "elapsed_ms": 40180,
+    "inputs_unchanged": true
+  },
+  "replay_run": {
+    "status": "passed",
+    "mismatch_count": 0,
+    "current_issues": 299,
+    "formula_issues": 297,
+    "conditional_issues": 2,
+    "history_input_rows_python": 299,
+    "history_input_rows_rust": 299,
+    "history_classification": {
+      "python": {
+        "history_rows": 299,
+        "merged_history_rows": 299,
+        "new_issues": 0,
+        "continuous_issues": 0,
+        "recurring_issues": 299,
+        "resolved_issues": 0,
+        "resolved_statuses": {}
+      },
+      "rust": {
+        "history_rows": 299,
+        "merged_history_rows": 299,
+        "current_issues": 299,
+        "new_issues": 0,
+        "continuous_issues": 0,
+        "recurring_issues": 299,
+        "resolved_issues": 0
+      }
+    },
+    "history_result_comparison": {
+      "status": "passed",
+      "rows": 299,
+      "mismatch_counts": {}
+    },
+    "history_result_writer": {
+      "engine": "rust_xlsxwriter 0.101.0",
+      "issue_count": 299,
+      "elapsed_ms": 135
+    },
+    "readers": [
+      "calamine",
+      "calamine+namespace_aware_ooxml",
+      "rust_s1_issue_chain+rust_s1_history"
+    ],
+    "elapsed_ms": 33997,
+    "inputs_unchanged": true
+  },
+  "verification": {
+    "python_rust_parity_both_runs": true,
+    "history_input_readback_parity": {
+      "python_rows_read": 299,
+      "rust_rows_read": 299,
+      "mismatch_count": 0
+    },
+    "no_duplicate_merged_history_rows": true,
+    "all_source_audit_template_and_history_inputs_unchanged": true,
+    "formula_recalculation": "not performed",
+    "raw_issue_values_paths_and_hashes_persisted": false,
+    "target_linux_validation": "not performed"
+  }
+}

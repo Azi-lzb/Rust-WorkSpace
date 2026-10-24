@@ -444,6 +444,49 @@ fn cli_runs_both_issue_sources_merges_then_classifies_and_logs_actual_engines() 
             && event["elapsed_ms"].is_number()
     }));
 
+    let replay_history_result = directory.join("s1-history-replay.xlsx");
+    let replay = run_cli_with_options(
+        &input,
+        None,
+        Some(&template_dir),
+        &manifest,
+        Some(&history_result_workbook),
+        None,
+        Some(&replay_history_result),
+        false,
+    );
+    assert!(
+        replay.status.success(),
+        "{}",
+        String::from_utf8_lossy(&replay.stderr)
+    );
+    let replay_report: Value =
+        serde_json::from_slice(&replay.stdout).expect("parse replayed issue-chain output");
+    assert_eq!(
+        replay_report["history_workbook_summary"]["status"],
+        "loaded"
+    );
+    assert_eq!(
+        replay_report["history_workbook_summary"]["reader"],
+        "calamine"
+    );
+    assert_eq!(replay_report["history_workbook_summary"]["rows_read"], 3);
+    assert_eq!(replay_report["summary"]["history_rows"], 3);
+    assert_eq!(replay_report["summary"]["merged_history_rows"], 3);
+    assert_eq!(replay_report["summary"]["new_issues"], 0);
+    assert_eq!(replay_report["summary"]["recurring_issues"], 3);
+    assert_eq!(replay_report["summary"]["continuous_issues"], 0);
+    assert_eq!(replay_report["issues"].as_array().unwrap().len(), 3);
+    assert!(replay_report["issues"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|issue| issue["status"] == "再次出现"));
+    assert_eq!(replay_report["history_result_workbook"]["issue_count"], 3);
+    let replay_log = String::from_utf8_lossy(&replay.stderr);
+    assert!(replay_log.contains("S1 历史工作簿读取完成"));
+    assert!(replay_log.contains("历史结果工作簿已生成"));
+
     if std::env::var_os("AUDIT_S1_KEEP_RESULT_ARTIFACTS").is_some() {
         fs::write(directory.join("rust-result.json"), &ordinary.stdout)
             .expect("save synthetic Rust issues for Python writer parity");
