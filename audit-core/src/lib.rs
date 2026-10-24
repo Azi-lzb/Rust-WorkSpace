@@ -36,6 +36,7 @@ pub mod s2_rule_engine;
 pub mod s2_service;
 pub mod s2_summary;
 pub mod s2_validation;
+pub mod s3_explanation_export;
 pub mod template;
 pub mod unit_conversion;
 pub mod web_bridge;

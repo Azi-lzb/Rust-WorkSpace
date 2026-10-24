@@ -1,0 +1,21 @@
+{
+  "feature": "S3-F02",
+  "fixture": "synthetic",
+  "baseline": "read-only Python export_selected_explanations",
+  "rust_reader": "calamine",
+  "rust_writer": "rust_xlsxwriter",
+  "status": "passed",
+  "selected_rows_python": 4,
+  "selected_rows_rust": 4,
+  "output_rows_compared": 4,
+  "differences": [],
+  "checks": [
+    "selected rows and cell values",
+    "region code and exact/wildcard institution names",
+    "header order and comparison data preserved without rounding",
+    "sheet order, title merge, freeze pane, filter and column widths",
+    "title/header styles and numeric display formats",
+    "metadata content and timestamp format",
+    "comparison and configuration workbooks remain inputs only"
+  ]
+}

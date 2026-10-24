@@ -31,6 +31,7 @@ use audit_core::{
     s1_template_rules::{load_s1_template_rule_plan, assess_s1_template_health},
     s2_service::{run_s2_audit, S2ProgressEvent, S2RunRequest},
     s2_summary::S2AuditSummary,
+    s3_explanation_export::export_selected_explanations,
     web_bridge::serve_web_ui,
 };
 use clap::{Args, Parser, Subcommand};
@@ -57,6 +58,8 @@ struct Cli {
 enum Command {
     /// Run the S2 period-report audit and create its three-sheet result workbook.
     S2(S2Args),
+    /// Export S3-F02 comparison rows selected for institution explanation.
+    S3ExportExplanations(S3ExportExplanationsArgs),
     /// Recommend an S1 template from source and template workbook sheet names.
     TemplateSuggest(TemplateSuggestArgs),
     /// Evaluate the Rust-supported static conditional-format rules in an XLSX workbook.
@@ -543,6 +546,25 @@ struct S2Args {
     external: Option<PathBuf>,
 }
 
+#[derive(Debug, Args)]
+struct S3ExportExplanationsArgs {
+    /// S3 comparison workbook containing the output-explanation selection column.
+    #[arg(long)]
+    comparison_file: PathBuf,
+
+    /// New XLSX path for the institution explanation workbook.
+    #[arg(long)]
+    output_workbook: PathBuf,
+
+    /// Optional workbook containing the “机构地区参照” sheet.
+    #[arg(long)]
+    config_workbook: Option<PathBuf>,
+
+    /// Emit developer-view progress with the actual engines and stage timings.
+    #[arg(long, default_value_t = false)]
+    developer_view: bool,
+}
+
 #[derive(Debug, Serialize)]
 struct S2CliOutput {
     status: &'static str,
@@ -586,6 +608,9 @@ fn run() -> Result<()> {
                 summary: result.analysis.summary,
             };
             println!("{}", serde_json::to_string_pretty(&output)?);
+        }
+        Command::S3ExportExplanations(arguments) => {
+            run_s3_export_explanations(arguments)?;
         }
         Command::TemplateSuggest(arguments) => {
             let depth = if arguments.recursive {
@@ -747,6 +772,101 @@ fn run() -> Result<()> {
             run_s1_region_summary(arguments)?;
         }
     }
+    Ok(())
+}
+
+fn run_s3_export_explanations(arguments: S3ExportExplanationsArgs) -> Result<()> {
+    let started = Instant::now();
+    let started_at = chrono::Local::now().to_rfc3339();
+    if arguments.developer_view {
+        eprintln!(
+            "{}",
+            serde_json::to_string(&serde_json::json!({
+                "type": "progress",
+                "product": "open-data-audit",
+                "feature": "S3-F02",
+                "step": "selected_explanation_export",
+                "status": "started",
+                "started_at": started_at
+            }))?
+        );
+    } else {
+        eprintln!("正在整理比较结果中标记的机构说明并生成工作簿…");
+    }
+
+    let report = match export_selected_explanations(
+        &arguments.comparison_file,
+        &arguments.output_workbook,
+        arguments.config_workbook.as_deref(),
+    ) {
+        Ok(report) => report,
+        Err(error) => {
+            if arguments.developer_view {
+                eprintln!(
+                    "{}",
+                    serde_json::to_string(&serde_json::json!({
+                        "type": "progress",
+                        "product": "open-data-audit",
+                        "feature": "S3-F02",
+                        "step": "selected_explanation_export",
+                        "status": "failed",
+                        "finished_at": chrono::Local::now().to_rfc3339(),
+                        "elapsed_ms": started.elapsed().as_millis(),
+                        "error": format!("{error:#}")
+                    }))?
+                );
+            } else {
+                eprintln!("说明文件导出失败，未报告成功结果。");
+            }
+            return Err(error);
+        }
+    };
+
+    if arguments.developer_view {
+        eprintln!(
+            "{}",
+            serde_json::to_string(&serde_json::json!({
+                "type": "progress",
+                "product": "open-data-audit",
+                "feature": "S3-F02",
+                "step": "selected_explanation_export",
+                "status": "completed",
+                "started_at": started_at,
+                "finished_at": chrono::Local::now().to_rfc3339(),
+                "reader": report.reader,
+                "writer": report.writer,
+                "selected_rows": report.selected_rows,
+                "comparison_read_time_ms": report.comparison_read_time_ms,
+                "config_read_time_ms": report.config_read_time_ms,
+                "workbook_write_time_ms": report.workbook_write_time_ms,
+                "elapsed_ms": started.elapsed().as_millis()
+            }))?
+        );
+    } else {
+        eprintln!(
+            "说明文件导出完成：{} 行；耗时 {} ms；输出：{}",
+            report.selected_rows,
+            started.elapsed().as_millis(),
+            report.output_workbook.display()
+        );
+    }
+
+    let mut output = serde_json::to_value(&report)?;
+    if !arguments.developer_view {
+        if let Some(object) = output.as_object_mut() {
+            for key in [
+                "reader",
+                "writer",
+                "comparison_read_time_ms",
+                "config_read_time_ms",
+                "workbook_write_time_ms",
+                "total_time_ms",
+            ] {
+                object.remove(key);
+            }
+        }
+    }
+    println!("{}", serde_json::to_string_pretty(&output)?);
     Ok(())
 }
 

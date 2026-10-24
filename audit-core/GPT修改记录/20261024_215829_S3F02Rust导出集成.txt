@@ -1,0 +1,28 @@
+时间：2026-10-24 21:58（Asia/Shanghai）
+执行者：Codex Audit 开发 Agent
+修改前 commit：06a41083217ee76ce335e3e81812080f14b2f4bc
+修改后 commit：本记录与 S3-F02 实现一并提交；提交哈希以 Git 记录为准。
+WIP：开始时 audit-dev 工作树干净。开发中发现 rustfmt 递归改写了无关 Audit 模块格式，已仅恢复这些开始时干净且与本功能无关的文件；保留 CLI、lib.rs 和 S3-F02 功能改动。
+
+目的：把 Python `systems.s3_central_statistics.explanation_exporter.export_selected_explanations` 的比较结果到机构说明文件导出切片接入 Audit Rust 业务入口。
+
+修改/新增文件：
+- `src/s3_explanation_export.rs`：实现比较结果选择、机构/地区映射、村镇银行和多地区长码生成、说明文件及生成信息表；输入只读，输出先生成并读回校验，再以同文件系统硬链接发布且不覆盖已存在目标。
+- `src/lib.rs`：注册 Audit 业务模块。
+- `src/bin/open-data-audit.rs`：增加 `s3-export-explanations` CLI、用户/开发者双视图日志及实际 reader/writer/耗时输出。
+- `tests/s3_explanation_export_cli.rs`：覆盖 CLI 两种视图、选择与映射规则、输出值、输入不变和已存在输出拒绝覆盖。
+- `tests/compare/compare_s3_explanation_export.py`：在合成工作簿上调用只读 Python 基线并比较 Rust 输出。
+- `probe/reports/s3_f02_explanation_export_synthetic_parity_20261024.json`：保存脱敏合成对拍汇总。
+- `MIGRATION_INVENTORY.md`：更新 S3-F02 局部进度，整体保持未验证。
+
+逻辑/配置影响：读引擎为共享 Calamine，写引擎为 rust_xlsxwriter；可选配置仅读取“机构地区参照”工作表，兼容精确映射、显式通配及唯一名称通配。新增 CLI 参数 `--comparison-file`、`--output-workbook`、可选 `--config-workbook` 和 `--developer-view`。未改 VBA、共享 crate、根 Cargo 配置、Cargo.lock、GUI/Web bridge 或 Python 产品运行路径。Rust crate 仍为 `audit-core 0.1.0`，未升级组件版本。
+
+实际验证：
+- Windows 原生 `cargo check -p audit-core --bin open-data-audit`：通过。
+- Windows 原生 `cargo test -p audit-core --test s3_explanation_export_cli -- --nocapture`：1 项通过。
+- Windows Python 3.12/openpyxl 只作为测试对拍环境：Python 基线与 Rust CLI 合成 4 行逐项对拍通过，字段/样式/布局/元数据差异 0；输入比较表和映射表字节保持不变。对拍细节见上述 JSON 报告。
+
+未执行/已知问题：没有 S3 比较结果真实工作簿和黄金说明，因此不据此宣称 S3-F02 整体迁移完成；用户提供的 2026-07-31 目录是 S1 样本，本切片不读取它。真实业务配置、真实 xlsm、GUI、目标 Linux 和 deb 尚未验证。S1-F01 的公式复制及历史工作簿回写仍受共享 ExcelModifier 缓存保留门槛约束，本次未绕过或修改该门槛。
+
+删除清单：无。
+回滚提示：如需撤销本功能，在集成提交上执行常规 `git revert <本功能提交>`；不删除或覆盖源 Python 代码及用户工作簿。
