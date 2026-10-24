@@ -1,0 +1,35 @@
+时间：2026-10-25（Windows 原生环境）
+执行者：Codex Audit migration agent
+修改前 commit：51e05f3
+修改后 commit：待本轮本地提交
+WIP：工作树开始时干净；未修改 DEVELOPMENT_GOAL.md、共享 crate、根 Cargo 配置或用户工作簿。
+
+## 目的
+
+- 修正 S1-F02 命名区域汇总对 rust_xlsxwriter::Worksheet::set_autofit_max_width 的参数单位误用。旧代码把 40 个 Excel 字符单位直接作为像素传入，令 AutoFit 宽度封顶约 5.71 字符；现改用 285px，约等于 40 个 Calibri 11 标准字符单位。
+- 保持旧 Python Excel COM 路径的 AutoFit 后 40 字符上限；不改变输出格式路由或 S1-F02 验收状态。
+
+## 修改文件
+
+- audit-core/src/s1_region_summary.rs：将 AutoFit 最大宽度改为 285px，并注明单位映射。
+- audit-core/probe/reports/s1_f02_named_region_summary_synthetic_parity_windows_native_20261025_autofit_cap_pixels.json：保存 Windows 合成对拍结果。
+- audit-core/MIGRATION_INVENTORY.md：追加列宽修正和对拍结果，保持 S1-F02 未验证。
+- 本记录。
+
+## 测试
+
+- Windows 原生 cargo test --offline --locked -p audit-core --test s1_region_summary_cli -j 1：5/5 通过。
+- Windows 原生 cargo build --offline --locked -p audit-core --bin open-data-audit：通过。
+- compare_s1_region_summary.py 使用本机 Microsoft Excel/Python 基线与新 Rust CLI 对拍：状态 passed_with_column_width_variance；值/类型、数字格式、字体、对齐均为 0 差异；主结果、历史、兜底、固定行最大列宽差分别为 3.5703125、4.5703125、3.7890625、3.7890625 字符；合成输入未改变。报告如上。
+
+## 未执行项与已知问题
+
+- 未用用户 2026-07-31 的真实批次重跑本次列宽修正；真实样本旧报告仍记录 12.92578125 字符最大差，不能将该旧数据外推为本次修正结果。
+- 合成列宽仍有差异；完整真实模板格式契约、GUI、Linux、麒麟/UOS 和 deb 未验证。S1-F02 整体仍未验证。
+- S1-F01 的公式复制与共享公式缓存能力阻塞没有变化；本轮未修改共享实现，也未重复运行已失败的候选。
+
+## 影响与回滚
+
+- 仅影响新建 S1-F02 汇总工作簿的自动列宽像素上限；不修改输入文件或既有工作簿。
+- 回滚本地提交可撤销该 AutoFit 单位修正和对应证据；无需恢复用户工作簿。
+- 格式检查：`cargo fmt --all -- --check` 未通过，报告包含多个既有 Audit 文件和测试文件的导入排序差异；单文件 `rustfmt --check audit-core/src/s1_region_summary.rs` 也只指出该文件顶部原有导入排序。本轮改动仅调整注释和参数，没有对工作区运行 formatter，避免带入无关格式变更。

@@ -1,0 +1,214 @@
+{
+  "feature": "S1-F02 named-region summary",
+  "status": "passed_with_column_width_variance",
+  "fixture": "synthetic",
+  "python_engine": "Microsoft Excel",
+  "python_com_call_adapter": "test-only: this Office installation rejects the source adapter's named UpdateLinks=0 argument; the baseline used ReadOnly and IgnoreReadOnlyRecommended while Excel AskToUpdateLinks remained disabled",
+  "rust_reader": "calamine+namespace_aware_ooxml",
+  "rust_writer": "rust_xlsxwriter 0.101.0",
+  "python_elapsed_ms": 4436,
+  "rust_cli_elapsed_ms": 79,
+  "rust_events": 2,
+  "source_workbooks": 2,
+  "source_sheets": 3,
+  "metadata_fields_left_blank": 2,
+  "output_sheets": 2,
+  "data_rows": 9,
+  "input_files_unchanged": true,
+  "comparison": {
+    "status": "passed",
+    "sheet_name_mismatches": 0,
+    "python_sheet_names": [
+      "Data_2",
+      "Data"
+    ],
+    "rust_sheet_names": [
+      "Data_2",
+      "Data"
+    ],
+    "dimension_mismatches": 0,
+    "value_mismatches": 0,
+    "number_format_mismatches": 0,
+    "font_mismatches": 0,
+    "alignment_mismatches": 0,
+    "alignment_header_mismatches": 0,
+    "alignment_body_mismatches": 0,
+    "alignment_property_mismatches": {
+      "horizontal": 0,
+      "vertical": 0,
+      "textRotation": 0,
+      "wrapText": 0,
+      "shrinkToFit": 0,
+      "indent": 0,
+      "relativeIndent": 0,
+      "justifyLastLine": 0,
+      "readingOrder": 0
+    },
+    "alignment_type_pairs": {},
+    "alignment_horizontal_pairs": {},
+    "header_style_mismatches": 0,
+    "filter_mismatches": 0,
+    "freeze_mismatches": 0,
+    "column_width_max_delta": 3.5703125,
+    "column_widths_exact": false,
+    "data_rows_by_sheet": {
+      "Data_2": 4,
+      "Data": 5
+    }
+  },
+  "history_enrichment": {
+    "status": "passed",
+    "python_engine": "Microsoft Excel",
+    "rust_history_reader": "calamine+namespace_aware_ooxml",
+    "rust_history_rows_matched": 1,
+    "rust_history_elapsed_ms": 5,
+    "rust_events": 2,
+    "input_files_unchanged": true,
+    "comparison": {
+      "status": "passed",
+      "sheet_name_mismatches": 0,
+      "python_sheet_names": [
+        "本地校验结果"
+      ],
+      "rust_sheet_names": [
+        "本地校验结果"
+      ],
+      "dimension_mismatches": 0,
+      "value_mismatches": 0,
+      "number_format_mismatches": 0,
+      "font_mismatches": 0,
+      "alignment_mismatches": 0,
+      "alignment_header_mismatches": 0,
+      "alignment_body_mismatches": 0,
+      "alignment_property_mismatches": {
+        "horizontal": 0,
+        "vertical": 0,
+        "textRotation": 0,
+        "wrapText": 0,
+        "shrinkToFit": 0,
+        "indent": 0,
+        "relativeIndent": 0,
+        "justifyLastLine": 0,
+        "readingOrder": 0
+      },
+      "alignment_type_pairs": {},
+      "alignment_horizontal_pairs": {},
+      "header_style_mismatches": 0,
+      "filter_mismatches": 0,
+      "freeze_mismatches": 0,
+      "column_width_max_delta": 4.5703125,
+      "column_widths_exact": false,
+      "data_rows_by_sheet": {
+        "本地校验结果": 2
+      }
+    },
+    "scope": "synthetic local-validation history sheet; eight-column composite key; numeric 1.0 to text '1' key normalization; duplicate history rows joined in source order; unmatched source row remains blank"
+  },
+  "fallback_template": {
+    "status": "passed",
+    "python_engine": "Microsoft Excel",
+    "python_elapsed_ms": 5458,
+    "rust_reader": "calamine+namespace_aware_ooxml",
+    "rust_writer": "rust_xlsxwriter 0.101.0",
+    "rust_elapsed_ms": 49,
+    "rust_events": 2,
+    "output_sheets": 2,
+    "data_rows": 4,
+    "input_files_unchanged": true,
+    "comparison": {
+      "status": "passed",
+      "sheet_name_mismatches": 0,
+      "python_sheet_names": [
+        "另一张表",
+        "未匹配表"
+      ],
+      "rust_sheet_names": [
+        "另一张表",
+        "未匹配表"
+      ],
+      "dimension_mismatches": 0,
+      "value_mismatches": 0,
+      "number_format_mismatches": 0,
+      "font_mismatches": 0,
+      "alignment_mismatches": 0,
+      "alignment_header_mismatches": 0,
+      "alignment_body_mismatches": 0,
+      "alignment_property_mismatches": {
+        "horizontal": 0,
+        "vertical": 0,
+        "textRotation": 0,
+        "wrapText": 0,
+        "shrinkToFit": 0,
+        "indent": 0,
+        "relativeIndent": 0,
+        "justifyLastLine": 0,
+        "readingOrder": 0
+      },
+      "alignment_type_pairs": {},
+      "alignment_horizontal_pairs": {},
+      "header_style_mismatches": 0,
+      "filter_mismatches": 0,
+      "freeze_mismatches": 0,
+      "column_width_max_delta": 3.7890625,
+      "column_widths_exact": false,
+      "data_rows_by_sheet": {
+        "另一张表": 1,
+        "未匹配表": 3
+      }
+    },
+    "fixed_rows": {
+      "python_engine": "Microsoft Excel",
+      "python_elapsed_ms": 4201,
+      "rust_reader": "calamine+namespace_aware_ooxml",
+      "rust_writer": "rust_xlsxwriter 0.101.0",
+      "rust_elapsed_ms": 47,
+      "rust_events": 2,
+      "output_sheets": 2,
+      "data_rows": 4,
+      "comparison": {
+        "status": "passed",
+        "sheet_name_mismatches": 0,
+        "python_sheet_names": [
+          "另一张表",
+          "未匹配表"
+        ],
+        "rust_sheet_names": [
+          "另一张表",
+          "未匹配表"
+        ],
+        "dimension_mismatches": 0,
+        "value_mismatches": 0,
+        "number_format_mismatches": 0,
+        "font_mismatches": 0,
+        "alignment_mismatches": 0,
+        "alignment_header_mismatches": 0,
+        "alignment_body_mismatches": 0,
+        "alignment_property_mismatches": {
+          "horizontal": 0,
+          "vertical": 0,
+          "textRotation": 0,
+          "wrapText": 0,
+          "shrinkToFit": 0,
+          "indent": 0,
+          "relativeIndent": 0,
+          "justifyLastLine": 0,
+          "readingOrder": 0
+        },
+        "alignment_type_pairs": {},
+        "alignment_horizontal_pairs": {},
+        "header_style_mismatches": 0,
+        "filter_mismatches": 0,
+        "freeze_mismatches": 0,
+        "column_width_max_delta": 3.7890625,
+        "column_widths_exact": false,
+        "data_rows_by_sheet": {
+          "另一张表": 1,
+          "未匹配表": 3
+        }
+      },
+      "scope": "same source workbooks using the configured fixed-row fallback range"
+    },
+    "scope": "synthetic unmatched source sheets across multiple workbooks; arbitrary-row and fixed-row fallback ranges; repeated sheet names merged; local fallback-sheet metadata mapped by coordinates onto each source sheet; global metadata; blank-only unmatched sheet omitted"
+  },
+  "scope": "Windows synthetic formula-free XLSX; named arbitrary/fixed rows; unmatched source-sheet fallback; global/local single-cell metadata fields; missing source metadata sheet leaves the global field blank; merged multi-row header; value/type, sheet order, dimensions, number format, header style, filter and freeze comparison; built-in local-validation history append comparison; no real template or Linux runtime"
+}

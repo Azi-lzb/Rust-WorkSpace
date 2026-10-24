@@ -739,8 +739,9 @@ pub fn summarize_s1_named_regions(
                 worksheet
                     .autofilter(0, 0, group.rows.len() as u32, (headers.len() - 1) as u16)
                     .context("设置 S1-F02 汇总筛选")?;
-                // Match the legacy Excel COM path: AutoFit, then cap each column at 40.
-                worksheet.set_autofit_max_width(40).autofit();
+                // Match the legacy Excel COM path's 40-character cap. The writer API
+                // takes pixels here: 285px is about 40 Calibri 11 character units.
+                worksheet.set_autofit_max_width(285).autofit();
             }
         }
         workbook
