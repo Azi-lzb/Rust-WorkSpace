@@ -4,27 +4,36 @@
   "baseline": "Open-Data-Audit UOS/native DAG adapter formula/conditional Issue stages and history classifier",
   "status": "passed",
   "python": {
-    "formula_issues": 146,
+    "formula_issues": 297,
     "conditional_issues": 2,
     "conditional_evaluated_cells": 602,
-    "merged_issues": 148
+    "merged_issues": 299
   },
   "rust": {
-    "formula_issues": 146,
+    "formula_issues": 297,
     "conditional_issues": 2,
-    "merged_issues": 148,
+    "merged_issues": 299,
     "resolved_issues": 0,
     "readers": [
       "calamine",
       "calamine+namespace_aware_ooxml",
       "rust_s1_issue_chain+rust_s1_history"
     ],
-    "cli_elapsed_ms": 13153
+    "cli_elapsed_ms": 11024,
+    "cli_peak_rss_kib": null,
+    "template_selection_mode": "automatic",
+    "template_selection_matches_baseline": true,
+    "result_workbook": null,
+    "history_result_workbook": {
+      "engine": "rust_xlsxwriter 0.101.0",
+      "issue_count": 299,
+      "elapsed_ms": 302
+    }
   },
   "comparison": {
     "current_issues": {
-      "expected_count": 148,
-      "actual_count": 148,
+      "expected_count": 299,
+      "actual_count": 299,
       "missing_in_rust": 0,
       "missing_in_python": 0,
       "field_difference_counts": {}
@@ -37,11 +46,17 @@
       "field_difference_counts": {}
     },
     "merged_history": {
-      "expected_count": 148,
-      "actual_count": 148,
+      "expected_count": 299,
+      "actual_count": 299,
       "missing_in_rust": 0,
       "missing_in_python": 0,
       "field_difference_counts": {}
+    },
+    "result_workbook": null,
+    "history_result_workbook": {
+      "status": "passed",
+      "rows": 299,
+      "mismatch_counts": {}
     },
     "mismatch_count": 0
   },
@@ -52,7 +67,19 @@
     "python_conditional_metadata_source": "workflow.adapters.native_audit_handlers.handle_conditional_issue_extract",
     "windows_general_handler_metadata_behavior": "workflow.adapters.audit_handlers.handle_conditional_issue_extract passes source organization fields; S1 UOS/native path intentionally leaves them empty",
     "scope": "one read-only real source/audit-copy pair and one S1 template",
-    "source_filename_alias_used_for_linux_component_limit": true,
-    "python_conditional_total_time_s": 0.297
+    "source_filename_alias_used_for_linux_component_limit": false,
+    "rust_cli_peak_rss_scope": "not measured",
+    "python_conditional_total_time_s": 0.266,
+    "full_directory_history_workbook": {
+      "status": "passed",
+      "source_workbooks": 7,
+      "history_issue_rows": 322,
+      "worksheet_rows_including_header": 323,
+      "auto_filter_range": "A1:M323",
+      "freeze_panes": "A2",
+      "all_13_column_widths_match_python": true,
+      "protected_files": 38,
+      "changed_protected_files": 0
+    }
   }
 }

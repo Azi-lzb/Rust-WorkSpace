@@ -7,6 +7,7 @@ import argparse
 import dataclasses
 import hashlib
 import json
+import math
 import ntpath
 import os
 import subprocess
@@ -114,6 +115,11 @@ def invoke_rust(args: argparse.Namespace, manifest: Path, source: Path) -> tuple
         audit_arg = wsl_path(args.audit_workbook.resolve(strict=True))
         mapping_arg = wsl_path(args.mapping_config.resolve(strict=True)) if args.mapping_config else None
         result_arg = wsl_path(args.result_workbook.resolve()) if args.result_workbook else None
+        history_result_arg = (
+            wsl_path(args.history_result_workbook.resolve())
+            if args.history_result_workbook
+            else None
+        )
     else:
         command = [str(binary)]
         input_arg = str(args.input_dir.resolve(strict=True))
@@ -126,6 +132,9 @@ def invoke_rust(args: argparse.Namespace, manifest: Path, source: Path) -> tuple
         audit_arg = str(args.audit_workbook.resolve(strict=True))
         mapping_arg = str(args.mapping_config.resolve(strict=True)) if args.mapping_config else None
         result_arg = str(args.result_workbook.resolve()) if args.result_workbook else None
+        history_result_arg = (
+            str(args.history_result_workbook.resolve()) if args.history_result_workbook else None
+        )
 
     command.extend(
         [
@@ -153,6 +162,8 @@ def invoke_rust(args: argparse.Namespace, manifest: Path, source: Path) -> tuple
         command.extend(["--mapping-config", mapping_arg])
     if result_arg:
         command.extend(["--result-workbook", result_arg])
+    if history_result_arg:
+        command.extend(["--history-result-workbook", history_result_arg])
     started = time.perf_counter()
     completed = subprocess.run(
         command,
@@ -306,6 +317,93 @@ def compare_result_workbooks(expected_path: Path, actual_path: Path) -> dict[str
         actual_book.close()
 
 
+def compare_history_result_workbooks(expected_path: Path, actual_path: Path) -> dict[str, Any]:
+    from openpyxl import load_workbook
+
+    expected_book = load_workbook(expected_path, data_only=False, read_only=False)
+    actual_book = load_workbook(actual_path, data_only=False, read_only=False)
+    try:
+        mismatches: Counter[str] = Counter()
+        if expected_book.sheetnames != actual_book.sheetnames:
+            mismatches["sheet_names"] += 1
+        expected = expected_book["核查表校验结果"] if "核查表校验结果" in expected_book else None
+        actual = actual_book["核查表校验结果"] if "核查表校验结果" in actual_book else None
+        if expected is None or actual is None:
+            mismatches["history_sheet_missing"] += 1
+            return {
+                "status": "failed",
+                "rows": 0,
+                "mismatch_counts": dict(sorted(mismatches.items())),
+            }
+
+        if expected.freeze_panes != actual.freeze_panes:
+            mismatches["freeze_panes"] += 1
+        if expected.auto_filter.ref != actual.auto_filter.ref:
+            mismatches["auto_filter"] += 1
+
+        max_row = max(expected.max_row, actual.max_row)
+        for row in range(1, max_row + 1):
+            for column in range(1, 14):
+                expected_cell = expected.cell(row, column)
+                actual_cell = actual.cell(row, column)
+                expected_value = expected_cell.value
+                actual_value = actual_cell.value
+                if expected_value is None or actual_value is None:
+                    if expected_value is not actual_value:
+                        mismatches["cell_values"] += 1
+                elif (
+                    isinstance(expected_value, bool)
+                    or isinstance(actual_value, bool)
+                    or isinstance(expected_value, (int, float))
+                    and isinstance(actual_value, (int, float))
+                ):
+                    if isinstance(expected_value, bool) and isinstance(actual_value, bool):
+                        if expected_value != actual_value:
+                            mismatches["cell_values"] += 1
+                    elif (
+                        isinstance(expected_value, (int, float))
+                        and not isinstance(expected_value, bool)
+                        and isinstance(actual_value, (int, float))
+                        and not isinstance(actual_value, bool)
+                    ):
+                        if not math.isclose(
+                            float(expected_value), float(actual_value), rel_tol=1e-12, abs_tol=1e-12
+                        ):
+                            mismatches["cell_values"] += 1
+                    else:
+                        mismatches["cell_values"] += 1
+                elif canonical(expected_value) != canonical(actual_value):
+                    mismatches["cell_values"] += 1
+
+                if expected_value is not None or actual_value is not None:
+                    if expected_cell.data_type != actual_cell.data_type:
+                        mismatches["cell_types"] += 1
+
+        def effective_column_width(sheet, column_index: int) -> float:
+            for dimension in sheet.column_dimensions.values():
+                minimum = dimension.min
+                maximum = dimension.max or minimum
+                if minimum <= column_index <= maximum:
+                    return dimension.width
+            return sheet.sheet_format.defaultColWidth or 13.0
+
+        for column_index in range(1, 14):
+            if abs(
+                effective_column_width(expected, column_index)
+                - effective_column_width(actual, column_index)
+            ) > 0.01:
+                mismatches["column_widths"] += 1
+
+        return {
+            "status": "passed" if not mismatches else "failed",
+            "rows": max_row - 1,
+            "mismatch_counts": dict(sorted(mismatches.items())),
+        }
+    finally:
+        expected_book.close()
+        actual_book.close()
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--source-root", required=True, type=Path)
@@ -318,6 +416,7 @@ def main() -> int:
     parser.add_argument("--protected-original", action="append", type=Path, default=[])
     parser.add_argument("--mapping-config", type=Path)
     parser.add_argument("--result-workbook", type=Path)
+    parser.add_argument("--history-result-workbook", type=Path)
     parser.add_argument("--rust-cli-peak-rss-file", type=Path)
     parser.add_argument("--wsl-distribution", default="Ubuntu")
     parser.add_argument("--period", required=True)
@@ -332,6 +431,11 @@ def main() -> int:
     template = args.template_workbook.resolve(strict=True)
     input_dir = args.input_dir.resolve(strict=True)
     source.relative_to(input_dir)
+    history_result_path = (
+        args.history_result_workbook.resolve() if args.history_result_workbook else None
+    )
+    if history_result_path is not None and history_result_path.exists():
+        raise ValueError("Rust S1 history result output path already exists")
     mapping_config = args.mapping_config.resolve(strict=True) if args.mapping_config else None
     protected_paths = [source, audit, template]
     protected_paths.extend(path.resolve(strict=True) for path in args.protected_original)
@@ -349,7 +453,6 @@ def main() -> int:
         features_of_type,
         load_feature_mappings,
     )
-    from base_audit.native.history_io import read_history_xlsx
     from base_audit.native.openpyxl_workbook import (
         extract_issues,
         named_ranges,
@@ -358,6 +461,7 @@ def main() -> int:
     from base_audit.service import _organisation_from_name
     from base_audit.history import classify_current_issues, merge_history
     from base_audit.native.result_writer import write_audit_summary
+    from base_audit.native.history_io import write_history_xlsx
     from openpyxl import load_workbook
 
     mappings = load_feature_mappings(mapping_config, template)
@@ -475,6 +579,23 @@ def main() -> int:
     else:
         writer_summary = None
 
+    history_result_workbook_comparison = None
+    if args.history_result_workbook:
+        with tempfile.TemporaryDirectory(prefix="audit-s1-python-history-result-") as directory:
+            python_history_workbook = Path(directory) / "python-history-result.xlsx"
+            write_history_xlsx(python_history_workbook, python_merged_history)
+            history_result_workbook_comparison = compare_history_result_workbooks(
+                python_history_workbook,
+                history_result_path.resolve(strict=True),
+            )
+        history_writer_summary = rust.get("history_result_workbook")
+        if not isinstance(history_writer_summary, dict):
+            raise ValueError("Rust CLI did not report the S1 history result-workbook execution")
+        if history_writer_summary.get("issue_count") != len(rust.get("merged_history", [])):
+            raise ValueError("Rust S1 history result-workbook count differs from merged history")
+    else:
+        history_writer_summary = None
+
     formula_comparison = compare_issues(python_current, rust.get("issues", []))
     resolved_comparison = compare_issues(python_resolved, rust.get("resolved_issues", []))
     history_comparison = compare_issues(python_merged_history, rust.get("merged_history", []))
@@ -501,6 +622,8 @@ def main() -> int:
     )
     if result_workbook_comparison:
         mismatch_count += sum(result_workbook_comparison["mismatch_counts"].values())
+    if history_result_workbook_comparison:
+        mismatch_count += sum(history_result_workbook_comparison["mismatch_counts"].values())
     log_events = [
         json.loads(line)
         for line in rust_log.splitlines()
@@ -552,12 +675,22 @@ def main() -> int:
                 if writer_summary
                 else None
             ),
+            "history_result_workbook": (
+                {
+                    "engine": history_writer_summary.get("engine"),
+                    "issue_count": history_writer_summary.get("issue_count"),
+                    "elapsed_ms": history_writer_summary.get("elapsed_ms"),
+                }
+                if history_writer_summary
+                else None
+            ),
         },
         "comparison": {
             "current_issues": formula_comparison,
             "resolved_issues": resolved_comparison,
             "merged_history": history_comparison,
             "result_workbook": result_workbook_comparison,
+            "history_result_workbook": history_result_workbook_comparison,
             "mismatch_count": mismatch_count,
         },
         "verification": {

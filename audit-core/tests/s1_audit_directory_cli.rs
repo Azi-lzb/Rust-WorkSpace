@@ -170,6 +170,7 @@ fn run_cli_with_history(
         manifest,
         history,
         None,
+        None,
         developer_view,
     )
 }
@@ -181,6 +182,7 @@ fn run_cli_with_options(
     manifest: &Path,
     history: Option<&Path>,
     result_workbook: Option<&Path>,
+    history_result_workbook: Option<&Path>,
     developer_view: bool,
 ) -> Output {
     let mut command = Command::new(env!("CARGO_BIN_EXE_open-data-audit"));
@@ -207,6 +209,11 @@ fn run_cli_with_options(
     }
     if let Some(result_workbook) = result_workbook {
         command.arg("--result-workbook").arg(result_workbook);
+    }
+    if let Some(history_result_workbook) = history_result_workbook {
+        command
+            .arg("--history-result-workbook")
+            .arg(history_result_workbook);
     }
     if developer_view {
         command.arg("--developer-view");
@@ -248,6 +255,7 @@ fn cli_runs_both_issue_sources_merges_then_classifies_and_logs_actual_engines() 
     .expect("write formula copy manifest");
 
     let result_workbook = directory.join("s1-result.xlsx");
+    let history_result_workbook = directory.join("s1-history.xlsx");
     let ordinary = run_cli_with_options(
         &input,
         None,
@@ -255,6 +263,7 @@ fn cli_runs_both_issue_sources_merges_then_classifies_and_logs_actual_engines() 
         &manifest,
         None,
         Some(&result_workbook),
+        Some(&history_result_workbook),
         false,
     );
     assert!(
@@ -263,6 +272,7 @@ fn cli_runs_both_issue_sources_merges_then_classifies_and_logs_actual_engines() 
         String::from_utf8_lossy(&ordinary.stderr)
     );
     let developer_result_workbook = directory.join("s1-result-developer.xlsx");
+    let developer_history_result_workbook = directory.join("s1-history-developer.xlsx");
     let developer = run_cli_with_options(
         &input,
         None,
@@ -270,6 +280,7 @@ fn cli_runs_both_issue_sources_merges_then_classifies_and_logs_actual_engines() 
         &manifest,
         None,
         Some(&developer_result_workbook),
+        Some(&developer_history_result_workbook),
         true,
     );
     assert!(
@@ -317,6 +328,15 @@ fn cli_runs_both_issue_sources_merges_then_classifies_and_logs_actual_engines() 
     assert_eq!(report["resolved_issues"].as_array().unwrap().len(), 0);
     assert_eq!(report["result_workbook"]["issue_count"], 3);
     assert_eq!(report["result_workbook"]["hyperlink_count"], 3);
+    assert_eq!(report["history_result_workbook"]["issue_count"], 3);
+    assert_eq!(
+        report["history_result_workbook"]["path"],
+        history_result_workbook
+            .canonicalize()
+            .unwrap()
+            .to_string_lossy()
+            .as_ref()
+    );
     assert_eq!(
         report["result_workbook"]["path"],
         result_workbook
@@ -340,6 +360,28 @@ fn cli_runs_both_issue_sources_merges_then_classifies_and_logs_actual_engines() 
         result.sheets[0].values["K2"]["value"],
         report["issues"][0]["issue_id"]
     );
+    let history_result =
+        read_workbook(&history_result_workbook).expect("read generated S1 history workbook");
+    assert_eq!(history_result.sheets.len(), 1);
+    assert_eq!(history_result.sheets[0].name, "核查表校验结果");
+    assert_eq!(history_result.sheets[0].values["A1"]["value"], "工作簿名");
+    let first_history_issue = &report["merged_history"][0];
+    let first_history_source = Path::new(
+        first_history_issue["source_file"]
+            .as_str()
+            .expect("first merged history issue source file"),
+    )
+    .file_name()
+    .expect("first history source filename")
+    .to_string_lossy();
+    assert_eq!(
+        history_result.sheets[0].values["A2"]["value"],
+        first_history_source.as_ref()
+    );
+    assert_eq!(
+        history_result.sheets[0].values["K2"]["value"],
+        first_history_issue["issue_id"]
+    );
 
     let user_log = String::from_utf8_lossy(&ordinary.stderr);
     assert!(user_log.contains("条件格式审核完成"));
@@ -349,6 +391,7 @@ fn cli_runs_both_issue_sources_merges_then_classifies_and_logs_actual_engines() 
     assert!(!user_log.contains("读取器"), "{user_log}");
     assert!(user_log.contains("未执行公式重算"));
     assert!(user_log.contains("本期结果工作簿已生成"));
+    assert!(user_log.contains("历史结果工作簿已生成"));
     assert!(user_log.contains("S1-F01 模板推荐完成"));
     assert!(user_log.contains("引擎 namespace-aware OOXML 工作表目录读取"));
     assert!(user_log.contains("耗时"));
@@ -391,6 +434,13 @@ fn cli_runs_both_issue_sources_merges_then_classifies_and_logs_actual_engines() 
             && event["engine"] == "rust_xlsxwriter 0.101.0"
             && event["issues"] == 3
             && event["hyperlinks"] == 3
+            && event["elapsed_ms"].is_number()
+    }));
+    assert!(events.iter().any(|event| {
+        event["step"] == "history_result_workbook_write"
+            && event["status"] == "completed"
+            && event["engine"] == "rust_xlsxwriter 0.101.0"
+            && event["issues"] == 3
             && event["elapsed_ms"].is_number()
     }));
 

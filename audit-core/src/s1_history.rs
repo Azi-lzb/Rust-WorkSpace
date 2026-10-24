@@ -2,17 +2,354 @@
 
 use crate::models::Issue;
 use anyhow::{ensure, Context, Result};
+use excel_editor::CellValue as EditCellValue;
 use excel_reader::{read_value_columns_with_iso_dates, CellValue, SheetValues};
+use excel_writer::Workbook as XlsxWorkbook;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
+    fs,
     path::Path,
-    time::Instant,
+    time::{Instant, SystemTime, UNIX_EPOCH},
 };
 
 const HISTORY_AUDIT_SHEET: &str = "核查表校验结果";
 const LEGACY_HISTORY_SHEET: &str = "历史审核结果";
 const INITIAL_HISTORY_READ_COLUMNS: usize = 14;
+pub const S1_HISTORY_HEADERS: [&str; 13] = [
+    "工作簿名",
+    "工作表名",
+    "定位单元格",
+    "错误类型",
+    "校验类型",
+    "校验指标",
+    "描述",
+    "当前值",
+    "对比值",
+    "差值",
+    "规则编号",
+    "历史校验说明",
+    "审核意见",
+];
+
+pub type S1HistoryWorkbookRow = [EditCellValue; 13];
+
+/// Convert Rust issues into the ordered cells used by Python's history writer.
+///
+/// This keeps numeric, boolean, and blank issue values typed for ExcelEditPlan;
+/// it does not open or modify a workbook.
+pub fn s1_history_workbook_row(issue: &Issue) -> Result<S1HistoryWorkbookRow> {
+    let source_name = Path::new(&issue.source_file)
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let description = if issue.detail.is_empty() {
+        issue.message.clone()
+    } else {
+        issue.detail.clone()
+    };
+    Ok([
+        EditCellValue::Text(source_name),
+        EditCellValue::Text(issue.sheet_name.clone()),
+        EditCellValue::Text(issue.target_cell.clone()),
+        EditCellValue::Text(issue.severity.clone()),
+        EditCellValue::Text(issue.check_type.clone()),
+        EditCellValue::Text(issue.check_field.clone()),
+        EditCellValue::Text(description),
+        history_json_cell_value(&issue.target_value, "当前值")?,
+        history_json_cell_value(&issue.comparison_value, "对比值")?,
+        history_json_cell_value(&issue.difference_value, "差值")?,
+        EditCellValue::Text(issue.issue_id.clone()),
+        EditCellValue::Text(issue.institution_feedback.clone()),
+        EditCellValue::Text(issue.auditor_opinion.clone()),
+    ])
+}
+
+pub fn s1_history_header_row() -> S1HistoryWorkbookRow {
+    S1_HISTORY_HEADERS.map(|header| EditCellValue::Text(header.to_owned()))
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct S1HistoryWorkbookWriteSummary {
+    pub path: std::path::PathBuf,
+    pub sheet_name: &'static str,
+    pub issue_count: usize,
+    pub engine: &'static str,
+    pub elapsed_ms: u128,
+}
+
+/// Create a standalone XLSX containing the merged S1 history rows.
+///
+/// This writer deliberately creates a new file and never edits an existing
+/// workbook. Preservation-style updates to existing history workbooks must use
+/// the ExcelEditPlan/ExcelModifier route after that operation capability is
+/// validated for its real template and platform.
+pub fn write_s1_history_workbook(
+    output_path: impl AsRef<Path>,
+    issues: &[Issue],
+) -> Result<S1HistoryWorkbookWriteSummary> {
+    const ENGINE: &str = "rust_xlsxwriter 0.101.0";
+
+    let started = Instant::now();
+    let output_path = output_path.as_ref();
+    ensure!(
+        output_path
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("xlsx")),
+        "S1 历史结果工作簿输出路径必须使用 .xlsx"
+    );
+    ensure!(
+        !output_path.exists(),
+        "拒绝覆盖已有 S1 历史结果工作簿：{}",
+        output_path.display()
+    );
+    ensure!(
+        issues.len() <= 1_048_575,
+        "S1 历史结果工作簿超过 Excel 的最大数据行数"
+    );
+
+    let parent = output_path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    fs::create_dir_all(parent)
+        .with_context(|| format!("创建 S1 历史结果工作簿目录 {}", parent.display()))?;
+    let temp_path = s1_history_temporary_path(output_path)?;
+
+    let write_result = (|| -> Result<()> {
+        {
+            let mut workbook = XlsxWorkbook::new();
+            let worksheet = workbook.add_worksheet();
+            worksheet
+                .set_name(HISTORY_AUDIT_SHEET)
+                .context("设置 S1 历史结果工作表名称")?;
+            for (column, header) in S1_HISTORY_HEADERS.iter().enumerate() {
+                worksheet
+                    .write_string(0, column as u16, *header)
+                    .with_context(|| format!("写入 S1 历史表头第 {} 列", column + 1))?;
+            }
+
+            for (row_index, issue) in issues.iter().enumerate() {
+                let row = s1_history_workbook_row(issue)?;
+                for (column, value) in row.iter().enumerate() {
+                    let row_number = row_index as u32 + 1;
+                    let column_number = column as u16;
+                    match value {
+                        EditCellValue::Text(value) if !value.is_empty() => {
+                            worksheet.write_string(row_number, column_number, value)?;
+                        }
+                        EditCellValue::Text(_) | EditCellValue::Blank => {}
+                        EditCellValue::Decimal(value) => {
+                            let number = value.parse::<f64>().with_context(|| {
+                                format!("解析 S1 历史数值第 {} 行", row_index + 2)
+                            })?;
+                            ensure!(number.is_finite(), "S1 历史数值必须是有限数值");
+                            worksheet.write_number(row_number, column_number, number)?;
+                        }
+                        EditCellValue::Boolean(value) => {
+                            worksheet.write_boolean(row_number, column_number, *value)?;
+                        }
+                        EditCellValue::Error(value) => {
+                            worksheet.write_string(row_number, column_number, value)?;
+                        }
+                        EditCellValue::DateTime { .. } => {
+                            anyhow::bail!("S1 历史结果暂不接受未经日期契约映射的日期单元格")
+                        }
+                    }
+                }
+            }
+
+            worksheet
+                .set_freeze_panes(1, 0)
+                .context("冻结 S1 历史表头")?;
+            worksheet
+                .autofilter(
+                    0,
+                    0,
+                    issues.len() as u32,
+                    S1_HISTORY_HEADERS.len() as u16 - 1,
+                )
+                .context("设置 S1 历史结果表筛选")?;
+            for column in 0..S1_HISTORY_HEADERS.len() {
+                // Keep Python's stored character width (22) exact in OOXML.
+                worksheet
+                    .set_column_width_pixels(column as u16, 22 * 7)
+                    .with_context(|| format!("设置 S1 历史表第 {} 列宽度", column + 1))?;
+            }
+            workbook
+                .save(&temp_path)
+                .context("保存 S1 历史结果临时工作簿")?;
+        }
+
+        validate_s1_history_workbook(&temp_path, issues)?;
+        // A same-directory hard link commits without replacing a file that may
+        // have appeared after the initial existence check.
+        fs::hard_link(&temp_path, output_path)
+            .with_context(|| format!("提交 S1 历史结果工作簿 {}", output_path.display()))?;
+        let _ = fs::remove_file(&temp_path);
+        Ok(())
+    })();
+    if write_result.is_err() {
+        let _ = fs::remove_file(&temp_path);
+    }
+    write_result?;
+
+    Ok(S1HistoryWorkbookWriteSummary {
+        path: fs::canonicalize(output_path)
+            .with_context(|| format!("规范化 S1 历史结果路径 {}", output_path.display()))?,
+        sheet_name: HISTORY_AUDIT_SHEET,
+        issue_count: issues.len(),
+        engine: ENGINE,
+        elapsed_ms: started.elapsed().as_millis(),
+    })
+}
+
+fn s1_history_temporary_path(output_path: &Path) -> Result<std::path::PathBuf> {
+    let parent = output_path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    let stem = output_path
+        .file_stem()
+        .context("S1 历史结果工作簿输出路径缺少文件名")?
+        .to_string_lossy();
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .context("系统时间早于 Unix epoch")?
+        .as_nanos();
+    Ok(parent.join(format!(
+        ".{stem}.rust-audit-{}-{nonce}.tmp.xlsx",
+        std::process::id()
+    )))
+}
+
+fn validate_s1_history_workbook(path: &Path, issues: &[Issue]) -> Result<()> {
+    let workbook = excel_reader::read_workbook(path).context("重新打开 S1 历史结果工作簿")?;
+    ensure!(
+        workbook.sheets.len() == 1 && workbook.sheets[0].name == HISTORY_AUDIT_SHEET,
+        "S1 历史结果工作簿的工作表名称或数量不匹配"
+    );
+    let sheet = &workbook.sheets[0];
+    ensure!(sheet.formulas.is_empty(), "S1 历史结果工作簿不应包含公式");
+    ensure!(
+        sheet.merges.is_empty(),
+        "S1 历史结果工作簿不应包含合并单元格"
+    );
+
+    let mut expected = Vec::with_capacity((issues.len() + 1) * S1_HISTORY_HEADERS.len());
+    expected.extend(
+        s1_history_header_row()
+            .into_iter()
+            .enumerate()
+            .map(|(column, value)| (s1_history_cell_address(0, column), value)),
+    );
+    for (row_index, issue) in issues.iter().enumerate() {
+        expected.extend(
+            s1_history_workbook_row(issue)?
+                .into_iter()
+                .enumerate()
+                .map(|(column, value)| (s1_history_cell_address(row_index + 1, column), value)),
+        );
+    }
+    let expected_nonblank = expected
+        .iter()
+        .filter(|(_, value)| match value {
+            EditCellValue::Blank => false,
+            EditCellValue::Text(value) => !value.is_empty(),
+            _ => true,
+        })
+        .count();
+    ensure!(
+        sheet.values.len() == expected_nonblank,
+        "S1 历史结果工作簿单元格数量不匹配：预期 {}，实际 {}",
+        expected_nonblank,
+        sheet.values.len()
+    );
+    for (address, value) in expected {
+        let actual = sheet.values.get(&address);
+        match value {
+            EditCellValue::Blank => {
+                ensure!(
+                    actual.is_none_or(|actual| actual
+                        .get("type")
+                        .and_then(serde_json::Value::as_str)
+                        == Some("empty")),
+                    "S1 历史结果工作簿空白单元格 {address} 意外有值"
+                );
+            }
+            EditCellValue::Text(value) if value.is_empty() => {
+                ensure!(
+                    actual.is_none_or(|actual| actual
+                        .get("type")
+                        .and_then(serde_json::Value::as_str)
+                        == Some("empty")),
+                    "S1 历史结果工作簿空白单元格 {address} 意外有值"
+                );
+            }
+            EditCellValue::Text(value) | EditCellValue::Error(value) => {
+                let actual =
+                    actual.with_context(|| format!("S1 历史结果工作簿缺少单元格 {address}"))?;
+                ensure!(
+                    actual.get("type").and_then(serde_json::Value::as_str) == Some("string")
+                        && actual.get("value").and_then(serde_json::Value::as_str)
+                            == Some(value.as_str()),
+                    "S1 历史结果工作簿单元格 {address} 内容或类型不匹配"
+                );
+            }
+            EditCellValue::Decimal(value) => {
+                let expected = value.parse::<f64>().context("解析 S1 历史预期数值")?;
+                let actual =
+                    actual.with_context(|| format!("S1 历史结果工作簿缺少单元格 {address}"))?;
+                let actual_type = actual.get("type").and_then(serde_json::Value::as_str);
+                let actual_value = actual.get("value").and_then(serde_json::Value::as_f64);
+                ensure!(
+                    matches!(actual_type, Some("integer" | "number"))
+                        && actual_value.is_some_and(|value| (value - expected).abs() <= 1e-12),
+                    "S1 历史结果工作簿单元格 {address} 数值或类型不匹配"
+                );
+            }
+            EditCellValue::Boolean(expected) => {
+                let actual =
+                    actual.with_context(|| format!("S1 历史结果工作簿缺少单元格 {address}"))?;
+                ensure!(
+                    actual.get("type").and_then(serde_json::Value::as_str) == Some("boolean")
+                        && actual.get("value").and_then(serde_json::Value::as_bool)
+                            == Some(expected),
+                    "S1 历史结果工作簿单元格 {address} 布尔值或类型不匹配"
+                );
+            }
+            EditCellValue::DateTime { .. } => {
+                anyhow::bail!("S1 历史结果工作簿暂不支持日期值读回校验")
+            }
+        }
+    }
+    Ok(())
+}
+
+fn s1_history_cell_address(row: usize, column: usize) -> String {
+    let mut number = column + 1;
+    let mut letters = Vec::new();
+    while number > 0 {
+        let remainder = (number - 1) % 26;
+        letters.push((b'A' + remainder as u8) as char);
+        number = (number - 1) / 26;
+    }
+    letters.reverse();
+    format!("{}{}", letters.into_iter().collect::<String>(), row + 1)
+}
+
+fn history_json_cell_value(value: &serde_json::Value, header: &str) -> Result<EditCellValue> {
+    match value {
+        serde_json::Value::Null => Ok(EditCellValue::Blank),
+        serde_json::Value::Bool(value) => Ok(EditCellValue::Boolean(*value)),
+        serde_json::Value::Number(value) => Ok(EditCellValue::Decimal(value.to_string())),
+        serde_json::Value::String(value) => Ok(EditCellValue::Text(value.clone())),
+        serde_json::Value::Array(_) | serde_json::Value::Object(_) => {
+            anyhow::bail!("S1 历史工作簿字段 {header} 不是 Excel 标量值")
+        }
+    }
+}
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct S1HistoryRequest {
@@ -772,6 +1109,95 @@ mod tests {
         assert_eq!(additions[0].auditor_opinion, "审核意见");
         assert_eq!(merged.len(), 1);
         assert_eq!(merged[0].period, "2026-03");
+    }
+
+    #[test]
+    fn history_writer_rows_match_python_column_order_and_keep_scalar_types() {
+        let mut current = issue("RULE-7", "2026-03", true);
+        current.source_file = Path::new("inputs")
+            .join("机构甲.xlsx")
+            .display()
+            .to_string();
+        current.check_type = "公式".to_owned();
+        current.check_field = "资产总额".to_owned();
+        current.detail.clear();
+        current.message = "指标不匹配".to_owned();
+        current.target_value = json!(12.5);
+        current.comparison_value = json!(false);
+        current.difference_value = serde_json::Value::Null;
+        current.institution_feedback = "机构反馈".to_owned();
+        current.auditor_opinion = "审核意见".to_owned();
+
+        let headers = s1_history_header_row();
+        let row = s1_history_workbook_row(&current).unwrap();
+
+        assert_eq!(
+            headers,
+            S1_HISTORY_HEADERS.map(|header| EditCellValue::Text(header.to_owned()))
+        );
+        assert_eq!(row[0], EditCellValue::Text("机构甲.xlsx".to_owned()));
+        assert_eq!(row[1], EditCellValue::Text("Sheet1".to_owned()));
+        assert_eq!(row[2], EditCellValue::Text("B2".to_owned()));
+        assert_eq!(row[4], EditCellValue::Text("公式".to_owned()));
+        assert_eq!(row[5], EditCellValue::Text("资产总额".to_owned()));
+        assert_eq!(row[6], EditCellValue::Text("指标不匹配".to_owned()));
+        assert_eq!(row[7], EditCellValue::Decimal("12.5".to_owned()));
+        assert_eq!(row[8], EditCellValue::Boolean(false));
+        assert_eq!(row[9], EditCellValue::Blank);
+        assert_eq!(row[10], EditCellValue::Text("RULE-7".to_owned()));
+        assert_eq!(row[11], EditCellValue::Text("机构反馈".to_owned()));
+        assert_eq!(row[12], EditCellValue::Text("审核意见".to_owned()));
+    }
+
+    #[test]
+    fn history_writer_rejects_non_scalar_excel_values() {
+        let mut current = issue("RULE-ARRAY", "2026-03", true);
+        current.target_value = json!([1, 2]);
+
+        let error = s1_history_workbook_row(&current).unwrap_err();
+
+        assert!(error.to_string().contains("当前值"));
+    }
+
+    #[test]
+    fn history_result_writer_creates_a_typed_standalone_workbook() {
+        let directory = std::env::temp_dir().join(format!(
+            "audit_s1_history_writer_{}_{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        let output = directory.join("history.xlsx");
+        let mut current = issue("RULE-7", "2026-03", true);
+        current.source_file = Path::new("inputs")
+            .join("机构甲.xlsx")
+            .display()
+            .to_string();
+        current.target_value = json!(12.5);
+        current.comparison_value = json!(false);
+        current.difference_value = serde_json::Value::Null;
+
+        let summary = write_s1_history_workbook(&output, &[current]).unwrap();
+
+        assert_eq!(summary.issue_count, 1);
+        assert_eq!(summary.sheet_name, HISTORY_AUDIT_SHEET);
+        assert_eq!(summary.engine, "rust_xlsxwriter 0.101.0");
+        let workbook = excel_reader::read_workbook(&output).unwrap();
+        assert_eq!(workbook.sheets.len(), 1);
+        let sheet = &workbook.sheets[0];
+        assert_eq!(sheet.name, HISTORY_AUDIT_SHEET);
+        assert_eq!(sheet.values["A1"]["value"], "工作簿名");
+        assert_eq!(sheet.values["A2"]["value"], "机构甲.xlsx");
+        assert_eq!(sheet.values["H2"]["type"], "number");
+        assert_eq!(sheet.values["H2"]["value"], 12.5);
+        assert_eq!(sheet.values["I2"]["type"], "boolean");
+        assert_eq!(sheet.values["I2"]["value"], false);
+        assert!(!sheet.values.contains_key("J2"));
+        assert!(write_s1_history_workbook(&output, &[]).is_err());
+        fs::remove_dir_all(directory).unwrap();
     }
 
     #[test]

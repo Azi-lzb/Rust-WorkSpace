@@ -1,0 +1,46 @@
+# S1 历史结果工作簿 Rust 独立导出接入与真实样本对拍
+
+- 时间：2026-10-24 10:46（Asia/Shanghai）
+- 执行者：Codex audit-dev Agent
+- 分支：audit-dev
+- 修改前 commit：b88f919
+- 修改后 commit：待提交
+- WIP：沿用当前 Audit S1-F01 迁移中的未提交改动；未修改 DEVELOPMENT_GOAL.md、源 Python 目录、用户提供样本、pytools-core/**、公共 crates 或 Cargo.lock。
+
+## 目的与范围
+
+为 S1 目录审核 CLI 增加可选的 --history-result-workbook，将合并后的历史审核项写入一个新建的独立 XLSX。该选项拒绝覆盖已有文件，不编辑原历史簿；既有工作簿原位更新仍需等 Audit 真实模板上的 ExcelModifier 整批保留能力验收后再迁移。结果簿采用 Rust excel_writer / rust_xlsxwriter，以 Python 历史写入函数对拍单元格类型和值、工作表名、冻结窗格、筛选范围和列宽。
+
+## 修改文件
+
+- audit-core/src/s1_history.rs：增加有类型历史行映射、独立 XLSX 输出、写后重读校验、新文件安全提交；列宽按 Python 写入的 OOXML 字符宽精确保存。
+- audit-core/src/bin/open-data-audit.rs：接入 CLI 参数、输出路径校验、源文件扫描排除、用户与开发者日志及 JSON 摘要。
+- audit-core/tests/s1_audit_directory_cli.rs：验证普通/开发者两种入口均能导出历史结果，检查内容与日志。
+- audit-core/tests/compare/compare_s1_audit_directory.py：增加独立历史结果簿 Python/Rust 对拍与覆盖路径前置校验。
+- audit-core/probe/reports/s1_issue_chain_real.json：更新为用户提供的 2026-07-31 S1 样本脱敏统计；不含样本路径、文件名或 Issue 原值。
+- 本记录。
+
+## 测试与证据
+
+- WSL Linux：cargo test -p audit-core --locked --lib s1_history::tests：7 passed。
+- WSL Linux：cargo test -p audit-core --locked --test s1_audit_directory_cli：3 passed。
+- Python comparator py_compile：通过。
+- 用户提供的真实 S1 高差异样本单项对拍：Python/Rust 公式 Issue 297、条件格式 Issue 2、合并历史行 299；Issue 字段 mismatch 0，历史工作簿的值/类型、13 列宽、冻结窗格与筛选范围 mismatch 0；输入、审核副本和模板未变化。
+- 同一真实目录 7 份源工作簿目录级导出：历史数据行 322、含表头 323 行；筛选范围 A1:M323、冻结 A2、13 列宽均与 Python 契约一致；此前保护的 38 个源、审核副本与模板文件 SHA-256 均未变化。
+- 报告仅保留汇总，不保存业务原值或文件路径。公式重算未执行。
+
+## 未执行项、已知问题与风险
+
+- 新选项只生成独立历史结果簿；尚未迁移 Python 对已有历史工作簿的保留式重写，未登记或通过 ExcelModifier 生产修改能力。
+- Rust writer 对 DateTime 类型显式报错；日期字段格式契约确认后再扩展。
+- Rust 构建与测试运行于 WSL Linux；原生 Windows Rust 工具链、本轮目标麒麟 V10/UOS V20、glibc 2.28 deb 与离线安装验收未执行。
+- 不改变 Excel 引擎默认路由，不引入 Python 生产后端；openpyxl 仅在测试对拍中调用。
+
+## 删除与回滚
+
+- 删除项：无。
+- 回滚：提交后以对应功能提交为单位执行 git revert；保留此前 main 协调的分支同步提交，不回滚公共 crates。
+
+## 组件版本
+
+不升级；沿用当前 audit-core crate 版本。
