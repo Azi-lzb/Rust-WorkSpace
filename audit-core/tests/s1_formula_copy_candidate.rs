@@ -55,6 +55,135 @@ fn readback_failure_category(message: &str) -> &'static str {
     }
 }
 
+fn readback_failure_location<'a>(message: &'a str, marker: &str) -> Option<(&'a str, &'a str)> {
+    let failure = message.rsplit_once(marker)?.1;
+    let location = failure.split(": expected ").next()?;
+    location.rsplit_once('!')
+}
+
+fn rust_cell_value_diagnostic(value: Option<&serde_json::Value>) -> serde_json::Value {
+    let Some(value) = value else {
+        return serde_json::json!({
+            "present": false,
+            "json_type": "missing",
+            "value_class": "missing",
+        });
+    };
+    let json_type = value
+        .get("type")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("unknown");
+    let raw = value.get("value");
+    let string_value = raw.and_then(serde_json::Value::as_str);
+    let empty_string = json_type == "string" && string_value == Some("");
+    let whitespace_only =
+        string_value.is_some_and(|value| !value.is_empty() && value.trim().is_empty());
+    let value_class = match json_type {
+        "string" if empty_string => "empty_string",
+        "string" => "nonempty_string",
+        "number" | "datetime_serial" => "number",
+        "boolean" => "boolean",
+        "error" => "error",
+        "datetime_iso" | "duration_iso" => "textual_datetime",
+        _ => "other",
+    };
+    serde_json::json!({
+        "present": true,
+        "json_type": json_type,
+        "value_class": value_class,
+        "empty_string": empty_string,
+        "string_length_chars": string_value.map(|value| value.chars().count()),
+        "whitespace_only": whitespace_only,
+    })
+}
+
+fn safe_readback_diagnostic(
+    message: &str,
+    input: &Path,
+    output: &Path,
+) -> Option<serde_json::Value> {
+    if let Some((sheet_name, cell)) =
+        readback_failure_location(message, "unmodified cell value changed at ")
+    {
+        let Ok(source) = excel_reader::read_workbook(input) else {
+            return Some(serde_json::json!({
+                "kind": "unmodified_cell_value_changed",
+                "diagnostic_status": "source_reader_failed",
+            }));
+        };
+        let Ok(output) = excel_reader::read_workbook(output) else {
+            return Some(serde_json::json!({
+                "kind": "unmodified_cell_value_changed",
+                "diagnostic_status": "output_reader_failed",
+            }));
+        };
+        let Some(sheet_ordinal) = source
+            .sheets
+            .iter()
+            .position(|sheet| sheet.name == sheet_name)
+            .map(|index| index + 1)
+        else {
+            return Some(serde_json::json!({
+                "kind": "unmodified_cell_value_changed",
+                "diagnostic_status": "source_sheet_not_found",
+            }));
+        };
+        let normalized_cell = cell.trim().replace('$', "").to_ascii_uppercase();
+        let source_value = source
+            .sheets
+            .get(sheet_ordinal - 1)?
+            .values
+            .get(&normalized_cell);
+        let output_value = output
+            .sheets
+            .get(sheet_ordinal - 1)?
+            .values
+            .get(&normalized_cell);
+        return Some(serde_json::json!({
+            "kind": "unmodified_cell_value_changed",
+            "diagnostic_status": "readback_values_available",
+            "sheet_ordinal": sheet_ordinal,
+            "cell": normalized_cell,
+            "rust_source_json": rust_cell_value_diagnostic(source_value),
+            "rust_output_json": rust_cell_value_diagnostic(output_value),
+        }));
+    }
+
+    if let Some((sheet_name, cell)) =
+        readback_failure_location(message, "Rust style readback mismatch at ")
+    {
+        let Ok(source) = excel_reader::read_workbook(input) else {
+            return Some(serde_json::json!({
+                "kind": "imported_style_semantic_mismatch",
+                "diagnostic_status": "source_reader_failed",
+            }));
+        };
+        let Some(sheet_ordinal) = source
+            .sheets
+            .iter()
+            .position(|sheet| sheet.name == sheet_name)
+            .map(|index| index + 1)
+        else {
+            return Some(serde_json::json!({
+                "kind": "imported_style_semantic_mismatch",
+                "diagnostic_status": "source_sheet_not_found",
+            }));
+        };
+        let details = message.rsplit_once("Rust style readback mismatch at ")?.1;
+        let style_details = details.split_once(": expected ")?.1;
+        let style_pair = style_details.rsplit_once(", got ");
+        return Some(serde_json::json!({
+            "kind": "imported_style_semantic_mismatch",
+            "diagnostic_status": if style_pair.is_some() { "style_signatures_available" } else { "style_signatures_unavailable" },
+            "sheet_ordinal": sheet_ordinal,
+            "cell": cell.trim().replace('$', "").to_ascii_uppercase(),
+            "rust_expected_style": style_pair.map(|(expected, _)| expected.trim()),
+            "rust_actual_style": style_pair.map(|(_, actual)| actual.trim()),
+        }));
+    }
+    None
+}
+
 #[test]
 #[ignore = "manual candidate probe; direct Unverified backend is not a production route"]
 fn probes_s1_formula_copy_import_ranges_without_claiming_capability() {
@@ -148,34 +277,44 @@ fn probes_s1_formula_copy_import_ranges_without_claiming_capability() {
     // continue rejecting this Unverified capability until real-template and
     // target-platform preservation evidence is reviewed and registered.
     let started = Instant::now();
-    let (apply_result, output_readback_failure_category) = match candidate_engine.as_str() {
-        "umya" => {
-            let backend =
-                UmyaXlsxBackend::new(capability).expect("construct unverified Umya candidate");
-            (backend.apply(&plan), None)
-        }
-        "openpyxl-worker" => {
-            let python = required_path("RUST_WORKSPACE_OPENPYXL_PYTHON");
-            let config = OpenpyxlWorkerConfig::new(python, openpyxl_worker_path())
-                .expect("construct isolated test worker config");
-            let backend = OpenpyxlXlsxBackend::new(capability, config)
-                .expect("construct unverified openpyxl candidate");
-            let result = backend.apply(&plan);
-            let readback_failure = if result.is_ok() && output.is_file() {
-                OpenpyxlXlsxValidator
-                    .validate(&plan, &output)
-                    .err()
-                    .map(|error| {
-                        let message = format!("{error:#}");
-                        readback_failure_category(&message)
-                    })
-            } else {
-                None
-            };
-            (result, readback_failure)
-        }
-        _ => unreachable!("candidate engine validated above"),
-    };
+    let include_safe_diagnostics =
+        std::env::var("AUDIT_S1_COPY_SAFE_DIAGNOSTICS").as_deref() == Ok("1");
+    let (apply_result, output_readback_failure_category, output_readback_diagnostic) =
+        match candidate_engine.as_str() {
+            "umya" => {
+                let backend =
+                    UmyaXlsxBackend::new(capability).expect("construct unverified Umya candidate");
+                (backend.apply(&plan), None, None)
+            }
+            "openpyxl-worker" => {
+                let python = required_path("RUST_WORKSPACE_OPENPYXL_PYTHON");
+                let config = OpenpyxlWorkerConfig::new(python, openpyxl_worker_path())
+                    .expect("construct isolated test worker config");
+                let backend = OpenpyxlXlsxBackend::new(capability, config)
+                    .expect("construct unverified openpyxl candidate");
+                let result = backend.apply(&plan);
+                let readback_failure = if result.is_ok() && output.is_file() {
+                    OpenpyxlXlsxValidator
+                        .validate(&plan, &output)
+                        .err()
+                        .map(|error| {
+                            let message = format!("{error:#}");
+                            let category = readback_failure_category(&message);
+                            let diagnostic = include_safe_diagnostics
+                                .then(|| safe_readback_diagnostic(&message, &target, &output))
+                                .flatten();
+                            (category, diagnostic)
+                        })
+                } else {
+                    None
+                };
+                match readback_failure {
+                    Some((category, diagnostic)) => (result, Some(category), diagnostic),
+                    None => (result, None, None),
+                }
+            }
+            _ => unreachable!("candidate engine validated above"),
+        };
     let output_created = Path::new(&output).is_file();
     let apply_failure_kind = apply_result
         .as_ref()
@@ -246,6 +385,7 @@ fn probes_s1_formula_copy_import_ranges_without_claiming_capability() {
         "output_created": output_created,
         "output_readback_failed": output_readback_failure_category.is_some(),
         "output_readback_failure_category": output_readback_failure_category,
+        "output_readback_diagnostic": output_readback_diagnostic,
         "apply_failure_kind": apply_failure_kind,
         "apply_failure_category": apply_failure_category,
         "elapsed_ms": started.elapsed().as_millis(),

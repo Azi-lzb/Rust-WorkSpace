@@ -1,0 +1,37 @@
+时间：2026-10-24
+执行者：Codex Audit 专属开发 Agent
+分支：audit-dev
+修改前提交：3f9a089（包含已由 main 协调并 cherry-pick 的共享样式读回修正 2a78321）
+WIP：修改前未发现 Audit WIP 文件。保留已有实现；原始 Python 与用户提供的工作簿只读，候选输出和对拍临时文件写入系统临时目录并清理。
+
+修改目的：
+继续 S1-F01 真实 Rust 业务链验证：完成用户提供批次的 Python/Rust 条件格式审核对拍，并为仍未验收的公式复制候选保留脱敏、可复现的安全失败诊断。公式复制仍不得进入生产路由。
+
+变更文件：
+- audit-core/tests/s1_formula_copy_candidate.rs：为手动、忽略执行的公式复制候选探针加入环境变量显式开启的安全首错定位；只记录错误类别、工作表序号/坐标、Rust JSON 值类别/字符串长度和样式摘要，不写入单元格值、公式、批注或工作簿路径。
+- audit-core/probe/reports/s1_f01_formula_copy_final_recheck_20261024.json：保存共享修正 2a78321 后的七样本脱敏候选结果。
+- audit-core/probe/reports/s1_f01_conditional_real_batch_parity_20261024.json：保存七样本条件格式 Python/Rust 汇总和计数，不含业务文件名、文件路径、单元格值或评论内容。
+- 本记录：留存本轮目的、测试环境、对拍证据、未完成项和回滚方法。
+- 未修改 Audit 生产 Rust 业务实现、共享 crate、根 Cargo 配置、DEVELOPMENT_GOAL.md 或 pytools-core。
+
+业务入口与样本：
+- 条件格式基线对拍通过现有 Windows 原生 Rust CLI `conditional-audit` 与 Audit Python 比较基线逐文件执行；使用 Rust Calamine + namespace-aware OOXML 与 Windows CPython 3.12.10/openpyxl 3.1.5 测试基线。用户所给同一批次共 7 个样本，使用内置映射，无自定义映射簿。
+- 已有 `S1AuditDirectory` Rust 目录审核入口的七样本全链验证沿用记录 `20261024_130426_S1F01Windows原生真实样本链复验.txt`；本轮不重复运行目录全链，也不把既有审核副本当作 Rust 公式复制结果。
+
+验证：
+- 条件格式 Python/Rust 对拍：7/7 样本通过；双方合计均评估 1,806 个单元格和 7 条规则；Python 与 Rust 各识别 5 条问题；问题字段差异 0，Rust 诊断数 0；合计 Python 条件审核耗时约 2.281 秒，Rust 约 2,029 毫秒。未执行公式重算。
+- 公式复制最终七样本候选复验：7/7 仍为 comparison_incomplete；7/7 在 Rust 读回校验处失败，其中 6 个为未修改单元格值读回不一致，1 个为导入范围样式语义不一致；apply 失败 0，所有源输入未变。能力继续标记 Unverified，未登记 Passed、未接生产路由。
+- Windows 原生 Cargo 1.99.1 / rustc 1.99.1 MSVC：`cargo fmt -p audit-core -- --check` 通过；`cargo test -p audit-core --lib s1_formula_copy:: --locked` 5 项通过；`cargo test -p audit-core --test s1_formula_copy_candidate --locked --no-run` 编译通过。
+- Windows CPython/openpyxl 仅用于本次测试基线及已隔离 worker 候选；WSL Python 未使用，最终 deb 隔离 runtime 未测试。共享 `excel-editor` 的既有测试证据记录于前序 Audit 留痕；本轮未声称重跑整个 workspace。
+
+未完成与已知问题：
+- S1-F01 条件格式审核链已有 Rust CLI 入口，真实批次 Python/Rust 结果一致；该证据只覆盖本批次、该输入契约和 Windows 平台。
+- S1 公式复制仍未通过七样本读回保真门槛，无生产能力登记或 GUI/CLI 公式复制路由；未修改 validator 或降低保护要求。
+- main 已告知另有共享修正提交 `788afe19e8e00db53c6e4738402b1ce2d25a7991`，目标是处理缺失单元格 XF0 样式读回；本记录形成安全提交点后再按协调的 Git 流程同步，并在该修正后决定是否做针对性复验。
+- 公式缓存未重算；本轮不是 WSL 或 deb 交付验收。
+
+敏感信息与回滚：
+- 提交内容仅含 Audit 测试代码、脱敏计数报告和本记录。报告不包含样本名称/路径、单元格内容、公式、批注或凭据；源 Python 与样本工作簿未修改。
+- 本轮 Audit 自有变更可通过撤销对应本地证据提交回滚；共享提交保持独立提交。组件版本保持 0.1.0。
+
+【组件版本】：audit-core 0.1.0（不升级）
