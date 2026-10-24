@@ -1,0 +1,29 @@
+时间：2026-10-24 18:43:17 Asia/Shanghai
+执行者：Codex main
+修改前 commit：9d25edc1c081c89c8a9eca04392fa0c56b7e632e
+修改后 commit：待提交
+WIP 情况：修改前 main 工作区干净；本次只处理共享 Umya 行插入缺陷。
+
+目的：修正 Umya 3.1.1 工作簿级插行会移动所有工作表的问题，使批量行插入只移动 EditPlan 指定工作表，并在无法安全处理公式结构时于写入前拒绝。
+
+修改文件：
+- crates/excel-editor/src/umya_backend.rs
+- crates/excel-editor/tests/insert_rows.rs
+- 本记录
+
+变化：使用工作表级插行；安全预检插入操作；按目标表插行语义更新目标表公式、其他工作表指向目标表的公式及定义名称。增加合成 XLSX 回归，验证目标表对象移动及未选工作表的值、公式、合并区、批注、行高保持不动。
+
+配置及 VBA 迁移影响：无。
+组件版本：不升级。
+
+测试：
+- `cargo fmt --package excel-editor`：通过。
+- `$env:CARGO_TARGET_DIR='F:\codex-targets\rust-workspace-main'; cargo test --offline --locked -p excel-editor --test insert_rows -j 1`：通过，1 项测试。
+- `git diff --check`：通过；Git 提示 umya_backend.rs 的工作副本 LF 将在后续 Git 写入时转为 CRLF，不影响 diff 检查。
+
+未执行项：未运行 Audit/PyTools 产品测试、真实业务模板对拍、Office/COM 验证、Linux 或 deb 验收；未登记任何生产能力。
+
+已知问题：结构化、外部、数组/数据表/共享公式、动态 INDIRECT、三维引用、整行引用及无法安全解释的定义名称会被保守拒绝；需要按真实样本继续扩展验证。当前测试仅覆盖合成 XLSX 的明确操作组合。
+
+删除清单：无。
+回滚：回退本提交即可撤销本次适配器及回归测试；未修改输入文件。
