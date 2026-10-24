@@ -1,0 +1,33 @@
+# GPT 修改记录：PT-7-2 重复映射键兼容
+
+- 时间：2026-10-24 16:13（Asia/Shanghai）
+- 执行者：Codex
+- Git 基线：`b639afd`；工作分支 `pytools-dev`，开始时工作区干净且与 `origin/pytools-dev` 同步。本记录与业务修改一并提交。
+- WIP：未覆盖或清理现有改动；原始 Python 项目保持只读。
+- 【组件版本】：不升级；未修改依赖、公共 crate、产品版本或 Excel 引擎路由。
+
+## 修改目的
+
+补齐 PT-7-2 机构映射配置对 Python 字典重复键行为的兼容。Python 在后续重复键出现时更新映射值，同时保留该键首次插入时的子串匹配顺序；旧 Rust 有序列表会保留重复项，使更早的旧值错误胜出。
+
+## 修改文件
+
+- `pytools-core/src/config.rs`：有序映射加载时记录每个键的首次索引，重复键只更新映射值。
+- `pytools-core/tests/institution_normalize_batch_cli.rs`：新增真实 PyTools CLI 计划模式回归，覆盖重复键最后值生效、首次匹配顺序不变及输入未修改。
+- 本记录。
+
+## 验证
+
+- `cargo fmt --manifest-path pytools-core/Cargo.toml -- --check`：通过。
+- `cargo test --offline --locked -p pytools-core --lib institution_normalize::tests::`：4/4 通过。
+- `cargo test --offline --locked -p pytools-core --test institution_normalize_batch_cli`：5/5 通过。
+- Python 源函数 `_norm_name` 的重复键语义检查：通过；Rust CLI 对同样的合成映射生成的计划将 `A3` 映射为最后一条 `AB` 目标，精确匹配项仍优先，输入工作簿指纹不变。
+- 该新用例只验证计划语义，没有执行 Excel 修改引擎。Windows 环境未配置隔离 openpyxl runtime，未运行忽略式执行测试；未登记生产 capability，也未改变生产路由。
+
+## 状态与限制
+
+PT-7-2 现有合成业务测试通过，重复键语义已补齐；真实授权模板、完整 Excel 修改保真、Windows 执行引擎、`.xlsm`、目标 Linux/glibc 2.28、麒麟/UOS 与 deb 仍未验证，功能生产状态保持未验证。构建输出仍有既有 umya 弃用 API 与无关 unused import 警告。
+
+## 回滚
+
+如需撤销本项，可反向删除 `load_institution_mapping_ordered` 的位置索引逻辑及对应 CLI 回归测试，并保留其他 PyTools 改动；本项与记录作为一个提交提交，必要时可对该提交执行 `git revert`。

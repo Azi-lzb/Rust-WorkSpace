@@ -223,6 +223,63 @@ fn apply_without_a_passed_capability_refuses_to_modify_source() -> Result<()> {
 }
 
 #[test]
+fn duplicate_mapping_keys_use_last_value_without_changing_first_match_order() -> Result<()> {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let fixture = root.join("tests/fixtures/institution_normalize.xlsx");
+    let temp = TempDirectory::new("pytools-pt-7-2-duplicate-mapping")?;
+    let config = temp.path().join("duplicate-institution-config.xlsx");
+    let source = temp.path().join("source.xlsx");
+    let plan_dir = temp.path().join("plans");
+    let report_path = temp.path().join("run.json");
+    write_duplicate_institution_config(&config)?;
+    fs::copy(&fixture, &source)?;
+    let source_hash = pytools_core::file_commit::sha256_file(&source)?;
+
+    let output = run_cli([
+        "institution-normalize",
+        "--config",
+        config.to_str().context("temporary path is UTF-8")?,
+        "--plan-dir",
+        plan_dir.to_str().context("temporary path is UTF-8")?,
+        "--report-output",
+        report_path.to_str().context("temporary path is UTF-8")?,
+        "--view",
+        "developer",
+        source.to_str().context("temporary path is UTF-8")?,
+    ])?;
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let plan_path = plan_dir.join("0001_institution_normalize.json");
+    let plan: Value = serde_json::from_slice(&fs::read(plan_path)?)?;
+    let operations = plan["operations"]
+        .as_array()
+        .context("plan operations missing")?;
+    let updates = operations
+        .iter()
+        .map(|operation| {
+            (
+                operation["cell"].as_str().unwrap_or_default(),
+                operation["value"]["value"].as_str().unwrap_or_default(),
+            )
+        })
+        .collect::<Vec<_>>();
+    assert!(updates.contains(&("A2", "Exact Standard")));
+    assert!(updates.contains(&("A3", "Last AB Standard")));
+    assert!(!updates
+        .iter()
+        .any(|(_, value)| *value == "First AB Standard"));
+    assert_eq!(
+        pytools_core::file_commit::sha256_file(&source)?,
+        source_hash
+    );
+    Ok(())
+}
+
+#[test]
 fn empty_mapping_still_emits_a_completed_task_summary() -> Result<()> {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let fixture = root.join("tests/fixtures/institution_normalize.xlsx");
@@ -363,6 +420,27 @@ fn write_empty_institution_config(path: &Path) -> Result<()> {
     sheet.set_name("机构映射表")?;
     sheet.write_string(0, 0, "原始机构")?;
     sheet.write_string(0, 1, "标准机构")?;
+    workbook.save(path)?;
+    Ok(())
+}
+
+fn write_duplicate_institution_config(path: &Path) -> Result<()> {
+    let mut workbook = Workbook::new();
+    let sheet = workbook.add_worksheet();
+    sheet.set_name("机构映射表")?;
+    sheet.write_string(0, 0, "原始机构")?;
+    sheet.write_string(0, 1, "标准机构")?;
+    for (row, (source, target)) in [
+        ("AB", "First AB Standard"),
+        ("ABC Bank", "Exact Standard"),
+        ("AB", "Last AB Standard"),
+    ]
+    .iter()
+    .enumerate()
+    {
+        sheet.write_string((row + 1) as u32, 0, *source)?;
+        sheet.write_string((row + 1) as u32, 1, *target)?;
+    }
     workbook.save(path)?;
     Ok(())
 }

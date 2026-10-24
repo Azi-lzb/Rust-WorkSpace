@@ -513,12 +513,20 @@ pub fn load_institution_mapping_ordered(
     else {
         return Ok(Vec::new());
     };
-    let mut mapping = Vec::new();
+    let mut mapping: Vec<(String, String)> = Vec::new();
+    let mut positions = BTreeMap::<String, usize>::new();
     for row in 2..=max_row(sheet) {
         let source = cell_text(sheet, row, 1);
         let target = cell_text(sheet, row, 2);
         if !source.is_empty() && !target.is_empty() {
-            mapping.push((source, target));
+            if let Some(index) = positions.get(&source).copied() {
+                // Python's dict assignment replaces a duplicate key's value
+                // without moving the key from its first insertion position.
+                mapping[index].1 = target;
+            } else {
+                positions.insert(source.clone(), mapping.len());
+                mapping.push((source, target));
+            }
         }
     }
     Ok(mapping)
