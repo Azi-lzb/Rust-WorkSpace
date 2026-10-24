@@ -81,6 +81,12 @@ pub struct NewAppendSheet {
     pub name: String,
     /// Rows include the header at index zero.
     pub rows: Vec<Vec<AppendCell>>,
+    /// Match the legacy wide-summary DataFrame header style on row zero.
+    #[serde(default)]
+    pub style_header_row: bool,
+    /// Apply the legacy data-date number format to this zero-based column.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub data_date_column: Option<usize>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -744,8 +750,35 @@ pub fn write_append_workbook_payload(
         "refusing to overwrite {}",
         output_path.display()
     );
+    let header_format = excel_writer::Format::new()
+        .set_bold()
+        .set_border(excel_writer::FormatBorder::Thin)
+        .set_align(excel_writer::FormatAlign::Center)
+        .set_align(excel_writer::FormatAlign::Top);
+    let data_date_format = excel_writer::Format::new().set_num_format("yyyy/m/d");
     let mut workbook = excel_writer::Workbook::new();
     for planned_sheet in &workbook_plan.sheets {
+        if planned_sheet.style_header_row {
+            anyhow::ensure!(
+                planned_sheet.rows.first().is_some_and(|row| {
+                    !row.is_empty()
+                        && row
+                            .iter()
+                            .all(|cell| matches!(cell, AppendCell::Value(CellValue::Text(_))))
+                }),
+                "styled append header row must contain text cells"
+            );
+        }
+        if let Some(column) = planned_sheet.data_date_column {
+            anyhow::ensure!(
+                planned_sheet
+                    .rows
+                    .first()
+                    .and_then(|row| row.get(column))
+                    .is_some_and(|cell| matches!(cell, AppendCell::Value(CellValue::Text(value)) if value == "数据日期")),
+                "data-date format column must refer to the 数据日期 header"
+            );
+        }
         let worksheet = workbook.add_worksheet();
         worksheet.set_name(&planned_sheet.name)?;
         for (row_index, row) in planned_sheet.rows.iter().enumerate() {
@@ -754,22 +787,67 @@ pub fn write_append_workbook_payload(
                     u32::try_from(row_index).context("worksheet row exceeds XLSX limit")?;
                 let column_index =
                     u16::try_from(column_index).context("worksheet column exceeds XLSX limit")?;
+                let is_data_date =
+                    row_index > 0 && planned_sheet.data_date_column == Some(column_index as usize);
                 match cell {
                     AppendCell::Formula(formula) => {
-                        worksheet.write_formula(row_index, column_index, formula.as_str())?;
+                        if is_data_date {
+                            worksheet.write_formula_with_format(
+                                row_index,
+                                column_index,
+                                formula.as_str(),
+                                &data_date_format,
+                            )?;
+                        } else {
+                            worksheet.write_formula(row_index, column_index, formula.as_str())?;
+                        }
                     }
                     AppendCell::Value(CellValue::Text(value)) => {
-                        worksheet.write_string(row_index, column_index, value)?;
+                        if planned_sheet.style_header_row && row_index == 0 {
+                            worksheet.write_string_with_format(
+                                row_index,
+                                column_index,
+                                value,
+                                &header_format,
+                            )?;
+                        } else if is_data_date {
+                            worksheet.write_string_with_format(
+                                row_index,
+                                column_index,
+                                value,
+                                &data_date_format,
+                            )?;
+                        } else {
+                            worksheet.write_string(row_index, column_index, value)?;
+                        }
                     }
                     AppendCell::Value(CellValue::Decimal(value)) => {
                         let number = value.parse::<f64>().with_context(|| {
                             format!("numeric cell {value:?} is not representable as XLSX number")
                         })?;
                         anyhow::ensure!(number.is_finite(), "numeric cell must be finite");
-                        worksheet.write_number(row_index, column_index, number)?;
+                        if is_data_date {
+                            worksheet.write_number_with_format(
+                                row_index,
+                                column_index,
+                                number,
+                                &data_date_format,
+                            )?;
+                        } else {
+                            worksheet.write_number(row_index, column_index, number)?;
+                        }
                     }
                     AppendCell::Value(CellValue::Boolean(value)) => {
-                        worksheet.write_boolean(row_index, column_index, *value)?;
+                        if is_data_date {
+                            worksheet.write_boolean_with_format(
+                                row_index,
+                                column_index,
+                                *value,
+                                &data_date_format,
+                            )?;
+                        } else {
+                            worksheet.write_boolean(row_index, column_index, *value)?;
+                        }
                     }
                     AppendCell::DateTime {
                         serial,
@@ -777,7 +855,11 @@ pub fn write_append_workbook_payload(
                     } => {
                         let serial = serial.parse::<f64>().context("parse date/time serial")?;
                         let datetime = excel_writer::ExcelDateTime::from_serial_datetime(serial)?;
-                        let format = excel_writer::Format::new().set_num_format(number_format);
+                        let format = excel_writer::Format::new().set_num_format(if is_data_date {
+                            "yyyy/m/d"
+                        } else {
+                            number_format
+                        });
                         worksheet.write_datetime_with_format(
                             row_index,
                             column_index,
@@ -791,7 +873,11 @@ pub fn write_append_workbook_payload(
                     }) => {
                         let serial = serial.parse::<f64>().context("parse date/time serial")?;
                         let datetime = excel_writer::ExcelDateTime::from_serial_datetime(serial)?;
-                        let format = excel_writer::Format::new().set_num_format(number_format);
+                        let format = excel_writer::Format::new().set_num_format(if is_data_date {
+                            "yyyy/m/d"
+                        } else {
+                            number_format
+                        });
                         worksheet.write_datetime_with_format(
                             row_index,
                             column_index,
@@ -802,7 +888,11 @@ pub fn write_append_workbook_payload(
                     AppendCell::Value(CellValue::Error(_)) => {
                         unreachable!("typed error values were rejected above")
                     }
-                    AppendCell::Value(CellValue::Blank) => {}
+                    AppendCell::Value(CellValue::Blank) => {
+                        if is_data_date {
+                            worksheet.write_blank(row_index, column_index, &data_date_format)?;
+                        }
+                    }
                 }
             }
         }
@@ -936,6 +1026,8 @@ fn get_or_add_new_sheet<'a>(
     sheets.push(NewAppendSheet {
         name: name.to_owned(),
         rows: Vec::new(),
+        style_header_row: false,
+        data_date_column: None,
     });
     sheets.last_mut().expect("new sheet was just pushed")
 }

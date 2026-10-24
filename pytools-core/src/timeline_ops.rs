@@ -915,8 +915,13 @@ pub fn run_wide_summary(
         headers.extend(state.columns.iter().cloned());
         let sheet = workbook.add_worksheet();
         sheet.set_name(&unique_wide_sheet_name(rule_name, &mut used_sheet_names))?;
+        let header_format = Format::new()
+            .set_bold()
+            .set_border(FormatBorder::Thin)
+            .set_align(FormatAlign::Center)
+            .set_align(FormatAlign::Top);
         for (column, header) in headers.iter().enumerate() {
-            sheet.write_string(0, column as u16, header)?;
+            sheet.write_string_with_format(0, column as u16, header, &header_format)?;
         }
         for (row_index, bucket) in state.buckets.iter().enumerate() {
             let key = bucket.key.as_ref().expect("wide bucket has a row key");
@@ -1442,6 +1447,8 @@ pub fn build_wide_target_append_plans(
                 (state.appended_rows > 0).then(|| NewAppendSheet {
                     name: name.clone(),
                     rows: state.rows.clone(),
+                    style_header_row: true,
+                    data_date_column: state.headers.iter().position(|header| header == "数据日期"),
                 })
             })
             .collect::<Vec<_>>();

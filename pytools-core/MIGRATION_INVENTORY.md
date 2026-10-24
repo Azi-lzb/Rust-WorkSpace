@@ -12,7 +12,7 @@
 
 | 菜单组 | 来源入口中的功能 | 迁移边界 | 当前状态 |
 |---|---|---|---|
-| 时序 | 表头路径比对；时序提取；宽表汇总（行头加后缀）；宽表汇总（行头不加后缀）；预校验 | 迁移时序/路径映射规则、输出列和异常行为 | PT-1-3/1-4 两种行头模式已通过合成 Python/Rust 对拍和显式安全目标提交；真实样本、生产 capability、Windows 原生执行和目标平台仍未验收，整体状态未验证 |
+| 时序 | 表头路径比对；时序提取；宽表汇总（行头加后缀）；宽表汇总（行头不加后缀）；预校验 | 迁移时序/路径映射规则、输出列和异常行为 | PT-1-3/1-4 两种行头模式已通过 Windows 原生 Rust CLI 合成 Python/Rust 对拍及显式安全目标提交；汇总输出、新目标追加和临时测试 capability 下的既有目标替换有效样式逐格一致，源与配置未变。真实样本、生产 capability 和目标平台仍未验收，整体状态未验证 |
 | 去重 | 按批注检查；按批注删除；按配置检查；按配置删除；按配置追加到目标；按配置预校验 | 批注读取使用通用 Excel 原语；保留检查与执行的区别 | 六项均有合成语义对拍；PT-2-1 有合成 CLI→ExcelModifier→openpyxl 执行验证，PT-2-2 有合成 Excel COM 对拍及 CLI→ExcelModifier→umya 执行验证，PT-2-4 有合成 CLI→ExcelModifier→umya 执行验证；PT-2-5 新目标不覆盖发布及既有目标 `--commit-target` 提交通过合成测试专用 capability 验证；生产能力、真实样本和其余编辑能力仍未验收 |
 | 打印 | 按批注保留源格式；按批注快速复制；按配置准备打印文件；按配置预校验 | 只写页面设置并准备 xlsx；PDF 菜单不迁移 | 3-1/3-2 计划语义及 3-4 预校验通过合成对拍；3-3 模式 1/2/3 已通过合成端到端候选对拍，并按用户合同拒绝已有目标；生产能力、真实模板与目标平台仍未验证 |
 | 转换与文件命名 | 批量重命名；Excel 格式转换；Word 格式转换；批量修改 Sheet 名；按内容加前缀重命名；取消内容前缀；局部映射重命名；提交缺失检查；文件排序前缀；取消排序前缀 | 保留文件操作与同类格式转换；首批 sidecar 为 .et→.xlsx、.xls→.xlsx、.doc→.docx；不迁移 Python 模式切换 | 未验证 |
@@ -230,6 +230,16 @@ Windows Python 3.12.10 的临时对拍环境使用 NumPy 2.1.3、pandas 2.2.3、
 集成测试覆盖既有目标通过临时测试 capability→`ExcelModifier → UmyaSpreadsheet` 后安全替换、新目标发布、计划后目标变化拒绝、无效候选拒绝，以及默认候选模式不触碰原目标。Windows Python 3.12.10 + openpyxl 3.1.5 对拍脚本对行头加/不加后缀的四种场景（新/既有目标）重跑通过；两个既有目标的目标文件字节与验证候选一致，工作表顺序、值/类型投影和日期格式通过，未触及工作表抽查属性保留，目标 sheet 按 replace 语义丢弃的属性符合 Python 基线。源工作簿和配置字节未变，公式文本因夹具不含公式仍未验证。机器报告 `probe/reports/wide_summary_existing_target_parity_20261023.json` 现含 target commit 和 execution summary 信息；SHA-256 仅用于标识和提交完整性，不作为跨引擎逐格值比较。
 
 验证命令：`cargo fmt --all -- --check`；`cargo test -p pytools-core --test file_commit --test dedup_append_execution --offline --locked`（最终 11/11）；`cargo test --workspace --offline --locked -q`（通过）；`cargo check -p pytools-core --target x86_64-pc-windows-gnu --offline --locked`（通过，WSL 中的 Windows GNU 交叉检查，非 Windows 原生运行测试）；`pytools-core/probe/compare_wide_summary.py`（四种合成模式通过）。没有真实脱敏样本，生产 capability 未验收。实时进度推送、历史运行记录、普通用户/开发者切换视图尚未实现；当前执行摘要是 CLI 完成后的结构化 JSON，不能视为日志系统完整验收。全量样式/OOXML 保真、Excel/WPS 打开、Windows 原生执行、麒麟/UOS、glibc 2.28、离线 deb 仍未验证；PT-1-3/1-4 状态保持**未验证**。
+
+### 2026-10-24 PT-1-3/PT-1-4 Windows 原生样式对拍
+
+按 PyCode `write_workbook` 的 XLSX 输出行为补齐宽表汇总表头粗体、细边框、居中和顶端对齐；追加载荷增加显式表头样式与“数据日期”列格式，确保空白日期单元格也有 `yyyy/m/d`。普通去重追加载荷保持不设置这些宽表专用样式。`compare_wide_summary.py` 支持通过 `PYTOOLS_RUST_CLI` 直接调用 Windows CLI，并逐格比较有效样式；本轮移除已修复样式差异的过期限制说明。
+
+真实入口：Windows PowerShell 启动 `target/debug/pytools.exe`，覆盖 `wide-summary`、`wide-summary-row-suffix` 与 `dedup-append-execute --commit-target`。两种行头模式的汇总输出、新目标追加、使用临时测试 capability 的既有目标替换均通过 Python/Rust 合成对拍；汇总工作簿和被替换目标 sheet 的有效单元格样式完全一致。目标替换按原 Python replace 行为重建目标 sheet；未触及工作表顺序和值、抽查样式/批注/合并/行高/列宽通过检查，源输入与配置未变化。候选字节与提交后的目标一致。报告：`probe/reports/wide_summary_parity_20261023.json`、`probe/reports/wide_summary_existing_target_parity_20261023.json`。
+
+验证：Windows 原生 `cargo build --offline --locked -p pytools-core --bin pytools` 通过；`cargo fmt --manifest-path pytools-core/Cargo.toml -- --check` 通过；`cargo test --offline --locked -p pytools-core --test dedup_append_execution` 通过（6/6）；使用原项目 Python 3.12.10 venv 执行 `probe/compare_wide_summary.py`，4 种汇总/目标模式通过且样式差异数为 0。完整 `cargo test --offline --locked -p pytools-core` 因仓库缺少既有夹具 `pytools-core/tests/fixtures/季度报表_县区报表_2024-12-31.xlsx` 失败；跳过对应单测后，该套件的另一个既有 `config_task_loader_parity` 集成测试在 Windows `\\?\` canonical path 前缀断言失败，与本次业务代码无关。格式与 diff 检查均通过。
+
+范围仍为合成 XLSX；没有可用脱敏真实业务样本。临时 capability 仅用于测试，没有登记生产路由；PT-1-3/1-4 整体仍为**未验证**。真实工作簿、完整 OOXML 保留、麒麟/UOS、glibc 2.28 和离线 deb 未验收。此轮没有共享 crate、根 Cargo 配置、Cargo.lock、Audit 或长期 Goal 变更。
 
 ### 2026-10-23 汇总工具 6-1/6-2 合成对拍
 

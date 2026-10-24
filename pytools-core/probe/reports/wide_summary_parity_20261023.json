@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "suite": "pytools.timeline.wide_summary_python_rust_parity",
-  "date": "2026-10-23",
+  "date": "2026-10-24",
   "status": "passed_synthetic_parity",
   "source_python_files": [
     "PyCode/core/wide_397_398.py",
@@ -19,34 +19,108 @@
       "configured target worksheet"
     ]
   },
+  "environment": {
+    "python": "3.12.10",
+    "python_packages": {
+      "numpy": "2.1.3",
+      "pandas": "2.2.3",
+      "openpyxl": "3.1.5"
+    },
+    "python_baseline": "C:\\Users\\AZI\\Desktop\\VibeCode\\4.pytools-main",
+    "rust_execution": "Windows native pytools CLI",
+    "sample_kind": "synthetic XLSX only"
+  },
+  "comparison": {
+    "worksheet_names_order_values_and_types": "exact except numeric values compared with relative and absolute tolerance 1e-15",
+    "effective_cell_styles": "exact across every cell in generated summary workbooks, including font, fill, border, alignment, number format, and protection",
+    "formula_text_merges_dimensions_defined_names_freeze_panes": "exact; synthetic output contains no formulas, merges, defined names, or frozen panes",
+    "data_date_number_formats": "exact across the generated summary worksheet",
+    "new_target_append": "exact after the real Rust CLI executed and committed the validated candidate"
+  },
   "scenarios": [
     {
       "row_suffix": false,
-      "summary_workbook": "passed",
-      "new_target_append_candidate": "passed"
+      "summary_status": "passed",
+      "target_append_status": "passed",
+      "summary_sheet_names": [
+        "WideRule"
+      ],
+      "summary_dimensions": [
+        [
+          4,
+          9
+        ]
+      ],
+      "summary_cell_count": 36,
+      "summary_effective_styles": "exact",
+      "target_commit_operation": "created",
+      "execution_summary": {
+        "appended_rows": 2,
+        "duplicate_rows_filtered": 1,
+        "elapsed_ms": 49,
+        "function": "append_target_execute",
+        "stages": [
+          {
+            "elapsed_ms": 29,
+            "engine": "rust_xlsxwriter",
+            "name": "new_workbook_write_and_reopen",
+            "status": "succeeded"
+          },
+          {
+            "elapsed_ms": 18,
+            "name": "target_commit",
+            "status": "succeeded"
+          }
+        ],
+        "status": "succeeded",
+        "task_skipped_count": 0,
+        "task_success_count": 1
+      }
     },
     {
       "row_suffix": true,
-      "summary_workbook": "passed",
-      "new_target_append_candidate": "passed"
+      "summary_status": "passed",
+      "target_append_status": "passed",
+      "summary_sheet_names": [
+        "WideRule"
+      ],
+      "summary_dimensions": [
+        [
+          4,
+          9
+        ]
+      ],
+      "summary_cell_count": 36,
+      "summary_effective_styles": "exact",
+      "target_commit_operation": "created",
+      "execution_summary": {
+        "appended_rows": 3,
+        "duplicate_rows_filtered": 0,
+        "elapsed_ms": 49,
+        "function": "append_target_execute",
+        "stages": [
+          {
+            "elapsed_ms": 28,
+            "engine": "rust_xlsxwriter",
+            "name": "new_workbook_write_and_reopen",
+            "status": "succeeded"
+          },
+          {
+            "elapsed_ms": 19,
+            "name": "target_commit",
+            "status": "succeeded"
+          }
+        ],
+        "status": "succeeded",
+        "task_skipped_count": 0,
+        "task_success_count": 1
+      }
     }
   ],
-  "comparison": {
-    "worksheet_names": "exact",
-    "cell_values": "exact except numeric values compared with relative and absolute tolerance 1e-15",
-    "worksheet_dimensions": "exact",
-    "data_date_number_formats": "exact",
-    "target_rows_and_headers": "exact after executing the new-target candidate plan"
-  },
-  "commands": {
-    "focused_probe": "python pytools-core/probe/compare_wide_summary.py",
-    "rust_compile_check": "cargo check -p pytools-core --message-format short",
-    "rust_compile_check_result": "passed"
-  },
   "limitations": [
-    "Synthetic XLSX only; no real business workbooks or real source configuration were available for this probe.",
-    "The target was newly created. Appending to and preserving an existing target workbook remains gated by exact ExcelModifier capability evidence.",
-    "The comparison covers summary values, worksheet names and dimensions, and data-date number formats; it is not a complete workbook-preservation audit.",
-    "XLS, XLSM, XLSB, ET, Windows native execution, Kylin/UOS, glibc 2.28 and deb packaging were not validated."
+    "No sanitized real business sample was available.",
+    "Temporary capability evidence is test-only and does not register a production route.",
+    "麒麟/UOS glibc 2.28 deb remains unverified.",
+    "The fixture contains no formulas; the probe validates the generated summary workbook contract and is not a universal workbook-preservation claim."
   ]
 }
