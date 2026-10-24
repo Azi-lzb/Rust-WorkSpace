@@ -74,6 +74,21 @@ fn formula_template(path: &Path) {
     workbook.save(path).expect("save formula template");
 }
 
+fn formula_template_without_result_rule_or_structure_area(path: &Path) {
+    let mut workbook = Workbook::new();
+    let worksheet = workbook.add_worksheet();
+    worksheet.set_name("检查表").expect("name formula sheet");
+    worksheet
+        .write_formula(0, 0, "=1+1")
+        .expect("write error-only formula");
+    workbook
+        .define_name("校验区域", "='检查表'!$A$1")
+        .expect("define formula range");
+    workbook
+        .save(path)
+        .expect("save unhealthy formula template");
+}
+
 fn audit_copy(path: &Path) {
     let mut workbook = Workbook::new();
     let worksheet = workbook.add_worksheet();
@@ -494,6 +509,43 @@ fn cli_runs_both_issue_sources_merges_then_classifies_and_logs_actual_engines() 
     } else {
         fs::remove_dir_all(directory).expect("remove temporary issue-chain workbooks");
     }
+}
+
+#[test]
+fn cli_stops_before_formula_copy_manifest_when_template_health_fails() {
+    let directory = temporary_directory("template_health_failure");
+    let input = directory.join("input");
+    fs::create_dir_all(&input).expect("create source input directory");
+    let source = input.join("1001_机构甲_2026-07.xlsx");
+    audit_copy(&source);
+    let template = directory.join("template.xlsx");
+    formula_template_without_result_rule_or_structure_area(&template);
+    let manifest = directory.join("invalid-manifest.json");
+    fs::write(&manifest, "{ not valid JSON").expect("write invalid manifest sentinel");
+
+    let output = run_cli(&input, &template, &manifest, true);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!output.status.success(), "{stderr}");
+    assert!(stderr.contains("S1 模板体检不通过"), "{stderr}");
+    let events = stderr
+        .lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .collect::<Vec<_>>();
+    let health_event = events
+        .iter()
+        .find(|event| event["step"] == "template_health_preflight")
+        .expect("template-health progress event");
+    assert_eq!(health_event["status"], "failed");
+    assert_eq!(health_event["enabled_rules"], 1);
+    assert_eq!(health_event["result_rules"], 0);
+    assert_eq!(health_event["structure_ranges"], 0);
+    assert_eq!(health_event["errors"], 3);
+    assert!(
+        !stderr.contains("解析公式审核副本清单"),
+        "manifest JSON must not be parsed on template-health failure"
+    );
+
+    fs::remove_dir_all(&directory).expect("remove temporary directory");
 }
 
 #[test]

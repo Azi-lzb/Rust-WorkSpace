@@ -17,7 +17,48 @@
     "extraction_ranges": 4,
     "keyword_rules": 380,
     "error_only_rules": 692,
-    "elapsed_ms": 324
+    "template_health": {
+      "passed": true,
+      "enabled_rules": 1072,
+      "result_rules": 380,
+      "structure_ranges": 8,
+      "broken_reference_rules": 0,
+      "items": [
+        {
+          "category": "总体",
+          "level": "提示",
+          "status": "通过",
+          "sheet_name": "",
+          "location": "",
+          "message": "模板结构可用于审核"
+        },
+        {
+          "category": "规则",
+          "level": "提示",
+          "status": "信息",
+          "sheet_name": "",
+          "location": "",
+          "message": "启用公式 1072 个，其中问题规则 380 个、公式健康检查 692 个"
+        },
+        {
+          "category": "规则",
+          "level": "提示",
+          "status": "信息",
+          "sheet_name": "",
+          "location": "",
+          "message": "问题规则识别正常"
+        },
+        {
+          "category": "表结构区域",
+          "level": "提示",
+          "status": "通过",
+          "sheet_name": "",
+          "location": "",
+          "message": "已设置 8 个“表结构区域”命名区域"
+        }
+      ]
+    },
+    "elapsed_ms": 702
   },
   "rust": {
     "template_mode": "named_formula_ranges",
@@ -33,9 +74,50 @@
     "formula_cells": 1072,
     "rule_comments": 45,
     "explicit_comment_ids": 0,
-    "read_time_ms": 734,
-    "elapsed_ms": 785,
-    "cli_elapsed_ms": 8563
+    "read_time_ms": 324,
+    "elapsed_ms": 339,
+    "template_health": {
+      "broken_reference_rules": 0,
+      "enabled_rules": 1072,
+      "items": [
+        {
+          "category": "总体",
+          "level": "提示",
+          "location": "",
+          "message": "模板结构可用于审核",
+          "sheet_name": "",
+          "status": "通过"
+        },
+        {
+          "category": "规则",
+          "level": "提示",
+          "location": "",
+          "message": "启用公式 1072 个，其中问题规则 380 个、公式健康检查 692 个",
+          "sheet_name": "",
+          "status": "信息"
+        },
+        {
+          "category": "规则",
+          "level": "提示",
+          "location": "",
+          "message": "问题规则识别正常",
+          "sheet_name": "",
+          "status": "信息"
+        },
+        {
+          "category": "表结构区域",
+          "level": "提示",
+          "location": "",
+          "message": "已设置 8 个“表结构区域”命名区域",
+          "sheet_name": "",
+          "status": "通过"
+        }
+      ],
+      "passed": true,
+      "result_rules": 380,
+      "structure_ranges": 8
+    },
+    "cli_elapsed_ms": 410
   },
   "comparison": {
     "template_definition_field_difference_counts": {
@@ -66,6 +148,14 @@
       "extraction_ranges": 0,
       "keyword_rules": 0,
       "error_only_rules": 0
+    },
+    "template_health_difference_counts": {
+      "passed": 0,
+      "enabled_rules": 0,
+      "result_rules": 0,
+      "structure_ranges": 0,
+      "broken_reference_rules": 0,
+      "items": 0
     },
     "mismatch_count": 0
   },

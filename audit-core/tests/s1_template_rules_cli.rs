@@ -32,6 +32,9 @@ fn template_with_formula_rules() -> PathBuf {
     workbook
         .define_name("校验区域", "='检查表'!$A$1")
         .expect("define formula range");
+    workbook
+        .define_name("表结构区域", "='检查表'!$B$1")
+        .expect("define structure range");
     workbook.save(&path).expect("save formula template");
     path
 }
@@ -73,6 +76,9 @@ fn cli_returns_sanitized_summary_and_both_log_views() {
         serde_json::from_slice(&ordinary.stdout).expect("parse ordinary CLI output");
     assert_eq!(ordinary_output["status"], "completed");
     assert_eq!(ordinary_output["summary"]["rules_total"], 1);
+    assert_eq!(ordinary_output["template_health"]["passed"], true);
+    assert_eq!(ordinary_output["template_health"]["result_rules"], 1);
+    assert_eq!(ordinary_output["template_health"]["structure_ranges"], 1);
     assert!(ordinary_output.get("definition").is_none());
     let ordinary_log = String::from_utf8_lossy(&ordinary.stderr);
     assert!(ordinary_log.contains("S1 模板规则检查完成"));
@@ -95,4 +101,6 @@ fn cli_returns_sanitized_summary_and_both_log_views() {
         developer_events[1]["summary"]["engine"],
         "calamine+namespace_aware_ooxml"
     );
+    assert_eq!(developer_events[1]["template_health"]["passed"], true);
+    assert_eq!(developer_output["template_health"]["passed"], true);
 }

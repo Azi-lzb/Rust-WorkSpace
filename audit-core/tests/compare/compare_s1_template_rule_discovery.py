@@ -154,6 +154,8 @@ def main() -> int:
         load_feature_mappings,
     )
     from base_audit.native.openpyxl_workbook import read_template
+    from base_audit.template_snapshot import load_template_snapshot
+    from base_audit.workflow.adapters.audit_handlers import _inspect_template_health_snapshot
 
     python_started = time.perf_counter()
     mappings = load_feature_mappings(mapping_config, template_path)
@@ -163,11 +165,31 @@ def main() -> int:
         structure_mappings=features_of_type(mappings, STRUCTURE_COMPARE_FUNCTION),
         extraction_mappings=features_of_type(mappings, ISSUE_EXTRACT_FUNCTION),
     )
+    snapshot = load_template_snapshot(template_path, mappings)
+    python_health_items = _inspect_template_health_snapshot(snapshot)
     python_elapsed_ms = round((time.perf_counter() - python_started) * 1000)
     python_payload = normalized_definition(definition)
+    enabled_rules = [rule for rule in snapshot.definition.rules if rule.enabled]
+    result_rules = [rule for rule in enabled_rules if rule.result_mode != "error_only"]
+    broken_reference_rules = [
+        rule
+        for rule in enabled_rules
+        if "#REF!" in str(
+            snapshot.formula_cells.get((rule.sheet_name, rule.formula_cell), "")
+        ).upper()
+    ]
+    python_health = {
+        "passed": not any(item.level == "错误" for item in python_health_items),
+        "enabled_rules": len(enabled_rules),
+        "result_rules": len(result_rules),
+        "structure_ranges": len(snapshot.definition.structure_ranges),
+        "broken_reference_rules": len(broken_reference_rules),
+        "items": [dataclasses.asdict(item) for item in python_health_items],
+    }
 
     rust_payload = invoke_rust(args, template_path, mapping_config)
     rust_definition = rust_payload["definition"]
+    rust_health = rust_payload.get("template_health", {})
     field_differences = compare_definitions(python_payload, rust_definition)
     mismatch_count = sum(field_differences.values())
     python_rules = python_payload["rules"]
@@ -200,7 +222,18 @@ def main() -> int:
         field: int(python_summary[field] != rust_summary.get(field))
         for field in parity_fields
     }
-    mismatch_count += sum(summary_differences.values())
+    health_differences = {
+        field: int(python_health[field] != rust_health.get(field))
+        for field in (
+            "passed",
+            "enabled_rules",
+            "result_rules",
+            "structure_ranges",
+            "broken_reference_rules",
+            "items",
+        )
+    }
+    mismatch_count += sum(summary_differences.values()) + sum(health_differences.values())
     after = sha256(template_path)
     report = {
         "schema_version": 1,
@@ -213,6 +246,7 @@ def main() -> int:
         },
         "python": {
             **python_summary,
+            "template_health": python_health,
             "elapsed_ms": python_elapsed_ms,
         },
         "rust": {
@@ -228,11 +262,13 @@ def main() -> int:
                     "elapsed_ms",
                 )
             },
+            "template_health": rust_health,
             "cli_elapsed_ms": rust_payload["_comparison_elapsed_ms"],
         },
         "comparison": {
             "template_definition_field_difference_counts": field_differences,
             "summary_difference_counts": summary_differences,
+            "template_health_difference_counts": health_differences,
             "mismatch_count": mismatch_count,
         },
         "verification": {

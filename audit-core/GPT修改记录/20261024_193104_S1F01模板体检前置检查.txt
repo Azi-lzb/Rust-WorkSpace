@@ -1,0 +1,33 @@
+时间：2026-10-24 19:31:04（Asia/Shanghai）
+执行者：Codex
+修改前 commit：bf976d5 test(audit): classify S1 formula-copy preflight guards
+修改后 commit：2f2fde5 feat(audit): preflight S1 template health
+WIP 情况：工作树原有本轮 Audit 代码改动继续保留；未跟踪的 audit-core/examples/ 为既有用户内容，保持原样且不纳入提交。分支 audit-dev，提交前 origin/audit-dev 与修改前 HEAD 一致。
+
+目的：将源 Python Audit 工作流中的静态 S1 模板健康检查接入 Rust 规则查看和 S1 目录审核入口，并与 Python 基线在真实模板上对拍；不覆盖或替代尚未通过对象级验证的公式复制写入。
+
+修改文件：
+- audit-core/src/s1_template_rules.rs：新增模板健康汇总；检查启用规则、结果规则、有效结构范围与已读公式中的 #REF!。
+- audit-core/src/bin/open-data-audit.rs：将健康信息加入 s1-template-rules 普通/开发者视图；在 s1-audit-directory 解析公式审核副本清单前执行健康预检并记录引擎、步骤、结果和耗时。
+- audit-core/tests/s1_template_rules_cli.rs、audit-core/tests/s1_audit_directory_cli.rs：覆盖输出与预检失败关闭顺序。
+- audit-core/tests/compare/compare_s1_template_rule_discovery.py：对拍 Python `_inspect_template_health_snapshot` 的字段和检查项。
+- audit-core/probe/reports/s1_template_rule_discovery_real.json：保存脱敏真实模板对拍报告，无原始公式、绝对路径或业务工作簿内容。
+- audit-core/MIGRATION_INVENTORY.md：补记新增局部能力和边界。
+- 本记录。
+
+业务影响：无配置格式变更。模板无启用规则、没有结果标记规则或没有有效结构区域时，s1-audit-directory 在解析公式审核副本清单前停止；#REF! 作为警告记录，不触发公式重算。s1-template-rules 只报告体检结果。模板只读，未写工作簿。S1-F01 整体仍未验收。
+
+测试与证据：
+- `cargo test --offline --locked -p audit-core --lib s1_template_rules::tests -j 1`：4/4 通过。
+- `cargo test --quiet --offline --locked -p audit-core --test s1_template_rules_cli -j 1`：1/1 通过。
+- `cargo test --quiet --offline --locked -p audit-core --test s1_audit_directory_cli -j 1`：4/4 通过。
+- `cargo build --offline --locked -p audit-core --bin open-data-audit -j 1`：Windows MSVC debug 构建通过。
+- 真实模板 Python/Rust 对拍：1 个模板，1,072 条启用规则、380 条结果规则、8 个结构范围、0 条 #REF!；健康字段/检查项差异 0，报告中的其他模板定义/摘要差异也为 0；模板未改变，未保存规则定义或公式文本。
+- Python 对拍脚本语法检查通过。
+- 尝试对用户给出的 2026-07-31 输入目录直接执行目录预检时，该目录检测出多个数据期；显式给定期间后模板推荐仍未能唯一确定模板，故入口按设计失败关闭，未到达健康检查、未解析哨兵清单且未产生输出。模板健康本身已在真实模板 Python/Rust 对拍和合成目录 CLI 测试中覆盖。
+
+未执行项及已知问题：未执行真实公式复制、公式重算、GUI 全流程、Linux 兼容性或 deb 验收。S1 公式复制仍因共享编辑器对目标缓存/合并单元格写入能力未验收而保持 Unverified；本次不绕过保护。Windows 磁盘空间导致 Cargo 曾无法写入默认 C: 使用数据，临时目录改到 F: 后构建及测试通过；仓库文件未做清理。
+
+删除清单：无。
+回滚提示：提交后可通过 `git revert <本次提交>` 撤销；报告和迁移清单随代码一并回滚。未提交前可单独反向修改上述新增代码/记录，注意保留既有 examples/。
+【组件版本】audit-core 0.1.0（不升级）。

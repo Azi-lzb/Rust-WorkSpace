@@ -28,7 +28,7 @@ use audit_core::{
     },
     s1_summary_merge::merge_s1_workbook_tables,
     s1_template::{recommend_template, recommend_template_for_workbooks, template_workbook_paths},
-    s1_template_rules::load_s1_template_rule_plan,
+    s1_template_rules::{load_s1_template_rule_plan, assess_s1_template_health},
     s2_service::{run_s2_audit, S2ProgressEvent, S2RunRequest},
     s2_summary::S2AuditSummary,
     web_bridge::serve_web_ui,
@@ -1013,6 +1013,7 @@ fn run_s1_template_rules(arguments: S1TemplateRulesArgs) -> Result<()> {
             return Err(error);
         }
     };
+    let health = assess_s1_template_health(&plan, &plan.definition.structure_ranges);
 
     if arguments.developer_view {
         eprintln!(
@@ -1026,17 +1027,20 @@ fn run_s1_template_rules(arguments: S1TemplateRulesArgs) -> Result<()> {
                 "started_at": started_at,
                 "finished_at": chrono::Local::now().to_rfc3339(),
                 "elapsed_ms": plan.summary.elapsed_ms,
-                "summary": plan.summary
+                "summary": plan.summary,
+                "template_health": health
             }))?
         );
     } else {
         eprintln!(
-            "S1 模板规则检查完成：模式 {}，规则 {} 条（启用 {} 条），公式范围 {} 个，结构范围 {} 个，读取引擎 {}，读取 {} ms，合计 {} ms。",
+            "S1 模板规则检查完成：模式 {}，规则 {} 条（启用 {} 条），问题规则 {} 条，结构范围 {} 个，模板体检{}（#REF! 规则 {} 个），读取引擎 {}，读取 {} ms，合计 {} ms。",
             plan.summary.template_mode,
             plan.summary.rules_total,
             plan.summary.rules_enabled,
-            plan.summary.formula_named_ranges,
-            plan.summary.structure_ranges,
+            health.result_rules,
+            health.structure_ranges,
+            if health.passed { "通过" } else { "未通过" },
+            health.broken_reference_rules,
             plan.summary.engine,
             plan.summary.read_time_ms,
             plan.summary.elapsed_ms
@@ -1045,7 +1049,8 @@ fn run_s1_template_rules(arguments: S1TemplateRulesArgs) -> Result<()> {
 
     let mut output = serde_json::json!({
         "status": "completed",
-        "summary": plan.summary
+        "summary": plan.summary,
+        "template_health": health
     });
     if arguments.include_rule_definitions {
         output["definition"] = serde_json::to_value(plan.definition)?;
@@ -1344,10 +1349,6 @@ fn run_s1_audit_directory(arguments: S1AuditDirectoryArgs) -> Result<()> {
     let template_started = Instant::now();
     let template_plan = load_s1_template_rule_plan(&template_workbook, mapping_config)
         .context("读取 S1 模板公式规则")?;
-    anyhow::ensure!(
-        template_plan.summary.rules_enabled > 0,
-        "模板没有启用的 S1 公式规则；为避免遗漏公式审核后误判历史状态，已停止审核"
-    );
     let (scan_areas, structure_ranges) = resolve_s1_conditional_cli_areas(
         Some(&template_workbook),
         mapping_config,
@@ -1355,6 +1356,60 @@ fn run_s1_audit_directory(arguments: S1AuditDirectoryArgs) -> Result<()> {
         &[],
         arguments.developer_view,
     )?;
+    let health_started = Instant::now();
+    let health_started_at = chrono::Local::now().to_rfc3339();
+    let template_health = assess_s1_template_health(&template_plan, &structure_ranges);
+    let health_error_count = template_health
+        .items
+        .iter()
+        .filter(|item| item.level == "错误")
+        .count();
+    let health_warning_count = template_health
+        .items
+        .iter()
+        .filter(|item| item.level == "警告")
+        .count();
+    if arguments.developer_view {
+        eprintln!(
+            "{}",
+            serde_json::to_string(&serde_json::json!({
+                "type": "progress",
+                "product": "open-data-audit",
+                "feature": "S1-F01",
+                "step": "template_health_preflight",
+                "status": if template_health.passed { "completed" } else { "failed" },
+                "engine": template_plan.summary.engine,
+                "started_at": health_started_at,
+                "finished_at": chrono::Local::now().to_rfc3339(),
+                "enabled_rules": template_health.enabled_rules,
+                "result_rules": template_health.result_rules,
+                "structure_ranges": template_health.structure_ranges,
+                "broken_reference_rules": template_health.broken_reference_rules,
+                "errors": health_error_count,
+                "warnings": health_warning_count,
+                "items": template_health.items,
+                "elapsed_ms": health_started.elapsed().as_millis()
+            }))?
+        );
+    } else if template_health.passed {
+        eprintln!(
+            "S1 模板体检通过：启用规则 {} 条，问题规则 {} 条，结构范围 {} 个，#REF! 规则 {} 个；耗时 {} ms。",
+            template_health.enabled_rules,
+            template_health.result_rules,
+            template_health.structure_ranges,
+            template_health.broken_reference_rules,
+            health_started.elapsed().as_millis()
+        );
+    } else {
+        eprintln!(
+            "S1 模板体检未通过：存在 {} 个错误项、{} 个警告项；已停止审核。",
+            health_error_count, health_warning_count
+        );
+    }
+    anyhow::ensure!(
+        template_health.passed,
+        "S1 模板体检不通过；为避免遗漏公式审核或无法核对报送文件结构，已停止审核"
+    );
     if arguments.developer_view {
         eprintln!(
             "{}",

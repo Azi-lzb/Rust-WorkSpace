@@ -5,7 +5,7 @@
 //! definition; it never recalculates formulas or modifies the workbook.
 
 use crate::{
-    models::{AuditRule, CopyRange, TemplateDefinition},
+    models::{AuditRule, CopyRange, TemplateDefinition, PreflightItem},
     name_config::{
         load_s1_conditional_mappings, load_s1_formula_mappings, named_areas_from_defined_names,
         resolve_named_ranges_for_mappings, FeatureMapping, FORMULA_ISSUE_EXTRACT_FUNCTION,
@@ -53,6 +53,158 @@ pub struct S1TemplateRuleSummary {
 pub struct S1TemplateRulePlan {
     pub definition: TemplateDefinition,
     pub summary: S1TemplateRuleSummary,
+    formula_reference_errors: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct S1TemplateHealthReport {
+    pub passed: bool,
+    pub enabled_rules: usize,
+    pub result_rules: usize,
+    pub structure_ranges: usize,
+    pub broken_reference_rules: usize,
+    pub items: Vec<PreflightItem>,
+}
+
+/// Assess the static S1 template health checks used by the Audit workflow.
+///
+/// `effective_structure_ranges` may contain CLI-resolved overrides. Formula
+/// references are read from the already-loaded Rust template snapshot; this
+/// function never recalculates formulas or opens a workbook for modification.
+pub fn assess_s1_template_health(
+    plan: &S1TemplateRulePlan,
+    effective_structure_ranges: &[CopyRange],
+) -> S1TemplateHealthReport {
+    let enabled_rules = plan
+        .definition
+        .rules
+        .iter()
+        .filter(|rule| rule.enabled)
+        .collect::<Vec<_>>();
+    let result_rules = enabled_rules
+        .iter()
+        .filter(|rule| rule.result_mode != "error_only")
+        .count();
+    let structure_ranges = effective_structure_ranges.len();
+    let mut items = vec![
+        PreflightItem {
+            category: "规则".to_owned(),
+            level: if enabled_rules.is_empty() {
+                "错误"
+            } else {
+                "提示"
+            }
+            .to_owned(),
+            status: if enabled_rules.is_empty() {
+                "需处理"
+            } else {
+                "信息"
+            }
+            .to_owned(),
+            sheet_name: String::new(),
+            location: String::new(),
+            message: if enabled_rules.is_empty() {
+                "模板没有启用的校验规则".to_owned()
+            } else {
+                format!(
+                    "启用公式 {} 个，其中问题规则 {} 个、公式健康检查 {} 个",
+                    enabled_rules.len(),
+                    result_rules,
+                    enabled_rules.len() - result_rules
+                )
+            },
+        },
+        PreflightItem {
+            category: "规则".to_owned(),
+            level: if result_rules == 0 {
+                "错误"
+            } else {
+                "提示"
+            }
+            .to_owned(),
+            status: if result_rules == 0 {
+                "需处理"
+            } else {
+                "信息"
+            }
+            .to_owned(),
+            sheet_name: String::new(),
+            location: String::new(),
+            message: if result_rules == 0 {
+                "没有识别到会返回问题标记的公式，审核结果可能始终为零".to_owned()
+            } else {
+                "问题规则识别正常".to_owned()
+            },
+        },
+        PreflightItem {
+            category: "表结构区域".to_owned(),
+            level: if structure_ranges == 0 {
+                "错误"
+            } else {
+                "提示"
+            }
+            .to_owned(),
+            status: if structure_ranges == 0 {
+                "需处理"
+            } else {
+                "通过"
+            }
+            .to_owned(),
+            sheet_name: String::new(),
+            location: String::new(),
+            message: if structure_ranges == 0 {
+                "模板没有“表结构区域”命名区域，无法精确核对报送文件结构".to_owned()
+            } else {
+                format!("已设置 {structure_ranges} 个“表结构区域”命名区域")
+            },
+        },
+    ];
+
+    if !plan.formula_reference_errors.is_empty() {
+        items.push(PreflightItem {
+            category: "公式".to_owned(),
+            level: "警告".to_owned(),
+            status: "关注".to_owned(),
+            sheet_name: String::new(),
+            location: plan
+                .formula_reference_errors
+                .iter()
+                .take(10)
+                .cloned()
+                .collect::<Vec<_>>()
+                .join("、"),
+            message: format!(
+                "发现 {} 个公式含 #REF! 引用；实际计算触发错误时会写入问题结果",
+                plan.formula_reference_errors.len()
+            ),
+        });
+    }
+
+    let passed = !items.iter().any(|item| item.level == "错误");
+    items.insert(
+        0,
+        PreflightItem {
+            category: "总体".to_owned(),
+            level: if passed { "提示" } else { "错误" }.to_owned(),
+            status: if passed { "通过" } else { "不通过" }.to_owned(),
+            sheet_name: String::new(),
+            location: String::new(),
+            message: if passed {
+                "模板结构可用于审核".to_owned()
+            } else {
+                "模板存在必须处理的问题".to_owned()
+            },
+        },
+    );
+
+    S1TemplateHealthReport {
+        passed,
+        enabled_rules: enabled_rules.len(),
+        result_rules,
+        structure_ranges,
+        broken_reference_rules: plan.formula_reference_errors.len(),
+        items,
+    }
 }
 
 /// Read and validate one S1 template using the configured feature mappings.
@@ -176,6 +328,7 @@ fn build_s1_template_rule_plan(
         structure_ranges: structure_ranges.clone(),
         extraction_ranges: extraction_ranges.clone(),
     };
+    let formula_reference_errors = enabled_formula_reference_errors(&definition, workbook);
     let summary = S1TemplateRuleSummary {
         template_mode,
         engine: ENGINE,
@@ -201,7 +354,34 @@ fn build_s1_template_rule_plan(
     Ok(S1TemplateRulePlan {
         definition,
         summary,
+        formula_reference_errors,
     })
+}
+
+fn enabled_formula_reference_errors(
+    definition: &TemplateDefinition,
+    workbook: &WorkbookDump,
+) -> Vec<String> {
+    let sheets = workbook
+        .sheets
+        .iter()
+        .map(|sheet| (sheet.name.as_str(), sheet))
+        .collect::<BTreeMap<_, _>>();
+    definition
+        .rules
+        .iter()
+        .filter(|rule| rule.enabled)
+        .filter_map(|rule| {
+            let formula = sheets
+                .get(rule.sheet_name.as_str())?
+                .formulas
+                .get(&rule.formula_cell)?;
+            formula
+                .to_uppercase()
+                .contains("#REF!")
+                .then(|| format!("{}!{}", rule.sheet_name, rule.formula_cell))
+        })
+        .collect()
 }
 
 fn read_structured_rules(
@@ -531,9 +711,13 @@ mod tests {
         workbook
             .define_name("校验区域", "='检查表'!$A$1:$A$3")
             .expect("define formula range");
+        workbook
+            .define_name("表结构区域", "='检查表'!$B$1")
+            .expect("define structure range");
         workbook.save(&path).expect("save formula template");
 
         let plan = load_s1_template_rule_plan(&path, None).expect("discover formula rules");
+        let health = assess_s1_template_health(&plan, &plan.definition.structure_ranges);
         fs::remove_file(&path).expect("remove test template");
 
         assert_eq!(plan.summary.template_mode, "named_formula_ranges");
@@ -544,6 +728,47 @@ mod tests {
         assert_eq!(plan.definition.rules[0].result_mode, "keyword");
         assert_eq!(plan.definition.rules[1].formula_cell, "A3");
         assert_eq!(plan.definition.rules[1].result_mode, "error_only");
+        assert!(health.passed);
+        assert_eq!(health.enabled_rules, 2);
+        assert_eq!(health.result_rules, 1);
+        assert_eq!(health.structure_ranges, 1);
+        assert_eq!(health.broken_reference_rules, 0);
+    }
+
+    #[test]
+    fn template_health_blocks_missing_problem_rules_and_structure_ranges() {
+        let path = temporary_workbook_path("unhealthy");
+        let mut workbook = Workbook::new();
+        let worksheet = workbook.add_worksheet();
+        worksheet
+            .set_name("检查表")
+            .expect("set rule worksheet name");
+        worksheet
+            .write_formula(0, 0, "=#REF!+1")
+            .expect("write broken formula");
+        workbook
+            .define_name("校验区域", "='检查表'!$A$1")
+            .expect("define formula range");
+        workbook
+            .save(&path)
+            .expect("save unhealthy formula template");
+
+        let plan = load_s1_template_rule_plan(&path, None).expect("load unhealthy template");
+        let health = assess_s1_template_health(&plan, &plan.definition.structure_ranges);
+        fs::remove_file(&path).expect("remove unhealthy template");
+
+        assert!(!health.passed);
+        assert_eq!(health.enabled_rules, 1);
+        assert_eq!(health.result_rules, 0);
+        assert_eq!(health.structure_ranges, 0);
+        assert_eq!(health.broken_reference_rules, 1);
+        assert_eq!(health.items[0].status, "不通过");
+        assert!(health.items.iter().any(|item| {
+            item.category == "规则" && item.message.contains("问题标记") && item.level == "错误"
+        }));
+        assert!(health.items.iter().any(|item| {
+            item.category == "公式" && item.location == "检查表!A1" && item.level == "警告"
+        }));
     }
 
     #[test]
