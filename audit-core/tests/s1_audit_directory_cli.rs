@@ -557,6 +557,8 @@ fn cli_scans_template_validation_formula_cells_and_merges_source_errors() {
     formula_template(&template);
     let audit = directory.join("audit-copy.xlsx");
     audit_copy(&audit);
+    let result_workbook = directory.join("result.xlsx");
+    let history_result_workbook = directory.join("history-result.xlsx");
     let manifest = directory.join("formula-copies.json");
     fs::write(
         &manifest,
@@ -570,7 +572,16 @@ fn cli_scans_template_validation_formula_cells_and_merges_source_errors() {
     )
     .expect("write formula copy manifest");
 
-    let output = run_cli(&input, &template, &manifest, true);
+    let output = run_cli_with_options(
+        &input,
+        Some(&template),
+        None,
+        &manifest,
+        None,
+        Some(&result_workbook),
+        Some(&history_result_workbook),
+        true,
+    );
     assert!(
         output.status.success(),
         "{}",
@@ -610,6 +621,41 @@ fn cli_scans_template_validation_formula_cells_and_merges_source_errors() {
     assert_eq!(
         scanner_issue["source_file"],
         source.canonicalize().unwrap().to_string_lossy().as_ref()
+    );
+    assert_eq!(
+        report["result_workbook"]["issue_count"],
+        report["issues"].as_array().unwrap().len()
+    );
+    let result = read_workbook(&result_workbook).expect("read S1 result workbook with scan issue");
+    let scan_issue_id = scanner_issue["issue_id"]
+        .as_str()
+        .expect("scanner issue identity");
+    let scan_issue_row = (2..=report["result_workbook"]["issue_count"].as_u64().unwrap() + 1)
+        .find(|row| result.sheets[0].values[&format!("K{row}")]["value"] == scan_issue_id)
+        .expect("validation scan issue in generated result workbook");
+    assert_eq!(
+        result.sheets[0].values[&format!("E{scan_issue_row}")]["value"],
+        "校验公式错误"
+    );
+    assert_eq!(
+        result.sheets[0].values[&format!("H{scan_issue_row}")]["value"],
+        "#DIV/0!"
+    );
+    assert_eq!(
+        report["history_result_workbook"]["issue_count"],
+        report["merged_history"].as_array().unwrap().len()
+    );
+    let history_result = read_workbook(&history_result_workbook)
+        .expect("read S1 history workbook with validation scan issue");
+    let history_issue_row = (2..=report["history_result_workbook"]["issue_count"]
+        .as_u64()
+        .unwrap()
+        + 1)
+        .find(|row| history_result.sheets[0].values[&format!("K{row}")]["value"] == scan_issue_id)
+        .expect("validation scan issue in generated S1 history workbook");
+    assert_eq!(
+        history_result.sheets[0].values[&format!("E{history_issue_row}")]["value"],
+        "校验公式错误"
     );
     assert!(!report["validation_formula_scan"]["per_file"][0]
         .to_string()

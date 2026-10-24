@@ -44,7 +44,10 @@
     "cli_test": "cli_scans_template_validation_formula_cells_and_merges_source_errors",
     "in_range_cached_error_included": true,
     "out_of_range_error_ignored": true,
-    "quoted_formula_error_text_ignored": true
+    "quoted_formula_error_text_ignored": true,
+    "result_workbook_readback": "Rust Calamine readback confirms the validation formula Issue, issue identity, check type, and source error value are present.",
+    "history_result_workbook_readback": "Rust Calamine readback confirms the same validation formula Issue is present in the newly generated history result workbook.",
+    "result_writer": "rust_xlsxwriter 0.101.0"
   },
   "limitations": [
     "This evidence covers only this seven-workbook sample and the selected template.",

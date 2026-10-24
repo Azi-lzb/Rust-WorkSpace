@@ -1,0 +1,24 @@
+时间：2026-10-25 06:25:10
+执行者：Codex
+修改前 commit：c32a28d
+修改后 commit：待本地提交
+WIP：开始时仅存在用户既有 `DEVELOPMENT_GOAL.md` 未提交改动；本次不修改、不暂存。源 Python 与真实业务工作簿只读。
+
+目的：补齐 S1-F01 校验公式扫描 Issue 到本期结果表和新建历史结果表的 Rust 入口回归，确认扫描结果经现有业务流程编排实际到达 XLSX 输出。
+
+修改文件：
+- audit-core/tests/s1_audit_directory_cli.rs：扩展 `cli_scans_template_validation_formula_cells_and_merges_source_errors`，通过真实 `s1-audit-directory` CLI 写出本期与历史结果工作簿，并用 Rust Calamine 读回，断言扫描 Issue 的 ID、类型和值均存在。
+- audit-core/probe/reports/s1_validation_formula_scan_real_parity_windows_native_20261025.json：记录新增合成下游输出读回证据；真实样本对拍字段和范围不变。
+- audit-core/GPT修改记录/20261025_062510_S1扫描结果表链路回归.txt：本记录。
+
+逻辑影响：只扩展回归验证，不变更生产业务逻辑、配置、CLI 契约、共享 crate 或前端 API。没有 VBA 迁移影响。组件版本：不升级。
+
+测试：
+- `cargo test --offline --locked -p audit-core --test s1_audit_directory_cli cli_scans_template_validation_formula_cells_and_merges_source_errors -- --nocapture`：通过。
+- `cargo test --offline --locked -p audit-core --test s1_audit_directory_cli -- --nocapture`：5 项通过。
+- 先前全套 `cargo test --offline --locked -p audit-core -q`：库 116 项通过、2 项忽略，其余集成测试通过；本次只改变测试和报告，因此复跑 S1 CLI 集成二进制。
+- `rustfmt --check --edition 2024 audit-core/tests/s1_audit_directory_cli.rs` 检查发现文件既有 import 顺序及其他旧断言格式差异；未全文件重排，新增断言按 formatter 对齐。
+
+未执行/已知问题：结果表验证使用合成 CLI 模板；真实七本样本的扫描字段仍逐项对拍通过，但本轮未重新生成真实样本结果工作簿。已有历史工作簿原位编辑能力仍因共享 DefinedNames 保留校验失败而 Unverified；未执行公式重算、隔离 worker、WSL 或 Linux/deb 验收，S1-F01 整体仍未验证。编译继续显示共享 `excel-editor` 的既有 umya 弃用警告。
+
+删除清单：无。回滚：反向回滚本提交，或还原该集成测试、报告新增字段及本记录。
