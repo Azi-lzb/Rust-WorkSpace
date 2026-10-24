@@ -8,10 +8,12 @@ use anyhow::{bail, ensure, Context, Result};
 use chrono::Local;
 use excel_reader::{read_value_columns, CellValue, SheetValues};
 use excel_writer::{Color, Format, FormatAlign, Workbook};
+use serde::Serialize;
 use std::collections::BTreeMap;
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const REGION_SHEET_KEY: &str = "分地区";
 const TOTAL_REGION: &str = "惠州市";
@@ -63,6 +65,91 @@ pub struct RegionSumRun {
     pub log_path: PathBuf,
 }
 
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct RegionSumProgress {
+    pub total_files: usize,
+    pub processed_files: usize,
+    pub completed_files: usize,
+    pub failed_files: usize,
+    pub matched_sheets: usize,
+    pub errors: usize,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct RegionSumRunEvent {
+    pub sequence: usize,
+    pub timestamp: String,
+    pub product: String,
+    pub feature_id: String,
+    pub function: String,
+    pub run_id: String,
+    pub phase: String,
+    pub status: String,
+    pub user_message: String,
+    pub progress: RegionSumProgress,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub input_index: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stage_elapsed_ms: Option<u128>,
+    pub total_elapsed_ms: u128,
+    pub components: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub actual_engine: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_type: Option<String>,
+}
+
+struct RegionSumProgressEmitter<'a> {
+    started: Instant,
+    sequence: usize,
+    run_id: String,
+    progress: RegionSumProgress,
+    callback: Option<&'a mut dyn FnMut(RegionSumRunEvent)>,
+}
+
+impl RegionSumProgressEmitter<'_> {
+    fn emit(
+        &mut self,
+        phase: &str,
+        status: &str,
+        user_message: impl Into<String>,
+        input_index: Option<usize>,
+        stage_elapsed: Option<Duration>,
+        components: &[&str],
+        actual_engine: Option<&str>,
+        error_type: Option<&str>,
+    ) {
+        if self.callback.is_none() {
+            return;
+        }
+        self.sequence += 1;
+        let mut recorded_components = Vec::with_capacity(components.len() + 1);
+        recorded_components.push("Rust".to_owned());
+        recorded_components.extend(components.iter().map(|component| (*component).to_owned()));
+        let event = RegionSumRunEvent {
+            sequence: self.sequence,
+            timestamp: Local::now().to_rfc3339(),
+            product: "pytools".to_owned(),
+            feature_id: "PT-7-5".to_owned(),
+            function: "region-sum-check".to_owned(),
+            run_id: self.run_id.clone(),
+            phase: phase.to_owned(),
+            status: status.to_owned(),
+            user_message: user_message.into(),
+            progress: self.progress.clone(),
+            input_index,
+            stage_elapsed_ms: stage_elapsed.map(|elapsed| elapsed.as_millis()),
+            total_elapsed_ms: self.started.elapsed().as_millis(),
+            components: recorded_components,
+            actual_engine: actual_engine.map(str::to_owned),
+            error_type: error_type.map(str::to_owned),
+        };
+        if let Some(callback) = self.callback.as_mut() {
+            callback(event);
+        }
+    }
+}
+
 /// Run the standard feature using the current local time for output names.
 pub fn run_region_sum_check<I, P>(
     target_workbooks: I,
@@ -98,26 +185,160 @@ where
     I: IntoIterator<Item = P>,
     P: AsRef<Path>,
 {
+    run_region_sum_check_inner(
+        target_workbooks,
+        output_dir,
+        log_dir,
+        file_stamp,
+        log_stamp,
+        None,
+    )
+}
+
+pub fn run_region_sum_check_with_progress<I, P, F>(
+    target_workbooks: I,
+    output_dir: impl AsRef<Path>,
+    log_dir: impl AsRef<Path>,
+    on_event: F,
+) -> Result<RegionSumRun>
+where
+    I: IntoIterator<Item = P>,
+    P: AsRef<Path>,
+    F: FnMut(RegionSumRunEvent),
+{
+    let now = Local::now();
+    let file_stamp = now.format("%Y%m%d_%H%M%S").to_string();
+    let log_stamp = now.format("%Y-%m-%d %H:%M:%S").to_string();
+    run_region_sum_check_with_timestamp_and_progress(
+        target_workbooks,
+        output_dir,
+        log_dir,
+        &file_stamp,
+        &log_stamp,
+        on_event,
+    )
+}
+
+pub fn run_region_sum_check_with_timestamp_and_progress<I, P, F>(
+    target_workbooks: I,
+    output_dir: impl AsRef<Path>,
+    log_dir: impl AsRef<Path>,
+    file_stamp: &str,
+    log_stamp: &str,
+    mut on_event: F,
+) -> Result<RegionSumRun>
+where
+    I: IntoIterator<Item = P>,
+    P: AsRef<Path>,
+    F: FnMut(RegionSumRunEvent),
+{
+    run_region_sum_check_inner(
+        target_workbooks,
+        output_dir,
+        log_dir,
+        file_stamp,
+        log_stamp,
+        Some(&mut on_event),
+    )
+}
+
+fn run_region_sum_check_inner<I, P>(
+    target_workbooks: I,
+    output_dir: impl AsRef<Path>,
+    log_dir: impl AsRef<Path>,
+    file_stamp: &str,
+    log_stamp: &str,
+    callback: Option<&mut dyn FnMut(RegionSumRunEvent)>,
+) -> Result<RegionSumRun>
+where
+    I: IntoIterator<Item = P>,
+    P: AsRef<Path>,
+{
     validate_timestamp(file_stamp)?;
+    let target_workbooks = target_workbooks
+        .into_iter()
+        .map(|input| input.as_ref().to_path_buf())
+        .collect::<Vec<_>>();
     let output_dir = output_dir.as_ref();
     let log_dir = log_dir.as_ref();
-    fs::create_dir_all(log_dir)
-        .with_context(|| format!("create log directory {}", log_dir.display()))?;
-    let (log_path, initial_output_path) = unique_paths(output_dir, log_dir, file_stamp)?;
-    let log_file =
-        File::create(&log_path).with_context(|| format!("create log {}", log_path.display()))?;
+    let started = Instant::now();
+    let mut emitter = RegionSumProgressEmitter {
+        started,
+        sequence: 0,
+        run_id: region_sum_run_id(),
+        progress: RegionSumProgress {
+            total_files: target_workbooks.len(),
+            ..Default::default()
+        },
+        callback,
+    };
+    emitter.emit(
+        "run",
+        "started",
+        format!(
+            "开始地区总分校验，共 {} 个工作簿",
+            emitter.progress.total_files
+        ),
+        None,
+        None,
+        &[],
+        None,
+        None,
+    );
+
+    if let Err(error) = fs::create_dir_all(log_dir) {
+        emitter.emit(
+            "log_setup",
+            "failed",
+            "运行日志目录不可用，任务未启动",
+            None,
+            None,
+            &[],
+            None,
+            Some("log_directory_create_failed"),
+        );
+        return Err(error).with_context(|| format!("create log directory {}", log_dir.display()));
+    }
+    let (log_path, initial_output_path) = match unique_paths(output_dir, log_dir, file_stamp) {
+        Ok(paths) => paths,
+        Err(error) => {
+            emitter.emit(
+                "output_setup",
+                "failed",
+                "无法分配核对结果文件名",
+                None,
+                None,
+                &[],
+                None,
+                Some("output_name_allocation_failed"),
+            );
+            return Err(error);
+        }
+    };
+    let log_file = match File::create(&log_path) {
+        Ok(file) => file,
+        Err(error) => {
+            emitter.emit(
+                "log_setup",
+                "failed",
+                "无法创建运行日志",
+                None,
+                None,
+                &[],
+                None,
+                Some("legacy_log_create_failed"),
+            );
+            return Err(error).with_context(|| format!("create log {}", log_path.display()));
+        }
+    };
     let mut log = BufWriter::new(log_file);
-
     let mut result_rows = Vec::new();
-    let mut files = 0usize;
-    let mut sheets_checked = 0usize;
-    let mut errors = 0usize;
-    let mut failed_files = 0usize;
 
-    for input in target_workbooks {
-        let source = input.as_ref();
+    for (index, source) in target_workbooks.iter().enumerate() {
+        let input_index = index + 1;
         if !openpyxl_compatible_extension(source) {
-            failed_files += 1;
+            emitter.progress.processed_files += 1;
+            emitter.progress.failed_files += 1;
             write_log(
                 &mut log,
                 log_stamp,
@@ -127,24 +348,72 @@ where
                     source.display()
                 ),
             );
+            emitter.emit(
+                "input_validation",
+                "failed",
+                format!("第 {input_index} 个工作簿格式不受支持，已跳过"),
+                Some(input_index),
+                None,
+                &[],
+                None,
+                Some("unsupported_workbook_format"),
+            );
             continue;
         }
 
+        emitter.emit(
+            "workbook_read",
+            "started",
+            format!(
+                "正在读取第 {input_index}/{} 个工作簿",
+                emitter.progress.total_files
+            ),
+            Some(input_index),
+            None,
+            &[],
+            None,
+            None,
+        );
+        let read_started = Instant::now();
         let sheets = match read_value_columns(source, MAX_XLSX_COLUMNS) {
             Ok(sheets) => sheets,
             Err(error) => {
-                failed_files += 1;
+                emitter.progress.processed_files += 1;
+                emitter.progress.failed_files += 1;
                 write_log(
                     &mut log,
                     log_stamp,
                     "ERROR",
                     &format!("打开失败: {} - {error:#}", source.display()),
                 );
+                emitter.emit(
+                    "workbook_read",
+                    "failed",
+                    format!("第 {input_index} 个工作簿读取失败，已跳过"),
+                    Some(input_index),
+                    Some(read_started.elapsed()),
+                    &["calamine"],
+                    Some("calamine"),
+                    Some("workbook_read_failed"),
+                );
                 continue;
             }
         };
+        emitter.emit(
+            "workbook_read",
+            "completed",
+            format!(
+                "已读取第 {input_index}/{} 个工作簿",
+                emitter.progress.total_files
+            ),
+            Some(input_index),
+            Some(read_started.elapsed()),
+            &["calamine"],
+            Some("calamine"),
+            None,
+        );
 
-        files += 1;
+        let check_started = Instant::now();
         let mut file_sheets = 0usize;
         let mut file_errors = 0usize;
         let file_name = source
@@ -157,8 +426,8 @@ where
                 continue;
             }
             let check = check_one_sheet(sheet);
-            sheets_checked += 1;
-            errors += check.error_count;
+            emitter.progress.matched_sheets += 1;
+            emitter.progress.errors += check.error_count;
             file_sheets += 1;
             file_errors += check.error_count;
             result_rows.push(make_result_row(
@@ -174,34 +443,135 @@ where
             "INFO",
             &format!("{file_name}: 校验 {file_sheets} 个分地区 sheet，错误 {file_errors}"),
         );
+        emitter.progress.processed_files += 1;
+        emitter.progress.completed_files += 1;
+        emitter.emit(
+            "region_check",
+            "completed",
+            format!("第 {input_index} 个工作簿地区核对完成"),
+            Some(input_index),
+            Some(check_started.elapsed()),
+            &[],
+            None,
+            None,
+        );
     }
 
-    fs::create_dir_all(output_dir)
-        .with_context(|| format!("create output directory {}", output_dir.display()))?;
-    let output_path = save_report(
+    emitter.emit(
+        "report_write",
+        "started",
+        "正在生成地区总分核对结果",
+        None,
+        None,
+        &[],
+        None,
+        None,
+    );
+    let write_started = Instant::now();
+    if let Err(error) = fs::create_dir_all(output_dir) {
+        emitter.emit(
+            "report_write",
+            "failed",
+            "结果目录不可用，未生成核对报表",
+            None,
+            Some(write_started.elapsed()),
+            &[],
+            None,
+            Some("output_directory_create_failed"),
+        );
+        return Err(error)
+            .with_context(|| format!("create output directory {}", output_dir.display()));
+    }
+    let files = emitter.progress.completed_files;
+    let sheets_checked = emitter.progress.matched_sheets;
+    let errors = emitter.progress.errors;
+    let output_path = match save_report(
         output_dir,
         initial_output_path,
         &result_rows,
         files,
         sheets_checked,
         errors,
-    )?;
+    ) {
+        Ok(path) => path,
+        Err(error) => {
+            emitter.emit(
+                "report_write",
+                "failed",
+                "生成核对报表失败",
+                None,
+                Some(write_started.elapsed()),
+                &[],
+                None,
+                Some("report_write_failed"),
+            );
+            return Err(error);
+        }
+    };
+    let mut report_components = vec!["rust_xlsxwriter"];
+    if !result_rows.is_empty() {
+        report_components.push("ooxml-patch");
+    }
+    emitter.emit(
+        "report_write",
+        "completed",
+        "地区总分核对报表已生成",
+        None,
+        Some(write_started.elapsed()),
+        &report_components,
+        Some("rust_xlsxwriter"),
+        None,
+    );
     write_log(
         &mut log,
         log_stamp,
         "INFO",
         &format!("结果已保存: {}", output_path.display()),
     );
-    log.flush().context("flush feature log")?;
+    if let Err(error) = log.flush() {
+        emitter.emit(
+            "legacy_log_write",
+            "failed",
+            "运行日志写入失败",
+            None,
+            None,
+            &["RustFilesystem"],
+            Some("RustFilesystem"),
+            Some("legacy_log_flush_failed"),
+        );
+        return Err(error).context("flush feature log");
+    }
 
-    Ok(RegionSumRun {
+    let run = RegionSumRun {
         files,
         sheets: sheets_checked,
         errors,
-        failed_files,
+        failed_files: emitter.progress.failed_files,
         path: Some(output_path),
         log_path,
-    })
+    };
+    emitter.emit(
+        "run",
+        "completed",
+        format!(
+            "地区总分校验完成：成功 {} 个，失败 {} 个，核对 {} 张工作表，发现 {} 项错误",
+            run.files, run.failed_files, run.sheets, run.errors
+        ),
+        None,
+        Some(started.elapsed()),
+        &[],
+        None,
+        None,
+    );
+    Ok(run)
+}
+
+fn region_sum_run_id() -> String {
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or_default();
+    format!("pytools-pt-7-5-{}-{nonce}", std::process::id())
 }
 
 fn validate_timestamp(value: &str) -> Result<()> {

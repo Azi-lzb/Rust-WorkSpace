@@ -606,3 +606,11 @@ Windows 原生 `cargo fmt --manifest-path pytools-core/Cargo.toml -- --check` �
 `pytools file-sort-prefix` 与 `pytools remove-file-sort-prefix` 现在支持 `--log-view user|developer|off`，交互菜单类别 4 的第 9/10 项沿用全局视图设置。Rust 业务回调记录配置读取、输出目录准备、逐文件处理、报表写入和任务摘要；开发者事件包含实际组件/引擎、阶段耗时与累计耗时。PT-4-10 按是否读取内容前缀工作簿标记 Calamine，纯文件改名标记 RustFilesystem；报表写入标记 rust_xlsxwriter。用户视图显示处理数量和阶段耗时，off 不输出进度或新建日志，开发者视图保存结构化历史并保留原详细操作日志。两项操作的文件名、统计及报表业务语义未改变。
 
 Windows 原生验证：`cargo fmt --manifest-path pytools-core/Cargo.toml` 通过；`cargo test --offline --locked -p pytools-core --test conversion_menu_cli --test file_sort_prefix_operation_parity --test file_sort_prefix_remove_parity -q` 中 2/2、3/3、6/6 通过；`pytools --help` 显示两条命令的三种视图选项。对拍使用既有只读 PyCode 机器基线，4-9 八个文件案例及 4-10 内容前缀/冲突/跳过案例的统计、目录结果和 XLSX 报表检查无业务差异；新增菜单三视图测试、Calamine 实际调用标记及输出目录失败阶段测试。结构化历史不含输入文件名或路径。没有重新运行 Python 解释器，也没有可用真实业务目录样本；手工桌面文件选择器、目标 Linux/glibc 2.28、麒麟/UOS 与 deb 未验证，PT-4-9/PT-4-10 整体迁移状态仍未验证。日志性能开销未测量。
+
+### 2026-10-25 PT-7-5 地区总分校验双视图运行事件
+
+既有 pytools region-sum-check CLI 增加可选 --log-view user|developer|off，主菜单 7→5 将全局视图传入真实 CLI。Rust 地区核对核心提供阶段进度事件，记录处理计数、失败类型、阶段/总耗时及实际调用的 Calamine、rust_xlsxwriter；产生核对结果行时同时标记 ooxml-patch。user 输出简明进度，developer 输出结构化事件并保存 JSON 运行历史，off 不输出结构化事件或新增历史。未指定 --log-view 时保留原 CLI JSON 输出；既有详细 .log 保持兼容。新运行历史不保存输入路径、文件名或单元格值，核对业务与 Excel 引擎路由未改。
+
+Windows 原生 Rust 验证：cargo test --offline --locked -p pytools-core --test region_sum_parity --test batch_tools_menu_cli -j 1 中 5/5 和 16/16 通过；cargo fmt --manifest-path pytools-core/Cargo.toml -- --check、git diff --check 通过。测试启动真实 pytools menu → 7→5 → region-sum-check，覆盖 user/developer/off 视图、成功/损坏输入、历史隐私字段、实际引擎与阶段耗时；PT-7-5 既有合成工作簿输出继续与只读 PyCode 保存基线对拍，值和展示断言无回归。未重新运行 Python 解释器或全量 pytools-core 测试。
+
+合成夹具之外的真实业务工作簿、Windows 桌面文件弹窗手工操作、麒麟 V10/UOS V20、glibc 2.28 和离线 deb 未验证；PT-7-5 产品验收仍为未验证。日志性能开销未测量。

@@ -131,6 +131,123 @@ fn interactive_batch_menu_runs_region_sum_check_through_real_cli() -> Result<()>
 }
 
 #[test]
+fn interactive_region_sum_menu_records_user_developer_and_off_views() -> Result<()> {
+    let fixture_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/region_sum");
+    let balanced = fixture_dir.join("balanced.xlsx");
+    let broken = fixture_dir.join("broken.xlsx");
+    let input = format!(
+        "7\n5\n1\n{};{}\n0\n0\n",
+        balanced.display(),
+        broken.display()
+    );
+    let mut expected_projection = None::<Value>;
+
+    for view in ["user", "developer", "off"] {
+        let root = TestDirectory::new()?;
+        let config = create_config(root.path())?;
+        let output =
+            run_menu_with_arguments(&config, &input, &["--log-view".to_owned(), view.to_owned()])?;
+        assert!(
+            output.status.success(),
+            "PT-7-5 {view} menu failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stdout.contains(r#""files": 1"#));
+        assert!(stdout.contains(r#""failed_files": 1"#));
+
+        let output_dir = root.path().join("app/output");
+        let report_path = fs::read_dir(&output_dir)?
+            .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+            .find(|path| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| {
+                        name.starts_with("地区数值核对结果_") && name.ends_with(".xlsx")
+                    })
+            })
+            .context("PT-7-5 result workbook was not created")?;
+        let report = read_workbook(&report_path)?;
+        let sheet = report
+            .sheets
+            .iter()
+            .find(|sheet| sheet.name == "核对结果")
+            .context("PT-7-5 result worksheet is missing")?;
+        assert_eq!(sheet.values["B2"]["value"], "balanced.xlsx");
+        let projection = serde_json::to_value(&sheet.values)?;
+        if let Some(expected) = &expected_projection {
+            assert_eq!(&projection, expected, "output changed in {view} view");
+        } else {
+            expected_projection = Some(projection);
+        }
+
+        let log_dir = root.path().join("app/logs");
+        let history_paths = fs::read_dir(&log_dir)?
+            .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+            .filter(|path| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.starts_with("PT-7-5_") && name.ends_with(".run.json"))
+            })
+            .collect::<Vec<_>>();
+        if view == "off" {
+            assert!(history_paths.is_empty(), "off view must not save history");
+            assert!(!stderr.contains("workbook_read"));
+            assert!(!stderr.contains("calamine"));
+            continue;
+        }
+
+        assert_eq!(history_paths.len(), 1, "{view} history count");
+        let history_bytes = fs::read(&history_paths[0])?;
+        let history_text = String::from_utf8_lossy(&history_bytes);
+        let history: Value = serde_json::from_slice(&history_bytes)?;
+        assert_eq!(history["product"], "pytools");
+        assert_eq!(history["feature_id"], "PT-7-5");
+        assert_eq!(history["function"], "region-sum-check");
+        assert_eq!(history["total_files"], 2);
+        assert_eq!(history["completed_files"], 1);
+        assert_eq!(history["failed_files"], 1);
+        assert!(history["actual_engines"]
+            .as_array()
+            .context("actual_engines")?
+            .iter()
+            .any(|engine| engine == "calamine"));
+        for engine in ["rust_xlsxwriter", "ooxml-patch"] {
+            assert!(history["actual_engines"]
+                .as_array()
+                .context("actual_engines")?
+                .iter()
+                .any(|actual| actual == engine));
+        }
+        let events = history["events"].as_array().context("run events")?;
+        assert_eq!(events.first().context("start event")?["sequence"], 1);
+        assert_eq!(
+            events.last().context("completion event")?["status"],
+            "completed"
+        );
+        assert!(events.iter().any(|event| {
+            event["phase"] == "report_write" && event["stage_elapsed_ms"].is_number()
+        }));
+        assert!(history_text.contains("workbook_read_failed"));
+        assert!(!history_text.contains("balanced.xlsx"));
+        assert!(!history_text.contains(&balanced.to_string_lossy().to_string()));
+
+        if view == "user" {
+            assert!(stderr.contains("开始地区总分校验"));
+            assert!(stderr.contains("第 2 个工作簿读取失败"));
+            assert!(!stderr.contains("calamine"));
+            assert!(!stderr.contains("rust_xlsxwriter"));
+        } else {
+            assert!(stderr.contains(r#""actual_engine":"calamine""#));
+            assert!(stderr.contains(r#""actual_engine":"rust_xlsxwriter""#));
+            assert!(stderr.contains(r#""error_type":"workbook_read_failed""#));
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn interactive_village_split_menu_writes_plan_without_modifying_target() -> Result<()> {
     let root = TestDirectory::new()?;
     let config = create_config(root.path())?;

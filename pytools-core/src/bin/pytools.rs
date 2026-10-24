@@ -38,7 +38,9 @@ use pytools_core::print_ops::{
     build_comment_print_plan, build_config_print_plans, precheck_print_tasks,
 };
 use pytools_core::quick::{open_config, open_latest_output, open_output_directory};
-use pytools_core::region_sum::run_region_sum_check;
+use pytools_core::region_sum::{
+    run_region_sum_check, run_region_sum_check_with_progress, RegionSumRunEvent,
+};
 use pytools_core::sheet_extract::{is_full_sheet_task, run_extract_sheets_candidate_with_progress};
 use pytools_core::sheet_rename::{build_sheet_rename_plan, run_batch_sheet_rename_candidate};
 use pytools_core::submission_check::run_submission_check;
@@ -2265,6 +2267,8 @@ where
                     global.output_dir.to_string_lossy().into_owned(),
                     "--log-dir".to_owned(),
                     global.log_dir.to_string_lossy().into_owned(),
+                    "--log-view".to_owned(),
+                    log_view.to_owned(),
                 ]);
                 arguments.extend(
                     sources
@@ -8201,6 +8205,7 @@ fn run_region_sum(arguments: Vec<String>) -> Result<()> {
     let mut config_path = None::<PathBuf>;
     let mut output_dir = None::<PathBuf>;
     let mut log_dir = None::<PathBuf>;
+    let mut log_view = None::<String>;
     let mut source_workbooks = Vec::new();
     while let Some(argument) = arguments.next() {
         match argument.as_str() {
@@ -8219,6 +8224,9 @@ fn run_region_sum(arguments: Vec<String>) -> Result<()> {
                     arguments.next().context("--log-dir requires a path")?,
                 ));
             }
+            "--log-view" => {
+                log_view = Some(arguments.next().context("--log-view requires a value")?);
+            }
             "--help" | "-h" => {
                 print_usage();
                 return Ok(());
@@ -8228,6 +8236,12 @@ fn run_region_sum(arguments: Vec<String>) -> Result<()> {
         }
     }
 
+    if let Some(view) = log_view.as_deref() {
+        anyhow::ensure!(
+            matches!(view, "user" | "developer" | "off"),
+            "--log-view must be user, developer, or off"
+        );
+    }
     if source_workbooks.is_empty() {
         bail!("provide at least one source workbook path");
     }
@@ -8246,7 +8260,21 @@ fn run_region_sum(arguments: Vec<String>) -> Result<()> {
         .or_else(|| global.as_ref().map(|config| config.log_dir.clone()))
         .unwrap_or_else(|| PathBuf::from("logs"));
 
-    let result = run_region_sum_check(&source_workbooks, &output_dir, &log_dir)?;
+    let operation_result = if let Some(view) = log_view.as_deref().filter(|view| *view != "off") {
+        let mut events = Vec::new();
+        let operation_result =
+            run_region_sum_check_with_progress(&source_workbooks, &output_dir, &log_dir, |event| {
+                emit_region_sum_event(view, &event);
+                events.push(event);
+            });
+        if let Err(error) = write_region_sum_run_history(&log_dir, &events, &operation_result) {
+            eprintln!("pytools: warning: could not write PT-7-5 run history: {error:#}");
+        }
+        operation_result
+    } else {
+        run_region_sum_check(&source_workbooks, &output_dir, &log_dir)
+    };
+    let result = operation_result?;
     println!(
         "{}",
         serde_json::to_string_pretty(&serde_json::json!({
@@ -8259,6 +8287,69 @@ fn run_region_sum(arguments: Vec<String>) -> Result<()> {
         }))?
     );
     Ok(())
+}
+
+fn emit_region_sum_event(log_view: &str, event: &RegionSumRunEvent) {
+    match log_view {
+        "user" => eprintln!("{}", event.user_message),
+        "developer" => match serde_json::to_string(event) {
+            Ok(encoded) => eprintln!("{encoded}"),
+            Err(_) => eprintln!(
+                "{{\"feature_id\":\"PT-7-5\",\"phase\":\"{}\",\"status\":\"{}\"}}",
+                event.phase, event.status
+            ),
+        },
+        "off" => {}
+        _ => unreachable!("region-sum log view was validated"),
+    }
+}
+
+fn write_region_sum_run_history(
+    log_dir: &Path,
+    events: &[RegionSumRunEvent],
+    operation_result: &Result<pytools_core::region_sum::RegionSumRun>,
+) -> Result<PathBuf> {
+    let first = events.first().context("PT-7-5 run emitted no events")?;
+    let last = events.last().context("PT-7-5 run emitted no events")?;
+    let mut actual_engines = Vec::<String>::new();
+    for event in events {
+        if let Some(engine) = &event.actual_engine {
+            if !actual_engines.contains(engine) {
+                actual_engines.push(engine.clone());
+            }
+        }
+        for component in &event.components {
+            if component != "Rust" && !actual_engines.contains(component) {
+                actual_engines.push(component.clone());
+            }
+        }
+    }
+    let history = serde_json::json!({
+        "schema_version": 1,
+        "product": "pytools",
+        "feature_id": "PT-7-5",
+        "function": "region-sum-check",
+        "run_id": &first.run_id,
+        "started_at": &first.timestamp,
+        "status": if operation_result.is_ok() { "completed" } else { "failed" },
+        "total_files": first.progress.total_files,
+        "processed_files": last.progress.processed_files,
+        "completed_files": last.progress.completed_files,
+        "failed_files": last.progress.failed_files,
+        "matched_sheets": last.progress.matched_sheets,
+        "errors": last.progress.errors,
+        "total_elapsed_ms": last.total_elapsed_ms,
+        "actual_engines": actual_engines,
+        "failure_phase": events.iter().rev().find(|event| event.status == "failed").map(|event| event.phase.clone()),
+        "failure_type": events.iter().rev().find(|event| event.status == "failed").and_then(|event| event.error_type.clone()),
+        "events": events,
+    });
+    fs::create_dir_all(log_dir)
+        .with_context(|| format!("create PT-7-5 history directory {}", log_dir.display()))?;
+    let path = log_dir.join(format!("PT-7-5_{}.run.json", first.run_id));
+    fs::write(&path, serde_json::to_vec_pretty(&history)?)
+        .with_context(|| format!("write PT-7-5 run history {}", path.display()))?;
+    Ok(path)
 }
 
 fn print_usage() {
@@ -8309,7 +8400,7 @@ fn print_usage() {
          convert-file --input <file> --to <extension> [--output <file>] [--engine auto|lo|native]\n\
          native = 按值重建（C01，丢弃样式/公式缓存）；Excel 公式文本保留但不重算，CSV 按文本写入\n\
          pytools extract-sheets --config <workbook.xlsx> [--output-dir <dir>] [--log-dir <dir>] [--log-view user|developer|off] [--capabilities <json> --platform <id>] <source.xlsx>...\n\
-         pytools region-sum-check [--config <workbook.xlsx>] [--output-dir <dir>] [--log-dir <dir>] <source.xlsx>...\n\
+         pytools region-sum-check [--config <workbook.xlsx>] [--output-dir <dir>] [--log-dir <dir>] [--log-view user|developer|off] <source.xlsx>...\n\
          pytools file-sort-prefix --config <workbook.xlsx> [--output-dir <dir>] [--log-dir <dir>] [--log-view user|developer|off] <file>...\n\
          pytools remove-file-sort-prefix --config <workbook.xlsx> [--output-dir <dir>] [--log-dir <dir>] [--log-view user|developer|off] [<file>...]\n\
          pytools rename-by-content --config <workbook.xlsx> <file>...\n\

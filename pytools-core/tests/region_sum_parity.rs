@@ -159,6 +159,11 @@ fn region_sum_cli_runs_python_baseline_workflow() -> Result<()> {
         "CLI failed: {}",
         String::from_utf8_lossy(&output.stderr)
     );
+    assert!(
+        output.stderr.is_empty(),
+        "legacy CLI output changed without --log-view: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let result: Value = serde_json::from_slice(&output.stdout).context("parse CLI JSON")?;
     for field in ["files", "sheets", "errors", "failed_files"] {
         assert_eq!(
