@@ -182,5 +182,25 @@
     "target_linux_validation": "not_performed",
     "raw_business_paths_values_formulas_or_hashes_persisted": false,
     "range_aware_target_cache_guard_required": true
+  },
+  "coverage_boundary_follow_up_20261025": {
+    "test_platform_recorded_by_original_report": "WSL2 Ubuntu with isolated openpyxl test venv",
+    "worker_runtime_path_and_version_recorded": false,
+    "serialized_worker_request_recorded": false,
+    "range_coverage_evidence": "aggregate coordinate-rectangle counts only; exact worksheet name plus normalized cell address pairing was not persisted",
+    "exact_target_sheet_range_coverage": "unverified",
+    "current_audit_source_plan": {
+      "import_range_operations": 4,
+      "copy_values": true,
+      "copy_formulas": true,
+      "materialize_blank_cells": true,
+      "calculation_properties_operations": 1
+    },
+    "failure_stage": "unsupported_before_write in worker preflight",
+    "failure_category": "formula_cache_not_preserved",
+    "output_created": false,
+    "inputs_unchanged": true,
+    "production_capability_status": "unverified",
+    "note": "The F: native Python 3.12.10/openpyxl 3.1.5 runtime checked on 2026-10-25 is separate evidence and is not attributed to the original WSL2 candidate run. The current sample root contains multiple S1 batches; no batch was inferred from cache-count coincidence."
   }
 }

@@ -23,3 +23,11 @@ WIP：修改前 audit-dev 工作树干净并与 origin/audit-dev 同步。临时
 未执行项与已知问题：公式复制仍无可验收后端；当前源 Python helper 对本模板目标也无法生成新基线。OOXML Patch 的现有共享 backend 仅覆盖 ReplaceHeaderText，未提供 ImportRange。未检查或修改未知 OOXML payload；无需新增公共组件时继续 Audit 侧迁移，需共享操作时先由 main 协调。
 
 删除清单：无。回滚：可用 Git revert 回滚本次提交，恢复清单附记并移除本报告/记录；不影响原始样本。
+
+
+## 2026-10-25 证据范围核对
+
+- 已有 `s1_formula_copy_candidate_openpyxl_target_cache_guard_real.json` 明确记录 WSL2 Ubuntu + isolated openpyxl test venv；它不是 Windows 原生 worker/runtime 结果。报告未记录 venv 的 Python/openpyxl 版本、worker JSON 请求或原始路径。F: 上检查到的 Windows Python 3.12.10/openpyxl 3.1.5 属于另一 runtime，不归因到该报告。
+- 先前“缓存坐标落在 ImportRange 范围内”是聚合矩形计数，没有保存 `(worksheet name, normalized address)`，不能证明 sheet-aware 目标范围覆盖；没有输出文件可做对象级比较。
+- 当前 Rust 计划定义四个 ImportRange，`copy_values=true`、`copy_formulas=true`、`materialize_blank_cells=true`，并有一项计算属性操作；这是源码计划值，不等同于已留存的 worker 序列化 payload。
+- 证据状态保持 `Unverified`。不修改共享 guard、不启用生产路由；未将用户样本根中其他批次按缓存数量相似度替代该报告样本。
