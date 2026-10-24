@@ -33,6 +33,7 @@ use audit_core::{
     s2_summary::S2AuditSummary,
     s3_explanation_export::export_selected_explanations,
     s5_period_recognition::{detect_s5_period, s5_file_period_hint},
+    s5_template_matching::match_s5_template,
     web_bridge::serve_web_ui,
 };
 use clap::{Args, Parser, Subcommand};
@@ -61,6 +62,8 @@ enum Command {
     S5DetectPeriod(S5DetectPeriodArgs),
     /// Add filename/folder period hints to selected S5 workbooks without opening them.
     S5FilePeriodHints(S5FilePeriodHintsArgs),
+    /// Match selected S5 XLSX workbooks to one template by worksheet names.
+    S5MatchTemplate(S5MatchTemplateArgs),
     /// Run the S2 period-report audit and create its three-sheet result workbook.
     S2(S2Args),
     /// Export S3-F02 comparison rows selected for institution explanation.
@@ -578,6 +581,21 @@ struct S5FilePeriodHintsArgs {
 }
 
 #[derive(Debug, Args)]
+struct S5MatchTemplateArgs {
+    /// Directory containing the S5 XLSX templates.
+    #[arg(long)]
+    template_dir: PathBuf,
+
+    /// Selected S5 source workbook. Repeat once per selected .xlsx file.
+    #[arg(long = "input-file", required = true)]
+    selected_files: Vec<PathBuf>,
+
+    /// Emit developer-view JSON progress with the reader and elapsed time.
+    #[arg(long, default_value_t = false)]
+    developer_view: bool,
+}
+
+#[derive(Debug, Args)]
 struct S3ExportExplanationsArgs {
     /// S3 comparison workbook containing the output-explanation selection column.
     #[arg(long)]
@@ -618,6 +636,9 @@ fn run() -> Result<()> {
         }
         Command::S5FilePeriodHints(arguments) => {
             run_s5_file_period_hints(arguments)?;
+        }
+        Command::S5MatchTemplate(arguments) => {
+            run_s5_match_template(arguments)?;
         }
         Command::Serve(arguments) => {
             let config_path = arguments.config.unwrap_or_else(default_s2_config_path);
@@ -838,6 +859,16 @@ struct S5FilePeriodHintsOutput {
     elapsed_ms: u128,
 }
 
+#[derive(Debug, Serialize)]
+struct S5TemplateMatchOutput {
+    status: &'static str,
+    selected_file_count: usize,
+    template_path: PathBuf,
+    engine: &'static str,
+    reader: &'static str,
+    elapsed_ms: u128,
+}
+
 fn run_s5_file_period_hints(arguments: S5FilePeriodHintsArgs) -> Result<()> {
     for path in &arguments.selected_files {
         anyhow::ensure!(path.is_file(), "S5 输入文件不存在：{}", path.display());
@@ -911,6 +942,114 @@ fn run_s5_file_period_hints(arguments: S5FilePeriodHintsArgs) -> Result<()> {
     } else {
         eprintln!(
             "已完成 {} 个 S5 文件期次提示；引擎 Rust 文件名/目录解析（未读取工作簿），耗时 {} ms。",
+            output.selected_file_count, output.elapsed_ms
+        );
+        println!("{}", serde_json::to_string_pretty(&output)?);
+    }
+    Ok(())
+}
+
+fn run_s5_match_template(arguments: S5MatchTemplateArgs) -> Result<()> {
+    anyhow::ensure!(
+        arguments.template_dir.is_dir(),
+        "请选择存在的模板目录，或使用“更换”手动指定模板"
+    );
+    for path in &arguments.selected_files {
+        anyhow::ensure!(path.is_file(), "S5 输入文件不存在：{}", path.display());
+        let extension = path
+            .extension()
+            .and_then(|value| value.to_str())
+            .unwrap_or_default();
+        if !extension.eq_ignore_ascii_case("xlsx") {
+            if extension.eq_ignore_ascii_case("xlsm") {
+                anyhow::bail!(
+                    "S5 模板匹配的 XLSM 工作表读取仍待共享 excel-reader 协调：{}",
+                    path.display()
+                );
+            }
+            anyhow::bail!("S5 模板匹配当前只支持 XLSX：{}", path.display());
+        }
+    }
+
+    let started = Instant::now();
+    if arguments.developer_view {
+        eprintln!(
+            "{}",
+            serde_json::to_string(&serde_json::json!({
+                "type": "progress",
+                "product": "open-data-audit",
+                "feature": "S5-F01",
+                "step": "template_matching",
+                "status": "started",
+                "selected_file_count": arguments.selected_files.len(),
+                "template_dir": &arguments.template_dir,
+                "engine": "rust_s5_sheet_set_matcher",
+                "reader": "excel_reader_ooxml_sheet_names",
+                "started_at": chrono::Local::now().to_rfc3339()
+            }))?
+        );
+    } else {
+        eprintln!(
+            "正在按工作表结构匹配 S5 模板：{} 个文件（Rust + OOXML 工作表名称读取）…",
+            arguments.selected_files.len()
+        );
+    }
+
+    let matched = match_s5_template(&arguments.selected_files, &arguments.template_dir);
+    let elapsed_ms = started.elapsed().as_millis();
+    let template_path = match matched {
+        Ok(path) => path,
+        Err(error) => {
+            if arguments.developer_view {
+                eprintln!(
+                    "{}",
+                    serde_json::to_string(&serde_json::json!({
+                        "type": "progress",
+                        "product": "open-data-audit",
+                        "feature": "S5-F01",
+                        "step": "template_matching",
+                        "status": "failed",
+                        "selected_file_count": arguments.selected_files.len(),
+                        "engine": "rust_s5_sheet_set_matcher",
+                        "reader": "excel_reader_ooxml_sheet_names",
+                        "elapsed_ms": elapsed_ms,
+                        "error": format!("{error:#}"),
+                        "finished_at": chrono::Local::now().to_rfc3339()
+                    }))?
+                );
+            }
+            return Err(error);
+        }
+    };
+
+    let output = S5TemplateMatchOutput {
+        status: "completed",
+        selected_file_count: arguments.selected_files.len(),
+        template_path,
+        engine: "rust_s5_sheet_set_matcher",
+        reader: "excel_reader_ooxml_sheet_names",
+        elapsed_ms,
+    };
+    if arguments.developer_view {
+        eprintln!(
+            "{}",
+            serde_json::to_string(&serde_json::json!({
+                "type": "progress",
+                "product": "open-data-audit",
+                "feature": "S5-F01",
+                "step": "template_matching",
+                "status": "completed",
+                "selected_file_count": output.selected_file_count,
+                "engine": output.engine,
+                "reader": output.reader,
+                "elapsed_ms": output.elapsed_ms,
+                "finished_at": chrono::Local::now().to_rfc3339()
+            }))?
+        );
+        println!("{}", serde_json::to_string_pretty(&output)?);
+    } else {
+        eprintln!(
+            "已为 {} 个 S5 文件匹配模板；引擎 Rust 工作表结构匹配，读取器 OOXML 工作表名称适配器，耗时 {} ms。",
             output.selected_file_count, output.elapsed_ms
         );
         println!("{}", serde_json::to_string_pretty(&output)?);

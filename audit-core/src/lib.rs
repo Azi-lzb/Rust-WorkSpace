@@ -38,6 +38,7 @@ pub mod s2_summary;
 pub mod s2_validation;
 pub mod s3_explanation_export;
 pub mod s5_period_recognition;
+pub mod s5_template_matching;
 pub mod template;
 pub mod unit_conversion;
 pub mod web_bridge;

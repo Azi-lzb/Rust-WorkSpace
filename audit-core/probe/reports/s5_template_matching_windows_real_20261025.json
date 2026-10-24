@@ -1,0 +1,35 @@
+{
+  "feature_id": "S5-F01",
+  "source_function": "base_audit.systems.s5_configured_statistics.recognition.match_s5_template",
+  "rust_function": "audit_core::s5_template_matching::match_s5_template",
+  "cli": "open-data-audit s5-match-template",
+  "platform": "Windows x64 native Rust",
+  "reader": "excel_reader::read_xlsx_sheet_names_ooxml",
+  "sample_scope": {
+    "label": "user-provided 2026-07-31 S5 逐笔统计系统 sample",
+    "input_format": "XLSX",
+    "selected_file_count": 120,
+    "template_profile_count": 21
+  },
+  "parity": {
+    "per_file_compared": 120,
+    "python_matched": 85,
+    "rust_matched": 85,
+    "python_no_match": 35,
+    "rust_no_match": 35,
+    "mismatches": 0,
+    "same_template_batch": "matched identically",
+    "different_template_batch": "rejected identically"
+  },
+  "input_mutation": {
+    "source_workbooks_modified": false,
+    "source_template_workbooks_modified": false,
+    "source_template_index_modified": false,
+    "python_baseline_index": "temporary directory"
+  },
+  "limits": [
+    "This slice only selects a template by worksheet names; it does not load S5 configuration, infer business, execute rules, or write audit results.",
+    "The shared OOXML sheet-name adapter currently accepts XLSX only. XLSM support remains pending main coordination; this sample contains no XLSM files.",
+    "S5-F01 remains unverified as a complete business workflow."
+  ]
+}
