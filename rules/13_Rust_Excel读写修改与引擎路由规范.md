@@ -111,7 +111,7 @@ py_statistics_tools 工作表提取以普通无批注版为迁移基线，带批
 
 openpyxl 仅可通过隔离 worker 用于已验收的既有 XLSX 修改；未来 pywin32 / `win32com.client` 仅可通过独立 Windows worker 用于已验收的 COM 修改或公式计算。它们不得用于生产读取、新建写入、业务规则、统计或通用业务逻辑。worker 不依赖系统 Python/PATH，修改按工作簿批量处理，不逐格启动；对拍/测试 Python 仍可在 tests/compare 使用。禁止 python-calamine、PyO3、pandas、xlrd、pyxlsb 进入生产。不得无证据重写已验收模块；不得以完整 OOXML writer 为默认目标；不得无测量串联 Rust 读取→中间文件→Go 修改→Go 写回。
 
-`ExcelCalculator` 是与 ExcelModifier 分离的未来能力，候选为 LibreOffice Calc、Microsoft Excel COM 和 WPS COM；默认关闭，计算模式区分普通重算与完整重算。LibreOffice 的基础公式计算已有用户实测反馈，但覆盖率、与 Excel 的公式语义一致性、保存保真和 Linux 离线运行时仍未验收。不得宣称计算结果完全等价。显式选择不可用或未经该功能验收的引擎时返回明确错误；界面仅列出已实现、可用且有匹配能力证据的选项。
+`ExcelCalculator` 是与 ExcelModifier 分离的未来能力，候选为 LibreOffice Calc、Microsoft Excel COM 和 WPS COM；默认关闭，计算模式区分普通重算与完整重算。LibreOffice 基础公式计算的可行性已由用户实际测试确认，不重复泛泛的可行性调研；具体公式覆盖率、与 Excel 的公式语义一致性、保存保真和 Linux 离线运行时仍未验收。不得宣称计算结果完全等价。显式选择不可用或未经该功能验收的引擎时返回明确错误；界面仅列出已实现、可用且有匹配能力证据的选项。
 
 ## 5. 操作编号和目标方向
 
@@ -152,7 +152,7 @@ openpyxl 仅可通过隔离 worker 用于已验收的既有 XLSX 修改；未来
 | probe | 读取/JSON 导出和部分比较 | 修改计划与全引擎路由探针未形成。 |
 | Excelize worker | 当前没有 Go module/worker/IPC | 当前 unsupported（未实现）；达到 §4.3 门槛后再立项。 |
 | openpyxl worker | `crates/excel-editor/python/openpyxl_worker.py` + Rust `OpenpyxlXlsxBackend`；pytools capability dispatcher 已注册；支持有限 XLSX EditPlan 批处理 | 已实现并通过合成 worker/进程集成测试；Rust 独立读回覆盖已测样本的样式语义、显式行高列宽、填充色、页面设置和 OOXML Print_Area。真实项目模板、操作级 capability、Windows 原生 Rust、glibc 2.28 隔离 runtime、deb 打包和目标机均未验证。无生产 capability JSON、无默认路由；不支持行插删与 ImportRange 尺寸复制，非空公式缓存/未知 parts 写前拒绝。 |
-| sidecar/lo-convert | 同类格式转换已接入；`recalculate` 命令已实现，含缓存清理/完整计算标记、输出校验和 Ubuntu/WSL2 LibreOffice 合成 `SUM` 测试 | 仅候选实现；真实业务公式、Excel/WPS 一致性、复杂依赖、Windows COM、超时、目标 Linux/glibc 2.28 和离线运行时来源均未验收；不能宣称通用公式能力或生产默认。基础 LibreOffice 测试另有用户报告，范围待明确。 |
+| sidecar/lo-convert | 同类格式转换已接入；`recalculate` 命令已实现，含缓存清理/完整计算标记、输出校验和 Ubuntu/WSL2 LibreOffice 合成 `SUM` 测试 | 仅候选实现；用户已实际验证 LibreOffice 基础公式计算可行性，不重复泛泛可行性调研；真实业务公式、Excel/WPS 一致性、复杂依赖、Windows COM、超时、目标 Linux/glibc 2.28 和离线运行时来源均未验收；不能宣称通用公式能力或生产默认。 |
 | Excel COM / WPS COM worker | 当前未实现；现有 ExcelModifier 无对应已验收后端 | 尚未实现。未来分别登记 Windows-only Microsoft Excel 与 WPS capability；不得展示为可用选项或用于 Linux 依赖。 |
 | ExcelCalculator | 尚未形成统一公共计算接口 | 未来独立能力；LibreOffice Calc、Excel COM、WPS COM 为候选，按后端/公式/平台验收，不改变当前读写修改默认。 |
 
