@@ -30,7 +30,10 @@ use pytools_core::file_commit::{
     sha256_file, verify_planning_snapshot,
 };
 use pytools_core::file_sort_prefix::{
-    run_content_prefix_rename_xlsx_candidate, run_content_prefix_unrename_xlsx_candidate,
+    run_content_prefix_rename_xlsx_candidate,
+    run_content_prefix_rename_xlsx_candidate_with_progress,
+    run_content_prefix_unrename_xlsx_candidate,
+    run_content_prefix_unrename_xlsx_candidate_with_progress,
     run_file_sort_prefix_with_progress as run_file_sort_prefix_with_progress_business,
     run_remove_file_sort_prefix_with_progress as run_remove_file_sort_prefix_with_progress_business,
     FileSortProgressEvent,
@@ -1865,6 +1868,10 @@ where
                 )?;
             }
             "5" => {
+                arguments.push("--log-dir".to_owned());
+                arguments.push(global.log_dir.to_string_lossy().into_owned());
+                arguments.push("--log-view".to_owned());
+                arguments.push(log_view.to_owned());
                 arguments.extend(
                     paths
                         .into_iter()
@@ -1873,6 +1880,10 @@ where
                 run_content_prefix_rename_cli(arguments)?;
             }
             "6" => {
+                arguments.push("--log-dir".to_owned());
+                arguments.push(global.log_dir.to_string_lossy().into_owned());
+                arguments.push("--log-view".to_owned());
+                arguments.push(log_view.to_owned());
                 arguments.extend(
                     paths
                         .into_iter()
@@ -8042,26 +8053,89 @@ fn write_batch_rename_log(
 }
 
 fn run_content_prefix_rename_cli(arguments: Vec<String>) -> Result<()> {
-    let Some((config_path, files)) = parse_config_and_files(arguments)? else {
-        return Ok(());
-    };
-    let result = run_content_prefix_rename_xlsx_candidate(&config_path, &files)?;
-    println!("{}", serde_json::to_string_pretty(&result)?);
-    Ok(())
+    run_content_prefix_cli(arguments, true)
 }
 
 fn run_content_prefix_unrename_cli(arguments: Vec<String>) -> Result<()> {
-    let Some((config_path, files)) = parse_config_and_files(arguments)? else {
+    run_content_prefix_cli(arguments, false)
+}
+
+fn run_content_prefix_cli(arguments: Vec<String>, add_prefix: bool) -> Result<()> {
+    let Some((config_path, files, log_dir, log_view)) =
+        parse_content_prefix_cli_arguments(arguments)?
+    else {
         return Ok(());
     };
-    let result = run_content_prefix_unrename_xlsx_candidate(&config_path, &files)?;
-    println!("{}", serde_json::to_string_pretty(&result)?);
+    let (feature_id, function_name) = if add_prefix {
+        ("PT-4-6", "rename-by-content")
+    } else {
+        ("PT-4-7", "unrename-by-content")
+    };
+    let mut events = Vec::<serde_json::Value>::new();
+    let mut active_stage = None;
+    let operation_result = if log_view == "off" {
+        if add_prefix {
+            run_content_prefix_rename_xlsx_candidate(&config_path, &files)
+                .map(ContentPrefixOperationReport::Rename)
+        } else {
+            run_content_prefix_unrename_xlsx_candidate(&config_path, &files)
+                .map(ContentPrefixOperationReport::Unrename)
+        }
+    } else if add_prefix {
+        run_content_prefix_rename_xlsx_candidate_with_progress(&config_path, &files, |event| {
+            let event_value = file_sort_event_with_stage_elapsed(event, &mut active_stage);
+            if log_view == "developer" {
+                events.push(event_value.clone());
+            }
+            emit_file_sort_event_view(&log_view, event, &event_value);
+        })
+        .map(ContentPrefixOperationReport::Rename)
+    } else {
+        run_content_prefix_unrename_xlsx_candidate_with_progress(&config_path, &files, |event| {
+            let event_value = file_sort_event_with_stage_elapsed(event, &mut active_stage);
+            if log_view == "developer" {
+                events.push(event_value.clone());
+            }
+            emit_file_sort_event_view(&log_view, event, &event_value);
+        })
+        .map(ContentPrefixOperationReport::Unrename)
+    };
+    let history_result = if log_view == "developer" {
+        write_content_prefix_run_history(&log_dir, feature_id, function_name, &events).map(Some)
+    } else {
+        Ok(None)
+    };
+    if let Err(error) = &history_result {
+        eprintln!("pytools: warning: could not write structured run history: {error:#}");
+    }
+    let result = operation_result?;
+    let mut output = match result {
+        ContentPrefixOperationReport::Rename(report) => serde_json::to_value(report)?,
+        ContentPrefixOperationReport::Unrename(report) => serde_json::to_value(report)?,
+    };
+    if let Ok(Some(path)) = &history_result {
+        output["run_history_path"] = serde_json::json!(path);
+    }
+    if let Err(error) = &history_result {
+        output["run_history_warning"] =
+            serde_json::json!(format!("could not write structured run history: {error:#}"));
+    }
+    println!("{}", serde_json::to_string_pretty(&output)?);
     Ok(())
 }
 
-fn parse_config_and_files(arguments: Vec<String>) -> Result<Option<(PathBuf, Vec<PathBuf>)>> {
+enum ContentPrefixOperationReport {
+    Rename(pytools_core::file_sort_prefix::ContentPrefixRenameRunReport),
+    Unrename(pytools_core::file_sort_prefix::ContentPrefixUnrenameRunReport),
+}
+
+fn parse_content_prefix_cli_arguments(
+    arguments: Vec<String>,
+) -> Result<Option<(PathBuf, Vec<PathBuf>, PathBuf, String)>> {
     let mut arguments = arguments.into_iter();
     let mut config_path = None::<PathBuf>;
+    let mut log_dir = None::<PathBuf>;
+    let mut log_view = None::<String>;
     let mut files = Vec::new();
     while let Some(argument) = arguments.next() {
         match argument.as_str() {
@@ -8069,6 +8143,14 @@ fn parse_config_and_files(arguments: Vec<String>) -> Result<Option<(PathBuf, Vec
                 config_path = Some(PathBuf::from(
                     arguments.next().context("--config requires a path")?,
                 ));
+            }
+            "--log-dir" => {
+                log_dir = Some(PathBuf::from(
+                    arguments.next().context("--log-dir requires a path")?,
+                ));
+            }
+            "--log-view" => {
+                log_view = Some(arguments.next().context("--log-view requires a value")?);
             }
             "--help" | "-h" => {
                 print_usage();
@@ -8083,7 +8165,73 @@ fn parse_config_and_files(arguments: Vec<String>) -> Result<Option<(PathBuf, Vec
     if files.is_empty() {
         bail!("provide at least one file path");
     }
-    Ok(Some((config_path, files)))
+    let log_view = log_view.unwrap_or_else(|| "user".to_owned());
+    anyhow::ensure!(
+        matches!(log_view.as_str(), "user" | "developer" | "off"),
+        "--log-view must be user, developer, or off"
+    );
+    Ok(Some((
+        config_path,
+        files,
+        log_dir.unwrap_or_else(|| PathBuf::from("logs")),
+        log_view,
+    )))
+}
+
+fn write_content_prefix_run_history(
+    log_dir: &Path,
+    feature_id: &str,
+    function_name: &str,
+    events: &[serde_json::Value],
+) -> Result<PathBuf> {
+    fs::create_dir_all(log_dir)
+        .with_context(|| format!("create log directory {}", log_dir.display()))?;
+    let timestamp = Local::now().format("%Y%m%d_%H%M%S");
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .context("system clock before Unix epoch")?
+        .as_nanos();
+    let path = log_dir.join(format!(
+        "{feature_id}_content_prefix_{timestamp}_{nonce}.run.json"
+    ));
+    let actual_engines = events
+        .iter()
+        .filter_map(|event| event["actual_engine"].as_str())
+        .collect::<std::collections::BTreeSet<_>>();
+    let last_status = events
+        .last()
+        .and_then(|event| event["status"].as_str())
+        .unwrap_or("failed");
+    let run_status = if last_status != "completed" {
+        "failed"
+    } else if events
+        .iter()
+        .any(|event| event["error_type"].as_str().is_some())
+    {
+        "partial_failure"
+    } else {
+        "succeeded"
+    };
+    let history = serde_json::json!({
+        "schema_version": 1,
+        "product": "pytools",
+        "feature_id": feature_id,
+        "function": function_name,
+        "status": run_status,
+        "actual_engines": actual_engines,
+        "total_elapsed_ms": events.last().map(|event| event["elapsed_ms"].clone()),
+        "events": events,
+    });
+    let bytes = serde_json::to_vec_pretty(&history)?;
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)
+        .with_context(|| format!("create run history {}", path.display()))?;
+    file.write_all(&bytes)?;
+    file.write_all(b"\n")?;
+    file.flush()?;
+    Ok(path)
 }
 
 fn run_file_sort_prefix(arguments: Vec<String>) -> Result<()> {
@@ -8980,8 +9128,8 @@ fn print_usage() {
          pytools region-sum-check [--config <workbook.xlsx>] [--output-dir <dir>] [--log-dir <dir>] [--log-view user|developer|off] <source.xlsx>...\n\
          pytools file-sort-prefix --config <workbook.xlsx> [--output-dir <dir>] [--log-dir <dir>] [--log-view user|developer|off] <file>...\n\
          pytools remove-file-sort-prefix --config <workbook.xlsx> [--output-dir <dir>] [--log-dir <dir>] [--log-view user|developer|off] [<file>...]\n\
-         pytools rename-by-content --config <workbook.xlsx> <file>...\n\
-         pytools unrename-by-content --config <workbook.xlsx> <file>...\n\
+         pytools rename-by-content --config <workbook.xlsx> [--log-dir <dir>] [--log-view user|developer|off] <file>...\n\
+         pytools unrename-by-content --config <workbook.xlsx> [--log-dir <dir>] [--log-view user|developer|off] <file>...\n\
          pytools rename-local-map --config <workbook.xlsx> <file>...\n\
          pytools rename-batch --config <workbook.xlsx> [--log-dir <dir>] [--log-view user|developer|off] [<file-or-directory>...]\n\
          The region-sum command runs the Rust non-COM regional total check. Without --config,\n\

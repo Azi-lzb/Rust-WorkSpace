@@ -390,6 +390,102 @@ fn file_sort_menu_supports_user_developer_and_off_progress_views() -> Result<()>
 }
 
 #[test]
+fn content_prefix_menu_logs_user_developer_and_off_views() -> Result<()> {
+    let root = TestDirectory::new()?;
+    let config = create_config(root.path())?;
+    let sources = root.path().join("sources");
+    fs::create_dir_all(&sources)?;
+    let log_dir = root.path().join("logs");
+
+    let user_source = sources.join("content-user.xlsx");
+    create_source_workbook(&user_source, "Plain")?;
+    let user_source_bytes = fs::read(&user_source)?;
+    let user = run_action_with_log_view(&config, 5, 1, &user_source, "user")?;
+    assert!(user.status.success(), "user view failed: {}", stderr(&user));
+    let user_target = sources.join("Bank_content-user.xlsx");
+    assert_eq!(fs::read(&user_target)?, user_source_bytes);
+    let user_report = output_json(&user)?;
+    assert_eq!(user_report["ok"], 1);
+    assert!(user_report.get("run_history_path").is_none());
+    let user_stderr = stderr(&user);
+    assert!(user_stderr.contains("正在读取内容前缀配置"));
+    assert!(user_stderr.contains("已处理 1/1 个文件"));
+    assert!(user_stderr.contains("阶段用时"));
+    assert!(!user_stderr.contains(&user_source.display().to_string()));
+    assert!(!user_stderr.contains("content-user.xlsx"));
+    assert_eq!(fs::read_dir(&log_dir)?.count(), 0);
+
+    let developer_source = sources.join("Bank_content-developer.xlsx");
+    create_source_workbook(&developer_source, "Plain")?;
+    let developer_source_bytes = fs::read(&developer_source)?;
+    let developer = run_action_with_log_view(&config, 6, 1, &developer_source, "developer")?;
+    assert!(
+        developer.status.success(),
+        "developer view failed: {}",
+        stderr(&developer)
+    );
+    let developer_target = sources.join("content-developer.xlsx");
+    assert_eq!(fs::read(&developer_target)?, developer_source_bytes);
+    let developer_report = output_json(&developer)?;
+    assert_eq!(developer_report["ok"], 1);
+    let history_path = PathBuf::from(
+        developer_report["run_history_path"]
+            .as_str()
+            .context("content-prefix history path missing")?,
+    );
+    let history_bytes = fs::read(&history_path)?;
+    let history_text = String::from_utf8_lossy(&history_bytes);
+    assert!(!history_text.contains(&developer_source.display().to_string()));
+    assert!(!history_text.contains("Bank_content-developer.xlsx"));
+    assert!(!history_text.contains("content-developer.xlsx"));
+    assert!(!history_text.contains("Bank"));
+    let history: Value = serde_json::from_slice(&history_bytes)?;
+    assert_eq!(history["feature_id"], "PT-4-7");
+    assert_eq!(history["function"], "unrename-by-content");
+    assert_eq!(history["status"], "succeeded");
+    assert!(history["total_elapsed_ms"].is_number());
+    let events = history["events"].as_array().context("events missing")?;
+    assert!(events
+        .iter()
+        .any(|event| event["phase"] == "configuration_read"));
+    assert!(events
+        .iter()
+        .any(|event| event["phase"] == "file_processing"));
+    assert!(events.iter().any(|event| event["phase"] == "task"));
+    assert_eq!(events.last().unwrap()["completed_files"], 1);
+    for engine in ["Calamine", "Calamine + RustFilesystem"] {
+        assert!(
+            history["actual_engines"]
+                .as_array()
+                .context("actual_engines missing")?
+                .iter()
+                .any(|actual| actual == engine),
+            "missing engine {engine}"
+        );
+    }
+    for phase in ["configuration_read", "file_processing", "task"] {
+        assert!(events.iter().any(|event| {
+            event["phase"] == phase
+                && event["status"] == "completed"
+                && event["stage_elapsed_ms"].is_number()
+        }));
+    }
+    assert!(stderr(&developer).contains("\"feature_id\":\"PT-4-7\""));
+
+    let history_count = fs::read_dir(&log_dir)?.count();
+    let off_source = sources.join("content-off.xlsx");
+    create_source_workbook(&off_source, "Plain")?;
+    let off = run_action_with_log_view(&config, 5, 1, &off_source, "off")?;
+    assert!(off.status.success(), "off view failed: {}", stderr(&off));
+    assert!(sources.join("Bank_content-off.xlsx").is_file());
+    assert!(stderr(&off).is_empty());
+    assert_eq!(fs::read_dir(&log_dir)?.count(), history_count);
+    assert!(output_json(&off)?.get("run_history_path").is_none());
+
+    Ok(())
+}
+
+#[test]
 fn batch_rename_menu_supports_user_developer_and_off_progress_views() -> Result<()> {
     let root = TestDirectory::new()?;
     let config = create_config(root.path())?;

@@ -334,104 +334,213 @@ pub fn run_content_prefix_rename_xlsx_candidate(
     config_path: impl AsRef<Path>,
     files: &[PathBuf],
 ) -> Result<ContentPrefixRenameRunReport> {
-    let config = load_content_rename_config(config_path.as_ref())?;
-    let specs = parse_sheet_cell_spec(&config.spec)?;
+    run_content_prefix_rename_xlsx_candidate_with_progress(config_path, files, |_| {})
+}
+
+pub fn run_content_prefix_rename_xlsx_candidate_with_progress<F>(
+    config_path: impl AsRef<Path>,
+    files: &[PathBuf],
+    mut on_event: F,
+) -> Result<ContentPrefixRenameRunReport>
+where
+    F: FnMut(&FileSortProgressEvent),
+{
+    let config_path = config_path.as_ref();
+    let started = Instant::now();
+    let mut sequence = 0;
+    emit_file_sort_event(
+        &mut on_event,
+        &mut sequence,
+        &started,
+        "PT-4-6",
+        "run",
+        "started",
+        0,
+        files.len(),
+        &["Rust"],
+        None,
+        None,
+        format!(
+            "开始根据工作簿内容添加文件前缀，共 {} 个文件。",
+            files.len()
+        ),
+    );
+    emit_file_sort_event(
+        &mut on_event,
+        &mut sequence,
+        &started,
+        "PT-4-6",
+        "configuration_read",
+        "started",
+        0,
+        files.len(),
+        &["Rust", "excel-reader", "Calamine"],
+        Some("Calamine"),
+        None,
+        "正在读取内容前缀配置。",
+    );
+    let config = match load_content_rename_config(config_path) {
+        Ok(config) => config,
+        Err(error) => {
+            emit_file_sort_event(
+                &mut on_event,
+                &mut sequence,
+                &started,
+                "PT-4-6",
+                "configuration_read",
+                "failed",
+                0,
+                files.len(),
+                &["Rust", "excel-reader", "Calamine"],
+                Some("Calamine"),
+                Some("configuration_read_failed"),
+                "内容前缀配置读取失败。",
+            );
+            return Err(error);
+        }
+    };
+    let specs = match parse_sheet_cell_spec(&config.spec) {
+        Ok(specs) => specs,
+        Err(error) => {
+            emit_file_sort_event(
+                &mut on_event,
+                &mut sequence,
+                &started,
+                "PT-4-6",
+                "configuration_read",
+                "failed",
+                0,
+                files.len(),
+                &["Rust", "excel-reader", "Calamine"],
+                Some("Calamine"),
+                Some("content_prefix_spec_invalid"),
+                "内容前缀单元格规格无效。",
+            );
+            return Err(error);
+        }
+    };
+    emit_file_sort_event(
+        &mut on_event,
+        &mut sequence,
+        &started,
+        "PT-4-6",
+        "configuration_read",
+        "completed",
+        0,
+        files.len(),
+        &["Rust", "excel-reader", "Calamine"],
+        Some("Calamine"),
+        None,
+        "内容前缀配置已读取。",
+    );
+
     let mut rows = Vec::with_capacity(files.len());
     let mut ok = 0;
     let mut skip = 0;
+    emit_file_sort_event(
+        &mut on_event,
+        &mut sequence,
+        &started,
+        "PT-4-6",
+        "task",
+        "started",
+        0,
+        files.len(),
+        &["Rust"],
+        None,
+        None,
+        "开始处理所选文件。",
+    );
 
-    for source in files {
-        let mut row = ContentPrefixRenameRow {
-            source_path: source.to_string_lossy().into_owned(),
-            original_name: source
-                .file_name()
-                .map(|name| name.to_string_lossy().into_owned())
-                .unwrap_or_default(),
-            new_name: String::new(),
-            status: String::new(),
-        };
-
-        if !source.exists() || !source.is_file() {
+    for (index, source) in files.iter().enumerate() {
+        let input_index = index + 1;
+        emit_file_sort_event(
+            &mut on_event,
+            &mut sequence,
+            &started,
+            "PT-4-6",
+            "file_processing",
+            "started",
+            index,
+            files.len(),
+            &["Rust"],
+            None,
+            None,
+            format!("正在处理第 {input_index}/{} 个文件。", files.len()),
+        );
+        let (row, used_reader) = content_prefix_rename_row(source, &specs);
+        if row.new_name.is_empty() {
             skip += 1;
-            row.status = "跳过：非文件".to_owned();
-            rows.push(row);
-            continue;
-        }
-        if !matches!(
-            source
-                .extension()
-                .and_then(|extension| extension.to_str())
-                .map(str::to_ascii_lowercase)
-                .as_deref(),
-            Some("xlsx" | "xlsm")
-        ) {
-            skip += 1;
-            row.status = "跳过：格式未验收".to_owned();
-            rows.push(row);
-            continue;
-        }
-
-        let values = match read_content_prefix_items(source, &specs) {
-            Ok(values) => values,
-            Err(_) => {
-                skip += 1;
-                row.status = "跳过：内容读取失败".to_owned();
-                rows.push(row);
-                continue;
-            }
-        };
-        let prefix_items = values
-            .iter()
-            .map(|value| sanitize_name_part(value))
-            .filter(|value| !value.is_empty())
-            .collect::<Vec<_>>();
-
-        if already_renamed_by_content(&row.original_name, &prefix_items) {
-            skip += 1;
-            row.status = "跳过：内容已在文件名中".to_owned();
-            rows.push(row);
-            continue;
-        }
-
-        let prefix = prefix_items.join("_").chars().take(180).collect::<String>();
-        let new_name = if prefix.is_empty() {
-            row.original_name.clone()
         } else {
-            format!("{prefix}_{}", row.original_name)
+            ok += 1;
+        }
+        let (components, actual_engine) = if used_reader {
+            (
+                &["Rust", "excel-reader", "Calamine", "RustFilesystem"][..],
+                "Calamine + RustFilesystem",
+            )
+        } else {
+            (&["Rust", "RustFilesystem"][..], "RustFilesystem")
         };
-        if new_name == row.original_name {
-            skip += 1;
-            row.status = "跳过：文件名未变".to_owned();
-            rows.push(row);
-            continue;
-        }
-
-        let desired = source.with_file_name(&new_name);
-        match move_to_available_path(source, &desired) {
-            Ok(actual_target) => {
-                ok += 1;
-                row.new_name = actual_target
-                    .file_name()
-                    .map(|name| name.to_string_lossy().into_owned())
-                    .unwrap_or_default();
-                row.status = "已添加内容前缀".to_owned();
-            }
-            Err(_) => {
-                skip += 1;
-                row.status = "跳过：改名失败".to_owned();
-            }
-        }
+        let error_type = match row.status.as_str() {
+            "跳过：内容读取失败" => Some("content_read_failed"),
+            "跳过：改名失败" => Some("rename_failed"),
+            _ => None,
+        };
+        let user_message = if row.new_name.is_empty() {
+            format!(
+                "已处理 {input_index}/{} 个文件；本项跳过，成功 {ok}，跳过 {skip}。",
+                files.len()
+            )
+        } else {
+            format!(
+                "已处理 {input_index}/{} 个文件；成功 {ok}，跳过 {skip}。",
+                files.len()
+            )
+        };
+        emit_file_sort_event(
+            &mut on_event,
+            &mut sequence,
+            &started,
+            "PT-4-6",
+            "file_processing",
+            "completed",
+            input_index,
+            files.len(),
+            components,
+            Some(actual_engine),
+            error_type,
+            user_message,
+        );
         rows.push(row);
     }
 
-    Ok(ContentPrefixRenameRunReport {
+    let report = ContentPrefixRenameRunReport {
         ok,
         skip,
         spec: config.spec,
         config_row: config.row_no,
         config_remark: config.remark,
         rows,
-    })
+    };
+    emit_file_sort_event(
+        &mut on_event,
+        &mut sequence,
+        &started,
+        "PT-4-6",
+        "task",
+        "completed",
+        files.len(),
+        files.len(),
+        &["Rust", "excel-reader", "Calamine", "RustFilesystem"],
+        Some("Calamine + RustFilesystem"),
+        None,
+        format!(
+            "内容前缀处理完成：成功 {} 个，跳过 {} 个。",
+            report.ok, report.skip
+        ),
+    );
+    Ok(report)
 }
 
 /// Execute pytools operation 4-7 for XLSX/XLSM files using the shared Calamine reader.
@@ -444,9 +553,91 @@ pub fn run_content_prefix_unrename_xlsx_candidate(
     config_path: impl AsRef<Path>,
     files: &[PathBuf],
 ) -> Result<ContentPrefixUnrenameRunReport> {
+    run_content_prefix_unrename_xlsx_candidate_with_progress(config_path, files, |_| {})
+}
+
+pub fn run_content_prefix_unrename_xlsx_candidate_with_progress<F>(
+    config_path: impl AsRef<Path>,
+    files: &[PathBuf],
+    mut on_event: F,
+) -> Result<ContentPrefixUnrenameRunReport>
+where
+    F: FnMut(&FileSortProgressEvent),
+{
     let config_path = config_path.as_ref();
-    let config = load_content_rename_config(config_path)?;
-    let specs = parse_sheet_cell_spec(&config.spec)?;
+    let started = Instant::now();
+    let mut sequence = 0;
+    emit_file_sort_event(
+        &mut on_event,
+        &mut sequence,
+        &started,
+        "PT-4-7",
+        "run",
+        "started",
+        0,
+        files.len(),
+        &["Rust"],
+        None,
+        None,
+        format!(
+            "开始根据工作簿内容取消文件前缀，共 {} 个文件。",
+            files.len()
+        ),
+    );
+    emit_file_sort_event(
+        &mut on_event,
+        &mut sequence,
+        &started,
+        "PT-4-7",
+        "configuration_read",
+        "started",
+        0,
+        files.len(),
+        &["Rust", "excel-reader", "Calamine"],
+        Some("Calamine"),
+        None,
+        "正在读取内容前缀配置。",
+    );
+    let config = match load_content_rename_config(config_path) {
+        Ok(config) => config,
+        Err(error) => {
+            emit_file_sort_event(
+                &mut on_event,
+                &mut sequence,
+                &started,
+                "PT-4-7",
+                "configuration_read",
+                "failed",
+                0,
+                files.len(),
+                &["Rust", "excel-reader", "Calamine"],
+                Some("Calamine"),
+                Some("configuration_read_failed"),
+                "内容前缀配置读取失败。",
+            );
+            return Err(error);
+        }
+    };
+    let specs = match parse_sheet_cell_spec(&config.spec) {
+        Ok(specs) => specs,
+        Err(error) => {
+            emit_file_sort_event(
+                &mut on_event,
+                &mut sequence,
+                &started,
+                "PT-4-7",
+                "configuration_read",
+                "failed",
+                0,
+                files.len(),
+                &["Rust", "excel-reader", "Calamine"],
+                Some("Calamine"),
+                Some("content_prefix_spec_invalid"),
+                "内容前缀单元格规格无效。",
+            );
+            return Err(error);
+        }
+    };
 
     // Operation 4-7 treats an absent/invalid legacy sort-config sheet as an
     // empty list and still allows removal of a content prefix at the filename start.
@@ -465,91 +656,254 @@ pub fn run_content_prefix_unrename_xlsx_candidate(
             .then_with(|| left.cmp(right))
     });
 
+    emit_file_sort_event(
+        &mut on_event,
+        &mut sequence,
+        &started,
+        "PT-4-7",
+        "configuration_read",
+        "completed",
+        0,
+        files.len(),
+        &["Rust", "excel-reader", "Calamine"],
+        Some("Calamine"),
+        None,
+        "内容前缀配置已读取。",
+    );
+
     let mut rows = Vec::with_capacity(files.len());
     let mut ok = 0;
     let mut skip = 0;
-    for source in files {
-        let mut row = ContentPrefixUnrenameRow {
-            source_path: source.to_string_lossy().into_owned(),
-            original_name: source
-                .file_name()
-                .map(|name| name.to_string_lossy().into_owned())
-                .unwrap_or_default(),
-            new_name: String::new(),
-            status: String::new(),
-        };
-
-        if !source.exists() || !source.is_file() {
+    emit_file_sort_event(
+        &mut on_event,
+        &mut sequence,
+        &started,
+        "PT-4-7",
+        "task",
+        "started",
+        0,
+        files.len(),
+        &["Rust"],
+        None,
+        None,
+        "开始处理所选文件。",
+    );
+    for (index, source) in files.iter().enumerate() {
+        let input_index = index + 1;
+        emit_file_sort_event(
+            &mut on_event,
+            &mut sequence,
+            &started,
+            "PT-4-7",
+            "file_processing",
+            "started",
+            index,
+            files.len(),
+            &["Rust"],
+            None,
+            None,
+            format!("正在处理第 {input_index}/{} 个文件。", files.len()),
+        );
+        let (row, used_reader) = content_prefix_unrename_row(source, &specs, &sort_prefixes);
+        if row.new_name.is_empty() {
             skip += 1;
-            row.status = "跳过：非文件".to_owned();
-            rows.push(row);
-            continue;
+        } else {
+            ok += 1;
         }
-        if !matches!(
-            source
-                .extension()
-                .and_then(|extension| extension.to_str())
-                .map(str::to_ascii_lowercase)
-                .as_deref(),
-            Some("xlsx" | "xlsm")
-        ) {
-            skip += 1;
-            row.status = "跳过：格式未验收".to_owned();
-            rows.push(row);
-            continue;
-        }
-
-        let values = match read_content_prefix_items(source, &specs) {
-            Ok(values) => values,
-            Err(_) => {
-                skip += 1;
-                row.status = "跳过：内容读取失败".to_owned();
-                rows.push(row);
-                continue;
-            }
+        let (components, actual_engine) = if used_reader {
+            (
+                &["Rust", "excel-reader", "Calamine", "RustFilesystem"][..],
+                "Calamine + RustFilesystem",
+            )
+        } else {
+            (&["Rust", "RustFilesystem"][..], "RustFilesystem")
         };
-        let prefix_items = values
-            .iter()
-            .map(|value| sanitize_name_part(value))
-            .filter(|value| !value.is_empty())
-            .collect::<Vec<_>>();
-        let Some(new_name) = remove_content_prefix_keep_sort_prefix(
-            &row.original_name,
-            &prefix_items,
-            &sort_prefixes,
-        ) else {
-            skip += 1;
-            row.status = "跳过：前缀不匹配".to_owned();
-            rows.push(row);
-            continue;
+        let error_type = match row.status.as_str() {
+            "跳过：内容读取失败" => Some("content_read_failed"),
+            "跳过：改名失败" => Some("rename_failed"),
+            _ => None,
         };
-
-        let desired = source.with_file_name(&new_name);
-        match move_to_available_path(source, &desired) {
-            Ok(actual_target) => {
-                ok += 1;
-                row.new_name = actual_target
-                    .file_name()
-                    .map(|name| name.to_string_lossy().into_owned())
-                    .unwrap_or_default();
-                row.status = "已取消内容前缀".to_owned();
-            }
-            Err(_) => {
-                skip += 1;
-                row.status = "跳过：改名失败".to_owned();
-            }
-        }
+        let user_message = if row.new_name.is_empty() {
+            format!(
+                "已处理 {input_index}/{} 个文件；本项跳过，成功 {ok}，跳过 {skip}。",
+                files.len()
+            )
+        } else {
+            format!(
+                "已处理 {input_index}/{} 个文件；成功 {ok}，跳过 {skip}。",
+                files.len()
+            )
+        };
+        emit_file_sort_event(
+            &mut on_event,
+            &mut sequence,
+            &started,
+            "PT-4-7",
+            "file_processing",
+            "completed",
+            input_index,
+            files.len(),
+            components,
+            Some(actual_engine),
+            error_type,
+            user_message,
+        );
         rows.push(row);
     }
 
-    Ok(ContentPrefixUnrenameRunReport {
+    let report = ContentPrefixUnrenameRunReport {
         ok,
         skip,
         spec: config.spec,
         config_row: config.row_no,
         config_remark: config.remark,
         rows,
-    })
+    };
+    emit_file_sort_event(
+        &mut on_event,
+        &mut sequence,
+        &started,
+        "PT-4-7",
+        "task",
+        "completed",
+        files.len(),
+        files.len(),
+        &["Rust", "excel-reader", "Calamine", "RustFilesystem"],
+        Some("Calamine + RustFilesystem"),
+        None,
+        format!(
+            "取消内容前缀完成：成功 {} 个，跳过 {} 个。",
+            report.ok, report.skip
+        ),
+    );
+    Ok(report)
+}
+
+fn content_prefix_rename_row(
+    source: &Path,
+    specs: &[(String, String)],
+) -> (ContentPrefixRenameRow, bool) {
+    let mut row = ContentPrefixRenameRow {
+        source_path: source.to_string_lossy().into_owned(),
+        original_name: source
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_default(),
+        new_name: String::new(),
+        status: String::new(),
+    };
+    if !source.exists() || !source.is_file() {
+        row.status = "跳过：非文件".to_owned();
+        return (row, false);
+    }
+    if !matches!(
+        source
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .map(str::to_ascii_lowercase)
+            .as_deref(),
+        Some("xlsx" | "xlsm")
+    ) {
+        row.status = "跳过：格式未验收".to_owned();
+        return (row, false);
+    }
+    let values = match read_content_prefix_items(source, specs) {
+        Ok(values) => values,
+        Err(_) => {
+            row.status = "跳过：内容读取失败".to_owned();
+            return (row, true);
+        }
+    };
+    let prefix_items = values
+        .iter()
+        .map(|value| sanitize_name_part(value))
+        .filter(|value| !value.is_empty())
+        .collect::<Vec<_>>();
+    if already_renamed_by_content(&row.original_name, &prefix_items) {
+        row.status = "跳过：内容已在文件名中".to_owned();
+        return (row, true);
+    }
+    let prefix = prefix_items.join("_").chars().take(180).collect::<String>();
+    let new_name = if prefix.is_empty() {
+        row.original_name.clone()
+    } else {
+        format!("{prefix}_{}", row.original_name)
+    };
+    if new_name == row.original_name {
+        row.status = "跳过：文件名未变".to_owned();
+        return (row, true);
+    }
+    match move_to_available_path(source, &source.with_file_name(&new_name)) {
+        Ok(actual_target) => {
+            row.new_name = actual_target
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            row.status = "已添加内容前缀".to_owned();
+        }
+        Err(_) => row.status = "跳过：改名失败".to_owned(),
+    }
+    (row, true)
+}
+
+fn content_prefix_unrename_row(
+    source: &Path,
+    specs: &[(String, String)],
+    sort_prefixes: &[String],
+) -> (ContentPrefixUnrenameRow, bool) {
+    let mut row = ContentPrefixUnrenameRow {
+        source_path: source.to_string_lossy().into_owned(),
+        original_name: source
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_default(),
+        new_name: String::new(),
+        status: String::new(),
+    };
+    if !source.exists() || !source.is_file() {
+        row.status = "跳过：非文件".to_owned();
+        return (row, false);
+    }
+    if !matches!(
+        source
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .map(str::to_ascii_lowercase)
+            .as_deref(),
+        Some("xlsx" | "xlsm")
+    ) {
+        row.status = "跳过：格式未验收".to_owned();
+        return (row, false);
+    }
+    let values = match read_content_prefix_items(source, specs) {
+        Ok(values) => values,
+        Err(_) => {
+            row.status = "跳过：内容读取失败".to_owned();
+            return (row, true);
+        }
+    };
+    let prefix_items = values
+        .iter()
+        .map(|value| sanitize_name_part(value))
+        .filter(|value| !value.is_empty())
+        .collect::<Vec<_>>();
+    let Some(new_name) =
+        remove_content_prefix_keep_sort_prefix(&row.original_name, &prefix_items, sort_prefixes)
+    else {
+        row.status = "跳过：前缀不匹配".to_owned();
+        return (row, true);
+    };
+    match move_to_available_path(source, &source.with_file_name(&new_name)) {
+        Ok(actual_target) => {
+            row.new_name = actual_target
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            row.status = "已取消内容前缀".to_owned();
+        }
+        Err(_) => row.status = "跳过：改名失败".to_owned(),
+    }
+    (row, true)
 }
 
 #[cfg(test)]

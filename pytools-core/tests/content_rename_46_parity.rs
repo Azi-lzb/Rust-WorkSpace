@@ -4,7 +4,12 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::{
+    sync::atomic::{AtomicU64, Ordering},
+    time::{SystemTime, UNIX_EPOCH},
+};
+
+static NEXT_TEMPORARY_DIRECTORY_ID: AtomicU64 = AtomicU64::new(0);
 
 fn cases() -> Value {
     serde_json::from_str(include_str!("fixtures/content_rename_46_cases.json"))
@@ -23,9 +28,10 @@ fn temporary_directory() -> PathBuf {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
+    let serial = NEXT_TEMPORARY_DIRECTORY_ID.fetch_add(1, Ordering::Relaxed);
     let path = std::env::temp_dir().join(format!(
-        "pytools-content-rename-46-{}-{unique}",
-        std::process::id()
+        "pytools-content-rename-46-{}-{unique}-{serial}",
+        std::process::id(),
     ));
     fs::create_dir_all(&path).unwrap();
     path
