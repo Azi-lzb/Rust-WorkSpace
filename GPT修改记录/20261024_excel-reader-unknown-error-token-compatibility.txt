@@ -1,0 +1,22 @@
+日期：2026-10-24
+
+变更：
+- crates/excel-reader/src/lib.rs：新增显式 API `read_workbook_with_unknown_error_tokens_as_text`。默认 `read_workbook` 行为不变；仅在 Calamine 报告不支持的 cell error token 时，针对 XLSX/XLSM 将不认识的字面错误值在临时副本中归一为 inline string，再由 Calamine 读取工作簿其余数据。公式错误单元格和结构异常单元格拒绝归一。临时包完成后删除，源工作簿不变。
+- crates/excel-reader/tests/unknown_error_tokens.rs：运行时构造小型合成 `#DATA!` 错误值 XLSX；验证默认读取仍 fail-closed，显式 API 返回普通字符串 `#DATA!` 且源文件字节未改变。未将 pytools-dev 工作树的 fixture 拷入 main。
+
+目的：给需要按旧 Python 行为把未知错误 token 当普通文本的调用方提供窄共享能力，不改变 reader 全局错误值契约；调用产品仍需自行显式选择该 API，并对拍业务输出。
+
+测试：
+- `wsl.exe -e bash -lc 'cd /mnt/c/Users/AZI/Desktop/VibeCode/1.rust-workspace && cargo test -p excel-reader --test unknown_error_tokens -- --nocapture'`：1 项通过。
+- `wsl.exe -e bash -lc 'cd /mnt/c/Users/AZI/Desktop/VibeCode/1.rust-workspace && cargo test -p excel-reader'`：10 项单元测试、1 项新集成测试通过。
+- 直接以 main 的 PyTools CLI 运行该夹具，确认默认 `read_workbook` 失败原因为 `Unsupported cell error value '#DATA!'`；未输出成功报表。此复现确认了差异来源在 Calamine XLSX error-token 解析阶段。
+
+未执行/未完成：
+- 尚未切换 PyTools PT-6-1 业务调用，也未与其 Python 输出完成对拍；未登记任何业务能力为验收通过。
+- 未验证 XLS/XLSB、公式错误单元格、Linux glibc 2.28 或 deb。
+
+已知限制：
+- 兼容 API 明确限定 XLSX/XLSM；仅支持无公式的字面 error cell 且保留 Calamine 作为实际值 reader。若工作簿有不支持的错误 token 但无法安全转换，会报错而非回退到通用 OOXML 读值。
+- 普通 `read_workbook` 与 `read_value_columns` 均不改变行为。
+
+回滚：回滚本记录、新增集成测试/夹具及 excel-reader API 实现；不触碰 PyTools/Audit 业务分支。
