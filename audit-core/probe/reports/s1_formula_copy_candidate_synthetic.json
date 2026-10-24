@@ -1,0 +1,106 @@
+{
+  "schema_version": 1,
+  "suite": "audit.s1_formula_copy_candidate",
+  "status": "candidate_match_unverified",
+  "sample_kind": "synthetic",
+  "python": {
+    "baseline": "base_audit.native.openpyxl_workbook.copy_formula_ranges_from_template",
+    "elapsed_ms": 20
+  },
+  "rust_candidate": {
+    "calculation_properties_operation_present": true,
+    "capability_status": "unverified",
+    "elapsed_ms": 408,
+    "engine": "umya-spreadsheet",
+    "formula_recalculation_performed": false,
+    "operation_count": 5,
+    "output_created": true,
+    "production_route_eligible": false,
+    "range_import_count": 4,
+    "status": "written_unverified_candidate",
+    "target_inventory_complete": true,
+    "elapsed_ms_including_test_harness": 19931,
+    "candidate_test_exit_code": 0,
+    "formula_cache_nonempty_count": 0,
+    "output_readback_failed": false,
+    "output_readback_failure_category": null
+  },
+  "copy_scope": {
+    "range_count": 4,
+    "formula_cells": 4,
+    "range_comment_count_python": 5
+  },
+  "comparison": {
+    "range_cells": 16,
+    "range_mismatches": 0,
+    "outside_cells": 2,
+    "outside_mismatches": 0,
+    "workbook_metadata_mismatch_count": 0,
+    "calculation_flags_mismatch_count": 0,
+    "python_calculation_flags": {
+      "full_calc_on_load": "1",
+      "force_full_calc": "1"
+    },
+    "rust_calculation_flags": {
+      "full_calc_on_load": "1",
+      "force_full_calc": "1"
+    },
+    "python_formula_cache_nonempty_count": 0,
+    "package_differences_python_vs_rust": {
+      "left_part_count": 13,
+      "right_part_count": 14,
+      "part_name_difference_count": 5,
+      "part_name_difference_category_counts": {
+        "comments": 2,
+        "drawings": 2,
+        "other": 1
+      },
+      "common_part_byte_difference_count": 11,
+      "common_part_byte_difference_category_counts": {
+        "content_types": 1,
+        "other": 3,
+        "relationships": 2,
+        "styles": 1,
+        "workbook": 1,
+        "worksheets": 3
+      }
+    },
+    "python_style_references": {
+      "cell_xf_count": 6,
+      "cell_style_reference_count": 17,
+      "invalid_cell_style_reference_count": 0,
+      "max_cell_style_index": 5,
+      "sheets_with_invalid_style_references": 0,
+      "invalid_style_component_reference_counts": {
+        "font": 0,
+        "fill": 0,
+        "border": 0,
+        "custom_number_format": 0
+      }
+    },
+    "rust_style_references": {
+      "cell_xf_count": 6,
+      "cell_style_reference_count": 17,
+      "invalid_cell_style_reference_count": 0,
+      "max_cell_style_index": 5,
+      "sheets_with_invalid_style_references": 0,
+      "invalid_style_component_reference_counts": {
+        "font": 0,
+        "fill": 0,
+        "border": 0,
+        "custom_number_format": 0
+      }
+    },
+    "invalid_style_reference_count": 0,
+    "output_readback_failed": false,
+    "mismatch_count": 0
+  },
+  "verification": {
+    "input_workbooks_unchanged": true,
+    "formula_recalculation_performed": false,
+    "capability_status": "unverified",
+    "production_route_eligible": false,
+    "target_linux_validation": "not performed",
+    "scope": "four cross-workbook ImportRange operations plus calculation flags; direct candidate only"
+  }
+}

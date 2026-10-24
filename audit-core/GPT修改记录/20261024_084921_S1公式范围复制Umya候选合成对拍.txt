@@ -1,0 +1,48 @@
+# S1 公式范围复制 Umya 候选合成对拍
+
+- 时间：2026-10-24 08:49（Asia/Shanghai）
+- 执行者：Codex audit-dev Agent
+- 分支：`audit-dev`
+- 修改前 commit：`79fec60`（已推送 `origin/audit-dev`）
+- 修改后 commit：本记录随候选探针提交；不改变 S1-F01 的迁移状态。
+- WIP：修改前工作区仅有本次公式复制候选测试、对拍驱动和合成报告；未覆盖其他工作。根 `DEVELOPMENT_GOAL.md` 未修改；未发现 `audit-core/GPT修改记录/WIP.md`。
+
+## 目的与范围
+
+为 S1 公式复制的下一步真实接线准备一个 Audit 专属、可重复的候选对拍。Python 旧实现跨工作簿复制模板的 4 个命名公式区域，逐格复制公式/值、样式和批注，并设置 `fullCalcOnLoad=true` 与 `forceFullCalc=true`；它不在此步骤执行重算。
+
+Rust 候选按 `ImportRange×4` 加 `SetWorkbookCalculationProperties(true, true)` 构造 5 项同批计划，直接调用状态为 `Unverified` 的 Umya 后端仅用于候选测量。此探针不经过生产路由，不登记 Passed capability，不改变审核 CLI/GUI，也不表示 S1-F01 已迁移。
+
+## 修改文件
+
+- `audit-core/tests/s1_formula_copy_candidate.rs`：增加需显式忽略运行的 direct-backend 候选测试；只接收临时路径，不记录输入路径。
+- `audit-core/tests/compare/compare_s1_formula_copy_candidate.py`：对拍驱动；可生成合成样本，也可由调用方传入只读真实模板/审核副本及可选映射配置。输出仅含差异计数、对象数量与运行状态。
+- `audit-core/probe/reports/s1_formula_copy_candidate_synthetic.json`：保存一次合成候选对拍的安全汇总，不包含单元格值、公式文本、批注内容、文件路径或哈希。
+- 本修改记录。
+
+未修改 `pytools-core/**`、共享 crate 源码、Cargo manifests/lock、真实业务文件或原 Python 源项目。main 的共享计算属性 API 已由 `79fec60` 安全同步并推送。
+
+## 测试与证据
+
+- WSL Ubuntu：`cargo fmt --package audit-core -- --check` 通过。
+- WSL Ubuntu：`cargo test -p audit-core --locked --quiet` 通过；75 个 crate 单元测试及全部已配置集成测试通过。手动候选测试保持 `#[ignore]`，由下述对拍脚本显式运行。
+- Windows Python 3.12：对拍脚本 AST 解析通过。
+- 合成对拍：`compare_s1_formula_copy_candidate.py` 调用 `s1_formula_copy_candidate` 忽略测试，完成 4 个 2×2 区域（16 个单元格、4 个公式和 5 条批注）的 Python/Rust 候选比较。范围内单元格值/类型、公式、样式、批注，未修改单元格、工作簿对象元数据及 calcPr 标志的差异均为 0；两项 calcPr 标志均为 true。模板与目标输入字节保持不变；未执行公式重算。
+- 报告状态为 `candidate_match_unverified`，明确 `production_route_eligible=false`。临时样本及输出均在系统临时目录，运行结束自动清理。
+- `git diff --check` 通过。
+
+## 未执行项与已知问题
+
+- 尚未取得上一轮真实 S1 模板与审核副本的只读路径；已向调用方请求。当前证据仅为合成样本，不能外推至真实 4 个命名区域、55 条范围批注、目标文件对象保留或缓存公式。
+- Audit 的 `s1-audit-directory` 仍使用已保存公式结果副本清单；本轮没有把公式复制接入生产业务入口。Umya capability 仍为 `Unverified`，没有真实模板及目标平台保留证据，不能生产路由。
+- 未执行 sidecar 公式重算；该步骤按 workspace 规则保持显式触发。Windows 原生 Rust 工具链、麒麟/UOS、glibc 2.28 与 deb 未验证。
+- S1-F01 整体仍未验收。
+
+## 删除与回滚
+
+- 删除项：无。
+- 回滚：使用 `git revert <候选探针提交 SHA>` 移除此候选测试、对拍驱动、报告和记录；不要回退此前共享 API 或已验收的 S1 目录功能。
+
+## 组件版本
+
+不升级。
