@@ -1,0 +1,14 @@
+修改日期：2026-10-25
+修改范围：DEVELOPMENT_GOAL.md、AGENTS.md、rules/13_Rust_Excel读写修改与引擎路由规范.md
+
+目的：明确 LibreOffice Calc 基础公式计算可行性已由用户实际测试确认，后续不重复泛泛可行性调研；同时保留具体业务公式、语义一致性、文件保真和目标 Linux 离线运行时的验收门槛。
+
+规则边界：没有开发 COM Worker 或 ExcelCalculator，没有改变读取、新建、修改的现有默认路由。Microsoft Excel/WPS COM 仍仅是未来 Windows 修改/计算候选；COM 不作为 Reader/Writer。LibreOffice Calc 仍是独立计算候选，不是 ExcelModifier 后端。Audit/PyTools 子项目规则已检查，未发现与上述方向冲突的绝对禁用条款，因此未改子项目规则。
+
+测试：文档差异与关键条款人工复核；未运行 Rust 测试（纯文档变更）。
+
+未执行项：未修改业务代码、引擎实现、JSON IPC 协议、依赖和打包配置；未运行公式计算或目标 Linux 部署验收。
+
+已知问题：用户基础实测的具体公式样本及结果范围尚未形成可复用的验收报告；不能据此声明通用公式兼容或目标平台通过。
+
+回滚：通过 Git revert 本次文档提交即可恢复；不需要回滚任何业务实现。
