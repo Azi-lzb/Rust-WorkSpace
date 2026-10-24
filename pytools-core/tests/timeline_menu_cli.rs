@@ -151,6 +151,59 @@ fn interactive_timeline_menu_routes_compare_wide_modes_and_precheck() -> Result<
 }
 
 #[test]
+fn wide_summary_cli_filters_missing_and_unconfigured_extensions_before_reading() -> Result<()> {
+    let root = TestDirectory::new()?;
+    let config = create_timeline_config(root.path())?;
+    let source = root.path().join("sample valid wide.xlsx");
+    let unsupported = root.path().join("sample unsupported.xlsb");
+    let missing = root.path().join("sample missing.xlsx");
+    create_wide_source(&source, "宽表甲", 17.5)?;
+    fs::write(&unsupported, b"not a supported workbook")?;
+    let source_before = fs::read(&source)?;
+    let unsupported_before = fs::read(&unsupported)?;
+
+    let output = Command::new(env!("CARGO_BIN_EXE_pytools"))
+        .arg("wide-summary")
+        .arg("--config")
+        .arg(&config)
+        .arg("--log-view")
+        .arg("developer")
+        .arg(&source)
+        .arg(&unsupported)
+        .arg(&missing)
+        .output()
+        .context("run wide-summary CLI with filtered inputs")?;
+    assert!(
+        output.status.success(),
+        "wide-summary CLI did not filter unsupported inputs: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let report: Value = serde_json::from_slice(&output.stdout)?;
+    let summary_path = report["output"]
+        .as_str()
+        .map(PathBuf::from)
+        .context("wide-summary CLI output path missing")?;
+    assert!(summary_path.is_file());
+    let run_log_path = report["run_log_path"]
+        .as_str()
+        .map(PathBuf::from)
+        .context("wide-summary run log path missing")?;
+    let history: Value = serde_json::from_slice(&fs::read(run_log_path)?)?;
+    assert_eq!(history["total_inputs"], 1);
+    assert_eq!(history["completed_inputs"], 1);
+    assert_eq!(history["failed_inputs"], 0);
+    assert!(history["events"]
+        .as_array()
+        .context("wide-summary events missing")?
+        .iter()
+        .all(|event| event["progress"]["total_inputs"] == 1));
+    assert_eq!(fs::read(&source)?, source_before);
+    assert_eq!(fs::read(&unsupported)?, unsupported_before);
+    Ok(())
+}
+
+#[test]
 fn header_path_compare_menu_supports_user_developer_and_off_views() -> Result<()> {
     let root = TestDirectory::new()?;
     let config = create_timeline_config(root.path())?;

@@ -6841,6 +6841,10 @@ fn run_wide_summary_cli_report(
             },
         )
     };
+    let total_inputs = events
+        .last()
+        .map(|event| event.progress.total_inputs)
+        .unwrap_or_default();
     let mut output = None;
     let mut append_plans = Vec::new();
     let result = match wide_result {
@@ -6853,7 +6857,7 @@ fn run_wide_summary_cli_report(
                         &events,
                         &run_started,
                         feature_id,
-                        options.positional.len(),
+                        total_inputs,
                         "target_append_plan",
                         "started",
                         "正在准备既有目标的追加计划",
@@ -6899,7 +6903,7 @@ fn run_wide_summary_cli_report(
                         &events,
                         &run_started,
                         feature_id,
-                        options.positional.len(),
+                        total_inputs,
                         "target_append_plan",
                         status,
                         message,
@@ -6918,7 +6922,7 @@ fn run_wide_summary_cli_report(
                         &events,
                         &run_started,
                         feature_id,
-                        options.positional.len(),
+                        total_inputs,
                         "target_append_plan",
                         "skipped",
                         "没有汇总工作簿，跳过目标追加计划",
@@ -6943,7 +6947,7 @@ fn run_wide_summary_cli_report(
             &events,
             &run_started,
             feature_id,
-            options.positional.len(),
+            total_inputs,
             "wide_summary",
             "failed",
             "宽表汇总失败",
@@ -6963,7 +6967,7 @@ fn run_wide_summary_cli_report(
             .last()
             .map(|event| event.progress.clone())
             .unwrap_or_else(|| WideSummaryProgress {
-                total_inputs: options.positional.len(),
+                total_inputs,
                 ..WideSummaryProgress::default()
             });
         let status = if result.is_err() {
@@ -7001,7 +7005,7 @@ fn run_wide_summary_cli_report(
             "run_id": &run_id,
             "started_at": &started_at,
             "status": status,
-            "total_inputs": options.positional.len(),
+            "total_inputs": progress.total_inputs,
             "completed_inputs": progress.completed_inputs,
             "failed_inputs": progress.failed_inputs,
             "matched_rule_sheets": progress.matched_rule_sheets,

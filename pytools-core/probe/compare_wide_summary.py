@@ -280,7 +280,13 @@ def make_config(path: Path, output: Path, input_dir: Path, target: Path) -> None
     workbook.save(path)
 
 
-def python_baseline(source: Path, output: Path, row_suffix: bool) -> tuple[Path | None, Path]:
+def python_baseline(
+    source: Path,
+    output: Path,
+    row_suffix: bool,
+    *,
+    source_paths: list[Path] | None = None,
+) -> tuple[Path | None, Path]:
     sys.path.insert(0, str(PYTOOLS_SOURCE / "PyCode"))
     from core.config_xlsx import GlobalConfig, TimelineRule
     from core.wide_397_398 import run_wide_summary
@@ -313,17 +319,29 @@ def python_baseline(source: Path, output: Path, row_suffix: bool) -> tuple[Path 
         source_exts=[".xlsx"],
     )
     try:
-        summary = run_wide_summary([rule], [], global_config, row_suffix, source_paths=[source])
+        summary = run_wide_summary(
+            [rule],
+            [],
+            global_config,
+            row_suffix,
+            source_paths=source_paths if source_paths is not None else [source],
+        )
         return summary, output / "target.xlsx"
     finally:
         logging.shutdown()
 
 
 def run_rust(config: Path, source: Path, row_suffix: bool) -> tuple[Path | None, list[Path]]:
+    return run_rust_sources(config, [source], row_suffix)
+
+
+def run_rust_sources(
+    config: Path, sources: list[Path], row_suffix: bool
+) -> tuple[Path | None, list[Path]]:
     cli = "wide-summary-row-suffix" if row_suffix else "wide-summary"
-    completed = run_rust_command(
-        [cli, "--config", rust_path_argument(config), rust_path_argument(source)]
-    )
+    arguments = [cli, "--config", rust_path_argument(config)]
+    arguments.extend(rust_path_argument(path) for path in sources)
+    completed = run_rust_command(arguments)
     stdout = completed.stdout.decode("utf-8-sig", errors="replace").replace("\x00", "")
     stderr = completed.stderr.decode("utf-8-sig", errors="replace").replace("\x00", "")
     for line in reversed(stdout.splitlines()):
@@ -336,6 +354,51 @@ def run_rust(config: Path, source: Path, row_suffix: bool) -> tuple[Path | None,
         except json.JSONDecodeError:
             continue
     raise RuntimeError(f"Rust CLI did not return JSON: {stdout}\n{stderr}")
+
+
+def run_input_filter_case(root: Path) -> dict[str, object]:
+    case = root / "source_filter"
+    case.mkdir()
+    source = case / "sample_2024-06-30.xlsx"
+    unsupported = case / "sample_unsupported.xlsb"
+    missing = case / "sample_missing.xlsx"
+    make_input(source)
+    unsupported.write_bytes(b"not a supported workbook")
+    source_before = source.read_bytes()
+    unsupported_before = unsupported.read_bytes()
+
+    python_output = case / "python_output"
+    rust_output = case / "rust_output"
+    config = case / "config.xlsx"
+    make_config(config, rust_output, case, rust_output / "target.xlsx")
+    config_before = config.read_bytes()
+    source_paths = [source, unsupported, missing]
+    baseline, _ = python_baseline(source, python_output, False, source_paths=source_paths)
+    actual, plans = run_rust_sources(config, source_paths, False)
+    if baseline is None or actual is None:
+        raise AssertionError(
+            f"filtered-input summary was not generated: baseline={baseline}, rust={actual}"
+        )
+    assert_parity(baseline, actual)
+    if len(plans) != 1:
+        raise AssertionError(f"expected one append plan after input filtering, got {plans}")
+    if (
+        source.read_bytes() != source_before
+        or unsupported.read_bytes() != unsupported_before
+        or missing.exists()
+        or config.read_bytes() != config_before
+    ):
+        raise AssertionError("input filtering modified a source, missing path, or configuration")
+    return {
+        "selected_paths": 3,
+        "python_eligible_sources": 1,
+        "rust_eligible_sources": 1,
+        "unsupported_extension": ".xlsb",
+        "missing_supported_path": True,
+        "summary_projection": "exact Python/Rust parity",
+        "source_and_config_unchanged": True,
+        "target_append_plan_count": len(plans),
+    }
 
 
 def run_rust_menu(
@@ -927,6 +990,7 @@ def main() -> int:
                 cached_formula=True,
             ),
         ]
+        input_filter_case = run_input_filter_case(root)
         existing_cases = [
             run_existing_target_case(root, False),
             run_existing_target_case(root, True),
@@ -966,6 +1030,7 @@ def main() -> int:
                 "test_capability": "temporary per-run capability; not registered in workspace production capabilities",
             },
             "summary_workbook_cases": summary_cases,
+            "input_filter_case": input_filter_case,
             "existing_target_cases": existing_cases,
             "commands": {
                 "probe": "<PyTools Python 3.12.10 venv> pytools-core/probe/compare_wide_summary.py",
@@ -1011,18 +1076,47 @@ def main() -> int:
                 "new_target_append": "exact after the real Rust menu generated, validated, confirmed and committed the candidate",
             },
             "scenarios": summary_cases,
+            "input_filter_case": input_filter_case,
             "limitations": report["limitations"],
         }
         summary_report_path = WORKSPACE / "pytools-core" / "probe" / "reports" / "wide_summary_parity_20261023.json"
         summary_report_path.write_text(
             json.dumps(summary_report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
         )
+        input_filter_report_path = (
+            WORKSPACE
+            / "pytools-core"
+            / "probe"
+            / "reports"
+            / f"wide_summary_input_filter_parity_{date.today():%Y%m%d}.json"
+        )
+        input_filter_report_path.write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "suite": "pytools.timeline.wide_summary_input_filter_python_rust_parity",
+                    "date": date.today().isoformat(),
+                    "status": "passed_synthetic_parity",
+                    "baseline": "PyCode/core/wide_397_398.py::run_wide_summary",
+                    "rust_entry": "pytools wide-summary",
+                    "contract": "Use existing paths whose extensions appear in the configured source_exts, and always allow .xls; ignore other extensions and nonexistent paths before reading.",
+                    "case": input_filter_case,
+                    "input_contents": "synthetic workbook and invalid unsupported-extension bytes only",
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
         print(
             json.dumps(
                 {
                     "report": str(summary_report_path),
                     "existing_target_report": str(report_path),
+                    "input_filter_report": str(input_filter_report_path),
                     "summary_cases": len(summary_cases),
+                    "input_filter_case": input_filter_case,
                     "existing_target_cases": len(existing_cases),
                 },
                 ensure_ascii=False,

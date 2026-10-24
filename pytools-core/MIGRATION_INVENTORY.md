@@ -265,6 +265,12 @@ Windows 原生 `cargo fmt --manifest-path pytools-core/Cargo.toml -- --check`、
 
 证据仍为合成 XLSX；只验证读取已保存公式缓存，不触发公式重算。没有脱敏真实业务样本或生产 capability；Windows 原生文件弹窗操作、完整真实模板保真、麒麟/UOS glibc 2.28 和离线 deb 未验收，PT-1-3/1-4 整体仍为**未验证**。
 
+### 2026-10-25 PT-1-3/PT-1-4 输入路径筛选对齐
+
+对照 PyCode `run_wide_summary` 后，Rust 汇总入口现只读取已存在、扩展名在全局 `源文件扩展名` 中或为 `.xls` 的路径；其他扩展名与不存在路径在 reader 调用前忽略。user/developer 运行历史中的 `total_inputs` 同步按实际纳入处理的路径计数。Windows 原生 `timeline_menu_cli` 9/9 通过；新增 Python/Rust CLI 对拍以 3 个输入路径验证 `.xlsb` 和不存在的 `.xlsx` 被过滤、输出工作簿投影一致、源和配置未改变。机器报告：`probe/reports/wide_summary_input_filter_parity_20261025.json`。
+
+本项仅为合成输入路径边界对拍；没有可用的脱敏 PT-1-3/1-4 真实业务样本，`.xls` 实际文件、原生文件弹窗、生产 capability、麒麟/UOS、glibc 2.28 和 deb 仍未验证，PT-1-3/1-4 整体状态不变。
+
 ### 2026-10-23 汇总工具 6-1/6-2 合成对拍
 
 新增 `probe/compare_summary_tools.py`，分别对比旧 `summary_321_322.py` 与 Rust `summary-used-range`、`summary-comments`。6-1 覆盖多个工作表、格式定义的 used-range 尾部、日期/布尔/数值/文本；12 行一致。6-2 覆盖行/列区域批注、`set(name)` 批注、重复列头和“模板”回退；6 行一致。两个输出的 sheet 名、单元格值/类型、维度、冻结窗格和表头加粗一致。机器报告见 `probe/reports/summary_tools_parity_20261023.json`。

@@ -1170,6 +1170,24 @@ where
     )
 }
 
+fn is_wide_summary_source(path: &Path, global: &GlobalConfig) -> bool {
+    if !path.exists() {
+        return false;
+    }
+
+    let Some(extension) = path.extension().and_then(|value| value.to_str()) else {
+        return false;
+    };
+
+    extension.eq_ignore_ascii_case("xls")
+        || global.source_exts.iter().any(|configured| {
+            configured
+                .trim()
+                .trim_start_matches('.')
+                .eq_ignore_ascii_case(extension)
+        })
+}
+
 fn run_wide_summary_inner(
     source_paths: &[PathBuf],
     rules: &[TimelineRule],
@@ -1178,6 +1196,10 @@ fn run_wide_summary_inner(
     row_suffix_enabled: bool,
     callback: Option<&mut dyn FnMut(WideSummaryRunEvent)>,
 ) -> Result<Option<PathBuf>> {
+    let sources = source_paths
+        .iter()
+        .filter(|path| is_wide_summary_source(path, global))
+        .collect::<Vec<_>>();
     let feature_id = if row_suffix_enabled {
         "PT-1-3"
     } else {
@@ -1188,14 +1210,14 @@ fn run_wide_summary_inner(
         sequence: 0,
         feature_id: feature_id.to_owned(),
         progress: WideSummaryProgress {
-            total_inputs: source_paths.len(),
+            total_inputs: sources.len(),
             ..WideSummaryProgress::default()
         },
         callback,
     };
     let mut rule_states = HashMap::<String, WideRuleState>::new();
     let mut rule_order = Vec::<String>::new();
-    for (source_index, path) in source_paths.iter().enumerate() {
+    for (source_index, path) in sources.iter().enumerate() {
         let input_index = source_index + 1;
         emitter.progress.processed_inputs += 1;
         emitter.progress.current_input = Some(input_index);
@@ -1203,7 +1225,7 @@ fn run_wide_summary_inner(
         emitter.emit(
             "source_read",
             "started",
-            format!("正在读取第 {input_index}/{} 个工作簿", source_paths.len()),
+            format!("正在读取第 {input_index}/{} 个工作簿", sources.len()),
             Some(input_index),
             None,
             &["pytools-core", "excel-reader", "calamine"],
@@ -1216,7 +1238,7 @@ fn run_wide_summary_inner(
                 emitter.emit(
                     "source_read",
                     "completed",
-                    format!("已读取第 {input_index}/{} 个工作簿", source_paths.len()),
+                    format!("已读取第 {input_index}/{} 个工作簿", sources.len()),
                     Some(input_index),
                     Some(read_started.elapsed()),
                     &["pytools-core", "excel-reader", "calamine"],
@@ -1232,7 +1254,7 @@ fn run_wide_summary_inner(
                     "failed",
                     format!(
                         "第 {input_index}/{} 个工作簿读取失败，继续处理",
-                        source_paths.len()
+                        sources.len()
                     ),
                     Some(input_index),
                     Some(read_started.elapsed()),
@@ -1248,7 +1270,7 @@ fn run_wide_summary_inner(
                 emitter.emit(
                     "source_read",
                     "failed",
-                    format!("第 {input_index}/{} 个工作簿读取失败", source_paths.len()),
+                    format!("第 {input_index}/{} 个工作簿读取失败", sources.len()),
                     Some(input_index),
                     Some(read_started.elapsed()),
                     &["pytools-core", "excel-reader", "calamine"],
@@ -1262,7 +1284,7 @@ fn run_wide_summary_inner(
         emitter.emit(
             "rule_aggregation",
             "started",
-            format!("正在汇总第 {input_index}/{} 个工作簿", source_paths.len()),
+            format!("正在汇总第 {input_index}/{} 个工作簿", sources.len()),
             Some(input_index),
             None,
             &["pytools-core", "rule_engine"],
@@ -1289,7 +1311,7 @@ fn run_wide_summary_inner(
                         emitter.emit(
                             "rule_aggregation",
                             "failed",
-                            format!("第 {input_index}/{} 个工作簿汇总失败", source_paths.len()),
+                            format!("第 {input_index}/{} 个工作簿汇总失败", sources.len()),
                             Some(input_index),
                             Some(aggregation_started.elapsed()),
                             &["pytools-core", "rule_engine"],
@@ -1400,7 +1422,7 @@ fn run_wide_summary_inner(
                         emitter.emit(
                             "rule_aggregation",
                             "failed",
-                            format!("第 {input_index}/{} 个工作簿汇总失败", source_paths.len()),
+                            format!("第 {input_index}/{} 个工作簿汇总失败", sources.len()),
                             Some(input_index),
                             Some(aggregation_started.elapsed()),
                             &["pytools-core", "rule_engine"],
@@ -1482,7 +1504,7 @@ fn run_wide_summary_inner(
             format!(
                 "已处理 {}/{} 个工作簿，匹配 {} 个工作表",
                 emitter.progress.completed_inputs,
-                source_paths.len(),
+                sources.len(),
                 emitter.progress.matched_rule_sheets
             ),
             Some(input_index),

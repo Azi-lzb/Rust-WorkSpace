@@ -56,17 +56,17 @@
       "target_execution_summary": {
         "appended_rows": 2,
         "duplicate_rows_filtered": 1,
-        "elapsed_ms": 37,
+        "elapsed_ms": 49,
         "function": "append_target_execute",
         "stages": [
           {
-            "elapsed_ms": 22,
+            "elapsed_ms": 25,
             "engine": "rust_xlsxwriter",
             "name": "new_workbook_write_and_reopen",
             "status": "succeeded"
           },
           {
-            "elapsed_ms": 15,
+            "elapsed_ms": 23,
             "name": "target_commit",
             "status": "succeeded"
           }
@@ -105,17 +105,17 @@
       "target_execution_summary": {
         "appended_rows": 3,
         "duplicate_rows_filtered": 0,
-        "elapsed_ms": 41,
+        "elapsed_ms": 47,
         "function": "append_target_execute",
         "stages": [
           {
-            "elapsed_ms": 24,
+            "elapsed_ms": 29,
             "engine": "rust_xlsxwriter",
             "name": "new_workbook_write_and_reopen",
             "status": "succeeded"
           },
           {
-            "elapsed_ms": 16,
+            "elapsed_ms": 17,
             "name": "target_commit",
             "status": "succeeded"
           }
@@ -154,7 +154,7 @@
       "target_execution_summary": {
         "appended_rows": 2,
         "duplicate_rows_filtered": 1,
-        "elapsed_ms": 40,
+        "elapsed_ms": 39,
         "function": "append_target_execute",
         "stages": [
           {
@@ -164,7 +164,7 @@
             "status": "succeeded"
           },
           {
-            "elapsed_ms": 15,
+            "elapsed_ms": 14,
             "name": "target_commit",
             "status": "succeeded"
           }
@@ -175,6 +175,16 @@
       }
     }
   ],
+  "input_filter_case": {
+    "selected_paths": 3,
+    "python_eligible_sources": 1,
+    "rust_eligible_sources": 1,
+    "unsupported_extension": ".xlsb",
+    "missing_supported_path": true,
+    "summary_projection": "exact Python/Rust parity",
+    "source_and_config_unchanged": true,
+    "target_append_plan_count": 1
+  },
   "existing_target_cases": [
     {
       "row_suffix": false,
@@ -185,22 +195,22 @@
       "execution_summary": {
         "appended_rows": 1,
         "duplicate_rows_filtered": 2,
-        "elapsed_ms": 215,
+        "elapsed_ms": 287,
         "function": "append_target_execute",
         "stages": [
           {
-            "elapsed_ms": 112,
+            "elapsed_ms": 172,
             "engine": "umya_spreadsheet",
             "name": "excel_modify",
             "status": "succeeded"
           },
           {
-            "elapsed_ms": 21,
+            "elapsed_ms": 22,
             "name": "replacement_contract_validation",
             "status": "succeeded"
           },
           {
-            "elapsed_ms": 47,
+            "elapsed_ms": 53,
             "name": "target_commit",
             "status": "succeeded"
           }
@@ -253,11 +263,11 @@
       "execution_summary": {
         "appended_rows": 2,
         "duplicate_rows_filtered": 1,
-        "elapsed_ms": 204,
+        "elapsed_ms": 212,
         "function": "append_target_execute",
         "stages": [
           {
-            "elapsed_ms": 100,
+            "elapsed_ms": 101,
             "engine": "umya_spreadsheet",
             "name": "excel_modify",
             "status": "succeeded"
@@ -268,7 +278,7 @@
             "status": "succeeded"
           },
           {
-            "elapsed_ms": 50,
+            "elapsed_ms": 49,
             "name": "target_commit",
             "status": "succeeded"
           }
