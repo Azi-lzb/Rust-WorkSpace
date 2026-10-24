@@ -564,39 +564,7 @@ fn convert_native_excel_values(input: &Path, output: &Path, source_ext: &str) ->
             input.display()
         )
     })?;
-    for sheet in &source.sheets {
-        for (address, value) in &sheet.values {
-            if sheet.formulas.contains_key(address) {
-                continue;
-            }
-            let parsed = CellValue::from_probe_json(value)
-                .with_context(|| format!("decode {}!{}", sheet.name, address))?;
-            match parsed {
-                CellValue::Error(_) => bail!(
-                    "native value-only conversion refuses error cell {}!{} because the writer cannot preserve its typed error value",
-                    sheet.name,
-                    address
-                ),
-                CellValue::Number(number) | CellValue::DateTimeSerial(number)
-                    if !number.is_finite() =>
-                {
-                    bail!(
-                        "native value-only conversion refuses non-finite numeric cell {}!{}",
-                        sheet.name,
-                        address
-                    )
-                }
-                CellValue::Integer(number) if number.unsigned_abs() > (1_u64 << 53) => {
-                    bail!(
-                        "native value-only conversion refuses integer cell {}!{} outside the exact XLSX numeric range",
-                        sheet.name,
-                        address
-                    )
-                }
-                _ => {}
-            }
-        }
-    }
+    validate_native_source_values(&source)?;
 
     let parent = output
         .parent()
@@ -656,6 +624,51 @@ fn convert_native_excel_values(input: &Path, output: &Path, source_ext: &str) ->
     drop(guard);
 
     Ok("按值重建（C01，丢弃样式/公式缓存）；native value-only conversion validated: worksheet names/order, stored values and formula text preserved; original formula caches are not preserved; formatting, comments, merges, dimensions, names, page settings, validations, conditional formatting, drawings and macros are not preserved; formulas are not recalculated".to_owned())
+}
+
+fn validate_native_source_values(source: &excel_reader::WorkbookDump) -> Result<()> {
+    for sheet in &source.sheets {
+        for (address, value) in &sheet.values {
+            if sheet.formulas.contains_key(address) {
+                continue;
+            }
+            let parsed = CellValue::from_probe_json(value)
+                .with_context(|| format!("decode {}!{}", sheet.name, address))?;
+            validate_native_cell_value(&sheet.name, address, parsed)?;
+        }
+    }
+    Ok(())
+}
+
+fn validate_native_cell_value(sheet_name: &str, address: &str, value: CellValue) -> Result<()> {
+    match value {
+        CellValue::Text(text) if text.is_empty() => bail!(
+            "native value-only conversion cannot preserve an empty-text cell {}!{}; use an external fidelity engine",
+            sheet_name,
+            address
+        ),
+        CellValue::Error(_) => bail!(
+            "native value-only conversion refuses error cell {}!{} because the writer cannot preserve its typed error value",
+            sheet_name,
+            address
+        ),
+        CellValue::Number(number) | CellValue::DateTimeSerial(number) if !number.is_finite() => {
+            bail!(
+                "native value-only conversion refuses non-finite numeric cell {}!{}",
+                sheet_name,
+                address
+            )
+        }
+        CellValue::Integer(number) if number.unsigned_abs() > (1_u64 << 53) => {
+            bail!(
+                "native value-only conversion refuses integer cell {}!{} outside the exact XLSX numeric range",
+                sheet_name,
+                address
+            )
+        }
+        _ => {}
+    }
+    Ok(())
 }
 
 fn write_native_cell(
@@ -737,11 +750,51 @@ fn validate_native_conversion(
             .keys()
             .filter(|address| !output_sheet.formulas.contains_key(*address))
             .collect::<std::collections::BTreeSet<_>>();
-        anyhow::ensure!(
-            source_cells == output_cells,
-            "native conversion changed data cell coordinates in worksheet {:?}",
-            source_sheet.name
-        );
+        if source_cells != output_cells {
+            let missing_addresses = source_cells
+                .difference(&output_cells)
+                .copied()
+                .collect::<Vec<_>>();
+            let unexpected_count = output_cells.difference(&source_cells).count();
+            let missing = missing_addresses
+                .iter()
+                .take(12)
+                .map(|address| address.as_str())
+                .collect::<Vec<_>>();
+            let unexpected = output_cells
+                .difference(&source_cells)
+                .take(12)
+                .map(|address| address.as_str())
+                .collect::<Vec<_>>();
+            let mut missing_types = std::collections::BTreeMap::<&str, usize>::new();
+            let mut missing_empty_strings = 0usize;
+            for address in &missing_addresses {
+                if let Some(value) = source_sheet.values.get(*address) {
+                    let value_type = value
+                        .get("type")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or("unknown");
+                    *missing_types.entry(value_type).or_default() += 1;
+                    if value_type == "string"
+                        && value.get("value").and_then(serde_json::Value::as_str) == Some("")
+                    {
+                        missing_empty_strings += 1;
+                    }
+                }
+            }
+            bail!(
+                "native conversion changed data cell coordinates in worksheet {:?} (source={}, output={}, missing_in_output={} {:?}, missing_value_types={:?}, missing_empty_strings={}, unexpected_in_output={} {:?})",
+                source_sheet.name,
+                source_cells.len(),
+                output_cells.len(),
+                missing_addresses.len(),
+                missing,
+                missing_types,
+                missing_empty_strings,
+                unexpected_count,
+                unexpected
+            );
+        }
         for address in source_cells {
             anyhow::ensure!(
                 native_values_equal(&source_sheet.values[address], &output_sheet.values[address])?,
@@ -863,10 +916,14 @@ fn find_sidecar() -> Result<PathBuf> {
 
 #[cfg(test)]
 mod tests {
-    use super::{convert_excel_files_in_source_folders, convert_one, invoke_sidecar};
-    use excel_reader::read_workbook;
+    use super::{
+        convert_excel_files_in_source_folders, convert_one, invoke_sidecar,
+        validate_native_source_values,
+    };
+    use excel_reader::{read_workbook, SheetDump, WorkbookDump};
     use excel_writer::Workbook;
-    use std::{fs, path::PathBuf, time::SystemTime};
+    use serde_json::json;
+    use std::{collections::BTreeMap, fs, path::PathBuf, time::SystemTime};
 
     struct TempDir(PathBuf);
 
@@ -948,6 +1005,24 @@ mod tests {
     }
 
     #[test]
+    fn native_value_conversion_rejects_empty_text_before_writing() {
+        let source = workbook_with_value_and_formula("", None);
+        let error = validate_native_source_values(&source)
+            .expect_err("empty-text cells cannot be represented by the native writer");
+        let message = format!("{error:#}");
+        assert!(message.contains("empty-text cell 数据!A1"));
+        assert!(message.contains("external fidelity engine"));
+        assert!(!message.contains("value="));
+    }
+
+    #[test]
+    fn native_value_conversion_skips_empty_formula_cache_during_preflight() {
+        let source = workbook_with_value_and_formula("", Some("=\"\""));
+        validate_native_source_values(&source)
+            .expect("empty cached formula values are represented by preserved formula text");
+    }
+
+    #[test]
     fn native_value_conversion_refuses_et_without_external_engine() {
         let root = TempDir::new("native-et");
         let input = root.0.join("input.et");
@@ -957,6 +1032,32 @@ mod tests {
             .expect_err("native value-only reader must reject ET");
         assert!(error.to_string().contains("cannot read .et"));
         assert!(!output.exists());
+    }
+
+    fn workbook_with_value_and_formula(value: &str, formula: Option<&str>) -> WorkbookDump {
+        let values = BTreeMap::from([("A1".to_owned(), json!({"type":"string", "value":value}))]);
+        let formulas = formula
+            .map(|formula| BTreeMap::from([("A1".to_owned(), formula.to_owned())]))
+            .unwrap_or_default();
+        WorkbookDump {
+            schema_version: 1,
+            reader: "unit-test",
+            elapsed_ms: 0,
+            sheets: vec![SheetDump {
+                name: "数据".to_owned(),
+                values,
+                formulas,
+                formula_status: "available".to_owned(),
+                merges: Vec::new(),
+                merge_status: "available".to_owned(),
+                comments: BTreeMap::new(),
+                comments_status: "available".to_owned(),
+                conditional_formatting: Vec::new(),
+                conditional_formatting_status: "available".to_owned(),
+                data_validations: Vec::new(),
+                data_validations_status: "available".to_owned(),
+            }],
+        }
     }
 
     #[test]

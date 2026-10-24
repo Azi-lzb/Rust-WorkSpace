@@ -523,6 +523,12 @@ Windows 原生验证：`cargo fmt --manifest-path pytools-core/Cargo.toml -- --c
 
 真实业务文件、用户实际原生文件/目录对话框操作、有效 sidecar 对 `.xls/.et/.doc` 的转换结果、隔离运行打包、麒麟/UOS、glibc 2.28 与 deb 均未验收。此更新证明菜单路由及合成对拍，不将转换/文件操作整组标为已验收。
 
+### 2026-10-25 PT-4-2 native XLS 空文本安全预检
+
+对一个临时副本的真实 `.xls` 样本复验 `pytools convert-excel --engine native`。上一轮 native 候选读取 18,080 个存储值坐标，写出并由共享 reader 重读后为 15,957 个；少掉的 2,123 个源坐标均为类型化空文本，没有额外输出坐标，因此候选未通过数据坐标校验且没有发布。`conversion.rs` 现于创建临时候选前拒绝无法保真的空文本值，并提示需要外部保真引擎；对应公式单元格的空缓存仍跳过该值预检，按原公式文本路径处理。
+
+真实 `convert-excel` CLI 复跑退出码 2，结果为 0 转换、1 失败，输出目录无文件。Windows 原生 `conversion::tests` 6/6、`conversion_menu_cli` 5/5，格式检查通过。未调用 Excel/COM/LibreOffice；该样本的 Python/保真转换对拍仍未验证，C01 native 路径不接受此空文本输入，PT-4-2 整体状态保持**未验证**。机器摘要为 `probe/reports/PT-4-2_native_empty_text_guard_20261025.json`。共享 reader/writer 对显式零长度文本的能力问题已提交 main 协调；未修改共享 crate，也未登记生产能力。
+
 ### 2026-10-24 PT-7-5 地区总分校验交互入口
 
 主菜单新增类别 7，并接入原 PyCode 菜单 7-5 地区总分校验：文件多选、当前层/递归文件夹扫描和手工路径均进入既有 `region-sum-check` Rust CLI；输出目录和日志目录读取全局配置。当前入口只接受 `.xlsx/.xlsm`；手工指定 `.xls` 会明确提示先显式转换，避免在业务路径使用未批准的 COM 读取。核对仍为只读输入并新建结果工作簿。
