@@ -573,6 +573,371 @@ struct CanonicalDefinedName {
     element: CanonicalXmlElement,
 }
 
+type DimensionAttributeKey = (String, String);
+type DimensionAttributes = BTreeMap<DimensionAttributeKey, String>;
+type ColumnDimensionMap = BTreeMap<u32, DimensionAttributes>;
+type RowDimensionMap = BTreeMap<u32, DimensionAttributes>;
+
+fn canonical_column_dimensions(
+    elements: &[CanonicalXmlElement],
+    modified_columns: &BTreeSet<u32>,
+) -> Result<ColumnDimensionMap> {
+    let mut dimensions = ColumnDimensionMap::new();
+    for element in elements {
+        let attribute = |name: &str| {
+            element
+                .attributes
+                .iter()
+                .find(|(namespace, attribute_name, _)| {
+                    namespace.is_empty() && attribute_name == name
+                })
+                .map(|(_, _, value)| value.as_str())
+        };
+        let min = attribute("min")
+            .context("worksheet column dimension is missing its min attribute")?
+            .parse::<u32>()
+            .context("parse worksheet column dimension min")?;
+        let max = attribute("max")
+            .context("worksheet column dimension is missing its max attribute")?
+            .parse::<u32>()
+            .context("parse worksheet column dimension max")?;
+        anyhow::ensure!(
+            min > 0 && min <= max && max <= 16_384,
+            "worksheet column dimension range {min}..={max} is invalid"
+        );
+
+        let attributes = element
+            .attributes
+            .iter()
+            .filter(|(namespace, name, _)| {
+                !(namespace.is_empty() && matches!(name.as_str(), "min" | "max"))
+            })
+            .map(|(namespace, name, value)| ((namespace.clone(), name.clone()), value.clone()))
+            .collect::<DimensionAttributes>();
+        for column in min..=max {
+            let mut effective_attributes = attributes.clone();
+            if modified_columns.contains(&column) {
+                // The requested width is checked independently by Rust readback.
+                // Preserve all other properties on the same column.
+                effective_attributes.remove(&(String::new(), "width".to_owned()));
+                effective_attributes.remove(&(String::new(), "customWidth".to_owned()));
+            }
+            if effective_attributes.is_empty() {
+                continue;
+            }
+            if let Some(existing) = dimensions.get(&column) {
+                anyhow::ensure!(
+                    existing == &effective_attributes,
+                    "worksheet column dimension ranges overlap with conflicting attributes at column {column}"
+                );
+            } else {
+                dimensions.insert(column, effective_attributes);
+            }
+        }
+    }
+    Ok(dimensions)
+}
+
+fn canonical_row_dimensions(
+    elements: &[(String, Vec<(String, String)>)],
+    modified_rows: &BTreeSet<u32>,
+) -> Result<RowDimensionMap> {
+    let mut dimensions = RowDimensionMap::new();
+    for (row_id, attributes) in elements {
+        let row = row_id
+            .parse::<u32>()
+            .with_context(|| format!("parse worksheet row dimension index {row_id:?}"))?;
+        anyhow::ensure!(
+            (1..=1_048_576).contains(&row),
+            "worksheet row dimension index {row} is out of range"
+        );
+        let attributes = attributes
+            .iter()
+            .filter(|(name, _)| name != "r")
+            .map(|(name, value)| ((String::new(), name.clone()), value.clone()))
+            .collect::<DimensionAttributes>();
+        let mut attributes = attributes;
+        if modified_rows.contains(&row) {
+            // The requested height is checked independently by Rust readback.
+            attributes.remove(&(String::new(), "ht".to_owned()));
+            attributes.remove(&(String::new(), "customHeight".to_owned()));
+        }
+        if attributes.is_empty() {
+            continue;
+        }
+        anyhow::ensure!(
+            dimensions.insert(row, attributes).is_none(),
+            "duplicate worksheet row dimension index {row}"
+        );
+    }
+    Ok(dimensions)
+}
+
+fn shift_row_indices_for_insert(
+    indices: BTreeSet<u32>,
+    first_row: u32,
+    count: u32,
+) -> Result<BTreeSet<u32>> {
+    indices
+        .into_iter()
+        .map(|row| {
+            let shifted = if row >= first_row {
+                row.checked_add(count)
+                    .context("row dimension index overflows after row insertion")?
+            } else {
+                row
+            };
+            anyhow::ensure!(
+                shifted <= 1_048_576,
+                "row dimension index exceeds the worksheet limit after row insertion"
+            );
+            Ok(shifted)
+        })
+        .collect()
+}
+
+fn shift_row_indices_for_delete(
+    indices: BTreeSet<u32>,
+    first_row: u32,
+    count: u32,
+) -> Result<BTreeSet<u32>> {
+    let last_deleted = first_row
+        .checked_add(
+            count
+                .checked_sub(1)
+                .context("row deletion count must not be zero")?,
+        )
+        .context("row deletion range overflows")?;
+    indices
+        .into_iter()
+        .filter_map(|row| {
+            if (first_row..=last_deleted).contains(&row) {
+                None
+            } else if row > last_deleted {
+                Some(
+                    row.checked_sub(count)
+                        .context("row dimension index underflows after row deletion"),
+                )
+            } else {
+                Some(Ok(row))
+            }
+        })
+        .collect()
+}
+
+fn insert_row_dimensions(
+    rows: RowDimensionMap,
+    first_row: u32,
+    count: u32,
+) -> Result<RowDimensionMap> {
+    let mut shifted = RowDimensionMap::new();
+    for (row, attributes) in rows {
+        let shifted_row = if row >= first_row {
+            row.checked_add(count)
+                .context("row dimension index overflows after row insertion")?
+        } else {
+            row
+        };
+        anyhow::ensure!(
+            shifted_row <= 1_048_576,
+            "row dimension index exceeds the worksheet limit after row insertion"
+        );
+        anyhow::ensure!(
+            shifted.insert(shifted_row, attributes).is_none(),
+            "row dimension collision after row insertion"
+        );
+    }
+    Ok(shifted)
+}
+
+fn delete_row_dimensions(
+    rows: RowDimensionMap,
+    first_row: u32,
+    count: u32,
+) -> Result<RowDimensionMap> {
+    let last_deleted = first_row
+        .checked_add(
+            count
+                .checked_sub(1)
+                .context("row deletion count must not be zero")?,
+        )
+        .context("row deletion range overflows")?;
+    let mut shifted = RowDimensionMap::new();
+    for (row, attributes) in rows {
+        if (first_row..=last_deleted).contains(&row) {
+            continue;
+        }
+        let shifted_row = if row > last_deleted {
+            row.checked_sub(count)
+                .context("row dimension index underflows after row deletion")?
+        } else {
+            row
+        };
+        anyhow::ensure!(
+            shifted.insert(shifted_row, attributes).is_none(),
+            "row dimension collision after row deletion"
+        );
+    }
+    Ok(shifted)
+}
+
+fn expected_row_dimensions_after_plan(
+    mut rows: RowDimensionMap,
+    source_sheet: &str,
+    output_sheet: &str,
+    operations: &[EditOperation],
+) -> Result<(RowDimensionMap, BTreeSet<u32>)> {
+    let sheet_names = [source_sheet, output_sheet];
+    let mut modified_rows = BTreeSet::new();
+    for operation in operations {
+        match operation {
+            EditOperation::SetRowHeight {
+                sheet, row_index, ..
+            } if sheet_names.contains(&sheet.as_str()) => {
+                modified_rows.insert(*row_index);
+                if let Some(attributes) = rows.get_mut(row_index) {
+                    attributes.remove(&(String::new(), "ht".to_owned()));
+                    attributes.remove(&(String::new(), "customHeight".to_owned()));
+                    if attributes.is_empty() {
+                        rows.remove(row_index);
+                    }
+                }
+            }
+            EditOperation::InsertRows {
+                sheet,
+                first_row,
+                count,
+            } if sheet_names.contains(&sheet.as_str()) => {
+                rows = insert_row_dimensions(rows, *first_row, *count)?;
+                modified_rows = shift_row_indices_for_insert(modified_rows, *first_row, *count)?;
+            }
+            EditOperation::DeleteRows {
+                sheet,
+                first_row,
+                count,
+            } if sheet_names.contains(&sheet.as_str()) => {
+                rows = delete_row_dimensions(rows, *first_row, *count)?;
+                modified_rows = shift_row_indices_for_delete(modified_rows, *first_row, *count)?;
+            }
+            _ => {}
+        }
+    }
+    Ok((rows, modified_rows))
+}
+
+fn row_dimension_attributes_match(
+    expected: &DimensionAttributes,
+    actual: &DimensionAttributes,
+) -> bool {
+    if expected == actual {
+        return true;
+    }
+
+    // openpyxl adds customHeight="1" when serializing an existing explicit
+    // height. Accept only that observed normalization when the numeric height
+    // and every other effective dimension attribute are unchanged.
+    let height = (String::new(), "ht".to_owned());
+    let custom_height = (String::new(), "customHeight".to_owned());
+    if expected.get(&height).is_some()
+        && expected.get(&height) == actual.get(&height)
+        && !expected.contains_key(&custom_height)
+        && actual.get(&custom_height).is_some_and(|value| value == "1")
+    {
+        let mut normalized_actual = actual.clone();
+        normalized_actual.remove(&custom_height);
+        return expected == &normalized_actual;
+    }
+    false
+}
+
+fn row_dimension_maps_match(expected: &RowDimensionMap, actual: &RowDimensionMap) -> bool {
+    let indices = expected
+        .keys()
+        .chain(actual.keys())
+        .copied()
+        .collect::<BTreeSet<_>>();
+    indices.into_iter().all(|row| {
+        let expected = expected.get(&row).cloned().unwrap_or_default();
+        let actual = actual.get(&row).cloned().unwrap_or_default();
+        row_dimension_attributes_match(&expected, &actual)
+    })
+}
+
+fn validate_preserved_dimensions(
+    source: &WorkbookPreservationSnapshot,
+    output: &WorkbookPreservationSnapshot,
+    plan: &ExcelEditPlan,
+) -> Result<()> {
+    let (retained_sheets, deleted_sheets) =
+        planned_sheet_provenance(&source.sheet_order, &plan.operations)?;
+
+    for (source_sheet, source_columns, source_rows) in &source.dimensions {
+        let no_modified_dimensions = BTreeSet::new();
+        let original_columns =
+            canonical_column_dimensions(source_columns, &no_modified_dimensions)?;
+        let original_rows = canonical_row_dimensions(source_rows, &no_modified_dimensions)?;
+        if let Some(output_sheet) = retained_sheets.get(source_sheet) {
+            let (output_columns, output_rows) = output
+                .dimensions
+                .iter()
+                .find(|(name, _, _)| name == output_sheet)
+                .map(|(_, columns, rows)| (columns, rows))
+                .with_context(|| {
+                    format!("openpyxl output is missing worksheet dimensions for {output_sheet:?}")
+                })?;
+            let dimension_sheet_names = [source_sheet.as_str(), output_sheet.as_str()];
+            let modified_columns = plan
+                .operations
+                .iter()
+                .filter_map(|operation| match operation {
+                    EditOperation::SetColumnWidth {
+                        sheet,
+                        column_index,
+                        ..
+                    } if dimension_sheet_names.contains(&sheet.as_str()) => Some(*column_index),
+                    _ => None,
+                })
+                .collect::<BTreeSet<_>>();
+            let expected_columns = canonical_column_dimensions(source_columns, &modified_columns)?;
+            let actual_columns = canonical_column_dimensions(output_columns, &modified_columns)?;
+            let (expected_rows, modified_rows) = expected_row_dimensions_after_plan(
+                original_rows.clone(),
+                source_sheet,
+                output_sheet,
+                &plan.operations,
+            )?;
+            let actual_rows = canonical_row_dimensions(output_rows, &modified_rows)?;
+            anyhow::ensure!(
+                expected_columns == actual_columns,
+                "openpyxl changed preserved column dimensions on worksheet {source_sheet:?}"
+            );
+            anyhow::ensure!(
+                row_dimension_maps_match(&expected_rows, &actual_rows),
+                "openpyxl changed preserved row dimensions on worksheet {source_sheet:?}"
+            );
+            continue;
+        }
+
+        if let Some(deleted_as) = deleted_sheets.get(source_sheet) {
+            if !original_columns.is_empty() || !original_rows.is_empty() {
+                let may_drop = plan.drop_allowed.get(deleted_as).is_some_and(|allowed| {
+                    allowed.contains(&PreservationRequirement::RowAndColumnDimensions)
+                });
+                anyhow::ensure!(
+                    may_drop,
+                    "openpyxl would remove row or column dimensions from deleted worksheet {source_sheet:?} without an explicit RowAndColumnDimensions drop allowance"
+                );
+            }
+            continue;
+        }
+
+        anyhow::bail!(
+            "source worksheet {source_sheet:?} has no planned output identity for dimension validation"
+        );
+    }
+    Ok(())
+}
+
 fn validate_preserved_ooxml_metadata(
     input_path: &Path,
     output_path: &Path,
@@ -617,10 +982,7 @@ fn validate_preserved_ooxml_metadata(
         .preserve
         .contains(&PreservationRequirement::RowAndColumnDimensions)
     {
-        anyhow::ensure!(
-            source.dimensions == output.dimensions,
-            "openpyxl changed worksheet row or column dimensions"
-        );
+        validate_preserved_dimensions(&source, &output, plan)?;
     }
     if plan
         .preserve
@@ -3345,6 +3707,57 @@ mod tests {
         }
     }
 
+    fn dimension_plan(
+        operations: Vec<EditOperation>,
+        drop_allowed: BTreeMap<String, BTreeSet<PreservationRequirement>>,
+    ) -> ExcelEditPlan {
+        let mut plan = defined_name_plan(operations, drop_allowed);
+        plan.preserve = [PreservationRequirement::RowAndColumnDimensions]
+            .into_iter()
+            .collect();
+        plan
+    }
+
+    fn column_dimension(min: u32, max: u32, attributes: &[(&str, &str)]) -> CanonicalXmlElement {
+        let mut canonical_attributes = vec![
+            (String::new(), "min".to_owned(), min.to_string()),
+            (String::new(), "max".to_owned(), max.to_string()),
+        ];
+        canonical_attributes.extend(
+            attributes
+                .iter()
+                .map(|(name, value)| (String::new(), (*name).to_owned(), (*value).to_owned())),
+        );
+        CanonicalXmlElement {
+            name: format!("{SPREADSHEET_MAIN_NS}:col"),
+            attributes: canonical_attributes,
+            text: None,
+            children: Vec::new(),
+        }
+    }
+
+    fn row_dimension(row: u32, attributes: &[(&str, &str)]) -> (String, Vec<(String, String)>) {
+        let mut canonical_attributes = vec![("r".to_owned(), row.to_string())];
+        canonical_attributes.extend(
+            attributes
+                .iter()
+                .map(|(name, value)| ((*name).to_owned(), (*value).to_owned())),
+        );
+        (row.to_string(), canonical_attributes)
+    }
+
+    fn dimension_snapshot(
+        sheet: &str,
+        columns: Vec<CanonicalXmlElement>,
+        rows: Vec<(String, Vec<(String, String)>)>,
+    ) -> WorkbookPreservationSnapshot {
+        WorkbookPreservationSnapshot {
+            sheet_order: vec![sheet.to_owned()],
+            dimensions: vec![(sheet.to_owned(), columns, rows)],
+            ..WorkbookPreservationSnapshot::default()
+        }
+    }
+
     fn auto_filter(range: &str) -> Option<CanonicalXmlElement> {
         Some(CanonicalXmlElement {
             name: format!("{SPREADSHEET_MAIN_NS}:autoFilter"),
@@ -3352,6 +3765,227 @@ mod tests {
             text: None,
             children: Vec::new(),
         })
+    }
+
+    #[test]
+    fn row_dimensions_allow_only_openpyxl_custom_height_serialization_normalization() -> Result<()>
+    {
+        let source = dimension_snapshot(
+            "Report",
+            Vec::new(),
+            vec![row_dimension(12, &[("ht", "15.0")])],
+        );
+        let output = dimension_snapshot(
+            "Report",
+            Vec::new(),
+            vec![row_dimension(12, &[("ht", "15.0"), ("customHeight", "1")])],
+        );
+        let plan = dimension_plan(Vec::new(), BTreeMap::new());
+
+        validate_preserved_dimensions(&source, &output, &plan)
+    }
+
+    #[test]
+    fn row_dimensions_still_reject_a_real_height_or_style_change() {
+        let source = dimension_snapshot(
+            "Report",
+            Vec::new(),
+            vec![row_dimension(12, &[("ht", "15.0"), ("s", "2")])],
+        );
+        let changed_height = dimension_snapshot(
+            "Report",
+            Vec::new(),
+            vec![row_dimension(
+                12,
+                &[("ht", "16.0"), ("customHeight", "1"), ("s", "2")],
+            )],
+        );
+        let changed_style = dimension_snapshot(
+            "Report",
+            Vec::new(),
+            vec![row_dimension(
+                12,
+                &[("ht", "15.0"), ("customHeight", "1"), ("s", "3")],
+            )],
+        );
+        let plan = dimension_plan(Vec::new(), BTreeMap::new());
+
+        assert!(validate_preserved_dimensions(&source, &changed_height, &plan).is_err());
+        assert!(validate_preserved_dimensions(&source, &changed_style, &plan).is_err());
+    }
+
+    #[test]
+    fn explicit_row_height_only_exempts_the_requested_height_property() -> Result<()> {
+        let source = dimension_snapshot(
+            "Report",
+            Vec::new(),
+            vec![row_dimension(12, &[("ht", "15.0"), ("hidden", "1")])],
+        );
+        let output = dimension_snapshot(
+            "Report",
+            Vec::new(),
+            vec![row_dimension(
+                12,
+                &[("ht", "20.0"), ("customHeight", "1"), ("hidden", "1")],
+            )],
+        );
+        let changed_hidden = dimension_snapshot(
+            "Report",
+            Vec::new(),
+            vec![row_dimension(
+                12,
+                &[("ht", "20.0"), ("customHeight", "1"), ("hidden", "0")],
+            )],
+        );
+        let plan = dimension_plan(
+            vec![EditOperation::SetRowHeight {
+                sheet: "Report".to_owned(),
+                row_index: 12,
+                height: 20.0,
+            }],
+            BTreeMap::new(),
+        );
+
+        validate_preserved_dimensions(&source, &output, &plan)?;
+        assert!(validate_preserved_dimensions(&source, &changed_hidden, &plan).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn column_ranges_compare_by_effective_column_properties() -> Result<()> {
+        let source = dimension_snapshot(
+            "Report",
+            vec![column_dimension(
+                1,
+                2,
+                &[("width", "22"), ("customWidth", "1")],
+            )],
+            Vec::new(),
+        );
+        let output = dimension_snapshot(
+            "Report",
+            vec![
+                column_dimension(1, 1, &[("width", "22"), ("customWidth", "1")]),
+                column_dimension(2, 2, &[("width", "22"), ("customWidth", "1")]),
+            ],
+            Vec::new(),
+        );
+        let plan = dimension_plan(Vec::new(), BTreeMap::new());
+
+        validate_preserved_dimensions(&source, &output, &plan)
+    }
+
+    #[test]
+    fn explicit_column_width_only_exempts_the_requested_width_property() -> Result<()> {
+        let source = dimension_snapshot(
+            "Report",
+            vec![column_dimension(
+                1,
+                2,
+                &[("width", "9"), ("customWidth", "1"), ("hidden", "1")],
+            )],
+            Vec::new(),
+        );
+        let output = dimension_snapshot(
+            "Report",
+            vec![
+                column_dimension(
+                    1,
+                    1,
+                    &[("width", "22"), ("customWidth", "1"), ("hidden", "1")],
+                ),
+                column_dimension(
+                    2,
+                    2,
+                    &[("width", "9"), ("customWidth", "1"), ("hidden", "1")],
+                ),
+            ],
+            Vec::new(),
+        );
+        let plan = dimension_plan(
+            vec![EditOperation::SetColumnWidth {
+                sheet: "Report".to_owned(),
+                column_index: 1,
+                width: 22.0,
+            }],
+            BTreeMap::new(),
+        );
+
+        validate_preserved_dimensions(&source, &output, &plan)
+    }
+
+    #[test]
+    fn recreated_sheet_dimensions_need_a_scoped_drop_allowance() -> Result<()> {
+        let source = dimension_snapshot(
+            "Managed",
+            vec![column_dimension(
+                1,
+                3,
+                &[("width", "9"), ("customWidth", "1")],
+            )],
+            vec![row_dimension(4, &[("ht", "18")])],
+        );
+        let output = dimension_snapshot(
+            "Managed",
+            vec![column_dimension(
+                1,
+                1,
+                &[("width", "22"), ("customWidth", "1")],
+            )],
+            Vec::new(),
+        );
+        let operations = vec![
+            EditOperation::DeleteSheet {
+                name: "Managed".to_owned(),
+            },
+            EditOperation::CreateSheetAt {
+                name: "Managed".to_owned(),
+                index: 0,
+            },
+            EditOperation::SetColumnWidth {
+                sheet: "Managed".to_owned(),
+                column_index: 1,
+                width: 22.0,
+            },
+        ];
+        let allowed = dimension_plan(
+            operations.clone(),
+            [(
+                "Managed".to_owned(),
+                [PreservationRequirement::RowAndColumnDimensions].into(),
+            )]
+            .into_iter()
+            .collect(),
+        );
+        let disallowed = dimension_plan(operations, BTreeMap::new());
+
+        validate_preserved_dimensions(&source, &output, &allowed)?;
+        assert!(validate_preserved_dimensions(&source, &output, &disallowed).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn row_dimensions_follow_planned_row_insertions() -> Result<()> {
+        let source = dimension_snapshot(
+            "Report",
+            Vec::new(),
+            vec![row_dimension(10, &[("ht", "18")])],
+        );
+        let output = dimension_snapshot(
+            "Report",
+            Vec::new(),
+            vec![row_dimension(12, &[("ht", "18"), ("customHeight", "1")])],
+        );
+        let plan = dimension_plan(
+            vec![EditOperation::InsertRows {
+                sheet: "Report".to_owned(),
+                first_row: 5,
+                count: 2,
+            }],
+            BTreeMap::new(),
+        );
+
+        validate_preserved_dimensions(&source, &output, &plan)
     }
 
     #[test]
