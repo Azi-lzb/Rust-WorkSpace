@@ -172,6 +172,8 @@ impl OpenpyxlXlsxBackend {
                     | PreservationRequirement::PageSettings
                     | PreservationRequirement::HeaderFooterText
                     | PreservationRequirement::Relationships
+                    | PreservationRequirement::FreezePanes
+                    | PreservationRequirement::AutoFilter
             )
         });
 
@@ -455,6 +457,9 @@ fn supported_operation(operation: EditOperationKind) -> bool {
             | EditOperationKind::SetRowHeight
             | EditOperationKind::RenameSheet
             | EditOperationKind::CreateSheet
+            | EditOperationKind::CreateSheetAt
+            | EditOperationKind::SetFreezePanes
+            | EditOperationKind::SetAutoFilter
             | EditOperationKind::DeleteSheet
             | EditOperationKind::SetCellFillColor
             | EditOperationKind::CopyRange
@@ -492,6 +497,7 @@ impl OutputValidator for OpenpyxlXlsxValidator {
         validate_preserved_comments(&source.sheets, &output.sheets, plan)?;
         validate_preserved_merges(&source.sheets, &output.sheets, plan)?;
         validate_preserved_ooxml_metadata(&plan.input, candidate_output, plan)?;
+        validate_requested_sheet_layout(plan, candidate_output)?;
         Ok(())
     }
 }
@@ -517,6 +523,8 @@ struct WorkbookPreservationSnapshot {
     conditional_formatting: Vec<(String, Vec<CanonicalXmlElement>)>,
     data_validations: Vec<(String, Option<CanonicalXmlElement>)>,
     relationships: Vec<(String, Vec<CanonicalXmlElement>)>,
+    freeze_panes: Vec<(String, Option<CanonicalXmlElement>)>,
+    auto_filters: Vec<(String, Option<CanonicalXmlElement>)>,
 }
 
 fn validate_preserved_ooxml_metadata(
@@ -532,6 +540,8 @@ fn validate_preserved_ooxml_metadata(
         PreservationRequirement::Relationships,
         PreservationRequirement::ConditionalFormatting,
         PreservationRequirement::DataValidations,
+        PreservationRequirement::FreezePanes,
+        PreservationRequirement::AutoFilter,
     ];
     if !checked
         .iter()
@@ -613,6 +623,122 @@ fn validate_preserved_ooxml_metadata(
             source.data_validations == output.data_validations,
             "openpyxl changed data validations"
         );
+    }
+    if plan
+        .preserve
+        .contains(&PreservationRequirement::FreezePanes)
+    {
+        anyhow::ensure!(
+            preserved_sheet_metadata_matches(
+                &source.freeze_panes,
+                &output.freeze_panes,
+                &plan.operations,
+                EditOperationKind::SetFreezePanes,
+            ),
+            "openpyxl changed freeze-pane metadata on a preserved worksheet"
+        );
+    }
+    if plan.preserve.contains(&PreservationRequirement::AutoFilter) {
+        anyhow::ensure!(
+            preserved_sheet_metadata_matches(
+                &source.auto_filters,
+                &output.auto_filters,
+                &plan.operations,
+                EditOperationKind::SetAutoFilter,
+            ),
+            "openpyxl changed AutoFilter metadata on a preserved worksheet"
+        );
+    }
+    Ok(())
+}
+
+fn preserved_sheet_metadata_matches(
+    source: &[(String, Option<CanonicalXmlElement>)],
+    output: &[(String, Option<CanonicalXmlElement>)],
+    operations: &[EditOperation],
+    operation_kind: EditOperationKind,
+) -> bool {
+    let (renamed, deleted) = sheet_name_changes(operations);
+    source.iter().all(|(source_name, metadata)| {
+        if deleted.contains(source_name) {
+            return true;
+        }
+        let output_name = renamed.get(source_name).unwrap_or(source_name);
+        let modified_by_plan =
+            operations
+                .iter()
+                .any(|operation| match (operation_kind, operation) {
+                    (
+                        EditOperationKind::SetFreezePanes,
+                        EditOperation::SetFreezePanes { sheet, .. },
+                    )
+                    | (
+                        EditOperationKind::SetAutoFilter,
+                        EditOperation::SetAutoFilter { sheet, .. },
+                    ) => sheet == source_name || sheet == output_name,
+                    _ => false,
+                });
+        if modified_by_plan {
+            return true;
+        }
+        output
+            .iter()
+            .find(|(name, _)| name == output_name)
+            .is_some_and(|(_, actual)| actual == metadata)
+    })
+}
+
+fn validate_requested_sheet_layout(plan: &ExcelEditPlan, output_path: &Path) -> Result<()> {
+    if !plan.operations.iter().any(|operation| {
+        matches!(
+            operation,
+            EditOperation::SetFreezePanes { .. } | EditOperation::SetAutoFilter { .. }
+        )
+    }) {
+        return Ok(());
+    }
+    let output = workbook_preservation_snapshot(output_path)?;
+    for operation in &plan.operations {
+        match operation {
+            EditOperation::SetFreezePanes { sheet, cell } => {
+                let actual = output
+                    .freeze_panes
+                    .iter()
+                    .find(|(name, _)| name == sheet)
+                    .and_then(|(_, pane)| pane.as_ref())
+                    .and_then(|pane| {
+                        pane.attributes.iter().find(|(namespace, name, _)| {
+                            namespace.is_empty() && name == "topLeftCell"
+                        })
+                    })
+                    .map(|(_, _, value)| normalize_address(value));
+                let expected = cell.as_deref().map(normalize_address);
+                anyhow::ensure!(
+                    actual == expected,
+                    "freeze panes readback mismatch for worksheet {sheet:?}: expected {expected:?}, got {actual:?}"
+                );
+            }
+            EditOperation::SetAutoFilter { sheet, range } => {
+                let actual = output
+                    .auto_filters
+                    .iter()
+                    .find(|(name, _)| name == sheet)
+                    .and_then(|(_, filter)| filter.as_ref())
+                    .and_then(|filter| {
+                        filter
+                            .attributes
+                            .iter()
+                            .find(|(namespace, name, _)| namespace.is_empty() && name == "ref")
+                    })
+                    .map(|(_, _, value)| normalize_range(value));
+                let expected = range.as_deref().map(normalize_range);
+                anyhow::ensure!(
+                    actual == expected,
+                    "AutoFilter readback mismatch for worksheet {sheet:?}: expected {expected:?}, got {actual:?}"
+                );
+            }
+            _ => {}
+        }
     }
     Ok(())
 }
@@ -758,6 +884,27 @@ fn workbook_preservation_snapshot(path: &Path) -> Result<WorkbookPreservationSna
         snapshot
             .page_settings
             .push((sheet_name.clone(), page_settings));
+
+        let pane = root
+            .descendants()
+            .find(|node| {
+                node.is_element()
+                    && node.tag_name().namespace() == Some(MAIN_NS)
+                    && node.tag_name().name() == "pane"
+            })
+            .map(canonical_xml_element);
+        snapshot.freeze_panes.push((sheet_name.clone(), pane));
+        let auto_filter = root
+            .children()
+            .find(|node| {
+                node.is_element()
+                    && node.tag_name().namespace() == Some(MAIN_NS)
+                    && node.tag_name().name() == "autoFilter"
+            })
+            .map(canonical_xml_element);
+        snapshot
+            .auto_filters
+            .push((sheet_name.clone(), auto_filter));
 
         let header_footer = root
             .children()

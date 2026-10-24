@@ -61,6 +61,8 @@ pub enum WorkbookFeature {
     Relationships,
     UnknownExtensions,
     HeadersFooters,
+    FreezePanes,
+    AutoFilter,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
@@ -80,6 +82,8 @@ pub enum PreservationRequirement {
     Relationships,
     UnmodifiedPackageParts,
     SheetIdentityAndOrder,
+    FreezePanes,
+    AutoFilter,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
@@ -95,6 +99,8 @@ pub enum EditOperationKind {
     RenameSheet,
     CreateSheet,
     CreateSheetAt,
+    SetFreezePanes,
+    SetAutoFilter,
     DeleteSheet,
     SetCellFillColor,
     CopyRange,
@@ -203,6 +209,16 @@ pub enum EditOperation {
         name: String,
         index: usize,
     },
+    /// Freeze panes at the first unfrozen cell, such as `A2`; `None` clears panes.
+    SetFreezePanes {
+        sheet: String,
+        cell: Option<String>,
+    },
+    /// Set the worksheet AutoFilter reference, such as `A1:M42`; `None` clears it.
+    SetAutoFilter {
+        sheet: String,
+        range: Option<String>,
+    },
     DeleteSheet {
         name: String,
     },
@@ -284,6 +300,8 @@ impl EditOperation {
             Self::RenameSheet { .. } => EditOperationKind::RenameSheet,
             Self::CreateSheet { .. } => EditOperationKind::CreateSheet,
             Self::CreateSheetAt { .. } => EditOperationKind::CreateSheetAt,
+            Self::SetFreezePanes { .. } => EditOperationKind::SetFreezePanes,
+            Self::SetAutoFilter { .. } => EditOperationKind::SetAutoFilter,
             Self::DeleteSheet { .. } => EditOperationKind::DeleteSheet,
             Self::SetCellFillColor { .. } => EditOperationKind::SetCellFillColor,
             Self::CopyRange { .. } => EditOperationKind::CopyRange,
@@ -397,6 +415,26 @@ impl EditOperation {
             Self::CreateSheetAt { name, .. } => {
                 if name.trim().is_empty() {
                     bail!("worksheet name must not be empty");
+                }
+            }
+            Self::SetFreezePanes { sheet, cell } => {
+                if sheet.trim().is_empty() {
+                    bail!("freeze-panes update requires a sheet name");
+                }
+                if let Some(cell) = cell {
+                    if !valid_a1_cell(cell) {
+                        bail!("freeze panes requires a valid A1 cell address");
+                    }
+                }
+            }
+            Self::SetAutoFilter { sheet, range } => {
+                if sheet.trim().is_empty() {
+                    bail!("AutoFilter update requires a sheet name");
+                }
+                if let Some(range) = range {
+                    if !valid_a1_range(range) {
+                        bail!("AutoFilter requires a valid A1 cell or range reference");
+                    }
                 }
             }
             Self::SetCellFillColor { sheet, cell, argb } => {
@@ -527,6 +565,35 @@ impl EditOperation {
         }
         Ok(())
     }
+}
+
+fn valid_a1_cell(value: &str) -> bool {
+    let value = value.trim().replace('$', "");
+    let split = value.find(|character: char| character.is_ascii_digit());
+    let Some(split) = split else { return false };
+    let (column, row) = value.split_at(split);
+    if column.is_empty() || row.is_empty() || !column.bytes().all(|byte| byte.is_ascii_alphabetic())
+    {
+        return false;
+    }
+    let column = column.bytes().fold(Some(0u32), |value, byte| {
+        value
+            .and_then(|value| value.checked_mul(26))
+            .and_then(|value| value.checked_add(byte.to_ascii_uppercase() as u32 - b'A' as u32 + 1))
+    });
+    let row = row.parse::<u32>().ok();
+    matches!((column, row), (Some(column), Some(row)) if (1..=16_384).contains(&column) && (1..=1_048_576).contains(&row))
+}
+
+fn valid_a1_range(value: &str) -> bool {
+    let mut parts = value.split(':');
+    let Some(first) = parts.next() else {
+        return false;
+    };
+    let Some(last) = parts.next() else {
+        return valid_a1_cell(first);
+    };
+    parts.next().is_none() && valid_a1_cell(first) && valid_a1_cell(last)
 }
 
 fn source_range_starts_at_a1(source_range: &str) -> bool {
@@ -1380,6 +1447,34 @@ mod tests {
             cell: "A1".to_owned(),
             value: CellValue::Text("new value".to_owned()),
         }
+    }
+
+    #[test]
+    fn sheet_layout_operations_validate_a1_references() {
+        assert!(EditOperation::SetFreezePanes {
+            sheet: "核查表校验结果".to_owned(),
+            cell: Some("A2".to_owned()),
+        }
+        .validate()
+        .is_ok());
+        assert!(EditOperation::SetAutoFilter {
+            sheet: "核查表校验结果".to_owned(),
+            range: Some("A1:M42".to_owned()),
+        }
+        .validate()
+        .is_ok());
+        assert!(EditOperation::SetFreezePanes {
+            sheet: "Data".to_owned(),
+            cell: Some("A0".to_owned()),
+        }
+        .validate()
+        .is_err());
+        assert!(EditOperation::SetAutoFilter {
+            sheet: "Data".to_owned(),
+            range: Some("A1:M0".to_owned()),
+        }
+        .validate()
+        .is_err());
     }
 
     fn capability(

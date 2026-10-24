@@ -1,0 +1,31 @@
+日期：2026-10-24
+
+变更：
+- crates/excel-editor/src/plan.rs：ExcelEditPlan 新增 `SetFreezePanes` 与 `SetAutoFilter` 操作及 A1 引用校验；新增对应能力/保留项标识。
+- crates/excel-editor/python/openpyxl_worker.py：支持 `CreateSheetAt`、冻结窗格设置/清除、AutoFilter 设置/清除，并在保存后由 worker 读回验证。
+- crates/excel-editor/src/openpyxl_backend.rs：将上述操作加入 openpyxl 候选能力；Rust 独立解析输出 OOXML，验证创建位置、冻结窗格与筛选范围，并支持未修改工作表的相关元数据保真校验。
+- crates/excel-editor/src/workbook_profile.rs：检测工作簿中的冻结窗格和 AutoFilter 对象，供能力路由匹配。
+- crates/excel-editor/src/umya_backend.rs：对当前未实现的冻结窗格/AutoFilter 操作显式拒绝，避免误执行。
+- crates/excel-editor/tests/openpyxl_worker.rs、crates/excel-editor/tests/python/test_openpyxl_worker.py：扩展批量 worker 测试，覆盖零基工作表插入、A2 冻结窗格与 A1:M2 AutoFilter。
+- crates/excel-editor/src/plan.rs：新增 A1 引用输入校验测试。
+
+目的：使 Audit S1-F01 历史表回写契约可由统一 ExcelEditPlan 表达，并能通过隔离 openpyxl worker 批量执行和独立 Rust 输出校验。该共享能力不自动创建生产 Passed capability，也不改变任何产品的默认引擎路由。
+
+测试：
+- `cargo fmt -p excel-editor`（Ubuntu/WSL2）：通过。
+- `cargo test -p excel-editor --locked`（Ubuntu/WSL2）：12 项单元测试、CreateSheetAt 1 项、ImportRange 1 项通过；openpyxl runtime 专项默认忽略。
+- `.test-openpyxl-venv/bin/python -I crates/excel-editor/tests/python/test_openpyxl_worker.py`（Ubuntu/WSL2）：4 项 Python worker 测试通过。
+- `RUST_WORKSPACE_OPENPYXL_PYTHON=/mnt/c/Users/AZI/Desktop/VibeCode/1.rust-workspace/.test-openpyxl-venv/bin/python cargo test -p excel-editor --locked --test openpyxl_worker rust_modifier_invokes_one_batch_worker_and_preserves_source -- --ignored --nocapture`：Rust → openpyxl worker → Rust validator 集成测试通过，确认单工作簿批处理、工作表顺序、冻结窗格、AutoFilter 和源文件未修改。
+- `git diff --check`：通过。
+
+未验证/未执行：
+- Audit S1-F01 历史工作簿真实样本及产品 capability 验收尚未执行；Audit 需在开发分支消费该共享提交后完成自己的业务对拍。
+- Windows 原生 openpyxl runtime、麒麟 V10、统信 UOS V20、glibc 2.28/deb 均未验证。
+- 本提交未对 umya 后端实现这些操作；该后端对这两类操作明确拒绝。
+
+已知限制：
+- AutoFilter 当前只设置或清除工作表 `autoFilter@ref`，不创建/修改筛选条件、排序状态或筛选按钮配置。
+- 冻结窗格只支持以 A1 单元格地址表达首个未冻结格或清除，不暴露活动窗格/选择状态编辑。
+- `CreateSheetAt` 可在 openpyxl worker 中执行，但仍需对应完整操作批次与对象特征的能力登记和验收后才能用于生产路由。
+
+回滚：回滚本记录与上述 ExcelEditPlan、openpyxl worker、Rust validator、工作簿特征扫描和测试变更；不回滚其他业务或并行分支文件。
