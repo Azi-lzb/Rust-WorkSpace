@@ -1,0 +1,20 @@
+日期：2026-10-24
+
+修改范围
+- crates/excel-reader/src/lib.rs：新增 WorkbookComment { text, author } 和 read_ooxml_comments(path)，按工作表名、A1 坐标返回传统 OOXML 批注记录；作者通过 comments.xml 的 authorId 解析。既有文本批注读取结果及 JSON 结构不变。
+- 新增 OOXML fixture 测试覆盖富文本拼接、作者解析、空作者和无效 authorId；非 OOXML 格式明确拒绝。
+
+目的
+- 为 Audit 的真实模板兼容性对拍提供批注文本与作者元数据，支持按源 Python 行为精确生成批注修改操作。该 API 只提供 Excel 元数据原语，不改变生产引擎路由或任何业务能力状态。
+
+验证
+- cargo test -p excel-reader：通过（12 个单元测试及现有集成/文档测试，合计 14 项）。
+- python -m unittest crates.excel-editor.tests.python.test_openpyxl_worker：6 项通过；本次未修改 worker。
+- git diff --check：通过。
+
+未执行/限制
+- 未运行完整 workspace 测试、真实 Audit 模板对拍或目标 Linux 验证。
+- OOXML 注释 API 限传统 comments.xml；不声称支持 threaded comments。作者为空字符串可从 OOXML 原样读出，但 openpyxl 保存该作者的实测行为无法无损往返，不能据此登记 worker 能力。
+
+回滚
+- 删除新增 API、元数据解析和对应测试即可回滚；不涉及数据格式或生产路由变更。
