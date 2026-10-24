@@ -1,0 +1,29 @@
+时间：2026-10-25 03:26:15 +08:00
+执行者：Codex Audit 开发 Agent
+修改前 commit：eb50796bee99ffa6ae9ede1976208aa0fb4b3c3c（已含 main 的 DefinedNames 修复）
+修改后 commit：见本记录所在 Audit 提交。
+WIP 情况：共享修复 cherry-pick 前 audit-dev 工作区干净；测试后仅有本次报告、清单和记录待提交。
+补充诊断时间：2026-10-25 03:37:01 +08:00
+
+目的：按 main 的指示，在安全同步 DefinedNames scope 修复后，对既有 S1 历史簿编辑候选仅复验一次；记录新失败阶段和计数，不改能力状态或生产路由。
+
+修改文件：
+- audit-core/probe/reports/s1_history_defined_names_scope_retry_windows_native_20261025.json：新增脱敏候选结果。
+- audit-core/MIGRATION_INVENTORY.md：仅在 S1-F01 行追加本次 validator 结果。
+- audit-core/GPT修改记录/20261025_032615_S1历史簿DefinedNames语义修复后候选复验.txt：本记录。
+
+测试与结果：
+- main 共享提交 `6924e4b` 安全 cherry-pick 为 Audit 提交 `eb50796`，仅涉及 `crates/excel-editor/src/openpyxl_backend.rs` 与 main 的共享修改记录；推送至 `origin/audit-dev` 后远端与本地一致。
+- Windows 原生 `cargo test --offline --locked -p excel-editor --lib defined_name -j 1 --quiet`：4 个 DefinedNames scope 测试通过。
+- Windows 原生 `cargo test --offline --locked -p excel-editor --lib explicitly_requested_print_area -j 1 --quiet`：Print_Area 读回测试通过。
+- 创建临时隔离 Windows 测试 venv，Python 3.12.10、openpyxl 3.1.5、et-xmlfile 2.0.0；`python -I` 隔离导入检查通过。此为候选测试 runtime，不是产品或 deb runtime。
+- 对一个含受管历史页的真实两工作表副本运行显式 ignored 探针两次（第二次为 main 批准的唯一一次受控 metadata-only 诊断）：worker apply 均成功；Rust 写后 DefinedNames 校验均拒绝，错误为 `missing=1, added_or_changed=2`。探针各通过安全断言，原样本与临时输入均未变，候选输出均由测试清理。
+- 诊断仅抽取 source/candidate 的 workbook.xml sheet 顺序及 definedName 的名称、localSheetId、归属表和公式文本。临时 Audit 测试钩子在第二次测试后已移除（`audit-core/src/s1_history.rs` 无工作树差异）。诊断 JSON 仅存于 Temp 供 main 审阅，不进入仓库；待 main 确认读取后删除。
+
+未执行项：未保留输出，未做 Python/Rust 输出工作簿对拍；未运行公式复制/重算、Linux 或 deb 验收。raw definedName 明细未进入聊天或仓库，当前未据此下结论；不再重跑候选。
+
+已知问题：DefinedNames scope 归一修复后，真实候选仍有 1 条名称缺失和 2 条名称新增/变化；具体名称和公式只在临时 JSON 中供 main 审阅，尚未收到诊断结论。S1 历史簿写回候选和 S1-F01 整体继续保持 Unverified，生产 capability 未变。
+
+删除清单：无。
+回滚提示：本轮未保留业务代码改动；回滚只需撤销 MIGRATION_INVENTORY.md 对应追加并删除新增报告与本记录。临时测试候选已由测试删除，源样本未变。诊断 JSON 待 main 确认读取后删除。
+【组件版本】：不升级。

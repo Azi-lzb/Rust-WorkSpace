@@ -1,0 +1,66 @@
+{
+  "schema_version": 1,
+  "suite": "audit.s1_history_openpyxl_candidate_defined_names_scope_retry_windows_native",
+  "status": "candidate_rejected",
+  "scope": {
+    "business_area": "S1-F01 history workbook edit candidate",
+    "sample_period": "2026-07-31",
+    "sample_workbooks": 1,
+    "existing_managed_history_sheet": true,
+    "workbook_sheet_count": 2,
+    "raw_paths_or_names_persisted": false,
+    "raw_workbook_values_persisted": false
+  },
+  "shared_fix": {
+    "main_commit": "6924e4b85dd2e1c09881431e8c8c67dc947bad57",
+    "audit_commit": "eb50796bee99ffa6ae9ede1976208aa0fb4b3c3c",
+    "change": "Defined names are compared by worksheet scope and full name XML; localSheetId is resolved through each workbook sheet order. Deleted-sheet local names require a scoped drop allowance."
+  },
+  "execution": {
+    "platform": "Windows x86_64",
+    "rust_target": "x86_64-pc-windows-msvc",
+    "engine_candidate": "openpyxl_worker",
+    "runtime_kind": "temporary isolated Windows test venv; not a product or deb runtime",
+    "python": "3.12.10",
+    "openpyxl": "3.1.5",
+    "et_xmlfile": "2.0.0",
+    "isolated_mode_import_verified": true
+  },
+  "candidate": {
+    "post_fix_candidate_probe_runs": 2,
+    "metadata_diagnostic_runs": 1,
+    "worker_apply_status": "passed",
+    "rust_post_write_validator_status": "rejected",
+    "rejection_stage": "DefinedNames preservation check after worksheet-scope normalization",
+    "reason": "openpyxl changed workbook defined names after worksheet-scope normalization; missing=1, added_or_changed=2",
+    "missing_defined_name_count": 1,
+    "added_or_changed_defined_name_count": 2,
+    "output_existed_before_test_cleanup": true,
+    "output_retained": false,
+    "python_rust_output_comparison_performed": false,
+    "source_unchanged": true,
+    "temporary_input_unchanged": true
+  },
+  "metadata_diagnostic": {
+    "performed": true,
+    "scope": "workbook.xml sheet order and each definedName name, localSheetId, resolved owner sheet, and formula text",
+    "stored_outside_repository_for_main_review": true,
+    "raw_entries_in_repository_or_report": false
+  },
+  "tests": {
+    "defined_name_scope_tests_passed": 4,
+    "print_area_readback_tests_passed": 1,
+    "real_candidate_probe_tests_passed": 1,
+    "real_candidate_business_validation_passed": false
+  },
+  "routing": {
+    "capability_status": "Unverified",
+    "production_route_changed": false
+  },
+  "limitations": [
+    "Both failed candidate outputs were removed by the test. A metadata-only diagnostic was created outside the repository for main review; raw entries and any per-name conclusion are omitted from this report.",
+    "The worker candidate was not compared with a Python-generated history workbook because Rust preservation validation rejected it first.",
+    "No Linux compatibility or deb runtime validation was performed.",
+    "S1-F01 overall remains unverified."
+  ]
+}
