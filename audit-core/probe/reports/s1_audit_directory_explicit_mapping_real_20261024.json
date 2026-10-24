@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "suite": "audit.s1_audit_directory_explicit_mapping_real",
+  "status": "passed",
+  "sample_scope": {
+    "period": "2026-07",
+    "source_workbooks": 1,
+    "formula_result_source": "saved Python audit copy from the same batch",
+    "mapping_source": "explicit same-batch Audit mapping workbook",
+    "template_selection": "explicit S1 personal-loan template",
+    "formula_recalculation": "not performed",
+    "history_workbook_provided": false
+  },
+  "python": {
+    "engine": "Open-Data-Audit native Python handlers",
+    "formula_issues": 2,
+    "conditional_issues": 0,
+    "conditional_evaluated_cells": 0,
+    "merged_issues": 2
+  },
+  "rust": {
+    "engines": [
+      "calamine",
+      "calamine+namespace_aware_ooxml",
+      "rust_s1_issue_chain+rust_s1_history",
+      "rust_xlsxwriter 0.101.0"
+    ],
+    "formula_issues": 2,
+    "conditional_issues": 0,
+    "merged_issues": 2,
+    "result_workbook_rows": 2,
+    "result_workbook_hyperlinks": 2,
+    "result_workbook_write_elapsed_ms": 59,
+    "template_selection_matches_python": true
+  },
+  "comparison": {
+    "issue_mismatch_count": 0,
+    "result_workbook_mismatch_count": 0,
+    "all_inputs_unchanged": true,
+    "raw_issue_values_or_paths_persisted": false
+  },
+  "limits": [
+    "The explicit mapping workbook and this single sample are the only mapping/template scope covered by this report.",
+    "The formula input was an existing Python audit copy; Rust formula copying and recalculation were not exercised.",
+    "No history workbook was supplied; existing history workbook writeback is not covered.",
+    "This Windows native result does not validate Linux, glibc 2.28, or deb delivery."
+  ]
+}

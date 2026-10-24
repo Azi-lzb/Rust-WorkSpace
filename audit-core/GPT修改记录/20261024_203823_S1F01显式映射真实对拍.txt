@@ -1,0 +1,37 @@
+时间：2026-10-24 20:38:23 +08:00
+执行者：Codex Audit migration agent
+修改前 commit：83d0c5f
+修改后 commit：待本地提交
+WIP：既存未跟踪 `audit-core/examples/` 保留；没有纳入本次改动。
+
+## 目的
+
+用用户提供的 2026-07-31 S1 同批样本，验证 `s1-audit-directory --mapping-config` 的显式 Audit 映射工作簿路径及当前 Rust 审核链。该次对拍不覆盖 Rust 公式复制或重算。
+
+## 修改文件
+
+- `audit-core/probe/reports/s1_audit_directory_explicit_mapping_real_20261024.json`：保存无用户路径/审核值的汇总对拍报告。
+- `audit-core/MIGRATION_INVENTORY.md`：登记此真实显式映射配置切片，S1-F01 整体仍未验证。
+- 本记录。
+
+## 行为与边界
+
+- 显式映射配置来自与所选源文件同批的 Audit 审核配置工作簿；模板显式选择。源文件、已有 Python 审核副本、模板和配置均只读，结果 XLSX 写到 F: 临时目录。
+- 比较脚本调用 Windows 原生 `open-data-audit.exe`；Python 仅作为测试对拍基线。实际 Rust 引擎为 Calamine、namespace-aware OOXML、S1 issue/history 流程和 `rust_xlsxwriter 0.101.0`。
+- 未执行 Rust 公式复制/重算或既有历史工作簿写回；无用户 Issue 值或路径写入报告。
+- 【组件版本】不升级；保持 `audit-core` workspace crate 版本。
+
+## 测试证据
+
+- Windows 原生 `cargo build --offline --locked -p audit-core --bin open-data-audit -j 1 --quiet`：成功。
+- `audit-core/tests/compare/compare_s1_audit_directory.py` 对拍：同批 1 个源工作簿，Python/Rust 均得到 2 条公式 Issue、0 条条件格式 Issue、2 条合并 Issue；Issue 与结果工作簿总差异 0，结果表 2 行/2 条链接，所选模板一致，所有输入未变。
+- 对拍报告经 JSON 读回验证 `status=passed`；`git diff --check` 通过。
+
+## 未完成项与已知问题
+
+- 样本只验证一份显式映射工作簿与一个 S1 输入；公式结果来自已有 Python 审核副本，未验证 Rust 公式复制/重算、真实历史输入写回、其他配置模板、Windows GUI、Linux、麒麟/UOS 或 deb。
+- S1-F01 仍未整体验收。
+
+## 删除与回滚
+
+- 无删除项、无用户业务数据写入或提交。回滚本次本地提交时使用 `git revert <commit>`。
