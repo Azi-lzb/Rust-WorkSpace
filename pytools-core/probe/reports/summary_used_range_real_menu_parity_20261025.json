@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
-  "suite": "pytools.summary_used_range_real_menu_manual_path_parity",
+  "suite": "pytools.summary_used_range_real_menu_input_parity",
   "date": "2026-10-25",
-  "status": "passed_python_rust_real_menu_parity",
+  "status": "passed_python_rust_real_menu_input_parity",
   "data_origin": "read-only XLSX assets in the original PyTools project",
   "environment": {
     "platform": "Windows x86_64",
@@ -38,13 +38,65 @@
     "reader_engine": "calamine",
     "writer_engine": "rust_xlsxwriter"
   },
+  "native_dialog_run": {
+    "date": "2026-10-25",
+    "environment": {
+      "platform": "Windows x86_64",
+      "rust_target": "x86_64-pc-windows-msvc",
+      "rust_toolchain": "1.99.1",
+      "pytools_branch": "pytools-dev",
+      "pytools_commit": "0500b20"
+    },
+    "entry_route": "pytools menu -> 6 -> 1 -> Win32 GetOpenFileNameW multi-select",
+    "baseline": "PyCode/core/summary_321_322.py::run_summary_by_usedrange",
+    "input": {
+      "format": "xlsx",
+      "selection_method": "native Windows Open dialog multi-select",
+      "sample_count": 2,
+      "summary_rows": 1167,
+      "output_dimensions_including_header": {
+        "rows": 1168,
+        "columns": 260
+      }
+    },
+    "comparison": {
+      "workbook_projection": "exact",
+      "fields": [
+        "sheet names and dimensions",
+        "row values and cell types",
+        "non-empty cell number format, bold, and fill style",
+        "freeze panes and header bold state",
+        "merged ranges, formula text, and defined names",
+        "print area, page setup, margins, and centering"
+      ],
+      "assertion": "pytools-core/probe/compare_summary_tools.py::assert_equivalent",
+      "different_fields": []
+    },
+    "execution": {
+      "status": "succeeded",
+      "saved_history_event_count": 16,
+      "history_elapsed_ms": 1094,
+      "completed_files": 2,
+      "output_files": 1,
+      "actual_engines": [
+        "calamine",
+        "excel-reader::read_xlsx_worksheet_extents",
+        "rust_xlsxwriter"
+      ]
+    },
+    "safety": {
+      "source_unchanged": true,
+      "outputs_temporary_only": true,
+      "report_contains_source_filenames_or_cell_values": false
+    }
+  },
   "safety": {
     "source_size_and_mtime_unchanged": true,
     "outputs_temporary_only": true,
     "report_contains_source_filenames_or_cell_values": false
   },
   "limitations": [
-    "This run exercised the manual path fallback, not the Win32 file dialog; the desktop was locked.",
+    "The original manual-path run was performed while the desktop was locked; a separate native-dialog multi-select run is recorded in native_dialog_run.",
     "The result covers these two XLSX samples only and does not extend acceptance to other formats or sample sets.",
     "The original business VBA-bearing XLSM and 麒麟 V10/UOS V20 offline deb acceptance remain unverified."
   ]
