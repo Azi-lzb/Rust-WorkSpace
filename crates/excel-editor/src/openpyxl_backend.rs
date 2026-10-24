@@ -1086,6 +1086,7 @@ fn validate_preserved_defined_names(
 ) -> Result<()> {
     let (retained_sheets, deleted_sheets) =
         planned_sheet_provenance(&source.sheet_order, &plan.operations)?;
+    let retained_output_sheets: BTreeSet<String> = retained_sheets.values().cloned().collect();
     let overridden_print_areas: BTreeSet<String> = plan
         .operations
         .iter()
@@ -1095,6 +1096,20 @@ fn validate_preserved_defined_names(
             }
             _ => None,
         })
+        .collect();
+    let explicit_auto_filters: BTreeMap<String, Option<String>> = plan
+        .operations
+        .iter()
+        .filter_map(|operation| match operation {
+            EditOperation::SetAutoFilter { sheet, range } => {
+                Some((final_sheet_name(plan, sheet), range.clone()))
+            }
+            _ => None,
+        })
+        .collect();
+    let mut required_filter_database_counts: BTreeMap<String, usize> = explicit_auto_filters
+        .iter()
+        .map(|(sheet, range)| (sheet.clone(), usize::from(range.is_some())))
         .collect();
 
     let mut expected = Vec::with_capacity(source.defined_names.len());
@@ -1110,6 +1125,25 @@ fn validate_preserved_defined_names(
                 // The requested print area is checked independently against
                 // the resulting workbook, while all other names stay strict.
                 continue;
+            }
+            let explicit_filter_update = explicit_auto_filters.contains_key(final_scope);
+            let preserved_filter_scope =
+                plan.preserve.contains(&PreservationRequirement::AutoFilter)
+                    && retained_output_sheets.contains(final_scope);
+            if is_filter_database_name(&defined_name.element) {
+                if explicit_filter_update {
+                    // The requested AutoFilter range is independently checked
+                    // against the saved worksheet and its generated name.
+                    continue;
+                }
+                if preserved_filter_scope
+                    && filter_database_matches_auto_filter(defined_name, source)
+                {
+                    *required_filter_database_counts
+                        .entry(final_scope.clone())
+                        .or_default() += 1;
+                    continue;
+                }
             }
             expected.push(CanonicalDefinedName {
                 scope: Some(final_scope.clone()),
@@ -1143,6 +1177,42 @@ fn validate_preserved_defined_names(
         })
         .cloned()
         .collect();
+    let mut actual_filter_database_counts: BTreeMap<String, usize> = BTreeMap::new();
+    actual.retain(|defined_name| {
+        let Some(scope) = &defined_name.scope else {
+            return true;
+        };
+        let validated_scope = explicit_auto_filters.contains_key(scope)
+            || (plan.preserve.contains(&PreservationRequirement::AutoFilter)
+                && retained_output_sheets.contains(scope));
+        if is_filter_database_name(&defined_name.element)
+            && validated_scope
+            && filter_database_matches_auto_filter(defined_name, output)
+        {
+            *actual_filter_database_counts
+                .entry(scope.clone())
+                .or_default() += 1;
+            false
+        } else {
+            true
+        }
+    });
+    for (scope, expected_count) in &required_filter_database_counts {
+        let actual_count = actual_filter_database_counts
+            .get(scope)
+            .copied()
+            .unwrap_or_default();
+        anyhow::ensure!(
+            actual_count == *expected_count,
+            "openpyxl changed the validated AutoFilter defined-name count; expected={expected_count}, actual={actual_count}"
+        );
+    }
+    for actual_count in actual_filter_database_counts.values() {
+        anyhow::ensure!(
+            *actual_count <= 1,
+            "openpyxl output contains duplicate AutoFilter defined names for a worksheet"
+        );
+    }
     expected.sort();
     actual.sort();
     let mut unmatched_output = actual;
@@ -1169,6 +1239,55 @@ fn is_print_area_name(element: &CanonicalXmlElement) -> bool {
     element.attributes.iter().any(|(namespace, name, value)| {
         namespace.is_empty() && name == "name" && value.eq_ignore_ascii_case("_xlnm.Print_Area")
     })
+}
+
+fn is_filter_database_name(element: &CanonicalXmlElement) -> bool {
+    element.attributes.iter().any(|(namespace, name, value)| {
+        namespace.is_empty()
+            && name == "name"
+            && value.eq_ignore_ascii_case("_xlnm._FilterDatabase")
+    })
+}
+
+fn filter_database_matches_auto_filter(
+    defined_name: &CanonicalDefinedName,
+    workbook: &WorkbookPreservationSnapshot,
+) -> bool {
+    let Some(scope) = defined_name.scope.as_deref() else {
+        return false;
+    };
+    let Some(auto_filter) = workbook
+        .auto_filters
+        .iter()
+        .find(|(sheet, _)| sheet == scope)
+        .and_then(|(_, filter)| filter.as_ref())
+    else {
+        return false;
+    };
+    let Some(auto_filter_range) = auto_filter
+        .attributes
+        .iter()
+        .find(|(namespace, name, _)| namespace.is_empty() && name == "ref")
+        .map(|(_, _, value)| value)
+    else {
+        return false;
+    };
+    let Some(formula) = defined_name.element.text.as_deref() else {
+        return false;
+    };
+    let Some((formula_sheet, formula_range)) = formula.split_once('!') else {
+        return false;
+    };
+    let formula_sheet = formula_sheet.trim().trim_start_matches('=');
+    let formula_sheet = if formula_sheet.starts_with('\'') && formula_sheet.ends_with('\'') {
+        formula_sheet[1..formula_sheet.len() - 1].replace("''", "'")
+    } else {
+        formula_sheet.to_owned()
+    };
+    !formula_sheet.contains('[')
+        && !formula_sheet.contains(']')
+        && formula_sheet.eq_ignore_ascii_case(scope)
+        && normalize_range(formula_range) == normalize_range(auto_filter_range)
 }
 
 fn planned_sheet_provenance(
@@ -3226,6 +3345,15 @@ mod tests {
         }
     }
 
+    fn auto_filter(range: &str) -> Option<CanonicalXmlElement> {
+        Some(CanonicalXmlElement {
+            name: format!("{SPREADSHEET_MAIN_NS}:autoFilter"),
+            attributes: vec![(String::new(), "ref".to_owned(), range.to_owned())],
+            text: None,
+            children: Vec::new(),
+        })
+    }
+
     #[test]
     fn defined_names_follow_sheet_scope_when_sheet_order_changes() -> Result<()> {
         let source_order = vec!["Before".to_owned(), "Managed".to_owned(), "Tail".to_owned()];
@@ -3416,6 +3544,75 @@ mod tests {
         );
 
         validate_preserved_defined_names(&source, &output, &plan)
+    }
+
+    #[test]
+    fn filter_database_names_are_checked_against_validated_auto_filter_ranges() -> Result<()> {
+        let source = WorkbookPreservationSnapshot {
+            sheet_order: vec!["Other".to_owned(), "History".to_owned()],
+            defined_names: vec![
+                defined_name(
+                    Some("Other"),
+                    "_xlnm._FilterDatabase",
+                    "'Other'!$A$1:$Q$2393",
+                ),
+                defined_name(
+                    Some("History"),
+                    "_xlnm._FilterDatabase",
+                    "'History'!$A$1:$L$10",
+                ),
+            ],
+            auto_filters: vec![
+                ("Other".to_owned(), auto_filter("A1:Q2393")),
+                ("History".to_owned(), auto_filter("A1:L10")),
+            ],
+            ..WorkbookPreservationSnapshot::default()
+        };
+        let output = WorkbookPreservationSnapshot {
+            sheet_order: vec!["History".to_owned(), "Other".to_owned()],
+            defined_names: vec![
+                defined_name(
+                    Some("History"),
+                    "_xlnm._FilterDatabase",
+                    "'History'!$A$1:$M$2",
+                ),
+                defined_name(Some("Other"), "_xlnm._FilterDatabase", "Other!A1:Q2393"),
+            ],
+            auto_filters: vec![
+                ("History".to_owned(), auto_filter("A1:M2")),
+                ("Other".to_owned(), auto_filter("A1:Q2393")),
+            ],
+            ..WorkbookPreservationSnapshot::default()
+        };
+        let mut plan = defined_name_plan(
+            vec![
+                EditOperation::DeleteSheet {
+                    name: "History".to_owned(),
+                },
+                EditOperation::CreateSheetAt {
+                    name: "History".to_owned(),
+                    index: 0,
+                },
+                EditOperation::SetAutoFilter {
+                    sheet: "History".to_owned(),
+                    range: Some("A1:M2".to_owned()),
+                },
+            ],
+            [(
+                "History".to_owned(),
+                [PreservationRequirement::DefinedNames].into(),
+            )]
+            .into_iter()
+            .collect(),
+        );
+        plan.preserve.insert(PreservationRequirement::AutoFilter);
+
+        validate_preserved_defined_names(&source, &output, &plan)?;
+
+        let mut damaged = output.clone();
+        damaged.defined_names[1].element.text = Some("Other!A1:Q2392".to_owned());
+        assert!(validate_preserved_defined_names(&source, &damaged, &plan).is_err());
+        Ok(())
     }
 
     #[test]
