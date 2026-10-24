@@ -1462,12 +1462,9 @@ fn validate_unmodified_styles(
             // loads/saves a workbook. Validate only border sides on the
             // merged range perimeter here; non-border style comes from the
             // anchor, which is checked independently above.
-            if let Some(equal) = merged_member_perimeter_borders_equal(
-                source_sheet,
-                &address,
-                source_cell.style(),
-                &actual,
-            ) {
+            if let Some(equal) =
+                merged_member_effective_borders_equal(source_sheet, output_sheet, &address)
+            {
                 anyhow::ensure!(
                     equal,
                     "Rust unmodified merged-cell border readback mismatch at {output_name}!{address}"
@@ -1483,16 +1480,15 @@ fn validate_unmodified_styles(
     Ok(())
 }
 
-fn merged_member_perimeter_borders_equal(
-    sheet: &umya_spreadsheet::Worksheet,
+fn merged_member_effective_borders_equal(
+    source_sheet: &umya_spreadsheet::Worksheet,
+    output_sheet: &umya_spreadsheet::Worksheet,
     address: &str,
-    expected_style: &umya_spreadsheet::Style,
-    actual_style: &umya_spreadsheet::Style,
 ) -> Option<bool> {
     let Ok((row, column)) = parse_cell(address) else {
         return None;
     };
-    let merged = sheet.merge_cells().iter().find_map(|merged| {
+    let merged = source_sheet.merge_cells().iter().find_map(|merged| {
         let Ok((start_row, start_column, end_row, end_column)) = parse_range(&merged.range())
         else {
             return None;
@@ -1505,13 +1501,37 @@ fn merged_member_perimeter_borders_equal(
             .then_some((start_row, start_column, end_row, end_column))
     })?;
 
-    let expected = expected_style.borders().cloned().unwrap_or_default();
-    let actual = actual_style.borders().cloned().unwrap_or_default();
+    let anchor_address = format!("{}{}", column_letters(merged.1), merged.0);
+    let bottom_right_address = format!("{}{}", column_letters(merged.3), merged.2);
+    let source_anchor = source_sheet
+        .cell(anchor_address.as_str())
+        .map(|cell| cell.style().clone())
+        .unwrap_or_default();
+    let output_anchor = output_sheet
+        .cell(anchor_address.as_str())
+        .map(|cell| cell.style().clone())
+        .unwrap_or_default();
+    let source_bottom_right = source_sheet
+        .cell(bottom_right_address.as_str())
+        .map(|cell| cell.style().clone())
+        .unwrap_or_default();
+    let output_bottom_right = output_sheet
+        .cell(bottom_right_address.as_str())
+        .map(|cell| cell.style().clone())
+        .unwrap_or_default();
+    let source_anchor = source_anchor.borders().cloned().unwrap_or_default();
+    let output_anchor = output_anchor.borders().cloned().unwrap_or_default();
+    let source_bottom_right = source_bottom_right.borders().cloned().unwrap_or_default();
+    let output_bottom_right = output_bottom_right.borders().cloned().unwrap_or_default();
+
+    // openpyxl builds merged-cell border semantics from the top-left anchor,
+    // then adds the bottom/right edges from the bottom-right cell. It does not
+    // preserve each interior MergedCell's independent raw border record.
     Some(
-        (row != merged.0 || expected.top() == actual.top())
-            && (row != merged.2 || expected.bottom() == actual.bottom())
-            && (column != merged.1 || expected.left() == actual.left())
-            && (column != merged.3 || expected.right() == actual.right()),
+        (row != merged.0 || source_anchor.top() == output_anchor.top())
+            && (column != merged.1 || source_anchor.left() == output_anchor.left())
+            && (row != merged.2 || source_bottom_right.bottom() == output_bottom_right.bottom())
+            && (column != merged.3 || source_bottom_right.right() == output_bottom_right.right()),
     )
 }
 
@@ -2528,39 +2548,68 @@ mod tests {
 
     #[test]
     fn merged_style_readback_treats_only_non_anchor_cells_as_normalized() {
-        let mut workbook = umya_spreadsheet::new_file();
-        let sheet = workbook.sheet_by_name_mut("Sheet1").unwrap();
-        sheet.add_merge_cells("A27:A55");
-
-        let mut expected = umya_spreadsheet::Style::default();
-        expected
+        let mut source = umya_spreadsheet::new_file();
+        let source_sheet = source.sheet_by_name_mut("Sheet1").unwrap();
+        source_sheet.add_merge_cells("A1:I1");
+        source_sheet
+            .cell_mut("A1")
+            .style_mut()
             .borders_mut()
             .top_mut()
             .set_style(umya_spreadsheet::BorderStyleValues::Thin);
-        let mut actual = expected.clone();
-        actual
+        source_sheet
+            .cell_mut("I1")
+            .style_mut()
+            .borders_mut()
+            .right_mut()
+            .set_style(umya_spreadsheet::BorderStyleValues::Thin);
+        source_sheet
+            .cell_mut("G1")
+            .style_mut()
             .borders_mut()
             .bottom_mut()
             .set_style(umya_spreadsheet::BorderStyleValues::Double);
 
-        // A43 is an interior merged cell: top/bottom differences are not
-        // visible perimeter changes and are normalized by openpyxl.
+        let mut output = umya_spreadsheet::new_file();
+        let output_sheet = output.sheet_by_name_mut("Sheet1").unwrap();
+        output_sheet.add_merge_cells("A1:I1");
+        output_sheet
+            .cell_mut("A1")
+            .style_mut()
+            .borders_mut()
+            .top_mut()
+            .set_style(umya_spreadsheet::BorderStyleValues::Thin);
+        output_sheet
+            .cell_mut("I1")
+            .style_mut()
+            .borders_mut()
+            .right_mut()
+            .set_style(umya_spreadsheet::BorderStyleValues::Thin);
+
+        // G1 inherits top/bottom from the anchor. Its own raw bottom border
+        // differs, but that interior record is normalized by openpyxl.
         assert_eq!(
-            merged_member_perimeter_borders_equal(sheet, "A43", &expected, &actual),
+            merged_member_effective_borders_equal(source_sheet, output_sheet, "G1"),
             Some(true)
         );
-        // A27 is the anchor and remains under the full style comparison.
+        // The anchor remains under the full style comparison.
         assert_eq!(
-            merged_member_perimeter_borders_equal(sheet, "A27", &expected, &actual),
+            merged_member_effective_borders_equal(source_sheet, output_sheet, "A1"),
             None
         );
-        // A55 is a perimeter cell: the bottom border must still be preserved.
+        // The right edge must still match the bottom-right cell's border.
+        output_sheet
+            .cell_mut("I1")
+            .style_mut()
+            .borders_mut()
+            .right_mut()
+            .set_style(umya_spreadsheet::BorderStyleValues::Double);
         assert_eq!(
-            merged_member_perimeter_borders_equal(sheet, "A55", &expected, &actual),
+            merged_member_effective_borders_equal(source_sheet, output_sheet, "I1"),
             Some(false)
         );
         assert_eq!(
-            merged_member_perimeter_borders_equal(sheet, "A56", &expected, &actual),
+            merged_member_effective_borders_equal(source_sheet, output_sheet, "J1"),
             None
         );
     }
