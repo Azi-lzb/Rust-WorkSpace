@@ -167,6 +167,7 @@ fn run_interactive_menu(arguments: Vec<String>) -> Result<()> {
     run_interactive_main_menu(
         &mut input,
         &mut output,
+        &config_path,
         &global,
         log_view,
         allow_native_dialog,
@@ -185,6 +186,7 @@ fn default_app_config_path() -> PathBuf {
 fn run_interactive_main_menu<R, W>(
     input: &mut R,
     output: &mut W,
+    config_path: &Path,
     global: &GlobalConfig,
     log_view: &str,
     allow_native_dialog: bool,
@@ -195,6 +197,7 @@ where
 {
     loop {
         writeln!(output, "======== PyTools 菜单 ========")?;
+        writeln!(output, "  1  时序工具（已接入 1、3、4、5）")?;
         writeln!(output, "  6  汇总工具")?;
         writeln!(output, "  0  退出")?;
         writeln!(output, "==============================")?;
@@ -203,6 +206,7 @@ where
             return Ok(());
         };
         match choice.as_str() {
+            "1" => run_interactive_timeline_menu(input, output, config_path, allow_native_dialog)?,
             "6" => {
                 run_interactive_summary_menu(input, output, global, log_view, allow_native_dialog)?
             }
@@ -210,7 +214,105 @@ where
                 writeln!(output, "再见。")?;
                 return Ok(());
             }
-            _ => writeln!(output, "仅接受 6 或 0")?,
+            _ => writeln!(output, "仅接受 1、6 或 0")?,
+        }
+    }
+}
+
+fn timeline_cli_arguments(config_path: &Path) -> Vec<String> {
+    vec![
+        "--config".to_owned(),
+        config_path.to_string_lossy().into_owned(),
+    ]
+}
+
+fn run_interactive_timeline_menu<R, W>(
+    input: &mut R,
+    output: &mut W,
+    config_path: &Path,
+    allow_native_dialog: bool,
+) -> Result<()>
+where
+    R: BufRead,
+    W: Write,
+{
+    loop {
+        writeln!(output, "------ 时序工具 ------")?;
+        writeln!(output, "  1  表头路径比对")?;
+        writeln!(output, "  3  宽表汇总（行头加后缀）")?;
+        writeln!(output, "  4  宽表汇总（行头不加后缀）")?;
+        writeln!(output, "  5  预校验")?;
+        writeln!(output, "  0  返回")?;
+        writeln!(output, "----------------------")?;
+        let Some(choice) = read_menu_choice(input, output, "子菜单选择> ")? else {
+            return Ok(());
+        };
+        match choice.as_str() {
+            "1" => {
+                let Some(template) = choose_workbooks(
+                    "选择表头路径比对模板",
+                    false,
+                    input,
+                    output,
+                    allow_native_dialog,
+                )?
+                .and_then(|paths| paths.into_iter().next()) else {
+                    writeln!(output, "[已取消]")?;
+                    return Ok(());
+                };
+                let Some(sources) = choose_workbooks(
+                    "选择表头路径比对源文件（可多选）",
+                    true,
+                    input,
+                    output,
+                    allow_native_dialog,
+                )?
+                else {
+                    writeln!(output, "[已取消]")?;
+                    return Ok(());
+                };
+                let mut arguments = timeline_cli_arguments(config_path);
+                arguments.push("--template".to_owned());
+                arguments.push(template.to_string_lossy().into_owned());
+                arguments.extend(
+                    sources
+                        .into_iter()
+                        .map(|path| path.to_string_lossy().into_owned()),
+                );
+                run_timeline_compare_cli(arguments)?;
+                return Ok(());
+            }
+            "3" | "4" => {
+                let Some(sources) = choose_workbooks(
+                    if choice == "3" {
+                        "选择行头加后缀宽表汇总源文件（可多选）"
+                    } else {
+                        "选择行头不加后缀宽表汇总源文件（可多选）"
+                    },
+                    true,
+                    input,
+                    output,
+                    allow_native_dialog,
+                )?
+                else {
+                    writeln!(output, "[已取消]")?;
+                    return Ok(());
+                };
+                let mut arguments = timeline_cli_arguments(config_path);
+                arguments.extend(
+                    sources
+                        .into_iter()
+                        .map(|path| path.to_string_lossy().into_owned()),
+                );
+                run_wide_summary_cli(arguments, choice == "3")?;
+                return Ok(());
+            }
+            "5" => {
+                run_timeline_precheck_cli(timeline_cli_arguments(config_path))?;
+                return Ok(());
+            }
+            "0" => return Ok(()),
+            _ => writeln!(output, "仅接受 1、3、4、5 或 0")?,
         }
     }
 }
@@ -2679,7 +2781,7 @@ fn print_usage() {
     eprintln!(
         "Usage:\n\
          pytools [menu] [--config <config.xlsx>] [--log-view user|developer|off]\n\
-         no command opens the migrated menu; currently available main category: 6 (summary)\n\
+         no command opens the migrated menu; available categories: 1 (timeline 1/3/4/5) and 6 (summary 1/2)\n\
          timeline-precheck --config <workbook.xlsx>\n\
          timeline-compare --config <workbook.xlsx> --template <workbook.xlsx> <source.xlsx>...\n\
          wide-summary --config <workbook.xlsx> <source.xlsx>...\n\

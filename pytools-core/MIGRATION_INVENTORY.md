@@ -472,3 +472,9 @@ Windows 原生测试：`cargo test --offline --locked -p pytools-core --lib comm
 在此前 HEAD a376a76 上，Windows 原生 target/debug/pytools.exe 已单独复验最大批次：4 份工作簿、188,365 行完整投影精确一致；63 条 developer 事件与保存历史匹配，输入前后 SHA-256 一致。随后在当前分支 HEAD 19c96fc，使用 Windows 原生真实 CLI 对全部 13 份工作簿分 4 批全量重跑，96 张工作表、203,580 行完整投影精确一致；值/类型、已填单元格样式、工作表及维度、冻结窗格/表头加粗、公式/合并/名称/页面属性通过。批次 developer 事件数为 26、14、27、63，均与保存历史匹配，源文件前后 SHA-256 相同。机器摘要位于 additional_current_head_windows_native_full_20261024；本结果记录正确性，不作 Windows/WSL 性能比较。
 
 机器结果见 probe/reports/summary_used_range_real_parity_20261024.json。此前独立 Windows 全量与 glibc 2.28 release 报告保留各自测量范围。原项目业务含 VBA 的 XLSM 样本、麒麟 V10/UOS V20、deb 与离线交付仍未验收；PT-6-1 整体尚未最终验收。
+
+### 2026-10-24 PT-1 时序交互菜单入口
+
+增量主菜单类别 1 已接入 1-1 表头路径比对、1-3/1-4 两种宽表汇总和 1-5 预校验，入口复用既有 Rust CLI 业务处理。Windows 原生 Rust CLI 的合成 PyCode/Rust 菜单对拍通过：1-1 五个所选文件中三个匹配，输出结构、值/类型及有效样式一致；1-3/1-4 工作簿投影与有效样式一致并生成目标追加计划，配置目标未改写；1-5 的有效、详细错误和缺必需列三种场景计数一致。tests/timeline_menu_cli.rs 1/1 通过。机器摘要见 probe/reports/timeline_menu_parity_20261024.json。
+
+证据仅覆盖合成 XLSX 和手工路径输入。真实业务样本、原生文件弹窗、目标追加生产 capability、结构化用户/开发者/off 日志、麒麟/UOS、glibc 2.28 和 deb 仍未验证。
