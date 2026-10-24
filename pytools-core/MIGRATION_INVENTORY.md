@@ -615,6 +615,8 @@ Windows 原生 Rust 验证：`cargo fmt --manifest-path pytools-core/Cargo.toml 
 
 本次只补充 PT-6-2 的 Windows 原生环境证据，没有修改业务代码。证据仍只覆盖合成输入；真实批注区域模板、Windows 原生文件弹窗手工操作、麒麟 V10/UOS V20、glibc 2.28 和离线 deb 未验证，PT-6-2 生产验收仍为未验证。
 
+补充真实拒绝路径：以原项目只读 `PyCode/config/config.xlsx`（含批注但不含 `行区域`/`列区域` 标记）分别运行 PyCode `run_summary_by_comment` 与 Rust `summary-comments` CLI；两端错误文本逐字一致，均以失败码 2 终止且未生成结果工作簿，输入簿大小/修改时间保持不变。Rust 提示已对齐 Python，并由 `summary_menu_cli` 集成测试覆盖。该证据只验证无有效区域标记时的拒绝行为；合法真实区域模板、PT-6-2 正向业务验收和目标平台仍未验证。
+
 ### 2026-10-25 PT-5-1/PT-5-2 配置工具交互菜单接入
 
 主菜单新增类别 5，并按只读 PyCode `main.py` 的 5-1/5-2 入口接入现有 Rust 配置能力。配置缺失或无法加载时仍可打开菜单；其他依赖配置的业务类别会提示先处理配置。5-1 在缺少配置时通过 Rust `initialize_new_config` 新建 11 张表；配置已存在时生成修复计划并保留原文件。只有显式提供匹配 capability/platform 才经 ExcelModifier 生成并校验候选，用户再输入 `y` 后才按原文件规划快照安全替换，保留备份。5-2 每次从磁盘读取，用户视图展示工作表维度、全局路径、启用规则/映射/提取任务摘要，开发者视图附原始配置结构及实际读取组件；打印阶段用时。没有已验收的生产修复 capability，因此菜单不默认修改现有配置。

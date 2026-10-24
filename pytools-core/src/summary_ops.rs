@@ -966,7 +966,7 @@ fn summarize_by_comments_inner(
             None,
             Some("template_rules_error"),
         );
-        anyhow::bail!("template has no supported comment-marked row/column regions");
+        anyhow::bail!("模板未识别到可用批注区域（需包含 行区域N/#N 与 列区域N/#N）。");
     }
     let mut data: BTreeMap<String, Vec<Vec<serde_json::Value>>> = BTreeMap::new();
     let mut headers_by_sheet = BTreeMap::new();

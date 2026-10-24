@@ -205,6 +205,40 @@ fn interactive_summary_menu_routes_comment_summary_with_template_and_sources() -
 }
 
 #[test]
+fn summary_comments_cli_matches_python_missing_region_error() -> Result<()> {
+    let root = TestDirectory::new()?;
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/summary_comments/merged_children_source.xlsx");
+    let output_dir = root.path().join("output");
+    let log_dir = root.path().join("logs");
+    let output = Command::new(env!("CARGO_BIN_EXE_pytools"))
+        .arg("summary-comments")
+        .arg("--template")
+        .arg(&fixture)
+        .arg("--output-dir")
+        .arg(&output_dir)
+        .arg("--log-dir")
+        .arg(&log_dir)
+        .arg("--log-view")
+        .arg("off")
+        .arg(&fixture)
+        .output()
+        .context("run PT-6-2 with a workbook lacking comment regions")?;
+
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("模板未识别到可用批注区域（需包含 行区域N/#N 与 列区域N/#N）。"),
+        "unexpected PT-6-2 error: {stderr}"
+    );
+    assert!(
+        !output_dir.exists() || fs::read_dir(&output_dir)?.next().is_none(),
+        "invalid comment template must not produce an output workbook"
+    );
+    Ok(())
+}
+
+#[test]
 fn interactive_menu_returns_failure_when_summary_input_is_corrupt() -> Result<()> {
     let root = TestDirectory::new()?;
     let config = create_app_config(root.path())?;
