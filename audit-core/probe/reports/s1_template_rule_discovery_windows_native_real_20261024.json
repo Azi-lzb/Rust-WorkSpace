@@ -1,0 +1,95 @@
+{
+  "schema_version": 1,
+  "suite": "audit.s1_template_rule_discovery_windows_real_parity",
+  "baseline": "Open-Data-Audit base_audit.native.openpyxl_workbook.read_template",
+  "status": "passed",
+  "sample": {
+    "template_workbook": "redacted real S1 template",
+    "mapping_config": "source defaults"
+  },
+  "environment": {
+    "python_version": null,
+    "rust_execution": "Windows native"
+  },
+  "python": {
+    "template_mode": "named_formula_ranges",
+    "rules_total": 1072,
+    "rules_enabled": 1072,
+    "formula_named_ranges": 4,
+    "copy_ranges": 4,
+    "structure_ranges": 8,
+    "extraction_ranges": 4,
+    "keyword_rules": 380,
+    "error_only_rules": 692,
+    "health": {
+      "passed": true,
+      "result_rules": 380,
+      "structure_ranges": 8,
+      "broken_reference_rules": 0
+    }
+  },
+  "rust": {
+    "engine": "calamine+namespace_aware_ooxml",
+    "template_mode": "named_formula_ranges",
+    "rules_total": 1072,
+    "rules_enabled": 1072,
+    "formula_named_ranges": 4,
+    "copy_ranges": 4,
+    "structure_ranges": 8,
+    "extraction_ranges": 4,
+    "keyword_rules": 380,
+    "error_only_rules": 692,
+    "health": {
+      "passed": true,
+      "result_rules": 380,
+      "structure_ranges": 8,
+      "broken_reference_rules": 0
+    }
+  },
+  "comparison": {
+    "mismatch_count": 0,
+    "template_definition_field_difference_counts": {
+      "structured": 0,
+      "rule_count": 0,
+      "rules.rule_id": 0,
+      "rules.enabled": 0,
+      "rules.report_code": 0,
+      "rules.sheet_name": 0,
+      "rules.formula_cell": 0,
+      "rules.target_cell": 0,
+      "rules.severity": 0,
+      "rules.message": 0,
+      "rules.copy_range": 0,
+      "rules.result_mode": 0,
+      "rules.value_from_result": 0,
+      "copy_ranges": 0,
+      "structure_ranges": 0,
+      "extraction_ranges": 0
+    },
+    "summary_difference_counts": {
+      "template_mode": 0,
+      "rules_total": 0,
+      "rules_enabled": 0,
+      "formula_named_ranges": 0,
+      "copy_ranges": 0,
+      "structure_ranges": 0,
+      "extraction_ranges": 0,
+      "keyword_rules": 0,
+      "error_only_rules": 0
+    },
+    "health_difference_counts": {
+      "passed": 0,
+      "enabled_rules": 0,
+      "result_rules": 0,
+      "structure_ranges": 0,
+      "broken_reference_rules": 0,
+      "items": 0
+    }
+  },
+  "verification": {
+    "template_unchanged": true,
+    "formula_recalculation": "not performed",
+    "raw_rule_definitions_or_formula_text_persisted": false,
+    "source_paths": "omitted"
+  }
+}

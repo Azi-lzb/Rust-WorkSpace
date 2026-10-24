@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "suite": "audit.s1_template_inspection_web_api_windows_real_smoke",
+  "status": "passed",
+  "sample": "redacted real S1 template from supplied batch configuration",
+  "environment": {
+    "platform": "Windows native",
+    "api_server": "open-data-audit serve",
+    "openpyxl_worker": "not invoked"
+  },
+  "entry": {
+    "calls": [
+      "get_state",
+      "choose_file(template)",
+      "inspect_template_formulas",
+      "get_state"
+    ],
+    "host": "127.0.0.1"
+  },
+  "result": {
+    "formula_count": 1072,
+    "formula_error_count": 0,
+    "named_range_group_count": 3,
+    "ordinary_log_entries": 2,
+    "developer_log_entries": 1,
+    "engine_logged": "calamine+namespace_aware_ooxml",
+    "step_and_timing_logged": true
+  },
+  "verification": {
+    "template_unchanged": true,
+    "formula_recalculation": "not performed",
+    "source_paths": "omitted"
+  }
+}

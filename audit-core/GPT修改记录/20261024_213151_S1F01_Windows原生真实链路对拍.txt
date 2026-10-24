@@ -1,0 +1,26 @@
+时间：2026-10-24 21:31:51 +08:00
+执行者：Codex（audit-dev）
+修改前 commit：4da18e1da16d4f46ef7507a7b05791cf5bf36824
+WIP：修改前工作区无内容差异；仅两份已跟踪 JSON 的文件时间戳待刷新，规范化对象与 HEAD 一致，已安全刷新索引统计信息。
+
+目的：补记 S1-F01 条件格式审核、模板规则发现及 Web API 在 Windows 原生环境的真实样本验证；不修改业务实现、配置或 DEVELOPMENT_GOAL.md。
+修改文件：
+- audit-core/probe/reports/s1_conditional_audit_windows_native_real_20261024.json
+- audit-core/probe/reports/s1_template_rule_discovery_windows_native_real_20261024.json
+- audit-core/probe/reports/s1_template_inspection_web_api_windows_real_20261024.json
+- audit-core/MIGRATION_INVENTORY.md
+- 本记录
+
+验证：
+- Windows 原生 cargo test --offline --locked -p audit-core s1_conditional -j 1：通过。
+- Windows 原生 cargo test --offline --locked -p audit-core --test s1_conditional_audit_batch_cli --test s1_conditional_audit_directory_cli --quiet -j 1：2 + 8 项通过，0 失败。
+- 真实条件格式目录 CLI 显式选择模板和单个源文件；Windows Python 3.12.10 与 Rust calamine+namespace_aware_ooxml 对拍：4 条规则、602 格、2 条 Issue，字段差异 0；输入与模板只读。
+- 真实模板公式规则对拍：1,072 条规则及定义/健康汇总差异 0；模板只读。
+- open-data-audit serve HTTP API get_state、choose_file(template)、inspect_template_formulas 实测：1,072 个公式、0 个公式错误、3 组命名区域；普通/开发日志均写出，实际引擎和耗时可见；模板 SHA-256 前后相同。
+- Python 3.12.10 仅为 Windows 对拍基线；未调用隔离 openpyxl worker。公式重算未执行，WSL 未参与本轮。
+
+影响：没有业务逻辑、配置、VBA 或组件版本变更；没有修改 Python 源项目，也未写入任何真实工作簿。DEVELOPMENT_GOAL.md 保持不变。
+未执行/已知限制：麒麟/UOS/Linux/deb 验收、全量批次及完整 S1-F01 未验证。公式复制与历史工作簿写回仍未进入生产；共享 OpenPyXL worker 对同名删除后重建工作表的最终态校验问题已由 Audit 报告 main 协调，main 当前共享代码仍待更新；Umya 候选不支持该计划所需的冻结窗格/筛选操作。不得绕过 ExcelModifier 的能力门控。
+删除清单：无。
+回滚：删除本次新增的三份 probe 报告和本记录，并还原 MIGRATION_INVENTORY.md 中对应 Windows 原生验证段落；无产品数据需要恢复。
+【组件版本】：不升级（仅验证证据与迁移状态记录）。

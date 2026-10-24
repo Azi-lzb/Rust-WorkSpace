@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "suite": "audit.s1_conditional_directory_windows_real_parity",
+  "baseline": "Open-Data-Audit ConditionalFormatService(PYTHON)",
+  "status": "passed",
+  "sample": "redacted real S1 workbook from supplied 2026-07-31 batch",
+  "entry": "open-data-audit conditional-audit-directory with explicit template and one selected source workbook",
+  "python": {
+    "engine": "PythonConditionalRuleEvaluator + Direct OOXML reader",
+    "issue_count": 2,
+    "rules_total": 4,
+    "evaluated_cells": 602,
+    "total_time_s": 0.28099999998812564
+  },
+  "rust": {
+    "engine": "calamine+namespace_aware_ooxml",
+    "issue_count": 2,
+    "rules_total": 4,
+    "evaluated_cells": 602,
+    "read_time_ms": 236,
+    "evaluation_time_ms": 9,
+    "issue_build_time_ms": 0,
+    "total_time_ms": 832,
+    "area_source": "template_defined_names",
+    "scan_areas": 4,
+    "structure_areas": 8
+  },
+  "comparison": {
+    "mismatch_count": 0,
+    "field_difference_counts": {},
+    "template_unchanged": true,
+    "source_unchanged": true
+  },
+  "verification": {
+    "python_version": "3.12.10",
+    "rust_execution": "Windows native",
+    "mapping_config": "built-in defaults",
+    "formula_recalculation": "not performed",
+    "source_paths": "omitted"
+  }
+}
