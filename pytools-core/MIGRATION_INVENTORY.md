@@ -4,7 +4,7 @@
 
 - 只读源项目：C:\Users\AZI\Desktop\VibeCode\4.pytools-main
 - 主入口基线：PyCode/main.py 的用户菜单和 dispatch 映射；继续追踪 PyCode/core 中的规则、配置、文件处理与工作簿调用链。
-- NoComPyTools 是同一产品目标的变体参考；共有和独有行为尚未逐项比较。PT-6-1 已对一份真实 XLSX 做 PyCode/NoCom/Rust 对照，确认 NoCom 与 PyCode 有输出差异；未确认的 NoCom 行为不并入 PyCode 生产基线，详见本清单末尾记录。
+- NoComPyTools 是同一产品目标的变体参考；独有行为先登记为待确认，不静默丢弃，也不生成第三个产品。PT-6-1 已对原项目 xlsx/ 下全部 70 份 XLSX 完成 PyCode/NoCom 对拍；差异仍按待确认处理，不并入 PyCode 生产基线，详见本清单末尾记录。
 - 状态统一使用保留、丢失、损坏、不适用、未验证；源代码入口和真实业务样本尚未对拍的功能一律不得标为完成。
 - 工作表提取以不带批注普通版为准；COM 批注版不迁移。Python 运行模式切换和 PDF 导出不迁移。
 
@@ -416,7 +416,7 @@ Windows GNU debug CLI 在 PowerShell 与只读 PyCode `PyCode.core.summary_321_3
 
 在 Windows Python 3.12.10 中分别使用 PyCode 项目虚拟环境（openpyxl 3.1.5）和 NoComPyTools 项目虚拟环境（openpyxl 3.1.5、python-calamine 0.9.0），与当前 Windows GNU `summary-used-range` CLI 对同一份原项目真实 XLSX 对拍。PyCode/Rust 完整投影精确一致，均输出 7,462 行；NoComPyTools 输出维度相同，但值、类型、样式和行投影存在差异：1,213 个单元格，其中 1,212 个 PyCode 错误类型单元格在 NoCom 输出中为空，另有 1 个空值变为字符串。Rust 实际使用 Calamine 与 rust_xlsxwriter，并由既有 OOXML Patch 保留 1,212 个错误单元格；源文件大小和修改时间未变，报告不含源文件名或单元格值。
 
-该结果只确认此真实样本上的变体差异；不据此判定 NoComPyTools 独有行为属于最终产品范围，也不改变已确认的 PyCode 基线。其余样本和格式差异仍待逐项比较。机器结果见 `probe/reports/summary_used_range_real_parity_20261024.json` 的 `nocom_pytools_pt61_variant_comparison`。
+该结果只确认此真实样本上的变体差异；不据此判定 NoComPyTools 独有行为属于最终产品范围，也不改变已确认的 PyCode 基线。原项目 xlsx/ 下其余 XLSX 的同一汇总入口变体对拍见下节；其他格式和 NoCom 独有行为仍待逐项确认。机器结果见 `probe/reports/summary_used_range_real_parity_20261024.json` 的 `nocom_pytools_pt61_variant_comparison`。
 
 
 ### 2026-10-24 PT-6-1 扩展 Excel 错误值 token 对拍
@@ -426,3 +426,9 @@ Windows GNU debug CLI 在 PowerShell 与只读 PyCode `PyCode.core.summary_321_3
 Rust 集成回归 `summary_used_range_cli_preserves_common_and_textual_error_token_matrix` 检查真实 CLI 报告、输入 XML 错误 token、输出类型与值以及日志隐私。Windows Python/Rust 对拍机器报告为 `probe/reports/summary_used_range_error_token_matrix_20261024.json`。验证：Windows Python 3.12.10 对拍通过；WSL `cargo fmt -p pytools-core -- --check` 通过；WSL `cargo test --offline --locked -p pytools-core --test summary_used_range_error -q` 为 5/5 通过。
 
 本证据仅覆盖列出的 XLSX 字面 token，不推断其他 token、XLS/XLSB、麒麟/UOS、deb 或生产默认路由；PT-6-1 最终验收状态不变。无真实业务数据或凭据进入夹具和报告。
+
+### 2026-10-24 PT-6-1 PyCode/NoComPyTools 全量 XLSX 变体对拍
+
+对原项目 xlsx/ 递归发现的 70 份 XLSX，分别运行原 PyCode 与 NoComPyTools 的按使用区域汇总入口，并按最多 3 份工作簿分为 24 批比较完整输出投影。24/24 批有结果，其中 12 批精确一致、12 批存在差异；一致批次包含 34 份输入，差异批次包含其余 36 份输入（比较粒度为批次，不能归因到单个工作簿）。两边失败输入和缺失输出均为 0。汇总行数（含标题行）分别为 1,260,077 和 1,258,014，PyCode 多 2,063 行。差异涉及工作表维度，以及汇总表的行、样式、类型、值和表头加粗属性。
+
+比较运行于 Windows Python 3.12.10；两边 openpyxl 为 3.1.5，NoCom 环境的 python-calamine 为 0.9.0。源工作簿大小和修改时间均未改变。按输出坐标计数的单元格差异可能受删除行后的坐标移动影响，不代表不同源单元格数。该对拍只比较两种 Python 变体，不新增 Rust 行为结论、不改变 PyCode 生产基线；NoCom 独有行为仍标为待确认。机器结果见 `probe/reports/summary_used_range_nocom_assets_20261024.json`，不记录源文件名、单元格值、路径或哈希。
