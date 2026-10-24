@@ -1523,16 +1523,31 @@ fn merged_member_effective_borders_equal(
     let output_anchor = output_anchor.borders().cloned().unwrap_or_default();
     let source_bottom_right = source_bottom_right.borders().cloned().unwrap_or_default();
     let output_bottom_right = output_bottom_right.borders().cloned().unwrap_or_default();
+    let source_bottom = merged_border_side(source_anchor.bottom(), source_bottom_right.bottom());
+    let output_bottom = merged_border_side(output_anchor.bottom(), output_bottom_right.bottom());
+    let source_right = merged_border_side(source_anchor.right(), source_bottom_right.right());
+    let output_right = merged_border_side(output_anchor.right(), output_bottom_right.right());
 
     // openpyxl builds merged-cell border semantics from the top-left anchor,
-    // then adds the bottom/right edges from the bottom-right cell. It does not
-    // preserve each interior MergedCell's independent raw border record.
+    // then fills missing bottom/right edges from the bottom-right cell. An
+    // existing anchor side takes precedence over the bottom-right side.
     Some(
         (row != merged.0 || source_anchor.top() == output_anchor.top())
             && (column != merged.1 || source_anchor.left() == output_anchor.left())
-            && (row != merged.2 || source_bottom_right.bottom() == output_bottom_right.bottom())
-            && (column != merged.3 || source_bottom_right.right() == output_bottom_right.right()),
+            && (row != merged.2 || source_bottom == output_bottom)
+            && (column != merged.3 || source_right == output_right),
     )
+}
+
+fn merged_border_side<'a>(
+    anchor: &'a umya_spreadsheet::Border,
+    bottom_right: &'a umya_spreadsheet::Border,
+) -> &'a umya_spreadsheet::Border {
+    if anchor == &umya_spreadsheet::Border::default() {
+        bottom_right
+    } else {
+        anchor
+    }
 }
 
 fn final_sheet_name(plan: &ExcelEditPlan, source_name: &str) -> String {
@@ -2558,11 +2573,23 @@ mod tests {
             .top_mut()
             .set_style(umya_spreadsheet::BorderStyleValues::Thin);
         source_sheet
+            .cell_mut("A1")
+            .style_mut()
+            .borders_mut()
+            .bottom_mut()
+            .set_style(umya_spreadsheet::BorderStyleValues::Thin);
+        source_sheet
             .cell_mut("I1")
             .style_mut()
             .borders_mut()
             .right_mut()
             .set_style(umya_spreadsheet::BorderStyleValues::Thin);
+        source_sheet
+            .cell_mut("I1")
+            .style_mut()
+            .borders_mut()
+            .bottom_mut()
+            .set_style(umya_spreadsheet::BorderStyleValues::Double);
         source_sheet
             .cell_mut("G1")
             .style_mut()
@@ -2580,14 +2607,21 @@ mod tests {
             .top_mut()
             .set_style(umya_spreadsheet::BorderStyleValues::Thin);
         output_sheet
+            .cell_mut("A1")
+            .style_mut()
+            .borders_mut()
+            .bottom_mut()
+            .set_style(umya_spreadsheet::BorderStyleValues::Thin);
+        output_sheet
             .cell_mut("I1")
             .style_mut()
             .borders_mut()
             .right_mut()
             .set_style(umya_spreadsheet::BorderStyleValues::Thin);
 
-        // G1 inherits top/bottom from the anchor. Its own raw bottom border
-        // differs, but that interior record is normalized by openpyxl.
+        // G1 inherits top/bottom from the anchor. The source bottom-right
+        // cell's conflicting raw bottom border is ignored because the anchor
+        // already defines that side.
         assert_eq!(
             merged_member_effective_borders_equal(source_sheet, output_sheet, "G1"),
             Some(true)
@@ -2597,7 +2631,8 @@ mod tests {
             merged_member_effective_borders_equal(source_sheet, output_sheet, "A1"),
             None
         );
-        // The right edge must still match the bottom-right cell's border.
+        // The right edge must still match: the anchor leaves it empty, so
+        // openpyxl fills it from the bottom-right cell.
         output_sheet
             .cell_mut("I1")
             .style_mut()
