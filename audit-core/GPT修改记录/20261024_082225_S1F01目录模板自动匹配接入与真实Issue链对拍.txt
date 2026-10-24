@@ -1,0 +1,52 @@
+# S1-F01 目录模板自动匹配接入与真实 Issue 链对拍
+
+- 时间：20261024_082225（本地时间）
+- 执行者：Codex audit-dev Agent
+- 分支：audit-dev
+- 修改前 commit：0aef9e1
+- 修改后 commit：本轮 Audit 功能提交（SHA 以 Git 提交记录为准）
+- WIP：修改前已核对当前为分支 `audit-dev` 的目标 worktree，工作区仅有本项三份既有未提交代码修改；未覆盖或清理。未发现 `audit-core/GPT修改记录/WIP.md`。
+
+## 目的与业务变化
+
+将既有 Rust S1 工作表集合模板推荐接入 `open-data-audit s1-audit-directory`。保留 `--template-workbook` 显式模板；新增互斥 `--template-dir`，在源工作簿发现和 `--selected-file` 筛选完成后，按所选源工作簿自动推荐唯一模板。模板候选从源扫描中排除；无唯一可信匹配时停止审核并要求显式选择。JSON 返回选择模式与模板文件名，不保存模板路径。普通用户日志延续实际 OOXML 工作表目录引擎和耗时说明，开发者事件记录引擎、可信度、选择项和耗时。
+
+Python 对拍助手仍用显式模板建立只读基线，并验证 Rust 输出的模板文件名匹配基线；安全报告新增 `template_selection_mode` 和 `template_selection_matches_baseline`，不保存输入路径或业务值。真实结果报告更新为自动模板选择运行，沿用现有报告文件。
+
+## 修改文件
+
+- `audit-core/src/bin/open-data-audit.rs`：S1 目录 CLI 参数、源目录排除、自动推荐接线、JSON 选择信息及用户日志。
+- `audit-core/tests/s1_audit_directory_cli.rs`：覆盖自动与显式模板模式、结果工作簿输出，以及普通/开发者日志事件。
+- `audit-core/tests/compare/compare_s1_audit_directory.py`：验证 Rust 选择结果与 Python 基线一致并写入安全汇总字段。
+- `audit-core/probe/reports/s1_result_workbook_real.json`：同一只读真实样本改以模板自动推荐运行，报告只留计数、引擎、耗时、RSS 和差异统计。
+- `audit-core/MIGRATION_INVENTORY.md`：更新 S1-F01 总览、模板推荐范围及本次真实运行资源数据。
+- 本修改记录。
+
+未修改共享 crate、公共架构、依赖锁、配置或 VBA；未修改 Python 源项目和 `pytools-core`。
+
+## 测试与证据
+
+- WSL Ubuntu：`cargo fmt --package audit-core -- --check` 通过。
+- 定向 `cargo test -p audit-core --locked --test s1_audit_directory_cli -- --nocapture`：3/3 通过。
+- 全量 `cargo test -p audit-core --locked --quiet`：退出码 0。
+- `cargo build -p audit-core --locked --release --bin open-data-audit`：通过。
+- Python 对拍脚本通过 AST 语法检查；`git diff --check` 通过。
+- Windows Python 驱动 WSL Rust CLI 对 2026-07 只读源/审核副本对拍：模板自动选择与 Python 基线一致；297 条公式 Issue、2 条条件格式 Issue、602 个条件格式评估格、299 条合并 Issue，全部 Issue 字段差异为 0。新建结果表 299 行、299 个链接，结果表比较差异为 0；源、审核副本和模板读前/读后未变化。
+- 该次自动选择运行完整 CLI 15,899 ms、结果写入阶段 5,872 ms、峰值 RSS 20,456 KiB；仅代表这一模板、工作簿和 299 条 Issue 的 WSL 运行，不外推为通用性能或内存承诺。
+- 真实报告未持久化原始 Issue 值、模板/工作簿路径；测试生成的结果工作簿及 RSS 文件保存在临时目录，运行后自动清除。
+
+## 未执行项与已知问题
+
+- Windows 原生 Rust 工具链不在 PATH；此次 Rust 构建/测试使用 WSL Ubuntu，不代表麒麟 V10/UOS V20 或 deb 验收。
+- 此功能只验证一个真实模板目录和一个真实源/审核副本对；未验收模板全集、其他数据期或目标平台。
+- `s1-audit-directory` 仍接收已完成的公式审核副本清单；公式复制能力未迁移。共享 `ExcelModifier::ImportRange` 的真实模板能力仍未标记 Passed，不在本项中绕过该边界。
+- 公式重算保持关闭；GUI、真实非空历史写回和重复运行一致性未验收；S1-F01 整体仍未验收。
+
+## 删除与回滚
+
+- 删除项：无。
+- 回滚：使用 `git revert <本轮 Audit 功能提交 SHA>` 撤销本次接入；不回退共享 crate 或其它提交。
+
+## 组件版本
+
+不升级。workspace crate 版本和 Cargo.lock 未修改。

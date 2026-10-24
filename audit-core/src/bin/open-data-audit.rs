@@ -303,8 +303,12 @@ struct S1AuditDirectoryArgs {
     formula_manifest: PathBuf,
 
     /// S1 template workbook containing formula rules and conditional-area mappings.
-    #[arg(long)]
-    template_workbook: PathBuf,
+    #[arg(long, conflicts_with = "template_dir")]
+    template_workbook: Option<PathBuf>,
+
+    /// Directory of S1 templates to match against the selected source workbooks.
+    #[arg(long, conflicts_with = "template_workbook")]
+    template_dir: Option<PathBuf>,
 
     /// Reporting period; when omitted, detect one from source filenames/directories.
     #[arg(long)]
@@ -914,8 +918,31 @@ fn run_s1_audit_directory(arguments: S1AuditDirectoryArgs) -> Result<()> {
         .as_deref()
         .map(prepare_s1_result_workbook_path)
         .transpose()?;
-    let template_workbook = fs::canonicalize(&arguments.template_workbook)
-        .with_context(|| format!("读取 S1 模板 {}", arguments.template_workbook.display()))?;
+    anyhow::ensure!(
+        arguments.template_workbook.is_some() || arguments.template_dir.is_some(),
+        "必须指定 --template-workbook 或 --template-dir"
+    );
+    let explicit_template_workbook = arguments
+        .template_workbook
+        .as_deref()
+        .map(|path| {
+            fs::canonicalize(path).with_context(|| format!("读取 S1 模板 {}", path.display()))
+        })
+        .transpose()?;
+    let template_dir = arguments
+        .template_dir
+        .as_deref()
+        .map(|path| {
+            fs::canonicalize(path).with_context(|| format!("读取 S1 模板目录 {}", path.display()))
+        })
+        .transpose()?;
+    if let Some(template_dir) = template_dir.as_deref() {
+        anyhow::ensure!(
+            template_dir.is_dir(),
+            "S1 模板路径不是目录：{}",
+            template_dir.display()
+        );
+    }
     let manifest_path = fs::canonicalize(&arguments.formula_manifest).with_context(|| {
         format!(
             "读取公式审核副本清单 {}",
@@ -930,7 +957,11 @@ fn run_s1_audit_directory(arguments: S1AuditDirectoryArgs) -> Result<()> {
     } else {
         ScanDepth::RootOnly
     };
-    let excluded = excluded_s1_input_workbooks(Some(&template_workbook), mapping_config, None)?;
+    let excluded = excluded_s1_input_workbooks(
+        explicit_template_workbook.as_deref(),
+        mapping_config,
+        template_dir.as_deref(),
+    )?;
     let source_files = source_workbooks(&input_dir, depth)?
         .into_iter()
         .filter(|path| {
@@ -997,6 +1028,19 @@ fn run_s1_audit_directory(arguments: S1AuditDirectoryArgs) -> Result<()> {
             discovery_started.elapsed().as_millis()
         );
     }
+
+    let (template_workbook, template_selection_mode) = if let Some(template_workbook) =
+        explicit_template_workbook
+    {
+        (template_workbook, "explicit")
+    } else {
+        let template_dir = template_dir.as_deref().context("S1 模板目录参数丢失")?;
+        let suggested =
+            recommend_s1_directory_template(template_dir, &source_files, arguments.developer_view)?;
+        let template_workbook = fs::canonicalize(&suggested)
+            .with_context(|| format!("读取自动匹配的 S1 模板 {}", suggested.display()))?;
+        (template_workbook, "automatic")
+    };
 
     let template_started = Instant::now();
     let template_plan = load_s1_template_rule_plan(&template_workbook, mapping_config)
@@ -1443,6 +1487,10 @@ fn run_s1_audit_directory(arguments: S1AuditDirectoryArgs) -> Result<()> {
     };
     let mut output = serde_json::json!({
         "status": status,
+        "template_selection": {
+            "mode": template_selection_mode,
+            "template_file": template_workbook.file_name().map(|name| name.to_string_lossy())
+        },
         "period": period,
         "batch_id": arguments.batch_id,
         "template_summary": template_plan.summary,

@@ -156,23 +156,6 @@ fn run_cli(input: &Path, template: &Path, manifest: &Path, developer_view: bool)
     run_cli_with_history(input, template, manifest, None, developer_view)
 }
 
-fn run_cli_with_result(
-    input: &Path,
-    template: &Path,
-    manifest: &Path,
-    result_workbook: &Path,
-    developer_view: bool,
-) -> Output {
-    run_cli_with_options(
-        input,
-        template,
-        manifest,
-        None,
-        Some(result_workbook),
-        developer_view,
-    )
-}
-
 fn run_cli_with_history(
     input: &Path,
     template: &Path,
@@ -180,12 +163,21 @@ fn run_cli_with_history(
     history: Option<&Path>,
     developer_view: bool,
 ) -> Output {
-    run_cli_with_options(input, template, manifest, history, None, developer_view)
+    run_cli_with_options(
+        input,
+        Some(template),
+        None,
+        manifest,
+        history,
+        None,
+        developer_view,
+    )
 }
 
 fn run_cli_with_options(
     input: &Path,
-    template: &Path,
+    template: Option<&Path>,
+    template_dir: Option<&Path>,
     manifest: &Path,
     history: Option<&Path>,
     result_workbook: Option<&Path>,
@@ -196,8 +188,6 @@ fn run_cli_with_options(
         .arg("s1-audit-directory")
         .arg("--input-dir")
         .arg(input)
-        .arg("--template-workbook")
-        .arg(template)
         .arg("--formula-manifest")
         .arg(manifest)
         .arg("--period")
@@ -206,6 +196,12 @@ fn run_cli_with_options(
         .arg("issue-chain-test")
         .arg("--audit-time")
         .arg("2026-10-24 12:00:00");
+    if let Some(template) = template {
+        command.arg("--template-workbook").arg(template);
+    }
+    if let Some(template_dir) = template_dir {
+        command.arg("--template-dir").arg(template_dir);
+    }
     if let Some(history) = history {
         command.arg("--history-workbook").arg(history);
     }
@@ -232,7 +228,9 @@ fn cli_runs_both_issue_sources_merges_then_classifies_and_logs_actual_engines() 
         &source,
     )
     .expect("copy conditional-format source fixture");
-    let template = directory.join("template.xlsx");
+    let template_dir = directory.join("templates");
+    fs::create_dir_all(&template_dir).expect("create template directory");
+    let template = template_dir.join("template.xlsx");
     formula_template(&template);
     let audit = directory.join("audit-copy.xlsx");
     audit_copy(&audit);
@@ -250,18 +248,28 @@ fn cli_runs_both_issue_sources_merges_then_classifies_and_logs_actual_engines() 
     .expect("write formula copy manifest");
 
     let result_workbook = directory.join("s1-result.xlsx");
-    let ordinary = run_cli_with_result(&input, &template, &manifest, &result_workbook, false);
+    let ordinary = run_cli_with_options(
+        &input,
+        None,
+        Some(&template_dir),
+        &manifest,
+        None,
+        Some(&result_workbook),
+        false,
+    );
     assert!(
         ordinary.status.success(),
         "{}",
         String::from_utf8_lossy(&ordinary.stderr)
     );
     let developer_result_workbook = directory.join("s1-result-developer.xlsx");
-    let developer = run_cli_with_result(
+    let developer = run_cli_with_options(
         &input,
-        &template,
+        None,
+        Some(&template_dir),
         &manifest,
-        &developer_result_workbook,
+        None,
+        Some(&developer_result_workbook),
         true,
     );
     assert!(
@@ -272,6 +280,11 @@ fn cli_runs_both_issue_sources_merges_then_classifies_and_logs_actual_engines() 
 
     let report: Value = serde_json::from_slice(&ordinary.stdout).expect("parse issue-chain output");
     assert_eq!(report["status"], "completed");
+    assert_eq!(report["template_selection"]["mode"], "automatic");
+    assert_eq!(
+        report["template_selection"]["template_file"],
+        "template.xlsx"
+    );
     assert_eq!(report["formula_summary"]["files"], 1);
     assert_eq!(report["formula_summary"]["issues"], 2);
     assert_eq!(report["issues"][0]["org_code"], "1001");
@@ -336,15 +349,27 @@ fn cli_runs_both_issue_sources_merges_then_classifies_and_logs_actual_engines() 
     assert!(!user_log.contains("读取器"), "{user_log}");
     assert!(user_log.contains("未执行公式重算"));
     assert!(user_log.contains("本期结果工作簿已生成"));
+    assert!(user_log.contains("S1-F01 模板推荐完成"));
+    assert!(user_log.contains("引擎 namespace-aware OOXML 工作表目录读取"));
+    assert!(user_log.contains("耗时"));
     assert!(!user_log.contains("rust_xlsxwriter"), "{user_log}");
 
     let developer_report: Value =
         serde_json::from_slice(&developer.stdout).expect("parse developer issue-chain output");
     assert_eq!(developer_report["issues"], report["issues"]);
+    assert_eq!(developer_report["template_selection"]["mode"], "automatic");
     let events = String::from_utf8_lossy(&developer.stderr)
         .lines()
         .map(|line| serde_json::from_str::<Value>(line).expect("parse developer event"))
         .collect::<Vec<_>>();
+    assert!(events.iter().any(|event| {
+        event["step"] == "template_recommendation"
+            && event["status"] == "completed"
+            && event["engine"] == "namespace_aware_ooxml_sheet_directory"
+            && event["selected_template"] == "template.xlsx"
+            && event["confidence"].is_number()
+            && event["elapsed_ms"].is_number()
+    }));
     assert!(events.iter().any(|event| {
         event["step"] == "formula_result_issue_extraction"
             && event["engine"] == "calamine"
@@ -456,6 +481,11 @@ fn cli_reads_nonempty_history_before_classification_and_reports_reader_and_timin
         String::from_utf8_lossy(&ordinary.stderr)
     );
     let report: Value = serde_json::from_slice(&ordinary.stdout).expect("parse history report");
+    assert_eq!(report["template_selection"]["mode"], "explicit");
+    assert_eq!(
+        report["template_selection"]["template_file"],
+        "template.xlsx"
+    );
     assert_eq!(report["history_workbook_summary"]["status"], "loaded");
     assert_eq!(report["history_workbook_summary"]["reader"], "calamine");
     assert_eq!(report["history_workbook_summary"]["rows_read"], 2);

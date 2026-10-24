@@ -106,6 +106,9 @@ def invoke_rust(args: argparse.Namespace, manifest: Path, source: Path) -> tuple
         ]
         input_arg = wsl_path(args.input_dir.resolve(strict=True))
         template_arg = wsl_path(args.template_workbook.resolve(strict=True))
+        template_dir_arg = (
+            wsl_path(args.template_dir.resolve(strict=True)) if args.template_dir else None
+        )
         manifest_arg = wsl_path(manifest.resolve(strict=True))
         source_arg = source.relative_to(args.input_dir.resolve(strict=True)).as_posix()
         audit_arg = wsl_path(args.audit_workbook.resolve(strict=True))
@@ -115,6 +118,9 @@ def invoke_rust(args: argparse.Namespace, manifest: Path, source: Path) -> tuple
         command = [str(binary)]
         input_arg = str(args.input_dir.resolve(strict=True))
         template_arg = str(args.template_workbook.resolve(strict=True))
+        template_dir_arg = (
+            str(args.template_dir.resolve(strict=True)) if args.template_dir else None
+        )
         manifest_arg = str(manifest.resolve(strict=True))
         source_arg = source.relative_to(args.input_dir.resolve(strict=True)).as_posix()
         audit_arg = str(args.audit_workbook.resolve(strict=True))
@@ -128,8 +134,6 @@ def invoke_rust(args: argparse.Namespace, manifest: Path, source: Path) -> tuple
             input_arg,
             "--selected-file",
             source_arg,
-            "--template-workbook",
-            template_arg,
             "--formula-manifest",
             manifest_arg,
             "--period",
@@ -141,6 +145,10 @@ def invoke_rust(args: argparse.Namespace, manifest: Path, source: Path) -> tuple
             "--developer-view",
         ]
     )
+    if template_dir_arg:
+        command.extend(["--template-dir", template_dir_arg])
+    else:
+        command.extend(["--template-workbook", template_arg])
     if mapping_arg:
         command.extend(["--mapping-config", mapping_arg])
     if result_arg:
@@ -306,6 +314,7 @@ def main() -> int:
     parser.add_argument("--source-file", required=True, type=Path)
     parser.add_argument("--audit-workbook", required=True, type=Path)
     parser.add_argument("--template-workbook", required=True, type=Path)
+    parser.add_argument("--template-dir", type=Path)
     parser.add_argument("--protected-original", action="append", type=Path, default=[])
     parser.add_argument("--mapping-config", type=Path)
     parser.add_argument("--result-workbook", type=Path)
@@ -425,6 +434,12 @@ def main() -> int:
             encoding="utf-8",
         )
         rust, rust_log, rust_elapsed_ms = invoke_rust(args, manifest, source)
+    template_selection = rust.get("template_selection", {})
+    expected_template_mode = "automatic" if args.template_dir else "explicit"
+    if template_selection.get("mode") != expected_template_mode:
+        raise ValueError("Rust S1 template selection mode differs from the requested mode")
+    if template_selection.get("template_file") != template.name:
+        raise ValueError("Rust S1 selected a different template from the Python baseline")
     rust_cli_peak_rss_kib = None
     if args.rust_cli_peak_rss_file:
         try:
@@ -523,6 +538,10 @@ def main() -> int:
             "readers": actual_readers,
             "cli_elapsed_ms": rust_elapsed_ms,
             "cli_peak_rss_kib": rust_cli_peak_rss_kib,
+            "template_selection_mode": template_selection.get("mode"),
+            "template_selection_matches_baseline": (
+                template_selection.get("template_file") == template.name
+            ),
             "result_workbook": (
                 {
                     "engine": writer_summary.get("engine"),

@@ -19,13 +19,15 @@
       "calamine+namespace_aware_ooxml",
       "rust_s1_issue_chain+rust_s1_history"
     ],
-    "cli_elapsed_ms": 15292,
-    "cli_peak_rss_kib": 30380,
+    "cli_elapsed_ms": 15899,
+    "cli_peak_rss_kib": 20456,
+    "template_selection_mode": "automatic",
+    "template_selection_matches_baseline": true,
     "result_workbook": {
       "engine": "rust_xlsxwriter 0.101.0",
       "issue_count": 299,
       "hyperlink_count": 299,
-      "elapsed_ms": 6423
+      "elapsed_ms": 5872
     }
   },
   "comparison": {
@@ -67,6 +69,6 @@
     "scope": "one read-only real source/audit-copy pair and one S1 template",
     "source_filename_alias_used_for_linux_component_limit": false,
     "rust_cli_peak_rss_scope": "complete s1-audit-directory process, including result workbook output",
-    "python_conditional_total_time_s": 0.281
+    "python_conditional_total_time_s": 0.297
   }
 }
