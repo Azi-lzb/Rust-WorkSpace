@@ -53,6 +53,14 @@ Audit Agent 复验确认 probe 将实际 `unmodified merged-cell border readback
 - 尚未请求 Audit 重跑真实样本；sample-1 的非空 shared-string 在普通 openpyxl 中被归一为空值，是独立保真差异，worker 能力仍为 Unverified。Audit 可在共享提交安全同步后按其流程决定是否进行一次最终复验。
 - 定向测试：`cargo test -p excel-editor openpyxl_backend::tests::`：6 项通过。`cargo fmt --package excel-editor` 已执行。完整 workspace 测试、目标 Linux 验证未执行。
 
+## Audit AB4 维度样式语义复核（本轮增补）
+
+- Audit 的 AB4 失败来自临时校验器对“工作表任何位置存在行/列样式”一概拒绝，尚不能证明 AB4 这个缺失 cell 本身应继承该维度样式。
+- 检查当前 worker：`python/openpyxl_worker.py::_copy_cells` 通过 `iter_rows()` 读取源 cell，再复制该 `Cell` 的直接 font/fill/border/alignment/number_format/protection；Python openpyxl 3.1.5 的 `Worksheet._get_cell` 对缺失坐标只新建默认 `Cell`，不会将 `row_dimensions`/`column_dimensions` 样式折入该 cell 的直接样式。故本 worker 的逐 cell ImportRange 样式契约中，源 cell 缺失时应比较 XF0；行/列维度复制属于独立操作。
+- 移除“工作表任何位置含行/列样式即拒绝”的过宽保护条件；临时探针显式绑定 XF0 以读取直接样式，不改变任何原文件。新增回归覆盖同时存在 row 与 column style 声明时，缺失 `AB4` 的 expected style 仍按 XF0 解析。
+- Audit 仍需确认旧业务函数采用同一逐 cell 样式契约；真实模板复验尚未通过前，capability 保持 Unverified，生产路由不变。
+- 定向命令：`cargo test -p excel-editor openpyxl_backend::tests::implicit_xf_zero_properties_are_visible_to_umya_expected_style_reader` 通过（1 项）。先前同模块 6 项测试通过；本轮最终完整同模块回归待执行。没有运行 Audit 样本或 workspace 全量测试。
+
 ## 删除、回滚与版本
 
 - 无删除项。可通过普通 `git revert <commit>` 回滚本次共享校验器修正和测试。
