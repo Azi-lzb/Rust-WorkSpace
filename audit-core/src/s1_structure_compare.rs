@@ -1,8 +1,8 @@
 //! S1 template structure checks used to screen source workbooks before audit.
 
 use crate::models::CopyRange;
-use anyhow::{bail, Context, Result};
-use excel_reader::{read_workbook, CellValue, SheetDump};
+use anyhow::{Context, Result, bail};
+use excel_reader::{CellValue, SheetDump, read_workbook};
 use serde::Serialize;
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -201,12 +201,21 @@ fn collect_expected_cells(
     bounds: (usize, usize, usize, usize),
     expected: &mut BTreeMap<(usize, usize), StructureValue>,
 ) -> Result<()> {
+    // Match the Python/openpyxl structure baseline: merged cells other than
+    // the top-left anchor read as blank, even if the OOXML part stores payload
+    // in those coordinates. Do not count that hidden content as a
+    // required template label.
+    let merged_ranges = sheet
+        .merges
+        .iter()
+        .filter_map(|address| parse_range(address))
+        .collect::<Vec<_>>();
     let mut cells = BTreeMap::<(usize, usize), StructureValue>::new();
     for (address, value) in &sheet.values {
         let Some((row, column)) = parse_cell(address) else {
             continue;
         };
-        if within(row, column, bounds) {
+        if within(row, column, bounds) && !is_merged_non_anchor_cell(row, column, &merged_ranges) {
             let value = CellValue::from_probe_json(value)
                 .with_context(|| format!("解码模板结构单元格 {address}"))?;
             if !is_blank(&value) {
@@ -218,7 +227,7 @@ fn collect_expected_cells(
         let Some((row, column)) = parse_cell(address) else {
             continue;
         };
-        if within(row, column, bounds) {
+        if within(row, column, bounds) && !is_merged_non_anchor_cell(row, column, &merged_ranges) {
             cells.insert(
                 (row, column),
                 StructureValue::Formula(normalize_formula(formula)),
@@ -229,6 +238,16 @@ fn collect_expected_cells(
         expected.insert(coordinate, value);
     }
     Ok(())
+}
+
+fn is_merged_non_anchor_cell(
+    row: usize,
+    column: usize,
+    merged_ranges: &[(usize, usize, usize, usize)],
+) -> bool {
+    merged_ranges
+        .iter()
+        .any(|bounds| within(row, column, *bounds) && (row, column) != (bounds.1, bounds.0))
 }
 
 fn value_at(sheet: &SheetDump, row: usize, column: usize) -> Result<Option<StructureValue>> {
@@ -409,6 +428,69 @@ mod tests {
                 .expect("write structure label");
         }
         workbook.save(path).expect("save structure workbook");
+    }
+
+    #[test]
+    fn template_structure_ignores_payload_in_merged_non_anchor_cells() {
+        let sheet = SheetDump {
+            name: "Report".to_owned(),
+            values: BTreeMap::from([
+                (
+                    "B1".to_owned(),
+                    serde_json::to_value(CellValue::Text("first anchor".to_owned()))
+                        .expect("serialize first anchor"),
+                ),
+                (
+                    "C1".to_owned(),
+                    serde_json::to_value(CellValue::Text("hidden merged value".to_owned()))
+                        .expect("serialize merged non-anchor value"),
+                ),
+                (
+                    "E1".to_owned(),
+                    serde_json::to_value(CellValue::Text("second anchor".to_owned()))
+                        .expect("serialize second anchor"),
+                ),
+            ]),
+            formulas: BTreeMap::from([
+                ("D1".to_owned(), "=1+2".to_owned()),
+                ("F1".to_owned(), "=3+4".to_owned()),
+            ]),
+            formula_status: "available".to_owned(),
+            merges: vec!["B1:C1".to_owned(), "E1:F1".to_owned()],
+            merge_status: "available".to_owned(),
+            comments: BTreeMap::new(),
+            comments_status: "not_requested".to_owned(),
+            conditional_formatting: Vec::new(),
+            conditional_formatting_status: "not_requested".to_owned(),
+            data_validations: Vec::new(),
+            data_validations_status: "not_requested".to_owned(),
+        };
+        let mut expected = BTreeMap::new();
+
+        collect_expected_cells(
+            &sheet,
+            parse_range("B1:F1").expect("valid area"),
+            &mut expected,
+        )
+        .expect("collect visible structure cells");
+
+        assert_eq!(
+            expected.keys().copied().collect::<Vec<_>>(),
+            vec![(1, 2), (1, 4), (1, 5)]
+        );
+        assert!(matches!(
+            expected.get(&(1, 4)),
+            Some(StructureValue::Formula(formula)) if formula == "=1+2"
+        ));
+
+        let mut non_anchor_only = BTreeMap::new();
+        collect_expected_cells(
+            &sheet,
+            parse_range("C1:C1").expect("valid non-anchor-only area"),
+            &mut non_anchor_only,
+        )
+        .expect("ignore a merged non-anchor when its anchor is outside the area");
+        assert!(non_anchor_only.is_empty());
     }
 
     #[test]

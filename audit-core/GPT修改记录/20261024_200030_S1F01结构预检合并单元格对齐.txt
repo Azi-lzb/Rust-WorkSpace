@@ -1,0 +1,27 @@
+# S1-F01 结构预检合并单元格语义对齐
+
+- 时间：2026-10-24（本机 Windows 原生环境）
+- 执行者：Codex audit-dev
+- 修改前 commit：c7bd9a6
+- 修改后 commit：由本记录所在提交生成
+- 修改前 WIP：仅有未跟踪 `audit-core/examples/`；保持未改、未暂存。
+
+## 目的与改动
+
+真实模板在合并单元格非锚位置存有 669 个 OOXML 单元格值。Python/openpyxl 预检把这些合并非锚位置读作空值，Rust 结构预检此前却将其计入，导致同一模板的结构标签数为 Python 406、Rust 1,075。调整 `audit-core/src/s1_structure_compare.rs`：读模板结构时忽略合并区域左上锚点以外的值和公式，保留锚点与普通单元格；增加覆盖值、公式和区域只包含非锚单元格的单测。
+
+没有修改 CLI/API、配置格式、共享 crate、根 Cargo 配置或 Cargo.lock；没有修改 Python 源项目或样本。产品/组件版本不升级。
+
+## 验证
+
+- `rustfmt --edition 2024 --check audit-core/src/s1_structure_compare.rs`：通过。
+- `cargo test --offline --locked -p audit-core --lib s1_structure_compare::tests -j 1`：7 项通过。首次链接使用系统临时目录时因 C: 空间不足失败；将本进程 `TEMP`/`TMP` 指向有空间的 F: 临时目录后重跑通过，未清理或重置构建产物。
+- `cargo build --offline --locked -p audit-core --bin open-data-audit -j 1`：通过。
+- Windows openpyxl 3.1.5 Python 基线与 Calamine Rust CLI 对同一真实批次结构预检：87 个 XLSX，Python/Rust 均通过 18、跳过 69、读取错误 0；模板 8 个结构区域，Python/Rust 均检查 406 个标签。对 Python 接受的 18 个具体文件，Rust 均接受，匹配/检查标签对多重集差异 0。Rust 完整 CLI 在结构预检后由临时无效 manifest 按计划停止，未进入公式/条件审核、未生成业务输出。
+- 4 个真实公式复制候选目标由 Windows openpyxl worker 候选保护在写入前拒绝，类别均为 `target_merged_non_anchor_payload`；输出均未创建、输入保持不变、生产路由仍关闭。未执行公式重算。
+
+## 未执行、问题与回滚
+
+Windows Excel/WPS、LibreOffice sidecar、WSL Python、打包 openpyxl runtime、Linux/glibc 与 deb 目标验证均未执行。S1-F01 公式复制/本轮重算尚未完成；不能据本次预检验证宣称 S1-F01 全流程通过。保留 ExcelModifier 对合并非锚载荷的全工作簿保护。
+
+无文件删除。回滚方式：`git revert` 本记录所在提交。组件版本：不升级。
