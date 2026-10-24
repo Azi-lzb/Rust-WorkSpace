@@ -1,5 +1,9 @@
 use anyhow::{Context, Result};
+use excel_editor::{
+    BackendCapability, CapabilityEvidence, CapabilityStatus, EditOperation, EngineId, ExcelEditPlan,
+};
 use excel_reader::read_workbook;
+use pytools_core::dedup_ops::AppendTargetPlan;
 use serde_json::Value;
 use std::{
     fs,
@@ -143,6 +147,181 @@ fn interactive_timeline_menu_routes_compare_wide_modes_and_precheck() -> Result<
     assert!(precheck_stdout.contains("5  预校验"));
     assert!(precheck_stdout.contains(r#""errors": 0"#));
     assert!(precheck_stdout.contains(r#""warnings": 0"#));
+    Ok(())
+}
+
+#[test]
+fn interactive_wide_summary_menu_commits_new_target_after_confirmation() -> Result<()> {
+    let root = TestDirectory::new()?;
+    let target = root.path().join("configured target.xlsx");
+    let config = create_timeline_config_with_target(root.path(), Some(&target))?;
+    let source = root.path().join("sample wide source.xlsx");
+    create_wide_source(&source, "交互汇总甲", 23.5)?;
+
+    let completed = run_menu(&config, &format!("1\n3\n{}\ny\n0\n", source.display()))?;
+    assert!(
+        completed.status.success(),
+        "confirmed target append failed: {}",
+        String::from_utf8_lossy(&completed.stderr)
+    );
+    assert!(target.is_file(), "confirmed new target was not published");
+    assert!(String::from_utf8_lossy(&completed.stdout).contains("新建目标簿"));
+    assert!(String::from_utf8_lossy(&completed.stdout).contains("目标写入完成"));
+
+    let target_dump = read_workbook(&target)?;
+    let target_sheet = target_dump
+        .sheets
+        .iter()
+        .find(|sheet| sheet.name == "Append")
+        .context("configured target worksheet was not created")?;
+    assert!(target_sheet
+        .values
+        .values()
+        .any(|cell| { cell.get("value").and_then(Value::as_str) == Some("交互汇总甲") }));
+
+    let report = latest_menu_json_report(&completed)?;
+    assert_eq!(report["target_append_status"], "succeeded");
+    assert_eq!(
+        report["target_append_executions"][0]["operation"],
+        "created"
+    );
+    assert!(report["target_append_executions"][0]["engine"].is_null());
+    let history_path = report["run_log_path"]
+        .as_str()
+        .context("wide summary run history path missing")?;
+    let history_bytes = fs::read(history_path)?;
+    let history: Value = serde_json::from_slice(&history_bytes)?;
+    assert!(history["events"].as_array().is_some_and(|events| {
+        events.iter().any(|event| {
+            event["phase"] == "target_append_execute"
+                && event["status"] == "succeeded"
+                && event["actual_engine"] == "rust_xlsxwriter"
+                && event["stage_elapsed_ms"].as_u64().is_some()
+        })
+    }));
+    let history_text = String::from_utf8_lossy(&history_bytes);
+    assert!(!history_text.contains(&source.display().to_string()));
+    assert!(!history_text.contains(&target.display().to_string()));
+    assert!(!history_text.contains("交互汇总甲"));
+    Ok(())
+}
+
+#[test]
+fn interactive_wide_summary_menu_does_not_commit_without_confirmation() -> Result<()> {
+    let root = TestDirectory::new()?;
+    let target = root.path().join("configured target.xlsx");
+    let config = create_timeline_config_with_target(root.path(), Some(&target))?;
+    let source = root.path().join("sample wide source.xlsx");
+    create_wide_source(&source, "交互汇总乙", 24.5)?;
+
+    let declined = run_menu(&config, &format!("1\n3\n{}\nn\n0\n", source.display()))?;
+    assert!(
+        declined.status.success(),
+        "declining target append failed: {}",
+        String::from_utf8_lossy(&declined.stderr)
+    );
+    assert!(!target.exists(), "declined new target was published");
+    assert!(String::from_utf8_lossy(&declined.stdout).contains("已取消目标写入"));
+    let report = latest_menu_json_report(&declined)?;
+    assert_eq!(report["target_append_executions"][0]["status"], "cancelled");
+    Ok(())
+}
+
+#[test]
+fn interactive_wide_summary_existing_target_requires_capability_and_commits_safely() -> Result<()> {
+    let root = TestDirectory::new()?;
+    let target = root.path().join("configured target.xlsx");
+    let config = create_timeline_config_with_target(root.path(), Some(&target))?;
+    let first_source = root.path().join("sample first source.xlsx");
+    let second_source = root.path().join("sample second source.xlsx");
+    create_wide_source(&first_source, "交互汇总甲", 23.5)?;
+    create_wide_source(&second_source, "交互汇总乙", 31.5)?;
+
+    let created = run_menu(
+        &config,
+        &format!("1\n3\n{}\ny\n0\n", first_source.display()),
+    )?;
+    assert!(created.status.success());
+    let original_target = fs::read(&target)?;
+
+    let without_capability = run_menu(&config, &format!("1\n3\n{}\n0\n", second_source.display()))?;
+    assert!(
+        without_capability.status.success(),
+        "plan-only existing target route failed: {}",
+        String::from_utf8_lossy(&without_capability.stderr)
+    );
+    assert!(String::from_utf8_lossy(&without_capability.stdout).contains("[仅生成计划]"));
+    assert_eq!(fs::read(&target)?, original_target);
+
+    let planned = Command::new(env!("CARGO_BIN_EXE_pytools"))
+        .args(["wide-summary", "--config"])
+        .arg(&config)
+        .args(["--log-view", "off"])
+        .arg(&second_source)
+        .output()?;
+    assert!(
+        planned.status.success(),
+        "failed to prepare fixture capability plan: {}",
+        String::from_utf8_lossy(&planned.stderr)
+    );
+    let planned_report: Value = serde_json::from_slice(&planned.stdout)?;
+    let plan_path = planned_report["target_append_plans"][0]
+        .as_str()
+        .context("existing target plan path missing")?;
+    let plan: AppendTargetPlan = serde_json::from_slice(&fs::read(plan_path)?)?;
+    let edit_plan = plan.edit_plan.as_ref().context("edit plan missing")?;
+    let capability = capability_for_menu_test(edit_plan);
+    let capability_path = root.path().join("fixture-scoped-capability.json");
+    fs::write(&capability_path, serde_json::to_vec_pretty(&capability)?)?;
+
+    let committed = run_menu_with_capabilities(
+        &config,
+        "user",
+        &capability_path,
+        "synthetic-pt-1-wide-menu-umya",
+        &format!("1\n3\n{}\ny\n0\n", second_source.display()),
+    )?;
+    assert!(
+        committed.status.success(),
+        "capability-gated menu commit failed: {}",
+        String::from_utf8_lossy(&committed.stderr)
+    );
+    let updated_target = read_workbook(&target)?;
+    let append_sheet = updated_target
+        .sheets
+        .iter()
+        .find(|sheet| sheet.name == "Append")
+        .context("updated target worksheet missing")?;
+    assert!(append_sheet
+        .values
+        .values()
+        .any(|cell| { cell.get("value").and_then(Value::as_str) == Some("交互汇总甲") }));
+    assert!(append_sheet
+        .values
+        .values()
+        .any(|cell| { cell.get("value").and_then(Value::as_str) == Some("交互汇总乙") }));
+    let report = latest_menu_json_report(&committed)?;
+    assert_eq!(report["target_append_status"], "succeeded");
+    assert_eq!(
+        report["target_append_executions"][0]["operation"],
+        "replaced"
+    );
+    assert!(report["target_append_executions"][0]["engine"].is_null());
+    let history: Value = serde_json::from_slice(&fs::read(
+        report["run_log_path"]
+            .as_str()
+            .context("wide summary history missing")?,
+    )?)?;
+    assert!(history["actual_engines"]
+        .as_array()
+        .is_some_and(|engines| engines.iter().any(|engine| engine == "umya_spreadsheet")));
+    assert!(history["events"].as_array().is_some_and(|events| {
+        events.iter().any(|event| {
+            event["phase"] == "target_append_execute"
+                && event["status"] == "succeeded"
+                && event["actual_engine"] == "umya_spreadsheet"
+        })
+    }));
     Ok(())
 }
 
@@ -322,6 +501,10 @@ fn read_single_run_history(log_dir: &Path, feature_id: &str) -> Result<Value> {
 }
 
 fn create_timeline_config(root: &Path) -> Result<PathBuf> {
+    create_timeline_config_with_target(root, None)
+}
+
+fn create_timeline_config_with_target(root: &Path, target: Option<&Path>) -> Result<PathBuf> {
     let config = root.join("app").join("config").join("config.xlsx");
     fs::create_dir_all(config.parent().context("config parent missing")?)?;
     let app = root.join("app");
@@ -375,6 +558,11 @@ fn create_timeline_config(root: &Path) -> Result<PathBuf> {
         for (column, header) in headers.iter().enumerate() {
             timeline.write_string(0, column as u16, *header)?;
         }
+        let target_workbook = target
+            .map(|path| path.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let target_sheet = if target.is_some() { "Append" } else { "" };
+        let target_enabled = if target.is_some() { "是" } else { "否" };
         let values = [
             "是",
             "WideRule",
@@ -389,9 +577,9 @@ fn create_timeline_config(root: &Path) -> Result<PathBuf> {
             "B",
             "D",
             "",
-            "",
-            "",
-            "否",
+            target_workbook.as_str(),
+            target_sheet,
+            target_enabled,
             "集团@B2",
             "",
             "是",
@@ -425,6 +613,38 @@ fn create_timeline_config(root: &Path) -> Result<PathBuf> {
         .save(&config)
         .context("save timeline menu configuration")?;
     Ok(config)
+}
+
+fn capability_for_menu_test(plan: &ExcelEditPlan) -> BackendCapability {
+    let platform = "synthetic-pt-1-wide-menu-umya".to_owned();
+    BackendCapability {
+        engine: EngineId::UmyaSpreadsheet,
+        status: CapabilityStatus::Passed,
+        format: plan.format,
+        operations: plan.operations.iter().map(EditOperation::kind).collect(),
+        supported_features: plan.workbook.features_present.clone(),
+        preserved: plan.preserve.clone(),
+        platform: platform.clone(),
+        evidence: Some(CapabilityEvidence {
+            sample_id: "synthetic-pt-1-wide-menu-existing-target".to_owned(),
+            report_path: "pytools-core/tests/timeline_menu_cli.rs".to_owned(),
+            adapter_version: "umya-spreadsheet-3.1.1".to_owned(),
+            engine_version: "umya-spreadsheet-3.1.1".to_owned(),
+            platform,
+        }),
+    }
+}
+
+fn latest_menu_json_report(output: &Output) -> Result<Value> {
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .rev()
+        .find_map(|line| {
+            serde_json::from_str::<Value>(line)
+                .ok()
+                .filter(|value| value.get("target_append_plans").is_some())
+        })
+        .context("interactive menu did not print a wide-summary report")
 }
 
 fn create_wide_source(path: &Path, organization: &str, amount: f64) -> Result<()> {
@@ -483,6 +703,39 @@ fn run_menu_with_view(config: &Path, log_view: &str, input: &str) -> Result<Outp
         .stderr(Stdio::piped())
         .spawn()
         .context("start interactive pytools menu")?;
+    child
+        .stdin
+        .take()
+        .context("interactive stdin missing")?
+        .write_all(input.as_bytes())
+        .context("send interactive menu selections")?;
+    child
+        .wait_with_output()
+        .context("wait for interactive menu")
+}
+
+fn run_menu_with_capabilities(
+    config: &Path,
+    log_view: &str,
+    capabilities: &Path,
+    platform: &str,
+    input: &str,
+) -> Result<Output> {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_pytools"))
+        .arg("menu")
+        .arg("--config")
+        .arg(config)
+        .arg("--log-view")
+        .arg(log_view)
+        .arg("--capabilities")
+        .arg(capabilities)
+        .arg("--platform")
+        .arg(platform)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .context("start interactive pytools menu with edit capability")?;
     child
         .stdin
         .take()

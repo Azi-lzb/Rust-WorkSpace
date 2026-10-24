@@ -10,7 +10,7 @@
       "openpyxl": "3.1.5"
     },
     "python_baseline": "C:\\Users\\AZI\\Desktop\\VibeCode\\4.pytools-main",
-    "rust_execution": "Windows native pytools CLI",
+    "rust_execution": "Windows native pytools menu and CLI",
     "sample_kind": "synthetic XLSX only"
   },
   "comparison_contract": {
@@ -18,6 +18,8 @@
     "effective_cell_styles": "exact across every cell in generated summary workbooks, including font, fill, border, alignment, number format, and protection",
     "formula_text_merges_dimensions_defined_names_freeze_panes": "exact; synthetic output contains no formulas, merges, defined names, or frozen panes",
     "data_date_number_formats": "exact across the generated summary worksheet",
+    "new_target_entry": "pytools menu -> timeline 1 -> wide summary 3/4 -> explicit confirmation",
+    "new_target_execution_history": "developer-view history records successful target_append_execute, rust_xlsxwriter and stage duration",
     "existing_target_behavior": "rebuild target worksheet from existing rows plus accepted non-duplicate rows; preserve untouched sheets",
     "target_sheet_replacement": "values, types, dimensions, and required untouched-sheet properties are checked; effective cell-style differences are reported and block acceptance",
     "untouched_sheet_properties": "selected values, A1 fill/comment, merges, row height, and column width",
@@ -40,8 +42,16 @@
       ],
       "summary_cell_count": 36,
       "summary_effective_styles": "exact",
+      "entry_route": "pytools menu -> 1 timeline -> 3 row-suffix or 4 no-suffix -> confirm",
       "target_commit_operation": "created",
-      "execution_summary": {
+      "target_candidate_matches_committed_bytes": true,
+      "target_execution_history": {
+        "phase": "target_append_execute",
+        "status": "succeeded",
+        "actual_engine": "rust_xlsxwriter",
+        "stage_elapsed_ms_recorded": true
+      },
+      "target_execution_summary": {
         "appended_rows": 2,
         "duplicate_rows_filtered": 1,
         "elapsed_ms": 41,
@@ -79,11 +89,19 @@
       ],
       "summary_cell_count": 36,
       "summary_effective_styles": "exact",
+      "entry_route": "pytools menu -> 1 timeline -> 3 row-suffix or 4 no-suffix -> confirm",
       "target_commit_operation": "created",
-      "execution_summary": {
+      "target_candidate_matches_committed_bytes": true,
+      "target_execution_history": {
+        "phase": "target_append_execute",
+        "status": "succeeded",
+        "actual_engine": "rust_xlsxwriter",
+        "stage_elapsed_ms_recorded": true
+      },
+      "target_execution_summary": {
         "appended_rows": 3,
         "duplicate_rows_filtered": 0,
-        "elapsed_ms": 42,
+        "elapsed_ms": 43,
         "function": "append_target_execute",
         "stages": [
           {
@@ -93,7 +111,7 @@
             "status": "succeeded"
           },
           {
-            "elapsed_ms": 16,
+            "elapsed_ms": 17,
             "name": "target_commit",
             "status": "succeeded"
           }
@@ -114,11 +132,11 @@
       "execution_summary": {
         "appended_rows": 1,
         "duplicate_rows_filtered": 2,
-        "elapsed_ms": 193,
+        "elapsed_ms": 197,
         "function": "append_target_execute",
         "stages": [
           {
-            "elapsed_ms": 95,
+            "elapsed_ms": 97,
             "engine": "umya_spreadsheet",
             "name": "excel_modify",
             "status": "succeeded"
@@ -129,7 +147,7 @@
             "status": "succeeded"
           },
           {
-            "elapsed_ms": 46,
+            "elapsed_ms": 47,
             "name": "target_commit",
             "status": "succeeded"
           }
@@ -182,22 +200,22 @@
       "execution_summary": {
         "appended_rows": 2,
         "duplicate_rows_filtered": 1,
-        "elapsed_ms": 196,
+        "elapsed_ms": 219,
         "function": "append_target_execute",
         "stages": [
           {
-            "elapsed_ms": 96,
+            "elapsed_ms": 109,
             "engine": "umya_spreadsheet",
             "name": "excel_modify",
             "status": "succeeded"
           },
           {
-            "elapsed_ms": 21,
+            "elapsed_ms": 22,
             "name": "replacement_contract_validation",
             "status": "succeeded"
           },
           {
-            "elapsed_ms": 46,
+            "elapsed_ms": 51,
             "name": "target_commit",
             "status": "succeeded"
           }

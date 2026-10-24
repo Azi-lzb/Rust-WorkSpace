@@ -281,6 +281,8 @@ where
                 global,
                 log_view,
                 allow_native_dialog,
+                capabilities,
+                platform,
             )?,
             "2" => {
                 run_interactive_dedup_menu(input, output, config_path, global, allow_native_dialog)?
@@ -904,6 +906,8 @@ fn run_interactive_timeline_menu<R, W>(
     global: &GlobalConfig,
     log_view: &str,
     allow_native_dialog: bool,
+    capabilities: Option<&Path>,
+    platform: Option<&str>,
 ) -> Result<()>
 where
     R: BufRead,
@@ -978,7 +982,15 @@ where
                         .into_iter()
                         .map(|path| path.to_string_lossy().into_owned()),
                 );
-                run_wide_summary_cli(arguments, choice == "3")?;
+                run_interactive_wide_summary_menu(
+                    input,
+                    output,
+                    arguments,
+                    choice == "3",
+                    log_view,
+                    capabilities,
+                    platform,
+                )?;
                 return Ok(());
             }
             "5" => {
@@ -989,6 +1001,368 @@ where
             _ => writeln!(output, "仅接受 1、3、4、5 或 0")?,
         }
     }
+}
+
+fn run_interactive_wide_summary_menu<R, W>(
+    input: &mut R,
+    output: &mut W,
+    arguments: Vec<String>,
+    row_suffix: bool,
+    log_view: &str,
+    capabilities: Option<&Path>,
+    platform: Option<&str>,
+) -> Result<()>
+where
+    R: BufRead,
+    W: Write,
+{
+    let mut report = run_wide_summary_cli_report(arguments, row_suffix)?;
+    let plan_paths = report["target_append_plans"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    let mut executable_plans = Vec::<(PathBuf, AppendTargetPlan)>::new();
+    let mut execution_results = Vec::<serde_json::Value>::new();
+
+    for plan_path in plan_paths {
+        let Some(plan_path) = plan_path.as_str().map(PathBuf::from) else {
+            anyhow::bail!("wide summary returned a target append plan without a path");
+        };
+        let plan: AppendTargetPlan = serde_json::from_slice(&fs::read(&plan_path)?)
+            .with_context(|| format!("decode target append plan {}", plan_path.display()))?;
+        if plan.appended_rows == 0 {
+            writeln!(
+                output,
+                "[跳过目标写入] {} 没有需要追加的新行。",
+                plan.target.display()
+            )?;
+            continue;
+        }
+        let has_payload = if plan.target_existed {
+            plan.edit_plan.is_some() && plan.replacement_workbook.is_some()
+        } else {
+            plan.new_workbook.is_some()
+        };
+        anyhow::ensure!(
+            has_payload,
+            "target append plan has rows but no executable workbook payload: {}",
+            plan_path.display()
+        );
+        if plan.target_existed && (capabilities.is_none() || platform.is_none()) {
+            writeln!(
+                output,
+                "[仅生成计划] 既有目标 {} 需要已验收的 ExcelModifier capability 和 platform；计划保存在 {}。",
+                plan.target.display(),
+                plan_path.display()
+            )?;
+            execution_results.push(serde_json::json!({
+                "target": plan.target,
+                "status": "planned_only",
+                "reason": "capability_required",
+                "plan": plan_path
+            }));
+            continue;
+        }
+        executable_plans.push((plan_path, plan));
+    }
+
+    if !executable_plans.is_empty() {
+        writeln!(
+            output,
+            "宽表汇总已准备 {} 个目标写入：",
+            executable_plans.len()
+        )?;
+        for (_, plan) in &executable_plans {
+            let operation = if plan.target_existed {
+                "替换目标表"
+            } else {
+                "新建目标簿"
+            };
+            writeln!(
+                output,
+                "  {operation}：{}（追加 {} 行，过滤重复 {} 行）",
+                plan.target.display(),
+                plan.appended_rows,
+                plan.duplicate_rows_filtered
+            )?;
+        }
+        let confirmed = read_menu_choice(
+            input,
+            output,
+            "确认执行上述目标写入？输入 y/yes/是 确认，其他输入取消> ",
+        )?
+        .is_some_and(|choice| {
+            matches!(
+                choice.trim().to_ascii_lowercase().as_str(),
+                "y" | "yes" | "是"
+            )
+        });
+        if confirmed {
+            let base_elapsed_ms = report["elapsed_ms"].as_u64().unwrap_or_default() as u128;
+            let mut execution_elapsed_ms = 0u128;
+            let mut history_events = Vec::<serde_json::Value>::new();
+            let mut execution_failures = 0usize;
+            let first_sequence = wide_summary_history_event_count(&report).unwrap_or_default();
+
+            for (index, (plan_path, plan)) in executable_plans.iter().enumerate() {
+                let started = Instant::now();
+                let mut arguments = vec![
+                    "--plan".to_owned(),
+                    plan_path.to_string_lossy().into_owned(),
+                    "--commit-target".to_owned(),
+                ];
+                if plan.target_existed {
+                    arguments.push("--capabilities".to_owned());
+                    arguments.push(
+                        capabilities
+                            .context("capabilities missing for existing target")?
+                            .to_string_lossy()
+                            .into_owned(),
+                    );
+                    arguments.push("--platform".to_owned());
+                    arguments.push(
+                        platform
+                            .context("platform missing for existing target")?
+                            .to_owned(),
+                    );
+                }
+
+                match run_dedup_append_execute_report(arguments) {
+                    Ok(execution) => {
+                        let elapsed_ms = started.elapsed().as_millis();
+                        execution_elapsed_ms += elapsed_ms;
+                        let engine = execution["engine"]
+                            .as_str()
+                            .or_else(|| execution["candidate_engine"].as_str())
+                            .map(str::to_owned);
+                        let commit_operation = execution["target_commit"]["operation"]
+                            .as_str()
+                            .unwrap_or("committed")
+                            .to_owned();
+                        let event = wide_summary_target_execution_event(
+                            &report,
+                            first_sequence + history_events.len() + 1,
+                            "succeeded",
+                            index + 1,
+                            elapsed_ms,
+                            base_elapsed_ms + execution_elapsed_ms,
+                            engine.as_deref(),
+                            None,
+                        );
+                        emit_wide_summary_target_execution_event(log_view, &event);
+                        history_events.push(event);
+                        let summary = execution["execution_summary"].clone();
+                        execution_results.push(serde_json::json!({
+                            "target": plan.target,
+                            "status": "succeeded",
+                            "operation": commit_operation,
+                            "appended_rows": plan.appended_rows,
+                            "elapsed_ms": elapsed_ms,
+                            "engine": if log_view == "developer" { engine.clone() } else { None },
+                            "execution_summary": if log_view == "developer" { Some(summary) } else { None }
+                        }));
+                        writeln!(
+                            output,
+                            "目标写入完成：{}，追加 {} 行，耗时 {} ms。",
+                            plan.target.display(),
+                            plan.appended_rows,
+                            elapsed_ms
+                        )?;
+                        if log_view == "developer" {
+                            writeln!(output, "{}", serde_json::to_string_pretty(&execution)?)?;
+                        }
+                    }
+                    Err(error) => {
+                        execution_failures += 1;
+                        let elapsed_ms = started.elapsed().as_millis();
+                        execution_elapsed_ms += elapsed_ms;
+                        let event = wide_summary_target_execution_event(
+                            &report,
+                            first_sequence + history_events.len() + 1,
+                            "failed",
+                            index + 1,
+                            elapsed_ms,
+                            base_elapsed_ms + execution_elapsed_ms,
+                            None,
+                            Some("append_target_execute_error"),
+                        );
+                        emit_wide_summary_target_execution_event(log_view, &event);
+                        history_events.push(event);
+                        execution_results.push(serde_json::json!({
+                            "target": plan.target,
+                            "status": "failed",
+                            "appended_rows": plan.appended_rows,
+                            "elapsed_ms": elapsed_ms,
+                            "error": if log_view == "developer" {
+                                Some(format!("{error:#}"))
+                            } else {
+                                None
+                            }
+                        }));
+                        writeln!(
+                            output,
+                            "目标写入失败：{}。{}",
+                            plan.target.display(),
+                            if log_view == "developer" {
+                                format!("详细错误：{error:#}")
+                            } else {
+                                "请检查目标文件和能力配置后重试。".to_owned()
+                            }
+                        )?;
+                    }
+                }
+            }
+
+            if !history_events.is_empty() {
+                if let Err(error) = persist_wide_summary_target_execution_events(
+                    &report,
+                    &history_events,
+                    base_elapsed_ms + execution_elapsed_ms,
+                    executable_plans.len() - execution_failures,
+                    execution_failures,
+                ) {
+                    eprintln!(
+                        "pytools: warning: could not update wide-summary run history: {error:#}"
+                    );
+                }
+            }
+            if execution_failures > 0 {
+                report["target_append_status"] = serde_json::Value::String("partial".to_owned());
+            } else {
+                report["target_append_status"] = serde_json::Value::String("succeeded".to_owned());
+            }
+        } else {
+            writeln!(output, "已取消目标写入；汇总文件和追加计划已保留。")?;
+            for (_, plan) in &executable_plans {
+                execution_results.push(serde_json::json!({
+                    "target": plan.target,
+                    "status": "cancelled",
+                    "appended_rows": plan.appended_rows
+                }));
+            }
+        }
+    }
+
+    report["target_append_executions"] = serde_json::Value::Array(execution_results);
+    writeln!(output, "{}", serde_json::to_string(&report)?)?;
+    if report["target_append_status"] == "partial" {
+        anyhow::bail!("one or more configured wide-summary targets could not be written");
+    }
+    Ok(())
+}
+
+fn wide_summary_history_event_count(report: &serde_json::Value) -> Result<usize> {
+    let Some(path) = report["run_log_path"].as_str() else {
+        return Ok(0);
+    };
+    let history: serde_json::Value = serde_json::from_slice(&fs::read(path)?)
+        .with_context(|| format!("read wide-summary run history {path}"))?;
+    Ok(history["events"].as_array().map_or(0, Vec::len))
+}
+
+fn wide_summary_target_execution_event(
+    report: &serde_json::Value,
+    sequence: usize,
+    status: &str,
+    completed_targets: usize,
+    stage_elapsed_ms: u128,
+    total_elapsed_ms: u128,
+    actual_engine: Option<&str>,
+    error_type: Option<&str>,
+) -> serde_json::Value {
+    serde_json::json!({
+        "sequence": sequence,
+        "timestamp": Local::now().to_rfc3339(),
+        "feature_id": report["feature_id"],
+        "phase": "target_append_execute",
+        "status": status,
+        "user_message": if status == "succeeded" {
+            "宽表汇总目标写入完成"
+        } else {
+            "宽表汇总目标写入失败"
+        },
+        "progress": {
+            "total_inputs": report["total_inputs"],
+            "processed_inputs": report["completed_inputs"],
+            "completed_inputs": report["completed_inputs"],
+            "failed_inputs": report["failed_inputs"],
+            "current_input": null,
+            "matched_rule_sheets": report["matched_rule_sheets"],
+            "extracted_cells": report["extracted_cells"],
+            "output_rows": report["output_rows"],
+            "target_append_plans": completed_targets
+        },
+        "input_index": null,
+        "stage_elapsed_ms": stage_elapsed_ms,
+        "total_elapsed_ms": total_elapsed_ms,
+        "components": if actual_engine == Some("rust_xlsxwriter") {
+            vec!["pytools-core", "excel-reader", "excel-writer", "rust_xlsxwriter"]
+        } else {
+            vec!["pytools-core", "excel-reader", "excel-editor", actual_engine.unwrap_or("excel-editor")]
+        },
+        "actual_engine": actual_engine,
+        "error_type": error_type
+    })
+}
+
+fn emit_wide_summary_target_execution_event(log_view: &str, event: &serde_json::Value) {
+    match log_view {
+        "developer" => eprintln!("{}", event),
+        "user" => eprintln!(
+            "{}",
+            event["user_message"].as_str().unwrap_or("目标写入已处理")
+        ),
+        _ => {}
+    }
+}
+
+fn persist_wide_summary_target_execution_events(
+    report: &serde_json::Value,
+    new_events: &[serde_json::Value],
+    total_elapsed_ms: u128,
+    succeeded_targets: usize,
+    failed_targets: usize,
+) -> Result<()> {
+    let Some(path) = report["run_log_path"].as_str() else {
+        return Ok(());
+    };
+    let path = Path::new(path);
+    let mut history: serde_json::Value = serde_json::from_slice(&fs::read(path)?)
+        .with_context(|| format!("read wide-summary run history {}", path.display()))?;
+    let events = history["events"]
+        .as_array_mut()
+        .context("wide-summary history events are not an array")?;
+    events.extend(new_events.iter().cloned());
+    let engines = history["actual_engines"]
+        .as_array_mut()
+        .context("wide-summary history actual_engines are not an array")?;
+    for event in new_events {
+        if let Some(engine) = event["actual_engine"].as_str() {
+            if !engines
+                .iter()
+                .any(|existing| existing.as_str() == Some(engine))
+            {
+                engines.push(serde_json::Value::String(engine.to_owned()));
+            }
+        }
+    }
+    history["elapsed_ms"] = serde_json::json!(total_elapsed_ms);
+    history["target_append_execution"] = serde_json::json!({
+        "succeeded_targets": succeeded_targets,
+        "failed_targets": failed_targets,
+        "status": if failed_targets > 0 { "partial" } else { "succeeded" }
+    });
+    if failed_targets > 0 {
+        history["status"] = serde_json::Value::String("partial".to_owned());
+    }
+    let mut output = OpenOptions::new()
+        .write(true)
+        .truncate(true)
+        .open(path)
+        .with_context(|| format!("open wide-summary run history {}", path.display()))?;
+    output.write_all(&serde_json::to_vec_pretty(&history)?)?;
+    output.sync_all()?;
+    Ok(())
 }
 
 fn run_interactive_dedup_menu<R, W>(
@@ -2772,13 +3146,19 @@ fn run_dedup_append_plan(arguments: Vec<String>) -> Result<()> {
 }
 
 fn run_dedup_append_execute(arguments: Vec<String>) -> Result<()> {
+    let report = run_dedup_append_execute_report(arguments)?;
+    println!("{}", serde_json::to_string_pretty(&report)?);
+    Ok(())
+}
+
+fn run_dedup_append_execute_report(arguments: Vec<String>) -> Result<serde_json::Value> {
     let run_started = Instant::now();
     let (commit_target, arguments) = extract_boolean_flag(arguments, "commit-target")?;
     let options = parse_cli_arguments(arguments)?;
     let plan_path = required_path(&options, "plan")?;
     let plan: AppendTargetPlan = serde_json::from_slice(&fs::read(&plan_path)?)
         .with_context(|| format!("decode append plan {}", plan_path.display()))?;
-    if plan.target_existed {
+    let report = if plan.target_existed {
         let edit_plan = plan
             .edit_plan
             .as_ref()
@@ -2877,7 +3257,7 @@ fn run_dedup_append_execute(arguments: Vec<String>) -> Result<()> {
             "elapsed_ms": run_started.elapsed().as_millis(),
             "stages": stages
         });
-        println!("{}", serde_json::to_string_pretty(&output)?);
+        output
     } else {
         let write_started = Instant::now();
         let candidate =
@@ -2919,9 +3299,9 @@ fn run_dedup_append_execute(arguments: Vec<String>) -> Result<()> {
             "elapsed_ms": run_started.elapsed().as_millis(),
             "stages": stages
         });
-        println!("{}", serde_json::to_string_pretty(&output)?);
-    }
-    Ok(())
+        output
+    };
+    Ok(report)
 }
 
 struct TemporaryFile(PathBuf);
@@ -5954,6 +6334,15 @@ fn run_timeline_compare_cli(arguments: Vec<String>) -> Result<()> {
 }
 
 fn run_wide_summary_cli(arguments: Vec<String>, row_suffix: bool) -> Result<()> {
+    let report = run_wide_summary_cli_report(arguments, row_suffix)?;
+    println!("{}", serde_json::to_string(&report)?);
+    Ok(())
+}
+
+fn run_wide_summary_cli_report(
+    arguments: Vec<String>,
+    row_suffix: bool,
+) -> Result<serde_json::Value> {
     let options = parse_cli_arguments(arguments)?;
     let run_started = Instant::now();
     let started_at = Local::now().to_rfc3339();
@@ -6198,8 +6587,7 @@ fn run_wide_summary_cli(arguments: Vec<String>, row_suffix: bool) -> Result<()> 
                     }
                 }
             }
-            println!("{}", serde_json::to_string(&result)?);
-            Ok(())
+            Ok(result)
         }
         Err(error) => {
             if log_view == "user" {

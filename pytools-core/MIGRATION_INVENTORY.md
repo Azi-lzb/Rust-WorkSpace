@@ -249,6 +249,14 @@ Windows 原生验证：`cargo check --manifest-path Cargo.toml -p pytools-core -
 
 该结果仍仅覆盖合成 XLSX 和菜单管道输入，不包含原生文件选择弹窗实测或脱敏真实业务样本；公式保留、生产 capability、完整真实模板保真、麒麟/UOS glibc 2.28 与离线 deb 未验收，PT-1-3/1-4 整体保持**未验证**。
 
+### 2026-10-25 PT-1-3/PT-1-4 交互式目标写入接入与菜单对拍
+
+主菜单现在将 capability/platform 传入时序子菜单。宽表汇总 3/4 生成计划后显示目标及追加行数，并要求用户确认；新目标确认后通过 rust_xlsxwriter 写入、重开验证并不覆盖发布，既有目标没有 capability/platform 时仅保留计划，有匹配能力时沿用 `dedup-append-execute --commit-target` 的快照核验、候选验证和安全替换。目标执行阶段写入 user/developer/off 兼容的结果摘要及开发者历史，历史记录实际引擎和阶段耗时，不记录路径或单元格内容。
+
+Windows 原生 `cargo fmt --manifest-path pytools-core/Cargo.toml -- --check` 通过；`cargo test --offline --locked -p pytools-core --test timeline_menu_cli --test dedup_append_execution` 为 12/12。`probe/compare_wide_summary.py` 已改为通过只读 Python PyCode 基线对比真实 `pytools menu → 1 → 3/4 → 确认` 新目标路径，两种行头模式共 2 个合成菜单场景通过；两个汇总各对比 36 个单元格、有效样式精确，目标输出、候选与已提交簿一致。该脚本另对两种模式的既有目标替换执行 2 个 Rust CLI 对拍，分别比较 467/476 个单元格，目标 sheet 样式精确、未触及工作表属性保留；既有目标的交互菜单计划模式/临时 capability 确认替换由 `timeline_menu_cli` 集成测试覆盖。开发者历史的 `target_append_execute` 状态、实际引擎及阶段耗时通过检查。机器报告更新为 `probe/reports/wide_summary_parity_20261023.json` 与 `probe/reports/wide_summary_existing_target_parity_20261023.json`。
+
+证据仍限于合成 XLSX 和管道输入。未实测 Windows 原生文件弹窗或脱敏真实业务样本；既有目标执行仅使用临时测试 capability，生产 capability、完整真实模板保真、麒麟/UOS glibc 2.28 和离线 deb 未验收，PT-1-3/1-4 整体仍为**未验证**。
+
 ### 2026-10-23 汇总工具 6-1/6-2 合成对拍
 
 新增 `probe/compare_summary_tools.py`，分别对比旧 `summary_321_322.py` 与 Rust `summary-used-range`、`summary-comments`。6-1 覆盖多个工作表、格式定义的 used-range 尾部、日期/布尔/数值/文本；12 行一致。6-2 覆盖行/列区域批注、`set(name)` 批注、重复列头和“模板”回退；6 行一致。两个输出的 sheet 名、单元格值/类型、维度、冻结窗格和表头加粗一致。机器报告见 `probe/reports/summary_tools_parity_20261023.json`。

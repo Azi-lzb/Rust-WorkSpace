@@ -1,4 +1,4 @@
-"""Compare the Rust 1-3/1-4 wide-summary CLI with the read-only PyCode baseline.
+"""Compare the Rust 1-3/1-4 wide-summary menu with the read-only PyCode baseline.
 
 The script builds a synthetic XLSX/config under a temporary directory, calls
 the original Python workflow without writing to the source tree, then compares
@@ -57,7 +57,9 @@ def rust_path_result(path: str) -> Path:
     return Path(path) if os.environ.get("PYTOOLS_RUST_CLI") else from_wsl_path(path)
 
 
-def run_rust_command(arguments: list[str]) -> subprocess.CompletedProcess[bytes]:
+def run_rust_command(
+    arguments: list[str], input_text: str | None = None
+) -> subprocess.CompletedProcess[bytes]:
     rust_cli = os.environ.get("PYTOOLS_RUST_CLI")
     if rust_cli:
         return subprocess.run(
@@ -65,6 +67,7 @@ def run_rust_command(arguments: list[str]) -> subprocess.CompletedProcess[bytes]
             cwd=WORKSPACE,
             check=True,
             capture_output=True,
+            input=input_text.encode("utf-8") if input_text is not None else None,
         )
 
     workspace = to_wsl_path(WORKSPACE)
@@ -76,6 +79,7 @@ def run_rust_command(arguments: list[str]) -> subprocess.CompletedProcess[bytes]
         ["wsl", "-e", "sh", "-lc", command],
         check=True,
         capture_output=True,
+        input=input_text.encode("utf-8") if input_text is not None else None,
     )
 
 
@@ -251,32 +255,30 @@ def run_rust(config: Path, source: Path, row_suffix: bool) -> tuple[Path | None,
     raise RuntimeError(f"Rust CLI did not return JSON: {stdout}\n{stderr}")
 
 
-def execute_new_target_plan(plan: Path) -> tuple[Path, Path, dict[str, object]]:
+def run_rust_menu(
+    config: Path, source: Path, row_suffix: bool
+) -> tuple[Path | None, list[Path], dict[str, object]]:
+    menu_choice = "3" if row_suffix else "4"
     completed = run_rust_command(
-        ["dedup-append-execute", "--plan", rust_path_argument(plan), "--commit-target"]
+        ["menu", "--config", rust_path_argument(config), "--log-view", "developer"],
+        input_text=f"1\n{menu_choice}\n{rust_path_argument(source)}\ny\n0\n",
     )
     stdout = completed.stdout.decode("utf-8-sig", errors="replace").replace("\x00", "")
     stderr = completed.stderr.decode("utf-8-sig", errors="replace").replace("\x00", "")
-    try:
-        result = json.loads(stdout)
-    except json.JSONDecodeError:
-        result = None
-        for line in reversed(stdout.splitlines()):
-            try:
-                result = json.loads(line)
-                break
-            except json.JSONDecodeError:
-                continue
-    if isinstance(result, dict) and "candidate" in result:
-        candidate = rust_path_result(result["candidate"])
-        wrapper = json.loads(plan.read_text(encoding="utf-8"))
-        target = rust_path_result(wrapper["target"])
-        if result.get("target_commit", {}).get("operation") != "created":
-            raise AssertionError(f"new configured target was not committed: {result}")
-        if target.read_bytes() != candidate.read_bytes():
-            raise AssertionError("new configured target differs from validated candidate")
-        return candidate, target, result
-    raise RuntimeError(f"append executor did not return a committed candidate: {stdout}\n{stderr}")
+    for line in reversed(stdout.splitlines()):
+        try:
+            result = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(result, dict) or "target_append_plans" not in result:
+            continue
+        value = result.get("output")
+        output = rust_path_result(value) if value else None
+        plans = [rust_path_result(path) for path in result.get("target_append_plans", [])]
+        return output, plans, result
+    raise RuntimeError(
+        f"Rust interactive menu did not return its wide-summary report: {stdout}\n{stderr}"
+    )
 
 
 def make_test_capability(plan_path: Path, capability_path: Path) -> None:
@@ -634,15 +636,54 @@ def run_case(root: Path, row_suffix: bool) -> dict[str, object]:
     rust_output = case / "rust_output"
     config = case / "config.xlsx"
     make_config(config, rust_output, source.parent, rust_output / "target.xlsx")
+    source_before = source.read_bytes()
+    config_before = config.read_bytes()
     baseline, python_target = python_baseline(source, python_output, row_suffix)
-    actual, plans = run_rust(config, source, row_suffix)
+    actual, plans, menu_report = run_rust_menu(config, source, row_suffix)
     if baseline is None or actual is None:
         raise AssertionError(f"wide summary did not produce output: baseline={baseline}, rust={actual}")
     assert_parity(baseline, actual)
     if len(plans) != 1:
         raise AssertionError(f"expected one target append plan, got {plans}")
-    candidate, committed_target, commit_execution = execute_new_target_plan(plans[0])
+    wrapper = json.loads(plans[0].read_text(encoding="utf-8"))
+    candidate = rust_path_result(wrapper["candidate"])
+    committed_target = rust_path_result(wrapper["target"])
+    executions = menu_report.get("target_append_executions", [])
+    if (
+        menu_report.get("target_append_status") != "succeeded"
+        or len(executions) != 1
+        or executions[0].get("status") != "succeeded"
+    ):
+        raise AssertionError(f"interactive target append did not succeed: {executions}")
+    commit_execution = executions[0]
+    if commit_execution.get("operation") != "created":
+        raise AssertionError(
+            f"interactive menu did not create the configured target: {commit_execution}"
+        )
+    if not candidate.is_file() or not committed_target.is_file():
+        raise AssertionError("interactive menu did not retain candidate and committed target")
+    run_log_path = menu_report.get("run_log_path")
+    if not run_log_path:
+        raise AssertionError("developer-view menu report did not include its run history")
+    history = json.loads(rust_path_result(run_log_path).read_text(encoding="utf-8"))
+    target_events = [
+        event
+        for event in history.get("events", [])
+        if event.get("phase") == "target_append_execute"
+    ]
+    if len(target_events) != 1:
+        raise AssertionError(f"expected one target execution history event: {target_events}")
+    target_event = target_events[0]
+    if (
+        target_event.get("status") != "succeeded"
+        or target_event.get("actual_engine") != "rust_xlsxwriter"
+        or not isinstance(target_event.get("stage_elapsed_ms"), int)
+    ):
+        raise AssertionError(f"unexpected target execution history event: {target_event}")
     assert_parity(python_target, candidate)
+    assert_parity(python_target, committed_target)
+    if source.read_bytes() != source_before or config.read_bytes() != config_before:
+        raise AssertionError("interactive Rust/Python run modified source workbook or config")
     if committed_target.read_bytes() != candidate.read_bytes():
         raise AssertionError("new target commit differs from candidate")
     projection = normalized(actual)
@@ -656,8 +697,16 @@ def run_case(root: Path, row_suffix: bool) -> dict[str, object]:
             len(row) for sheet in projection["rows"] for row in sheet
         ),
         "summary_effective_styles": "exact",
-        "target_commit_operation": commit_execution["target_commit"]["operation"],
-        "execution_summary": commit_execution["execution_summary"],
+        "entry_route": "pytools menu -> 1 timeline -> 3 row-suffix or 4 no-suffix -> confirm",
+        "target_commit_operation": commit_execution["operation"],
+        "target_candidate_matches_committed_bytes": True,
+        "target_execution_history": {
+            "phase": target_event["phase"],
+            "status": target_event["status"],
+            "actual_engine": target_event["actual_engine"],
+            "stage_elapsed_ms_recorded": True,
+        },
+        "target_execution_summary": commit_execution["execution_summary"],
     }
     print(json.dumps(result, ensure_ascii=False))
     return result
@@ -784,9 +833,9 @@ def main() -> int:
                 },
                 "python_baseline": str(PYTOOLS_SOURCE),
                 "rust_execution": (
-                    "Windows native pytools CLI"
+                    "Windows native pytools menu and CLI"
                     if os.environ.get("PYTOOLS_RUST_CLI")
-                    else "WSL2 cargo run via pytools CLI; Windows Python executes baseline and comparisons"
+                    else "WSL2 cargo run via pytools menu and CLI; Windows Python executes baseline and comparisons"
                 ),
                 "sample_kind": "synthetic XLSX only",
             },
@@ -795,6 +844,8 @@ def main() -> int:
                 "effective_cell_styles": "exact across every cell in generated summary workbooks, including font, fill, border, alignment, number format, and protection",
                 "formula_text_merges_dimensions_defined_names_freeze_panes": "exact; synthetic output contains no formulas, merges, defined names, or frozen panes",
                 "data_date_number_formats": "exact across the generated summary worksheet",
+                "new_target_entry": "pytools menu -> timeline 1 -> wide summary 3/4 -> explicit confirmation",
+                "new_target_execution_history": "developer-view history records successful target_append_execute, rust_xlsxwriter and stage duration",
                 "existing_target_behavior": "rebuild target worksheet from existing rows plus accepted non-duplicate rows; preserve untouched sheets",
                 "target_sheet_replacement": "values, types, dimensions, and required untouched-sheet properties are checked; effective cell-style differences are reported and block acceptance",
                 "untouched_sheet_properties": "selected values, A1 fill/comment, merges, row height, and column width",
@@ -843,7 +894,7 @@ def main() -> int:
                 "effective_cell_styles": report["comparison_contract"]["effective_cell_styles"],
                 "formula_text_merges_dimensions_defined_names_freeze_panes": report["comparison_contract"]["formula_text_merges_dimensions_defined_names_freeze_panes"],
                 "data_date_number_formats": report["comparison_contract"]["data_date_number_formats"],
-                "new_target_append": "exact after the real Rust CLI executed and committed the validated candidate",
+                "new_target_append": "exact after the real Rust menu generated, validated, confirmed and committed the candidate",
             },
             "scenarios": summary_cases,
             "limitations": report["limitations"],
