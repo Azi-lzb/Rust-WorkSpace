@@ -6,6 +6,7 @@
 
 use crate::config::ExtractTask;
 use crate::edit_plan::apply_plan_with_capability_file;
+use crate::summary_ops::{SummaryProgress, SummaryRunEvent};
 use anyhow::{bail, ensure, Context, Result};
 use chrono::Local;
 use excel_editor::{
@@ -22,7 +23,7 @@ use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 pub type CellMatrix = Vec<Vec<Option<Value>>>;
 
@@ -58,6 +59,48 @@ struct PendingWorkbook {
     sheets: Vec<ExpectedSheet>,
     sheet_names: Vec<String>,
     import_operations: Vec<EditOperation>,
+}
+
+struct ExtractSheetsProgressEmitter<'a> {
+    started: Instant,
+    sequence: usize,
+    progress: SummaryProgress,
+    callback: &'a mut dyn FnMut(SummaryRunEvent),
+}
+
+impl ExtractSheetsProgressEmitter<'_> {
+    fn emit(
+        &mut self,
+        phase: &str,
+        status: &str,
+        user_message: impl Into<String>,
+        file: Option<&Path>,
+        stage_elapsed: Option<Duration>,
+        components: &[&str],
+        actual_engine: Option<&str>,
+        error_type: Option<&str>,
+    ) {
+        self.sequence += 1;
+        (self.callback)(SummaryRunEvent {
+            sequence: self.sequence,
+            timestamp: Local::now().to_rfc3339(),
+            phase: phase.to_owned(),
+            status: status.to_owned(),
+            user_message: user_message.into(),
+            progress: self.progress.clone(),
+            file_name: file
+                .and_then(Path::file_name)
+                .map(|name| name.to_string_lossy().into_owned()),
+            stage_elapsed_ms: stage_elapsed.map(|elapsed| elapsed.as_millis()),
+            total_elapsed_ms: self.started.elapsed().as_millis(),
+            components: components
+                .iter()
+                .map(|component| (*component).to_owned())
+                .collect(),
+            actual_engine: actual_engine.map(str::to_owned),
+            error_type: error_type.map(str::to_owned),
+        });
+    }
 }
 
 const FULL_AREA_WORDS: &[&str] = &["", "整表", "全部", "全表"];
@@ -517,8 +560,67 @@ pub fn run_extract_sheets_candidate(
     capability_path: Option<&Path>,
     platform: Option<&str>,
 ) -> Result<ExtractSheetsAreaResult> {
+    run_extract_sheets_candidate_with_progress(
+        source_workbooks,
+        tasks,
+        output_dir,
+        append_existing,
+        default_output_name,
+        capability_path,
+        platform,
+        |_| {},
+    )
+}
+
+pub fn run_extract_sheets_candidate_with_progress<F>(
+    source_workbooks: &[PathBuf],
+    tasks: &[ExtractTask],
+    output_dir: &Path,
+    append_existing: bool,
+    default_output_name: Option<&str>,
+    capability_path: Option<&Path>,
+    platform: Option<&str>,
+    mut on_event: F,
+) -> Result<ExtractSheetsAreaResult>
+where
+    F: FnMut(SummaryRunEvent),
+{
+    let mut emitter = ExtractSheetsProgressEmitter {
+        started: Instant::now(),
+        sequence: 0,
+        progress: SummaryProgress {
+            total_inputs: source_workbooks.len(),
+            total_files: source_workbooks.len(),
+            ..SummaryProgress::default()
+        },
+        callback: &mut on_event,
+    };
+    emitter.emit(
+        "run",
+        "started",
+        format!(
+            "开始工作表提取：{} 个源文件，{} 条启用任务",
+            source_workbooks.len(),
+            tasks.len()
+        ),
+        None,
+        None,
+        &["pytools-core"],
+        None,
+        None,
+    );
     let mut result = ExtractSheetsAreaResult::default();
     if tasks.is_empty() {
+        emitter.emit(
+            "run",
+            "succeeded",
+            "没有启用的工作表提取任务",
+            None,
+            Some(emitter.started.elapsed()),
+            &["pytools-core"],
+            None,
+            None,
+        );
         return Ok(result);
     }
     if append_existing {
@@ -534,6 +636,32 @@ pub fn run_extract_sheets_candidate(
         );
     }
 
+    for (index, source_path) in source_workbooks.iter().enumerate() {
+        emitter.progress.current_file = Some(index + 1);
+        if !source_path
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("xlsx"))
+        {
+            let file_name = source_path
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_else(|| source_path.display().to_string());
+            let message = format!("工作表提取当前仅验收 .xlsx 输入；请先显式转换：{file_name}");
+            emitter.emit(
+                "input_filter",
+                "failed",
+                message.clone(),
+                Some(source_path),
+                None,
+                &["pytools-core"],
+                None,
+                Some("unsupported_input_format"),
+            );
+            bail!("{message}");
+        }
+    }
+
     let generated_name;
     let default_name = match default_output_name {
         Some(name) => name,
@@ -542,23 +670,87 @@ pub fn run_extract_sheets_candidate(
             &generated_name
         }
     };
-    fs::create_dir_all(output_dir)
-        .with_context(|| format!("create output directory {}", output_dir.display()))?;
+    let output_dir_started = Instant::now();
+    if let Err(error) = fs::create_dir_all(output_dir) {
+        emitter.emit(
+            "prepare_output",
+            "failed",
+            format!("无法准备工作表提取输出目录：{error}"),
+            None,
+            Some(output_dir_started.elapsed()),
+            &["pytools-core", "filesystem"],
+            None,
+            Some("output_directory_error"),
+        );
+        return Err(error)
+            .with_context(|| format!("create output directory {}", output_dir.display()));
+    }
+    emitter.emit(
+        "prepare_output",
+        "succeeded",
+        "工作表提取输出目录已准备",
+        None,
+        Some(output_dir_started.elapsed()),
+        &["pytools-core", "filesystem"],
+        None,
+        None,
+    );
 
     let mut output_indexes = BTreeMap::<String, usize>::new();
     let mut outputs = Vec::<PendingWorkbook>::new();
     let fallback_time = Local::now().format("%H%M%S").to_string();
 
-    for source_path in source_workbooks {
+    for (source_index, source_path) in source_workbooks.iter().enumerate() {
+        emitter.progress.current_file = Some(source_index + 1);
+        let source_started = Instant::now();
+        emitter.emit(
+            "source_read",
+            "started",
+            format!(
+                "正在读取源工作簿 [{}/{}]",
+                source_index + 1,
+                source_workbooks.len()
+            ),
+            Some(source_path),
+            None,
+            &["pytools-core", "excel-reader"],
+            None,
+            None,
+        );
         let source_sheets = match read_value_columns_with_iso_dates(source_path, EXCEL_MAX_COLUMNS)
         {
-            Ok(sheets) => sheets,
-            Err(_) => {
+            Ok(sheets) => {
+                result.files += 1;
+                emitter.emit(
+                    "source_read",
+                    "succeeded",
+                    "源工作簿读取完成",
+                    Some(source_path),
+                    Some(source_started.elapsed()),
+                    &["pytools-core", "excel-reader", "calamine"],
+                    Some("calamine"),
+                    None,
+                );
+                sheets
+            }
+            Err(error) => {
                 result.failed_files += 1;
+                emitter.progress.processed_files = source_index + 1;
+                emitter.progress.completed_files = source_index + 1;
+                emitter.progress.failed_files = result.failed_files;
+                emitter.emit(
+                    "source_read",
+                    "failed",
+                    format!("源工作簿读取失败：{error}"),
+                    Some(source_path),
+                    Some(source_started.elapsed()),
+                    &["pytools-core", "excel-reader", "calamine"],
+                    Some("calamine"),
+                    Some("source_read_error"),
+                );
                 continue;
             }
         };
-        result.files += 1;
 
         let source_file_name = source_path
             .file_name()
@@ -572,6 +764,7 @@ pub fn run_extract_sheets_candidate(
             .iter()
             .map(sparse_sheet)
             .collect::<Result<Vec<_>>>()?;
+        let extracted_sheets_before = result.extracted_sheets;
         let has_matching_full_sheet_task = tasks.iter().any(|task| {
             is_full_sheet_task(task)
                 && workbook_matches(&source_file_name, task)
@@ -586,6 +779,16 @@ pub fn run_extract_sheets_candidate(
             let extents = read_xlsx_worksheet_extents(source_path).with_context(|| {
                 format!("read stored-cell extents from {}", source_path.display())
             })?;
+            emitter.emit(
+                "worksheet_extent_read",
+                "succeeded",
+                "已读取整表导入所需的 OOXML 工作表范围",
+                Some(source_path),
+                Some(source_started.elapsed()),
+                &["pytools-core", "excel-reader"],
+                Some("excel-reader OOXML extent inventory"),
+                None,
+            );
             ensure!(
                 extents.len() == sparse_sheets.len(),
                 "OOXML extent inventory disagrees with Calamine sheet count in {}",
@@ -761,12 +964,40 @@ pub fn run_extract_sheets_candidate(
                 result.extracted_sheets += 1;
             }
         }
+        emitter.progress.processed_files = source_index + 1;
+        emitter.progress.completed_files = source_index + 1;
+        emitter.progress.failed_files = result.failed_files;
+        emitter.progress.processed_sheets = result.extracted_sheets;
+        emitter.emit(
+            "source_extract",
+            "succeeded",
+            format!(
+                "源工作簿处理完成，本文件新增 {} 张提取工作表",
+                result.extracted_sheets - extracted_sheets_before
+            ),
+            Some(source_path),
+            Some(source_started.elapsed()),
+            &["pytools-core"],
+            None,
+            None,
+        );
     }
 
     let mut staged = Vec::<(PathBuf, PathBuf)>::new();
     let mut temporary_files = Vec::<PathBuf>::new();
     let stage_result = (|| -> Result<()> {
         for pending in &mut outputs {
+            let output_started = Instant::now();
+            emitter.emit(
+                "output_write",
+                "started",
+                "正在生成提取结果工作簿",
+                Some(&pending.path),
+                None,
+                &["pytools-core", "excel-writer"],
+                None,
+                None,
+            );
             ensure!(
                 !pending.path.exists(),
                 "refuse to overwrite existing extraction output {}",
@@ -779,19 +1010,62 @@ pub fn run_extract_sheets_candidate(
             staged.push((stage_path.clone(), pending.path.clone()));
             temporary_files.push(stage_path.clone());
             if pending.import_operations.is_empty() {
-                pending
-                    .workbook
-                    .save(&stage_path)
-                    .with_context(|| format!("save staged workbook {}", stage_path.display()))?;
+                if let Err(error) = pending.workbook.save(&stage_path) {
+                    emitter.emit(
+                        "output_write",
+                        "failed",
+                        format!("提取结果工作簿写入失败：{error}"),
+                        Some(&pending.path),
+                        Some(output_started.elapsed()),
+                        &["pytools-core", "excel-writer", "rust_xlsxwriter"],
+                        Some("rust_xlsxwriter"),
+                        Some("output_write_error"),
+                    );
+                    return Err(error)
+                        .with_context(|| format!("save staged workbook {}", stage_path.display()));
+                }
+                emitter.emit(
+                    "output_write",
+                    "succeeded",
+                    "提取结果工作簿已写入",
+                    Some(&pending.path),
+                    Some(output_started.elapsed()),
+                    &["pytools-core", "excel-writer", "rust_xlsxwriter"],
+                    Some("rust_xlsxwriter"),
+                    None,
+                );
             } else {
                 let capability_path =
                     capability_path.context("full-sheet extraction requires a capability file")?;
                 let platform = platform.context("full-sheet extraction requires a platform id")?;
                 let skeleton_path = unique_stage_path(&pending.path)?;
                 temporary_files.push(skeleton_path.clone());
-                pending.workbook.save(&skeleton_path).with_context(|| {
-                    format!("save extraction skeleton {}", skeleton_path.display())
-                })?;
+                let skeleton_write_started = Instant::now();
+                if let Err(error) = pending.workbook.save(&skeleton_path) {
+                    emitter.emit(
+                        "skeleton_write",
+                        "failed",
+                        format!("整表导入骨架写入失败：{error}"),
+                        Some(&pending.path),
+                        Some(skeleton_write_started.elapsed()),
+                        &["pytools-core", "excel-writer", "rust_xlsxwriter"],
+                        Some("rust_xlsxwriter"),
+                        Some("skeleton_write_error"),
+                    );
+                    return Err(error).with_context(|| {
+                        format!("save extraction skeleton {}", skeleton_path.display())
+                    });
+                }
+                emitter.emit(
+                    "skeleton_write",
+                    "succeeded",
+                    "整表导入骨架已写入",
+                    Some(&pending.path),
+                    Some(skeleton_write_started.elapsed()),
+                    &["pytools-core", "excel-writer", "rust_xlsxwriter"],
+                    Some("rust_xlsxwriter"),
+                    None,
+                );
                 let mut workbook_profile = inspect_xlsx_profile(&skeleton_path)?;
                 let mut imported_source_profiles =
                     BTreeMap::<String, excel_editor::WorkbookProfile>::new();
@@ -849,14 +1123,89 @@ pub fn run_extract_sheets_candidate(
                 };
                 plan.validate()?;
                 let import_operations = plan.operations.clone();
-                apply_plan_with_capability_file(&plan, capability_path, platform)
-                    .with_context(|| "apply full-sheet extraction through ExcelModifier")?;
-                validate_full_sheet_imports(&import_operations, &stage_path)?;
+                let modifier_started = Instant::now();
+                let execution =
+                    match apply_plan_with_capability_file(&plan, capability_path, platform) {
+                        Ok(execution) => execution,
+                        Err(error) => {
+                            emitter.emit(
+                                "excel_modifier",
+                                "failed",
+                                format!("整表导入修改失败：{error:#}"),
+                                Some(&pending.path),
+                                Some(modifier_started.elapsed()),
+                                &["pytools-core", "excel-editor"],
+                                None,
+                                Some("excel_modifier_error"),
+                            );
+                            return Err(error).with_context(|| {
+                                "apply full-sheet extraction through ExcelModifier"
+                            });
+                        }
+                    };
+                let modifier_engine = execution.engine.to_string();
+                emitter.emit(
+                    "excel_modifier",
+                    "succeeded",
+                    "ExcelModifier 已完成整表导入",
+                    Some(&pending.path),
+                    Some(modifier_started.elapsed()),
+                    &["pytools-core", "excel-editor"],
+                    Some(&modifier_engine),
+                    None,
+                );
+                let validation_started = Instant::now();
+                if let Err(error) = validate_full_sheet_imports(&import_operations, &stage_path) {
+                    emitter.emit(
+                        "full_sheet_validation",
+                        "failed",
+                        format!("整表导入结果验证失败：{error:#}"),
+                        Some(&pending.path),
+                        Some(validation_started.elapsed()),
+                        &["pytools-core", "excel-editor", "calamine"],
+                        Some("calamine"),
+                        Some("full_sheet_validation_error"),
+                    );
+                    return Err(error);
+                }
+                emitter.emit(
+                    "full_sheet_validation",
+                    "succeeded",
+                    "整表导入的值与结构验证通过",
+                    Some(&pending.path),
+                    Some(validation_started.elapsed()),
+                    &["pytools-core", "excel-editor", "calamine"],
+                    Some("calamine"),
+                    None,
+                );
                 fs::remove_file(&skeleton_path).with_context(|| {
                     format!("remove extraction skeleton {}", skeleton_path.display())
                 })?;
             }
-            validate_staged_workbook(&stage_path, &pending.sheets)?;
+            let validation_started = Instant::now();
+            if let Err(error) = validate_staged_workbook(&stage_path, &pending.sheets) {
+                emitter.emit(
+                    "output_validation",
+                    "failed",
+                    format!("提取输出簿验证失败：{error:#}"),
+                    Some(&pending.path),
+                    Some(validation_started.elapsed()),
+                    &["pytools-core", "excel-reader", "calamine"],
+                    Some("calamine"),
+                    Some("output_validation_error"),
+                );
+                return Err(error);
+            }
+            emitter.emit(
+                "output_validation",
+                "succeeded",
+                "提取输出簿的工作表名称、尺寸和非空单元格计数验证通过",
+                Some(&pending.path),
+                Some(validation_started.elapsed()),
+                &["pytools-core", "excel-reader", "calamine"],
+                Some("calamine"),
+                None,
+            );
         }
         Ok(())
     })();
@@ -903,11 +1252,39 @@ pub fn run_extract_sheets_candidate(
                 .with_context(|| format!("remove staged workbook {}", stage_path.display()));
         }
         committed.push(output_path.clone());
+        emitter.emit(
+            "output_commit",
+            "succeeded",
+            "提取结果已安全提交到目标路径",
+            Some(output_path),
+            None,
+            &["pytools-core", "filesystem"],
+            None,
+            None,
+        );
         result
             .paths
             .push(output_path.to_string_lossy().into_owned());
         result.output_files += 1;
     }
+
+    emitter.progress.processed_files = source_workbooks.len();
+    emitter.progress.completed_files = source_workbooks.len();
+    emitter.progress.failed_files = result.failed_files;
+    emitter.progress.processed_sheets = result.extracted_sheets;
+    emitter.emit(
+        "run",
+        "succeeded",
+        format!(
+            "工作表提取完成：读取 {} 个文件，提取 {} 张工作表，输出 {} 个文件，失败 {} 个",
+            result.files, result.extracted_sheets, result.output_files, result.failed_files
+        ),
+        None,
+        Some(emitter.started.elapsed()),
+        &["pytools-core"],
+        None,
+        None,
+    );
 
     Ok(result)
 }

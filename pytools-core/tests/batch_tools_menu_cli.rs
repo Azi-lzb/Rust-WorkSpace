@@ -388,7 +388,7 @@ fn interactive_foreign_bank_menu_saves_read_only_plans_and_user_history() -> Res
         String::from_utf8_lossy(&output.stderr)
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("7-1、7-2、7-3、7-5"));
+    assert!(stdout.contains("当前接入 7-1 至 7-6"));
     assert!(stdout.contains("删除分机构表中的外资行"));
     assert!(stdout.contains("PT-7-3 当前只接受 .xlsx"));
     assert!(stdout.contains(r#""planned_files": 2"#));

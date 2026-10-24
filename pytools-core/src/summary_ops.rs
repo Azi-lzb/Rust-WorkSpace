@@ -70,6 +70,8 @@ pub struct SummaryProgress {
     pub failed_files: usize,
     pub processed_rows: usize,
     pub total_rows: usize,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub processed_sheets: usize,
 }
 
 #[derive(Clone, Debug, Serialize)]

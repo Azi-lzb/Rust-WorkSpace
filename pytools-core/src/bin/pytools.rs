@@ -35,7 +35,7 @@ use pytools_core::print_ops::{
 };
 use pytools_core::quick::{open_config, open_latest_output, open_output_directory};
 use pytools_core::region_sum::run_region_sum_check;
-use pytools_core::sheet_extract::run_extract_sheets_candidate;
+use pytools_core::sheet_extract::{is_full_sheet_task, run_extract_sheets_candidate_with_progress};
 use pytools_core::sheet_rename::{build_sheet_rename_plan, run_batch_sheet_rename_candidate};
 use pytools_core::submission_check::run_submission_check;
 use pytools_core::summary_ops::{
@@ -215,7 +215,7 @@ where
         writeln!(output, "  3  打印工具（生成页面设置计划）")?;
         writeln!(output, "  4  转换与文件命名工具")?;
         writeln!(output, "  6  汇总工具")?;
-        writeln!(output, "  7  一二批处理工具（当前接入 7-1 至 7-5）")?;
+        writeln!(output, "  7  一二批处理工具（当前接入 7-1 至 7-6）")?;
         writeln!(output, "  0  退出")?;
         writeln!(output, "==============================")?;
         let Some(choice) = read_menu_choice(input, output, "主菜单选择> ")? else {
@@ -864,6 +864,7 @@ where
             "  4  修改外汇工作表页眉单位（Rust 计划/能力门控提交）"
         )?;
         writeln!(output, "  5  地区总分校验（读取并生成核对结果）")?;
+        writeln!(output, "  6  工作表数据提取（普通无批注版）")?;
         writeln!(output, "  0  返回")?;
         writeln!(output, "----------------------------")?;
         let Some(choice) = read_menu_choice(input, output, "子菜单选择> ")? else {
@@ -1257,8 +1258,87 @@ where
                 run_region_sum(arguments)?;
                 return Ok(());
             }
+            "6" => {
+                let tasks = load_extract_tasks(config_path).with_context(|| {
+                    format!(
+                        "load worksheet-extraction tasks from {}",
+                        config_path.display()
+                    )
+                })?;
+                if tasks.is_empty() {
+                    writeln!(output, "[已中止] '工作表提取'配置无启用任务。")?;
+                    return Ok(());
+                }
+                writeln!(
+                    output,
+                    "[就绪] 已加载 {} 条启用的工作表提取任务。",
+                    tasks.len()
+                )?;
+                let full_sheet_tasks = tasks.iter().filter(|task| is_full_sheet_task(task)).count();
+                if full_sheet_tasks > 0 && capabilities.is_none() {
+                    writeln!(
+                        output,
+                        "[已中止] 配置中有 {full_sheet_tasks} 条整表提取任务；当前没有匹配的 ExcelModifier 能力文件与平台，未选择文件、未生成输出。"
+                    )?;
+                    return Ok(());
+                }
+                let Some(selected) = choose_workbooks(
+                    "选择要提取工作表数据的源文件（可多选）",
+                    true,
+                    input,
+                    output,
+                    allow_native_dialog,
+                )?
+                else {
+                    writeln!(output, "[已取消] 未选择工作表提取源文件。")?;
+                    return Ok(());
+                };
+                let mut sources = Vec::new();
+                for path in selected {
+                    if path
+                        .extension()
+                        .is_some_and(|extension| extension.eq_ignore_ascii_case("xlsx"))
+                    {
+                        sources.push(path);
+                    } else {
+                        writeln!(
+                            output,
+                            "[跳过] {}：PT-7-6 当前仅验收 .xlsx；请先显式转换，未验收格式不会交给读取器。",
+                            path.display()
+                        )?;
+                    }
+                }
+                if sources.is_empty() {
+                    writeln!(output, "[提示] 没有可处理的 .xlsx 工作簿。")?;
+                    return Ok(());
+                }
+                let mut arguments = config_cli_arguments(config_path);
+                arguments.extend([
+                    "--output-dir".to_owned(),
+                    global.output_dir.to_string_lossy().into_owned(),
+                    "--log-dir".to_owned(),
+                    global.log_dir.to_string_lossy().into_owned(),
+                    "--log-view".to_owned(),
+                    log_view.to_owned(),
+                ]);
+                if let (Some(capabilities), Some(platform)) = (capabilities, platform) {
+                    arguments.extend([
+                        "--capabilities".to_owned(),
+                        capabilities.to_string_lossy().into_owned(),
+                        "--platform".to_owned(),
+                        platform.to_owned(),
+                    ]);
+                }
+                arguments.extend(
+                    sources
+                        .into_iter()
+                        .map(|path| path.to_string_lossy().into_owned()),
+                );
+                run_extract_sheets(arguments)?;
+                return Ok(());
+            }
             "0" => return Ok(()),
-            _ => writeln!(output, "仅接受 1、2、3、4、5 或 0")?,
+            _ => writeln!(output, "仅接受 1、2、3、4、5、6 或 0")?,
         }
     }
 }
@@ -5377,6 +5457,8 @@ fn run_extract_sheets(arguments: Vec<String>) -> Result<()> {
     let mut arguments = arguments.into_iter();
     let mut config_path = None::<PathBuf>;
     let mut output_dir = None::<PathBuf>;
+    let mut log_dir = None::<PathBuf>;
+    let mut log_view = None::<String>;
     let mut capability_path = None::<PathBuf>;
     let mut platform = None::<String>;
     let mut source_workbooks = Vec::new();
@@ -5391,6 +5473,14 @@ fn run_extract_sheets(arguments: Vec<String>) -> Result<()> {
                 output_dir = Some(PathBuf::from(
                     arguments.next().context("--output-dir requires a path")?,
                 ));
+            }
+            "--log-dir" => {
+                log_dir = Some(PathBuf::from(
+                    arguments.next().context("--log-dir requires a path")?,
+                ));
+            }
+            "--log-view" => {
+                log_view = Some(arguments.next().context("--log-view requires a value")?);
             }
             "--capabilities" => {
                 capability_path = Some(PathBuf::from(
@@ -5410,6 +5500,12 @@ fn run_extract_sheets(arguments: Vec<String>) -> Result<()> {
     }
 
     let config_path = config_path.context("--config is required")?;
+    if let Some(log_view) = log_view.as_deref() {
+        anyhow::ensure!(
+            matches!(log_view, "user" | "developer" | "off"),
+            "--log-view must be user, developer, or off"
+        );
+    }
     if source_workbooks.is_empty() {
         bail!("provide at least one source workbook path");
     }
@@ -5423,25 +5519,227 @@ fn run_extract_sheets(arguments: Vec<String>) -> Result<()> {
             config_path.display()
         )
     })?;
-    let output_dir = match output_dir {
-        Some(path) => path,
-        None => {
-            load_global(&config_path)
-                .with_context(|| format!("load output directory from {}", config_path.display()))?
-                .output_dir
+    let global = if output_dir.is_none() || (log_view.is_some() && log_dir.is_none()) {
+        Some(load_global(&config_path).with_context(|| {
+            format!(
+                "load output and log directories from {}",
+                config_path.display()
+            )
+        })?)
+    } else {
+        None
+    };
+    let output_dir = output_dir
+        .or_else(|| global.as_ref().map(|config| config.output_dir.clone()))
+        .context("output directory is unavailable")?;
+    let log_dir = log_dir.or_else(|| global.map(|config| config.log_dir));
+    let run_started = Instant::now();
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or_default();
+    let run_id = format!(
+        "{}_{}_{}",
+        Local::now().format("%Y%m%dT%H%M%S"),
+        std::process::id(),
+        nonce
+    );
+    let mut events = Vec::<SummaryRunEvent>::new();
+    let progress_enabled = log_view
+        .as_deref()
+        .is_some_and(|view| matches!(view, "user" | "developer"));
+    let result = if progress_enabled {
+        let view = log_view.as_deref().unwrap_or("user");
+        run_extract_sheets_candidate_with_progress(
+            &source_workbooks,
+            &tasks,
+            &output_dir,
+            false,
+            None,
+            capability_path.as_deref(),
+            platform.as_deref(),
+            |event| emit_extract_sheets_event(&mut events, view, event),
+        )
+    } else {
+        run_extract_sheets_candidate_with_progress(
+            &source_workbooks,
+            &tasks,
+            &output_dir,
+            false,
+            None,
+            capability_path.as_deref(),
+            platform.as_deref(),
+            |_| {},
+        )
+    };
+
+    let result = match result {
+        Ok(result) => result,
+        Err(error) => {
+            if let Some(view) = log_view.as_deref().filter(|view| *view != "off") {
+                let progress = events
+                    .last()
+                    .map(|event| event.progress.clone())
+                    .unwrap_or_default();
+                let event = SummaryRunEvent {
+                    sequence: events.len() + 1,
+                    timestamp: Local::now().to_rfc3339(),
+                    phase: "run".to_owned(),
+                    status: "failed".to_owned(),
+                    user_message: format!("工作表提取失败：{error:#}"),
+                    progress,
+                    file_name: events.last().and_then(|event| event.file_name.clone()),
+                    stage_elapsed_ms: Some(run_started.elapsed().as_millis()),
+                    total_elapsed_ms: run_started.elapsed().as_millis(),
+                    components: vec!["pytools-core".to_owned()],
+                    actual_engine: None,
+                    error_type: Some("extraction_failed".to_owned()),
+                };
+                emit_extract_sheets_event(&mut events, view, event);
+                if let Some(log_dir) = log_dir.as_deref() {
+                    if let Err(history_error) = save_extract_sheets_run_history(
+                        log_dir,
+                        &run_id,
+                        "failed",
+                        tasks.len(),
+                        run_started.elapsed().as_millis(),
+                        None,
+                        Some("extraction_failed"),
+                        &events,
+                    ) {
+                        eprintln!("pytools: warning: could not save PT-7-6 run history: {history_error:#}");
+                    }
+                }
+            }
+            return Err(error);
         }
     };
-    let result = run_extract_sheets_candidate(
-        &source_workbooks,
-        &tasks,
-        &output_dir,
-        false,
-        None,
-        capability_path.as_deref(),
-        platform.as_deref(),
-    )?;
-    println!("{}", serde_json::to_string_pretty(&result)?);
+
+    let status = if result.failed_files > 0 {
+        "partial"
+    } else {
+        "succeeded"
+    };
+    if let Some(view) = log_view.as_deref().filter(|view| *view != "off") {
+        if let Some(log_dir) = log_dir.as_deref() {
+            match save_extract_sheets_run_history(
+                log_dir,
+                &run_id,
+                status,
+                tasks.len(),
+                run_started.elapsed().as_millis(),
+                Some(&result),
+                None,
+                &events,
+            ) {
+                Ok(path) if view == "user" => {
+                    eprintln!("工作表提取运行记录已保存：{}", path.display())
+                }
+                Ok(path) => eprintln!("PT-7-6 run history: {}", path.display()),
+                Err(error) => {
+                    eprintln!("pytools: warning: could not save PT-7-6 run history: {error:#}")
+                }
+            }
+        }
+    }
+
+    if log_view.as_deref() == Some("user") {
+        println!(
+            "[完成] 源文件={} 提取工作表={} 输出文件={} 失败={}",
+            result.files, result.extracted_sheets, result.output_files, result.failed_files
+        );
+        for path in &result.paths {
+            println!("  -> {path}");
+        }
+    } else {
+        println!("{}", serde_json::to_string_pretty(&result)?);
+    }
     Ok(())
+}
+
+fn emit_extract_sheets_event(
+    events: &mut Vec<SummaryRunEvent>,
+    log_view: &str,
+    event: SummaryRunEvent,
+) {
+    match log_view {
+        "developer" => match serde_json::to_string(&event) {
+            Ok(encoded) => eprintln!("{encoded}"),
+            Err(_) => {
+                eprintln!("{{\"phase\":\"progress_event\",\"status\":\"serialization_failed\"}}")
+            }
+        },
+        "user" => eprintln!("{}", event.user_message),
+        _ => {}
+    }
+    events.push(event);
+}
+
+fn save_extract_sheets_run_history(
+    log_dir: &Path,
+    run_id: &str,
+    status: &str,
+    task_count: usize,
+    total_elapsed_ms: u128,
+    result: Option<&pytools_core::sheet_extract::ExtractSheetsAreaResult>,
+    error_type: Option<&str>,
+    events: &[SummaryRunEvent],
+) -> Result<PathBuf> {
+    fs::create_dir_all(log_dir).with_context(|| {
+        format!(
+            "create worksheet extraction log directory {}",
+            log_dir.display()
+        )
+    })?;
+    let actual_engines = events
+        .iter()
+        .filter_map(|event| event.actual_engine.clone())
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+    let progress = events
+        .last()
+        .map(|event| event.progress.clone())
+        .unwrap_or_default();
+    let result_summary = result
+        .map(|result| {
+            serde_json::json!({
+                "files": result.files,
+                "extracted_sheets": result.extracted_sheets,
+                "output_files": result.output_files,
+                "failed_files": result.failed_files,
+                "output_file_names": result.paths.iter().filter_map(|path| {
+                    Path::new(path).file_name().map(|name| name.to_string_lossy().into_owned())
+                }).collect::<Vec<_>>(),
+            })
+        })
+        .unwrap_or_else(|| {
+            serde_json::json!({
+                "files": progress.completed_files.saturating_sub(progress.failed_files),
+                "extracted_sheets": progress.processed_sheets,
+                "output_files": 0,
+                "failed_files": progress.failed_files,
+            })
+        });
+    let history = serde_json::json!({
+        "schema_version": 1,
+        "product": "pytools",
+        "feature_id": "PT-7-6",
+        "run_id": run_id,
+        "status": status,
+        "task_count": task_count,
+        "total_inputs": progress.total_inputs,
+        "processed_files": progress.processed_files,
+        "total_elapsed_ms": total_elapsed_ms,
+        "actual_engines": actual_engines,
+        "result": result_summary,
+        "error_type": error_type,
+        "events": events,
+    });
+    let path = log_dir.join(format!("PT-7-6_{run_id}.run.json"));
+    fs::write(&path, serde_json::to_vec_pretty(&history)?)
+        .with_context(|| format!("write worksheet extraction run history {}", path.display()))?;
+    Ok(path)
 }
 
 fn run_region_sum(arguments: Vec<String>) -> Result<()> {
@@ -5513,7 +5811,7 @@ fn print_usage() {
     eprintln!(
         "Usage:\n\
          pytools [menu] [--config <config.xlsx>] [--log-view user|developer|off] [--capabilities <json> --platform <id>]\n\
-         no command opens the migrated menu; available categories: 1 (timeline 1/3/4/5), 2 (dedup 1-6), 3 (print 1-4), 4 (conversion and file naming 1-10), 6 (summary 1/2), and 7 (batch 7-1/7-5)\n\
+         no command opens the migrated menu; available categories: 1 (timeline 1/3/4/5), 2 (dedup 1-6), 3 (print 1-4), 4 (conversion and file naming 1-10), 6 (summary 1/2), and 7 (batch 7-1/7-6)\n\
          timeline-precheck --config <workbook.xlsx>\n\
          timeline-compare --config <workbook.xlsx> --template <workbook.xlsx> <source.xlsx>...\n\
          wide-summary --config <workbook.xlsx> <source.xlsx>...\n\
@@ -5556,7 +5854,7 @@ fn print_usage() {
          convert-word --config <config.xlsx> [--to docx] [--engine auto|lo] [--output-dir <dir>] <file>...\n\
          convert-file --input <file> --to <extension> [--output <file>] [--engine auto|lo|native]\n\
          native = 按值重建（C01，丢弃样式/公式缓存）；Excel 公式文本保留但不重算，CSV 按文本写入\n\
-         pytools extract-sheets --config <workbook.xlsx> [--output-dir <dir>] [--capabilities <json> --platform <id>] <source.xlsx>...\n\
+         pytools extract-sheets --config <workbook.xlsx> [--output-dir <dir>] [--log-dir <dir>] [--log-view user|developer|off] [--capabilities <json> --platform <id>] <source.xlsx>...\n\
          pytools region-sum-check [--config <workbook.xlsx>] [--output-dir <dir>] [--log-dir <dir>] <source.xlsx>...\n\
          pytools file-sort-prefix --config <workbook.xlsx> [--output-dir <dir>] [--log-dir <dir>] <file>...\n\
          pytools remove-file-sort-prefix --config <workbook.xlsx> [--output-dir <dir>] [--log-dir <dir>] [<file>...]\n\

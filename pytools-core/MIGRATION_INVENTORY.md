@@ -540,3 +540,13 @@ Windows 原生验证：`batch_tools_menu_cli` 6/6、`institution_normalize_batch
 Windows 原生验证：`cargo fmt --manifest-path pytools-core/Cargo.toml -- --check` 通过；`batch_tools_menu_cli` 10/10、`foreign_bank_batch_execution` 2/2 通过。完整关联测试使用 `CARGO_TARGET_DIR=F:\pytools-dev-verify-20261024` 与 `RUSTFLAGS=-C debuginfo=0`，避开默认目标目录链接 `pytools.exe` 时既有的 MSVC PDB `LNK1318 LIMIT`。Python 3.12.10 / openpyxl 3.1.5 基线与 native Rust CLI 合成对拍通过。既有共享 `excel-editor` 弃用 API 与未使用导入警告未在本功能中修改。
 
 PT-7-3 生产验收仍为**未验证**：没有真实工作簿/配置或授权样本，没有在 Windows 桌面人工操作文件弹窗，未迁移旧 `.xls` COM 路径及 `.xlsm` VBA 保留，生产 capability 未登记；麒麟/UOS、glibc 2.28 和离线 deb 未验证。本轮对拍和执行 capability 均为合成 XLSX，不更改 ExcelModifier 默认路由。
+
+### 2026-10-24 PT-7-6 区域提取菜单与运行记录
+
+在既有区域提取候选与 `extract-sheets` CLI 上接入主菜单 7→6。入口读取配置中的启用任务；无任务时中止；整表任务在没有 ExcelModifier capability 与 platform 参数时先中止，再选择输入。输入支持多选，但当前只把 `.xlsx` 交给读取器，其他扩展名在菜单处提示并跳过。普通无批注版保持 PyCode `feature_1_6_extract_sheets.run_extract_sheets` 的迁移范围，COM 批注版本不接入。
+
+核心通过共享 `excel-reader`/Calamine 读取区域值，以 `rust_xlsxwriter` 新建 XLSX，重开校验工作表名称、尺寸和非空格数量，并在校验后用不覆盖目标的提交方式发布结果。读取、输出写入/修改、校验和提交阶段提供进度、阶段耗时及实际引擎事件；菜单支持 user/developer/off 视图，user/developer 在配置日志目录写 PT-7-6 运行历史，记录统计、耗时和引擎，不写单元格值。整表导入继续走 ExcelModifier capability；本轮没有登记生产能力或改变默认路由。
+
+Windows 原生 `cargo fmt --manifest-path pytools-core/Cargo.toml -- --check` 通过；`sheet_extract_area_operation_parity` 7/7、关联的 `batch_tools_menu_cli` 10/10 通过。新增真实 `pytools menu` → 7→6 集成对拍：两个有效合成工作簿和一个损坏 XLSX 得到 4 张表、1 个输出、1 个失败；另有占位 `.xls` 在菜单处过滤。输出 44 个比较单元格的值/类型、工作表名和尺寸与只读 PyCode 基线一致，输入字节不变；user/developer/off 视图回归通过；开发者事件与运行历史记录 Calamine 和 rust_xlsxwriter，历史不含抽样单元格值。机器报告为 `probe/reports/sheet_extract_menu_parity.json`。
+
+证据仅覆盖合成 XLSX、管道输入的手动分号路径和区域模式；Windows 原生文件弹窗未操作，整表通过真实 capability 执行、真实业务模板、其他格式及麒麟/UOS glibc 2.28/deb 未验证。PT-7-6 完整功能及生产验收仍为未验证。
