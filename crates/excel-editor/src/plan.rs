@@ -99,6 +99,7 @@ pub enum EditOperationKind {
     SetCellFillColor,
     CopyRange,
     ImportRange,
+    SetWorkbookCalculationProperties,
     SetPageSettings,
     ReplaceHeaderText,
 }
@@ -253,6 +254,12 @@ pub enum EditOperation {
         materialize_blank_cells: bool,
         hide_zero: bool,
     },
+    /// Update workbook-level calculation flags. `None` preserves the existing
+    /// attribute; this operation requests flags only and never recalculates formulas.
+    SetWorkbookCalculationProperties {
+        full_calc_on_load: Option<bool>,
+        force_full_calc: Option<bool>,
+    },
     SetPageSettings {
         sheet: String,
         settings: PageSettings,
@@ -281,6 +288,9 @@ impl EditOperation {
             Self::SetCellFillColor { .. } => EditOperationKind::SetCellFillColor,
             Self::CopyRange { .. } => EditOperationKind::CopyRange,
             Self::ImportRange { .. } => EditOperationKind::ImportRange,
+            Self::SetWorkbookCalculationProperties { .. } => {
+                EditOperationKind::SetWorkbookCalculationProperties
+            }
             Self::SetPageSettings { .. } => EditOperationKind::SetPageSettings,
             Self::ReplaceHeaderText { .. } => EditOperationKind::ReplaceHeaderText,
         }
@@ -493,6 +503,14 @@ impl EditOperation {
                     bail!("print area must not be empty when specified");
                 }
             }
+            Self::SetWorkbookCalculationProperties {
+                full_calc_on_load,
+                force_full_calc,
+            } => {
+                if full_calc_on_load.is_none() && force_full_calc.is_none() {
+                    bail!("calculation-property update must request at least one flag");
+                }
+            }
             Self::ReplaceHeaderText {
                 sheet,
                 search,
@@ -562,6 +580,22 @@ impl ExcelEditPlan {
         }
         for operation in &self.operations {
             operation.validate()?;
+        }
+        let calc_property_operations = self
+            .operations
+            .iter()
+            .filter(|operation| {
+                matches!(
+                    operation,
+                    EditOperation::SetWorkbookCalculationProperties { .. }
+                )
+            })
+            .count();
+        if calc_property_operations > 1 {
+            bail!("an edit plan may contain at most one workbook calculation-property operation");
+        }
+        if calc_property_operations > 0 && self.format != WorkbookFormat::Xlsx {
+            bail!("workbook calculation-property patch currently supports XLSX only");
         }
         if self
             .drop_allowed

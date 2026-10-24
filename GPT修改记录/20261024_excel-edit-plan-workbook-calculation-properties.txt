@@ -1,0 +1,23 @@
+日期：2026-10-24
+
+变更：
+- crates/excel-editor/src/plan.rs：新增 SetWorkbookCalculationProperties 操作；None 表示保持原属性，Some(bool) 表示写入显式值。限制每个计划最多包含一次该操作，当前只接受 XLSX。
+- crates/excel-editor/src/umya_backend.rs：umya 保存候选后调用 namespace-aware OOXML calcPr 补丁，并在验证阶段读回请求属性。该操作只设置计算标志，不执行公式计算。
+- crates/ooxml-patch/src/lib.rs：新增计算属性读取与定点补丁 API；源文件保持不变，只修改 workbook part，并验证输出属性。新增现有 calcPr、缺少 calcPr、命名空间前缀、未指定属性保持、其他 ZIP 部件保留和源 part 不变测试。
+
+目的：为 S1 跨工作簿 ImportRange 批次提供通用工作簿计算标志表达能力；业务能力是否可路由仍取决于对应 capability 证据。
+
+测试：
+- `wsl.exe -e bash -lc 'cd /mnt/c/Users/AZI/Desktop/VibeCode/1.rust-workspace && cargo fmt --all && cargo test -p ooxml-patch -p excel-editor --no-fail-fast'`
+- 结果：excel-editor 11 单元测试、create_sheet_at 1 测试、import_range 1 测试、openpyxl_worker 1 测试通过；4 项需隔离 openpyxl runtime 的测试按现有配置 ignored。ooxml-patch 12 项测试通过。仅有既有 umya deprecated warnings。
+
+未执行/未完成：
+- 未使用 Audit 真实模板、未与 Python 基线对拍；S1 完整批次不得据此标记 Passed。
+- 未验证 Linux glibc 2.28、目标系统或 deb。
+- 没有生成/登记任何 production capability JSON，也未改变默认路由。
+
+已知问题：
+- calculation-property 操作当前只对 XLSX 暴露，umya backend 实现其候选路径；没有已验收 capability 时 ExcelModifier 不会据此执行。
+- 本轮 cargo fmt 曾触及 Audit 工作区既存的三个未提交文件的 import 排序；已逐行恢复原 import 顺序，避免改变其内容。
+
+回滚：仅回滚上述三个 crate 源文件的本次变更和本记录；不要回滚或覆盖 Audit 未提交文件。

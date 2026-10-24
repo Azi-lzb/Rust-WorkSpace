@@ -57,6 +57,239 @@ pub struct FormulaCachePatchReport {
     pub package_parts: usize,
 }
 
+/// Calculation flags stored in the workbook's `calcPr` element. `None`
+/// means the caller does not request a change to that attribute.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct WorkbookCalculationProperties {
+    pub full_calc_on_load: Option<bool>,
+    pub force_full_calc: Option<bool>,
+}
+
+/// Read the explicit workbook calculation flags. `None` means the attribute
+/// is absent (which is distinct from an explicit `false`).
+pub fn read_workbook_calculation_properties(
+    path: impl AsRef<Path>,
+) -> Result<WorkbookCalculationProperties> {
+    let path = path.as_ref();
+    let mut zip = ZipArchive::new(fs::File::open(path)?)?;
+    let workbook_part = workbook_part_from_zip(&mut zip)?;
+    let xml = read_zip_part(&mut zip, &workbook_part)?;
+    let document = Document::parse(std::str::from_utf8(&xml)?)?;
+    let workbook = document.root_element();
+    let calc_prs = workbook
+        .children()
+        .filter(|node| {
+            node.is_element()
+                && node.tag_name().namespace() == Some(MAIN_NS)
+                && node.tag_name().name() == "calcPr"
+        })
+        .collect::<Vec<_>>();
+    ensure!(
+        calc_prs.len() <= 1,
+        "workbook contains duplicate calcPr elements"
+    );
+    let Some(calc_pr) = calc_prs.first() else {
+        return Ok(WorkbookCalculationProperties::default());
+    };
+    Ok(WorkbookCalculationProperties {
+        full_calc_on_load: calc_pr
+            .attribute("fullCalcOnLoad")
+            .map(parse_xml_bool)
+            .transpose()?,
+        force_full_calc: calc_pr
+            .attribute("forceFullCalc")
+            .map(parse_xml_bool)
+            .transpose()?,
+    })
+}
+
+/// Write an XLSX candidate with targeted updates to workbook calculation flags.
+/// The source remains untouched and an existing output is rejected. All
+/// package parts except the workbook part are copied without XML modification.
+pub fn patch_workbook_calculation_properties(
+    source: impl AsRef<Path>,
+    output: impl AsRef<Path>,
+    requested: WorkbookCalculationProperties,
+) -> Result<()> {
+    let source = source.as_ref();
+    let output = output.as_ref();
+    ensure!(
+        requested.full_calc_on_load.is_some() || requested.force_full_calc.is_some(),
+        "calculation-property patch must request at least one attribute"
+    );
+    let canonical_source = fs::canonicalize(source).context("resolve source workbook")?;
+    ensure!(
+        source != output && (!output.exists() || fs::canonicalize(output)? != canonical_source),
+        "calculation-property patch requires a distinct output path"
+    );
+    ensure!(
+        !output.exists(),
+        "calculation-property patch refuses to overwrite an existing output"
+    );
+
+    let mut input_zip = ZipArchive::new(fs::File::open(source)?)?;
+    let workbook_part = workbook_part_from_zip(&mut input_zip)?;
+    let original = read_zip_part(&mut input_zip, &workbook_part)?;
+    let patched = patch_calc_pr_xml(&original, requested)?;
+    let parent = output.parent().filter(|p| !p.as_os_str().is_empty());
+    if let Some(parent) = parent {
+        fs::create_dir_all(parent)?;
+    }
+    let mut created = false;
+    let result = (|| -> Result<()> {
+        let file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(output)?;
+        created = true;
+        let mut writer = ZipWriter::new(file);
+        for index in 0..input_zip.len() {
+            let mut entry = input_zip.by_index(index)?;
+            let name = entry.name().to_owned();
+            let mut options = SimpleFileOptions::default().compression_method(entry.compression());
+            if let Some(modified) = entry.last_modified() {
+                options = options.last_modified_time(modified);
+            }
+            if entry.is_dir() {
+                writer.add_directory(name, options)?;
+                continue;
+            }
+            writer.start_file(&name, options)?;
+            if name == workbook_part {
+                writer.write_all(&patched)?;
+            } else {
+                std::io::copy(&mut entry, &mut writer)?;
+            }
+        }
+        writer.finish()?;
+        let readback = read_workbook_calculation_properties(output)?;
+        ensure!(
+            requested
+                .full_calc_on_load
+                .is_none_or(|v| readback.full_calc_on_load == Some(v)),
+            "fullCalcOnLoad readback mismatch"
+        );
+        ensure!(
+            requested
+                .force_full_calc
+                .is_none_or(|v| readback.force_full_calc == Some(v)),
+            "forceFullCalc readback mismatch"
+        );
+        Ok(())
+    })();
+    if result.is_err() && created {
+        let _ = fs::remove_file(output);
+    }
+    result
+}
+
+fn parse_xml_bool(value: &str) -> Result<bool> {
+    match value {
+        "1" | "true" => Ok(true),
+        "0" | "false" => Ok(false),
+        _ => bail!("invalid OOXML boolean {value:?}"),
+    }
+}
+
+fn workbook_part_from_zip(zip: &mut ZipArchive<fs::File>) -> Result<String> {
+    let root_rels_xml = read_zip_part(zip, "_rels/.rels")?;
+    let root_rels = Document::parse(std::str::from_utf8(&root_rels_xml)?)?;
+    let target = root_rels
+        .descendants()
+        .find(|node| {
+            node.is_element()
+                && node.tag_name().namespace() == Some(PACKAGE_REL_NS)
+                && node.tag_name().name() == "Relationship"
+                && node
+                    .attribute("Type")
+                    .is_some_and(|kind| kind.ends_with("/officeDocument"))
+                && !node
+                    .attribute("TargetMode")
+                    .is_some_and(|mode| mode.eq_ignore_ascii_case("External"))
+        })
+        .and_then(|node| node.attribute("Target"))
+        .context("package relationships do not identify an internal workbook part")?;
+    Ok(normalize_part("", target))
+}
+
+fn patch_calc_pr_xml(xml: &[u8], requested: WorkbookCalculationProperties) -> Result<Vec<u8>> {
+    let document = Document::parse(std::str::from_utf8(xml)?)?;
+    let root = document.root_element();
+    ensure!(
+        root.tag_name().namespace() == Some(MAIN_NS) && root.tag_name().name() == "workbook",
+        "workbook part has an unexpected root element"
+    );
+    let calc_prs = root
+        .children()
+        .filter(|node| {
+            node.is_element()
+                && node.tag_name().namespace() == Some(MAIN_NS)
+                && node.tag_name().name() == "calcPr"
+        })
+        .collect::<Vec<_>>();
+    ensure!(
+        calc_prs.len() <= 1,
+        "workbook contains duplicate calcPr elements"
+    );
+    if let Some(calc_pr) = calc_prs.first() {
+        let mut edits = Vec::new();
+        if let Some(value) = requested.full_calc_on_load {
+            edits.push(attribute_update(
+                xml,
+                *calc_pr,
+                "fullCalcOnLoad",
+                if value { "1" } else { "0" },
+            )?);
+        }
+        if let Some(value) = requested.force_full_calc {
+            edits.push(attribute_update(
+                xml,
+                *calc_pr,
+                "forceFullCalc",
+                if value { "1" } else { "0" },
+            )?);
+        }
+        return apply_xml_edits(xml, edits);
+    }
+    let qname = child_qname(xml, root, "calcPr");
+    let mut attributes = String::new();
+    if let Some(value) = requested.full_calc_on_load {
+        attributes.push_str(&format!(
+            " fullCalcOnLoad=\"{}\"",
+            if value { "1" } else { "0" }
+        ));
+    }
+    if let Some(value) = requested.force_full_calc {
+        attributes.push_str(&format!(
+            " forceFullCalc=\"{}\"",
+            if value { "1" } else { "0" }
+        ));
+    }
+    let element = format!("<{qname}{attributes}/>");
+    let insertion = root
+        .children()
+        .filter(|node| {
+            node.is_element()
+                && node.tag_name().namespace() == Some(MAIN_NS)
+                && matches!(
+                    node.tag_name().name(),
+                    "oleSize"
+                        | "customWorkbookViews"
+                        | "pivotCaches"
+                        | "smartTagPr"
+                        | "smartTagTypes"
+                        | "webPublishing"
+                        | "fileRecoveryPr"
+                        | "webPublishObjects"
+                        | "extLst"
+                )
+        })
+        .map(|node| node.range().start)
+        .min()
+        .unwrap_or(closing_tag_start(xml, root.range())?);
+    apply_xml_edits(xml, vec![(insertion..insertion, element.into_bytes())])
+}
+
 /// The three worksheet header variants stored in a SpreadsheetML worksheet.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
 pub enum HeaderVariant {
@@ -2611,6 +2844,120 @@ mod outline_copy_tests {
             ]
         );
 
+        fs::remove_file(source)?;
+        fs::remove_file(output)?;
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod calculation_properties_tests {
+    use super::{
+        patch_calc_pr_xml, patch_workbook_calculation_properties,
+        read_workbook_calculation_properties, WorkbookCalculationProperties, MAIN_NS,
+        PACKAGE_REL_NS,
+    };
+    use anyhow::Result;
+    use std::{
+        fs::{self, File},
+        io::Write,
+        path::PathBuf,
+    };
+    use zip::{write::SimpleFileOptions, CompressionMethod, ZipArchive, ZipWriter};
+
+    fn temp_path(label: &str) -> PathBuf {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "ooxml_calcpr_{}_{}_{}",
+            std::process::id(),
+            nonce,
+            label
+        ))
+    }
+
+    #[test]
+    fn patches_existing_flags_and_inserts_missing_calc_pr_with_namespace_prefix() -> Result<()> {
+        let existing = format!(
+            r#"<s:workbook xmlns:s="{MAIN_NS}"><s:calcPr calcMode="auto" forceFullCalc="0"/><s:sheets/></s:workbook>"#
+        );
+        let changed = patch_calc_pr_xml(
+            existing.as_bytes(),
+            WorkbookCalculationProperties {
+                full_calc_on_load: Some(true),
+                force_full_calc: Some(false),
+            },
+        )?;
+        let text = String::from_utf8(changed)?;
+        assert!(text.contains("calcMode=\"auto\""));
+        assert!(text.contains("fullCalcOnLoad=\"1\""));
+        assert!(text.contains("forceFullCalc=\"0\""));
+
+        let absent = format!(r#"<s:workbook xmlns:s="{MAIN_NS}"><s:sheets/></s:workbook>"#);
+        let inserted = patch_calc_pr_xml(
+            absent.as_bytes(),
+            WorkbookCalculationProperties {
+                full_calc_on_load: Some(true),
+                force_full_calc: Some(true),
+            },
+        )?;
+        let document = roxmltree::Document::parse(std::str::from_utf8(&inserted)?)?;
+        let calc = document
+            .descendants()
+            .find(|node| {
+                node.is_element()
+                    && node.tag_name().namespace() == Some(MAIN_NS)
+                    && node.tag_name().name() == "calcPr"
+            })
+            .unwrap();
+        assert_eq!(calc.attribute("fullCalcOnLoad"), Some("1"));
+        assert_eq!(calc.attribute("forceFullCalc"), Some("1"));
+        Ok(())
+    }
+
+    #[test]
+    fn package_patch_reads_back_flags_preserves_unspecified_flags_and_other_parts() -> Result<()> {
+        let source = temp_path("source.xlsx");
+        let output = temp_path("output.xlsx");
+        let workbook = format!(
+            r#"<x:workbook xmlns:x="{MAIN_NS}"><x:calcPr calcMode="auto" forceFullCalc="0"/><x:sheets/></x:workbook>"#
+        );
+        let mut zip = ZipWriter::new(File::create(&source)?);
+        let options = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
+        zip.start_file("_rels/.rels", options)?;
+        zip.write_all(format!(r#"<Relationships xmlns="{PACKAGE_REL_NS}"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>"#).as_bytes())?;
+        zip.start_file("xl/workbook.xml", options)?;
+        zip.write_all(workbook.as_bytes())?;
+        zip.start_file("xl/untouched.bin", options)?;
+        zip.write_all(b"keep me")?;
+        zip.finish()?;
+
+        patch_workbook_calculation_properties(
+            &source,
+            &output,
+            WorkbookCalculationProperties {
+                full_calc_on_load: Some(true),
+                force_full_calc: None,
+            },
+        )?;
+        let actual = read_workbook_calculation_properties(&output)?;
+        assert_eq!(actual.full_calc_on_load, Some(true));
+        assert_eq!(actual.force_full_calc, Some(false));
+        let mut archive = ZipArchive::new(File::open(&output)?)?;
+        let mut untouched = String::new();
+        use std::io::Read;
+        archive
+            .by_name("xl/untouched.bin")?
+            .read_to_string(&mut untouched)?;
+        assert_eq!(untouched, "keep me");
+        let mut original = ZipArchive::new(File::open(&source)?)?;
+        let mut original_workbook = Vec::new();
+        original
+            .by_name("xl/workbook.xml")?
+            .read_to_end(&mut original_workbook)?;
+        assert_eq!(original_workbook, workbook.as_bytes());
         fs::remove_file(source)?;
         fs::remove_file(output)?;
         Ok(())

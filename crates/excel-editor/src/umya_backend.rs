@@ -168,6 +168,49 @@ impl EditBackend for UmyaXlsxBackend {
             )
             .map_err(|error| BackendFailure::failed(format!("copy outline levels: {error:#}")))?;
         }
+        if let Some((full_calc_on_load, force_full_calc)) =
+            plan.operations.iter().find_map(|operation| {
+                if let EditOperation::SetWorkbookCalculationProperties {
+                    full_calc_on_load,
+                    force_full_calc,
+                } = operation
+                {
+                    Some((*full_calc_on_load, *force_full_calc))
+                } else {
+                    None
+                }
+            })
+        {
+            let patch_output = plan.output.with_file_name(format!(
+                ".{}.calcpr-{}.xlsx",
+                plan.output
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or("candidate"),
+                std::process::id()
+            ));
+            let patch_result = ooxml_patch::patch_workbook_calculation_properties(
+                &plan.output,
+                &patch_output,
+                ooxml_patch::WorkbookCalculationProperties {
+                    full_calc_on_load,
+                    force_full_calc,
+                },
+            );
+            if let Err(error) = patch_result {
+                return Err(BackendFailure::failed(format!(
+                    "patch workbook calculation properties: {error:#}"
+                )));
+            }
+            let copy_result = std::fs::copy(&patch_output, &plan.output).with_context(|| {
+                "replace disposable XLSX candidate with calculation-property patched package"
+                    .to_owned()
+            });
+            let _ = std::fs::remove_file(&patch_output);
+            copy_result.map_err(|error| {
+                BackendFailure::failed(format!("install calculation-property candidate: {error:#}"))
+            })?;
+        }
         Ok(())
     }
 }
@@ -937,7 +980,7 @@ fn restore_absolute_formula_rows(formula: &str, row_locks: &[bool]) -> Result<St
 pub struct UmyaXlsxValidator;
 
 impl OutputValidator for UmyaXlsxValidator {
-    fn validate(&self, _plan: &ExcelEditPlan, candidate_output: &Path) -> Result<()> {
+    fn validate(&self, plan: &ExcelEditPlan, candidate_output: &Path) -> Result<()> {
         let dump = read_workbook(candidate_output)
             .with_context(|| format!("reopen candidate {}", candidate_output.display()))?;
         anyhow::ensure!(
@@ -949,6 +992,24 @@ impl OutputValidator for UmyaXlsxValidator {
             profile.inventory_complete,
             "candidate contains unknown OOXML package parts"
         );
+        for operation in &plan.operations {
+            if let EditOperation::SetWorkbookCalculationProperties {
+                full_calc_on_load,
+                force_full_calc,
+            } = operation
+            {
+                let actual = ooxml_patch::read_workbook_calculation_properties(candidate_output)?;
+                anyhow::ensure!(
+                    full_calc_on_load
+                        .is_none_or(|expected| actual.full_calc_on_load == Some(expected)),
+                    "fullCalcOnLoad readback does not match edit plan"
+                );
+                anyhow::ensure!(
+                    force_full_calc.is_none_or(|expected| actual.force_full_calc == Some(expected)),
+                    "forceFullCalc readback does not match edit plan"
+                );
+            }
+        }
         Ok(())
     }
 }
@@ -1244,6 +1305,9 @@ fn apply_operation(workbook: &mut crate::Workbook, operation: &EditOperation) ->
                 *materialize_blank_cells,
                 *hide_zero,
             )?;
+        }
+        EditOperation::SetWorkbookCalculationProperties { .. } => {
+            // Applied after umya saves, through the namespace-aware workbook.xml patch.
         }
         EditOperation::SetPageSettings { sheet, settings } => {
             let target = workbook
