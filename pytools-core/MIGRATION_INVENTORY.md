@@ -576,3 +576,11 @@ Windows 原生 Rust（rustc/cargo 1.99.1）验证：`cargo fmt --manifest-path p
 Windows 原生 Rust 验证：`cargo fmt --manifest-path pytools-core/Cargo.toml -- --check` 通过；`batch_tools_menu_cli` 15/15、`rural_loan_regressions` 2/2 通过。新菜单测试覆盖 7-7 与 7-8 计划只读、user/developer/off 视图、地区错误摘要，以及临时 synthetic `umya_spreadsheet` capability 下真实菜单→ExcelModifier→安全提交；提交后检查工作簿值、公式、样式、合并区域、批注及未改地区，且上期输入保持不变。只读 PyCode 基线与 Windows native Rust CLI 的临时合成对拍中，7-7、7-8 正常摘要/输出投影以及 7-8 缺失上期地区、重复机构、缺统计地区等错误合同均一致；未生成机器报告文件。
 
 这些证据仅覆盖合成 `.xlsx`，不登记生产 Passed capability，也不改变默认修改路由。真实业务模板/数据、Windows 原生文件弹窗手工操作、目标 Linux/glibc 2.28 与离线 deb 尚未验收；PT-7-7/PT-7-8 的产品验收状态仍为未验证。
+
+### 2026-10-25 PT-6-2 Windows 原生 Rust 菜单与 PyCode 对拍
+
+使用 Windows 原生 Rust 1.99.1 验证既有真实入口：`cargo test --manifest-path Cargo.toml -p pytools-core --test summary_comments_cli --test summary_menu_cli --offline --locked -j 1` 中 `summary_comments_cli` 4/4、`summary_menu_cli` 3/3 通过。CLI 测试覆盖 user/developer/off 三种视图和合并区域锚点语义；菜单测试验证 `pytools menu` → 6→2、配置输出/日志目录、运行历史及损坏输入错误。
+
+另将只读 PyCode `run_summary_by_comment` 与本机编译的 `target/debug/pytools.exe summary-comments` 对拍三个合成场景：标准行/列区域（6 行）、重复行区域标记（6 行）和合并区域非锚点（3 行）。完整工作簿投影一致，比较值/类型、工作表名/维度、样式、冻结窗格、合并区域、公式、定义名称、打印区域、页面设置、页边距和居中属性。机器报告为 `probe/reports/summary_comments_windows_native_parity_20261025.json`。
+
+本次只补充 PT-6-2 的 Windows 原生环境证据，没有修改业务代码。证据仍只覆盖合成输入；真实批注区域模板、Windows 原生文件弹窗手工操作、麒麟 V10/UOS V20、glibc 2.28 和离线 deb 未验证，PT-6-2 生产验收仍为未验证。

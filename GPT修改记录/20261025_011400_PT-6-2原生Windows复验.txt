@@ -1,0 +1,28 @@
+时间：2026-10-25 01:14:00 +08:00
+执行者：Codex
+分支：pytools-dev
+修改前 commit：c8dbfe51ec196a54ef8b11fe50aeccd5fe343597
+修改后业务代码 commit：c8dbfe51ec196a54ef8b11fe50aeccd5fe343597（本轮未改业务代码）
+WIP 情况：修改前工作区干净；仅更新 PyTools 迁移证据。
+
+目的：利用当前 Windows 原生 Cargo 工具链复验已实现的 PT-6-2 CLI/菜单，并将其与只读 PyCode 基线直接对拍。
+
+文件变化：
+- `pytools-core/MIGRATION_INVENTORY.md`
+- `pytools-core/probe/reports/summary_comments_windows_native_parity_20261025.json`
+- 本记录
+
+验证结果：
+- Windows 原生 `cargo test --manifest-path Cargo.toml -p pytools-core --test summary_comments_cli --test summary_menu_cli --offline --locked -j 1`：CLI 4/4、菜单 3/3 通过。CLI 覆盖 user/developer/off 三种视图和合并锚点语义；菜单覆盖真实入口、配置输出/日志路径、运行历史与损坏输入。
+- Python 3.12.10 / openpyxl 3.1.5 只读 PyCode 基线与本机 `target/debug/pytools.exe` 对拍：标准批注区域、重复区域边界、合并单元格非锚点三个合成场景均完整工作簿投影一致。
+- `cargo fmt --manifest-path pytools-core/Cargo.toml -- --check` 与 `git diff --check` 通过；无 Rust 文件变化。
+
+范围与已知限制：
+- 没有找到 PT-6-2 真实批注区域业务模板；本次只补充合成样本的 Windows 原生证据。
+- 没有手工操作 Windows 原生文件弹窗；没有执行目标 Linux、麒麟 V10/UOS V20、glibc 2.28 或离线 deb 验收。
+- 未运行全量 PyTools 或 workspace 测试。
+- PT-6-2 生产验收状态仍为未验证。
+
+删除清单：无。
+回滚提示：仅需回滚本次清单段落、机器报告和本记录，不涉及业务代码。
+【组件版本】：不升级。
