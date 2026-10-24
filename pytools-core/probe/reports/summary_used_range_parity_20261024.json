@@ -66,14 +66,31 @@
     "pycode": {
       "saved": true,
       "output_value": "#DATA!",
-      "output_type": "s"
+      "output_type": "s",
+      "entrypoint": "PyCode.core.summary_321_322.run_summary_by_usedrange",
+      "runtime": "Windows Python 3.12.10; python-calamine available",
+      "output_rows": 1,
+      "output_projection_row": [
+        "getting_data_error",
+        "Errors",
+        1,
+        "#DATA!"
+      ]
     },
     "rust_cli": {
       "status": "failed_closed",
       "message_contains": "Unsupported cell error value '#DATA!'",
-      "reader_engine": "calamine"
+      "reader_engine": "calamine",
+      "entrypoint": "pytools summary-used-range",
+      "runtime": "Windows GNU debug CLI",
+      "actual_executable": "target/x86_64-pc-windows-gnu/debug/pytools.exe",
+      "exit_code": 2,
+      "failure_stage": "value_read",
+      "partial_output_created": false,
+      "failed_run_log_count": 1
     },
-    "note": "Calamine 0.37 does not parse this worksheet error token; PyTools does not use an OOXML value fallback."
+    "business_parity": "mismatch",
+    "note": "Direct Windows execution of the PyCode business function writes #DATA! as a string; the Rust CLI fails during Calamine value reading and creates no partial output. Supporting parity requires coordinated shared-reader capability; PyTools does not use an OOXML value fallback."
   },
   "comment_summary_probe": {
     "baseline_rows": 6,
