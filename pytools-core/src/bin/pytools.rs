@@ -29,8 +29,9 @@ use pytools_core::file_commit::{
 };
 use pytools_core::file_sort_prefix::{
     run_content_prefix_rename_xlsx_candidate, run_content_prefix_unrename_xlsx_candidate,
-    run_file_sort_prefix as run_file_sort_prefix_business,
-    run_remove_file_sort_prefix as run_remove_file_sort_prefix_business,
+    run_file_sort_prefix_with_progress as run_file_sort_prefix_with_progress_business,
+    run_remove_file_sort_prefix_with_progress as run_remove_file_sort_prefix_with_progress_business,
+    FileSortProgressEvent,
 };
 use pytools_core::local_filename_map::run_local_filename_map_candidate;
 use pytools_core::print_ops::{
@@ -292,6 +293,7 @@ where
                 output,
                 config_path,
                 global,
+                log_view,
                 allow_native_dialog,
             )?,
             "5" => run_interactive_config_menu(
@@ -1210,6 +1212,7 @@ fn run_interactive_convert_menu<R, W>(
     output: &mut W,
     config_path: &Path,
     global: &GlobalConfig,
+    log_view: &str,
     allow_native_dialog: bool,
 ) -> Result<()>
 where
@@ -1370,6 +1373,8 @@ where
                 arguments.push(global.output_dir.to_string_lossy().into_owned());
                 arguments.push("--log-dir".to_owned());
                 arguments.push(global.log_dir.to_string_lossy().into_owned());
+                arguments.push("--log-view".to_owned());
+                arguments.push(log_view.to_owned());
                 arguments.extend(
                     paths
                         .into_iter()
@@ -7119,6 +7124,7 @@ fn run_file_sort_prefix(arguments: Vec<String>) -> Result<()> {
     let mut config_path = None::<PathBuf>;
     let mut output_dir = None::<PathBuf>;
     let mut log_dir = None::<PathBuf>;
+    let mut log_view = None::<String>;
     let mut files = Vec::new();
     while let Some(argument) = arguments.next() {
         match argument.as_str() {
@@ -7137,6 +7143,9 @@ fn run_file_sort_prefix(arguments: Vec<String>) -> Result<()> {
                     arguments.next().context("--log-dir requires a path")?,
                 ));
             }
+            "--log-view" => {
+                log_view = Some(arguments.next().context("--log-view requires a value")?);
+            }
             "--help" | "-h" => {
                 print_usage();
                 return Ok(());
@@ -7152,19 +7161,159 @@ fn run_file_sort_prefix(arguments: Vec<String>) -> Result<()> {
     }
     let output_dir = output_dir.unwrap_or_else(|| PathBuf::from("output"));
     let log_dir = log_dir.unwrap_or_else(|| PathBuf::from("logs"));
-    let (log_path, mut log_file) = open_file_sort_log(&log_dir)?;
-
-    let result = run_file_sort_prefix_business(&config_path, &files, &output_dir)?;
-    let log_warning = write_file_sort_log(&mut log_file, &result.rows).err();
+    let log_view = file_sort_log_view(log_view)?;
+    let mut events = Vec::new();
+    let mut active_stage = None;
+    let operation_result =
+        run_file_sort_prefix_with_progress_business(&config_path, &files, &output_dir, |event| {
+            let event_value = file_sort_event_with_stage_elapsed(event, &mut active_stage);
+            if log_view == "developer" {
+                events.push(event_value.clone());
+            }
+            emit_file_sort_event_view(&log_view, event, &event_value);
+        });
+    let history_result = if log_view == "developer" {
+        write_file_sort_run_history(&log_dir, "PT-4-9", &events).map(Some)
+    } else {
+        Ok(None)
+    };
+    if let Err(error) = &history_result {
+        eprintln!("pytools: warning: could not write structured run history: {error:#}");
+    }
+    let result = operation_result?;
+    let legacy_log_result = if log_view == "developer" {
+        write_file_sort_legacy_log(&log_dir, &result.rows)
+    } else {
+        Ok(None)
+    };
+    if let Err(error) = &legacy_log_result {
+        eprintln!("pytools: warning: could not write complete operation log: {error:#}");
+    }
+    if log_view == "user" {
+        println!(
+            "完成：重命名 {} 个，未命中 {} 个，跳过 {} 个，失败 {} 个。结果报表：{}",
+            result.renamed,
+            result.unmatched,
+            result.skipped,
+            result.failed,
+            result.output.display()
+        );
+        return Ok(());
+    }
     let mut output = serde_json::to_value(result)?;
-    output["log_path"] = serde_json::json!(log_path);
-    if let Some(error) = log_warning {
+    if let Ok(Some(log_path)) = &legacy_log_result {
+        output["log_path"] = serde_json::json!(log_path);
+    }
+    if let Ok(Some(history_path)) = &history_result {
+        output["run_history_path"] = serde_json::json!(history_path);
+    }
+    if let Err(error) = &legacy_log_result {
         let warning = format!("could not write complete operation log: {error:#}");
-        eprintln!("pytools: warning: {warning}");
         output["log_warning"] = serde_json::json!(warning);
+    }
+    if let Err(error) = &history_result {
+        let warning = format!("could not write structured run history: {error:#}");
+        output["run_history_warning"] = serde_json::json!(warning);
     }
     println!("{}", serde_json::to_string_pretty(&output)?);
     Ok(())
+}
+
+fn file_sort_log_view(log_view: Option<String>) -> Result<String> {
+    let log_view = log_view.unwrap_or_else(|| "developer".to_owned());
+    if !matches!(log_view.as_str(), "user" | "developer" | "off") {
+        bail!("--log-view must be user, developer, or off");
+    }
+    Ok(log_view)
+}
+
+fn file_sort_event_with_stage_elapsed(
+    event: &FileSortProgressEvent,
+    active_stage: &mut Option<(String, u128)>,
+) -> serde_json::Value {
+    let mut value = serde_json::to_value(event).unwrap_or(serde_json::Value::Null);
+    match event.status.as_str() {
+        "started" => {
+            *active_stage = Some((event.phase.clone(), event.elapsed_ms));
+            value["stage_elapsed_ms"] = serde_json::json!(0);
+        }
+        "completed" | "failed" | "partial_failure" => {
+            let stage_elapsed_ms = active_stage
+                .take()
+                .filter(|(phase, _)| phase == &event.phase)
+                .map(|(_, started_ms)| event.elapsed_ms.saturating_sub(started_ms))
+                .unwrap_or(event.elapsed_ms);
+            value["stage_elapsed_ms"] = serde_json::json!(stage_elapsed_ms);
+        }
+        _ => {}
+    }
+    value
+}
+
+fn emit_file_sort_event_view(
+    log_view: &str,
+    event: &FileSortProgressEvent,
+    event_value: &serde_json::Value,
+) {
+    match log_view {
+        "user" => {
+            if event.status == "started" {
+                eprintln!("{}", event.user_message);
+            } else if let Some(stage_elapsed_ms) = event_value["stage_elapsed_ms"].as_u64() {
+                eprintln!("{} 阶段用时 {}ms。", event.user_message, stage_elapsed_ms);
+            } else {
+                eprintln!("{}", event.user_message);
+            }
+        }
+        "developer" => {
+            if let Ok(line) = serde_json::to_string(event_value) {
+                eprintln!("{line}");
+            }
+        }
+        "off" => {}
+        _ => unreachable!("file-sort log view is validated before execution"),
+    }
+}
+
+fn write_file_sort_run_history(
+    log_dir: &Path,
+    feature_id: &str,
+    events: &[serde_json::Value],
+) -> Result<PathBuf> {
+    fs::create_dir_all(log_dir)
+        .with_context(|| format!("create log directory {}", log_dir.display()))?;
+    let timestamp = Local::now().format("%Y%m%d_%H%M%S");
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .context("system clock before Unix epoch")?
+        .as_nanos();
+    let path = log_dir.join(format!("{feature_id}_file_sort_{timestamp}_{nonce}.json"));
+    let history = serde_json::json!({
+        "schema_version": 1,
+        "product": "pytools",
+        "feature_id": feature_id,
+        "total_elapsed_ms": events.last().map(|event| event["elapsed_ms"].clone()),
+        "events": events,
+    });
+    let bytes = serde_json::to_vec_pretty(&history)?;
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)
+        .with_context(|| format!("create run history {}", path.display()))?;
+    file.write_all(&bytes)?;
+    file.write_all(b"\n")?;
+    file.flush()?;
+    Ok(path)
+}
+
+fn write_file_sort_legacy_log(
+    log_dir: &Path,
+    rows: &[pytools_core::file_sort_prefix::FileSortPrefixRow],
+) -> Result<Option<PathBuf>> {
+    let (log_path, mut log_file) = open_file_sort_log(log_dir)?;
+    write_file_sort_log(&mut log_file, rows)?;
+    Ok(Some(log_path))
 }
 
 fn open_file_sort_log(log_dir: &Path) -> Result<(PathBuf, File)> {
@@ -7214,54 +7363,16 @@ fn write_file_sort_log(
     Ok(())
 }
 
-fn run_remove_file_sort_prefix(arguments: Vec<String>) -> Result<()> {
-    let mut arguments = arguments.into_iter();
-    let mut config_path = None::<PathBuf>;
-    let mut output_dir = None::<PathBuf>;
-    let mut log_dir = None::<PathBuf>;
-    let mut files = Vec::new();
-    while let Some(argument) = arguments.next() {
-        match argument.as_str() {
-            "--config" => {
-                config_path = Some(PathBuf::from(
-                    arguments.next().context("--config requires a path")?,
-                ));
-            }
-            "--output-dir" => {
-                output_dir = Some(PathBuf::from(
-                    arguments.next().context("--output-dir requires a path")?,
-                ));
-            }
-            "--log-dir" => {
-                log_dir = Some(PathBuf::from(
-                    arguments.next().context("--log-dir requires a path")?,
-                ));
-            }
-            "--help" | "-h" => {
-                print_usage();
-                return Ok(());
-            }
-            value if value.starts_with('-') => bail!("unknown option {value:?}"),
-            path => files.push(PathBuf::from(path)),
-        }
-    }
-
-    let config_path = config_path.context("--config is required")?;
-    let output_dir = output_dir.unwrap_or_else(|| PathBuf::from("output"));
-    let log_dir = log_dir.unwrap_or_else(|| PathBuf::from("logs"));
-    let (log_path, mut log_file) = open_file_sort_removal_log(&log_dir)?;
-
-    let result = run_remove_file_sort_prefix_business(&config_path, &files, &output_dir)?;
-    let log_warning = write_file_sort_removal_log(&mut log_file, &result.rows).err();
-    let mut output = serde_json::to_value(result)?;
-    output["log_path"] = serde_json::json!(log_path);
-    if let Some(error) = log_warning {
-        let warning = format!("could not write complete operation log: {error:#}");
-        eprintln!("pytools: warning: {warning}");
-        output["log_warning"] = serde_json::json!(warning);
-    }
-    println!("{}", serde_json::to_string_pretty(&output)?);
-    Ok(())
+/*
+ * The removal command uses the same progress contract as addition.
+ */
+fn write_file_sort_removal_legacy_log(
+    log_dir: &Path,
+    rows: &[pytools_core::file_sort_prefix::FileSortPrefixRemovalRow],
+) -> Result<Option<PathBuf>> {
+    let (log_path, mut log_file) = open_file_sort_removal_log(log_dir)?;
+    write_file_sort_removal_log(&mut log_file, rows)?;
+    Ok(Some(log_path))
 }
 
 fn open_file_sort_removal_log(log_dir: &Path) -> Result<(PathBuf, File)> {
@@ -7305,6 +7416,106 @@ fn write_file_sort_removal_log(
         }
     }
     file.flush()?;
+    Ok(())
+}
+
+fn run_remove_file_sort_prefix(arguments: Vec<String>) -> Result<()> {
+    let mut arguments = arguments.into_iter();
+    let mut config_path = None::<PathBuf>;
+    let mut output_dir = None::<PathBuf>;
+    let mut log_dir = None::<PathBuf>;
+    let mut log_view = None::<String>;
+    let mut files = Vec::new();
+    while let Some(argument) = arguments.next() {
+        match argument.as_str() {
+            "--config" => {
+                config_path = Some(PathBuf::from(
+                    arguments.next().context("--config requires a path")?,
+                ));
+            }
+            "--output-dir" => {
+                output_dir = Some(PathBuf::from(
+                    arguments.next().context("--output-dir requires a path")?,
+                ));
+            }
+            "--log-dir" => {
+                log_dir = Some(PathBuf::from(
+                    arguments.next().context("--log-dir requires a path")?,
+                ));
+            }
+            "--log-view" => {
+                log_view = Some(arguments.next().context("--log-view requires a value")?);
+            }
+            "--help" | "-h" => {
+                print_usage();
+                return Ok(());
+            }
+            value if value.starts_with('-') => bail!("unknown option {value:?}"),
+            path => files.push(PathBuf::from(path)),
+        }
+    }
+
+    let config_path = config_path.context("--config is required")?;
+    let output_dir = output_dir.unwrap_or_else(|| PathBuf::from("output"));
+    let log_dir = log_dir.unwrap_or_else(|| PathBuf::from("logs"));
+    let log_view = file_sort_log_view(log_view)?;
+    let mut events = Vec::new();
+    let mut active_stage = None;
+    let operation_result = run_remove_file_sort_prefix_with_progress_business(
+        &config_path,
+        &files,
+        &output_dir,
+        |event| {
+            let event_value = file_sort_event_with_stage_elapsed(event, &mut active_stage);
+            if log_view == "developer" {
+                events.push(event_value.clone());
+            }
+            emit_file_sort_event_view(&log_view, event, &event_value);
+        },
+    );
+    let history_result = if log_view == "developer" {
+        write_file_sort_run_history(&log_dir, "PT-4-10", &events).map(Some)
+    } else {
+        Ok(None)
+    };
+    if let Err(error) = &history_result {
+        eprintln!("pytools: warning: could not write structured run history: {error:#}");
+    }
+    let result = operation_result?;
+    let legacy_log_result = if log_view == "developer" {
+        write_file_sort_removal_legacy_log(&log_dir, &result.rows)
+    } else {
+        Ok(None)
+    };
+    if let Err(error) = &legacy_log_result {
+        eprintln!("pytools: warning: could not write complete operation log: {error:#}");
+    }
+    if log_view == "user" {
+        println!(
+            "完成：重命名 {} 个，跳过 {} 个，失败 {} 个。结果报表：{}",
+            result.renamed,
+            result.skipped,
+            result.failed,
+            result.output.display()
+        );
+        return Ok(());
+    }
+    let mut output = serde_json::to_value(result)?;
+    if let Ok(Some(log_path)) = &legacy_log_result {
+        output["log_path"] = serde_json::json!(log_path);
+    }
+    if let Ok(Some(history_path)) = &history_result {
+        output["run_history_path"] = serde_json::json!(history_path);
+    }
+    if let Err(error) = &legacy_log_result {
+        output["log_warning"] =
+            serde_json::json!(format!("could not write complete operation log: {error:#}"));
+    }
+    if let Err(error) = &history_result {
+        output["run_history_warning"] =
+            serde_json::json!(format!("could not write structured run history: {error:#}"));
+    }
+    println!("{}", serde_json::to_string_pretty(&output)?);
     Ok(())
 }
 
@@ -7711,8 +7922,8 @@ fn print_usage() {
          native = 按值重建（C01，丢弃样式/公式缓存）；Excel 公式文本保留但不重算，CSV 按文本写入\n\
          pytools extract-sheets --config <workbook.xlsx> [--output-dir <dir>] [--log-dir <dir>] [--log-view user|developer|off] [--capabilities <json> --platform <id>] <source.xlsx>...\n\
          pytools region-sum-check [--config <workbook.xlsx>] [--output-dir <dir>] [--log-dir <dir>] <source.xlsx>...\n\
-         pytools file-sort-prefix --config <workbook.xlsx> [--output-dir <dir>] [--log-dir <dir>] <file>...\n\
-         pytools remove-file-sort-prefix --config <workbook.xlsx> [--output-dir <dir>] [--log-dir <dir>] [<file>...]\n\
+         pytools file-sort-prefix --config <workbook.xlsx> [--output-dir <dir>] [--log-dir <dir>] [--log-view user|developer|off] <file>...\n\
+         pytools remove-file-sort-prefix --config <workbook.xlsx> [--output-dir <dir>] [--log-dir <dir>] [--log-view user|developer|off] [<file>...]\n\
          pytools rename-by-content --config <workbook.xlsx> <file>...\n\
          pytools unrename-by-content --config <workbook.xlsx> <file>...\n\
          pytools rename-local-map --config <workbook.xlsx> <file>...\n\

@@ -1,4 +1,6 @@
-use pytools_core::file_sort_prefix::run_remove_file_sort_prefix;
+use pytools_core::file_sort_prefix::{
+    run_remove_file_sort_prefix, run_remove_file_sort_prefix_with_progress,
+};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -153,6 +155,29 @@ fn excel_cell(row: usize, column: usize) -> String {
 }
 
 #[test]
+fn operation_410_progress_reports_output_directory_failure() {
+    let cases = cases();
+    let root = temporary_directory("sort-prefix-remove-output-failure");
+    let config = root.join("config.xlsx");
+    write_config(&config, &cases, true);
+    let output_file = root.join("output-is-a-file");
+    fs::write(&output_file, b"occupied").unwrap();
+
+    let mut progress = Vec::new();
+    let error = run_remove_file_sort_prefix_with_progress(&config, &[], &output_file, |event| {
+        progress.push(event.clone())
+    })
+    .unwrap_err();
+    assert!(error.to_string().contains("create output directory"));
+    assert!(progress.iter().any(|event| {
+        event.phase == "output_directory_prepare"
+            && event.status == "failed"
+            && event.actual_engine.as_deref() == Some("RustFilesystem")
+            && event.error_type.as_deref() == Some("output_directory_create_failed")
+    }));
+}
+
+#[test]
 fn operation_410_matches_python_prefix_removal_and_report_baseline() {
     let cases = cases();
     let expected = baseline();
@@ -169,7 +194,15 @@ fn operation_410_matches_python_prefix_removal_and_report_baseline() {
         .filter_map(|path| fs::read(path).ok().map(|bytes| (path.clone(), bytes)))
         .collect::<BTreeMap<_, _>>();
 
-    let result = run_remove_file_sort_prefix(&config, &files, &output_dir).unwrap();
+    let mut progress = Vec::new();
+    let result = run_remove_file_sort_prefix_with_progress(&config, &files, &output_dir, |event| {
+        progress.push(event.clone())
+    })
+    .unwrap();
+    assert!(progress.iter().any(|event| {
+        event.phase == "file_processing"
+            && event.actual_engine.as_deref() == Some("Calamine + RustFilesystem")
+    }));
     assert_eq!(
         result.rules,
         expected["stats"]["rules"].as_u64().unwrap() as usize

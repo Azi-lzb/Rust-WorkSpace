@@ -592,3 +592,9 @@ Windows 原生 Rust 验证：`cargo fmt --manifest-path pytools-core/Cargo.toml 
 Windows 原生 `cargo fmt --manifest-path pytools-core/Cargo.toml -- --check` 通过；主菜单回归 31/31：`config_menu_cli` 2/2、`timeline_menu_cli` 3/3、`dedup_menu_cli` 1/1、`print_menu_cli` 1/1、`conversion_menu_cli` 1/1、`summary_menu_cli` 3/3、`batch_tools_menu_cli` 15/15、`fx_header_menu_cli` 4/4、`archive_menu_cli` 1/1。真实菜单覆盖缺失配置提示、5-1 初始化、5-2 磁盘重读以及既有配置的计划模式；新配置为 11 张工作表，计划模式的修复计划非空、候选未生成且输入配置字节不变。配置模板和值、表头批注与只读真实配置的 Python/Rust 对拍沿用 `probe/reports/config_admin_parity_20261023.json`；修复候选的 openpyxl worker 语义及保留项沿用 `tests/config_repair_execution.rs` 的既有候选验证。本轮未重新运行 Python 基线，也未用 capability 执行菜单中的候选提交。
 
 仍未完成真实用户配置文件的修改验收、生产 capability 登记、Windows 桌面交互、目标平台和离线 deb 验收；PT-5-1 修复生产验收继续为未验证。配置查看和菜单集成测试使用合成/本地配置，不写真实业务数据或运行历史。
+
+### 2026-10-25 PT-4-9/PT-4-10 文件排序双视图运行日志
+
+`pytools file-sort-prefix` 与 `pytools remove-file-sort-prefix` 现在支持 `--log-view user|developer|off`，交互菜单类别 4 的第 9/10 项沿用全局视图设置。Rust 业务回调记录配置读取、输出目录准备、逐文件处理、报表写入和任务摘要；开发者事件包含实际组件/引擎、阶段耗时与累计耗时。PT-4-10 按是否读取内容前缀工作簿标记 Calamine，纯文件改名标记 RustFilesystem；报表写入标记 rust_xlsxwriter。用户视图显示处理数量和阶段耗时，off 不输出进度或新建日志，开发者视图保存结构化历史并保留原详细操作日志。两项操作的文件名、统计及报表业务语义未改变。
+
+Windows 原生验证：`cargo fmt --manifest-path pytools-core/Cargo.toml` 通过；`cargo test --offline --locked -p pytools-core --test conversion_menu_cli --test file_sort_prefix_operation_parity --test file_sort_prefix_remove_parity -q` 中 2/2、3/3、6/6 通过；`pytools --help` 显示两条命令的三种视图选项。对拍使用既有只读 PyCode 机器基线，4-9 八个文件案例及 4-10 内容前缀/冲突/跳过案例的统计、目录结果和 XLSX 报表检查无业务差异；新增菜单三视图测试、Calamine 实际调用标记及输出目录失败阶段测试。结构化历史不含输入文件名或路径。没有重新运行 Python 解释器，也没有可用真实业务目录样本；手工桌面文件选择器、目标 Linux/glibc 2.28、麒麟/UOS 与 deb 未验证，PT-4-9/PT-4-10 整体迁移状态仍未验证。日志性能开销未测量。

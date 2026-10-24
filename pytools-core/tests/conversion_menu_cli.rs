@@ -230,6 +230,89 @@ fn interactive_conversion_menu_routes_all_ten_file_workflows() -> Result<()> {
     Ok(())
 }
 
+#[test]
+fn file_sort_menu_supports_user_developer_and_off_progress_views() -> Result<()> {
+    let root = TestDirectory::new()?;
+    let config = create_config(root.path())?;
+    let sources = root.path().join("sources");
+    fs::create_dir_all(&sources)?;
+    let log_dir = root.path().join("logs");
+
+    let user_source = sources.join("sort-user-payload.txt");
+    fs::write(&user_source, b"user view")?;
+    let user = run_action_with_log_view(&config, 9, 1, &user_source, "user")?;
+    assert!(user.status.success(), "user view failed: {}", stderr(&user));
+    assert!(sources.join("1_sort-user-payload.txt").is_file());
+    let user_stderr = stderr(&user);
+    assert!(user_stderr.contains("正在读取文件排序配置"));
+    assert!(user_stderr.contains("已处理 1/1 个文件"));
+    assert!(user_stderr.contains("阶段用时"));
+    assert!(!user_stderr.contains(&user_source.display().to_string()));
+    assert!(!user_stderr.contains("sort-user-payload"));
+    assert!(String::from_utf8_lossy(&user.stdout).contains("重命名 1 个"));
+    assert_eq!(fs::read_dir(&log_dir)?.count(), 0);
+
+    let developer_source = sources.join("1_sort-developer-payload.txt");
+    fs::write(&developer_source, b"developer view")?;
+    let developer = run_action_with_log_view(&config, 10, 1, &developer_source, "developer")?;
+    assert!(
+        developer.status.success(),
+        "developer view failed: {}",
+        stderr(&developer)
+    );
+    assert!(sources.join("sort-developer-payload.txt").is_file());
+    let developer_report = output_json(&developer)?;
+    let history_path = PathBuf::from(
+        developer_report["run_history_path"]
+            .as_str()
+            .context("developer run-history path missing")?,
+    );
+    let history_bytes = fs::read(&history_path)?;
+    let history_text = String::from_utf8_lossy(&history_bytes);
+    assert!(!history_text.contains(&developer_source.display().to_string()));
+    assert!(!history_text.contains("sort-developer-payload"));
+    let history: Value = serde_json::from_slice(&history_bytes)?;
+    let events = history["events"].as_array().context("events missing")?;
+    assert!(history["total_elapsed_ms"].is_number());
+    assert!(events
+        .iter()
+        .any(|event| event["phase"] == "configuration_read"));
+    assert!(events
+        .iter()
+        .any(|event| event["phase"] == "file_processing"));
+    assert!(events.iter().any(|event| event["phase"] == "report_write"));
+    assert!(events.iter().any(|event| event["phase"] == "task"));
+    for engine in ["Calamine", "RustFilesystem", "rust_xlsxwriter"] {
+        assert!(
+            events.iter().any(|event| event["actual_engine"] == engine),
+            "missing engine event for {engine}"
+        );
+    }
+    assert!(events.iter().all(|event| event["elapsed_ms"].is_number()));
+    let missing_stage_timing = events
+        .iter()
+        .filter(|event| event["status"] == "completed" || event["status"] == "failed")
+        .filter(|event| !event["stage_elapsed_ms"].is_number())
+        .collect::<Vec<_>>();
+    assert!(
+        missing_stage_timing.is_empty(),
+        "events missing stage timings: {}",
+        serde_json::to_string(&missing_stage_timing)?
+    );
+    assert!(stderr(&developer).contains("\"feature_id\":\"PT-4-10\""));
+
+    let logs_before_off = fs::read_dir(&log_dir)?.count();
+    let off_source = sources.join("sort-off-payload.txt");
+    fs::write(&off_source, b"off view")?;
+    let off = run_action_with_log_view(&config, 9, 1, &off_source, "off")?;
+    assert!(off.status.success(), "off view failed: {}", stderr(&off));
+    assert!(sources.join("1_sort-off-payload.txt").is_file());
+    assert!(stderr(&off).is_empty());
+    assert_eq!(fs::read_dir(&log_dir)?.count(), logs_before_off);
+
+    Ok(())
+}
+
 fn create_config(root: &Path) -> Result<PathBuf> {
     let config = root.join("config.xlsx");
     let output_dir = root.join("output");
@@ -351,6 +434,19 @@ fn create_source_workbook(path: &Path, second_sheet: &str) -> Result<()> {
 fn run_action(config: &Path, action: u8, mode: u8, selected: &Path) -> Result<Output> {
     let input = format!("4\n{action}\n{mode}\n{}\n0\n", selected.display());
     run_menu(config, &input)
+}
+
+fn run_action_with_log_view(
+    config: &Path,
+    action: u8,
+    mode: u8,
+    selected: &Path,
+    log_view: &str,
+) -> Result<Output> {
+    let input = format!("4\n{action}\n{mode}\n{}\n0\n", selected.display());
+    let mut child = menu_command(config);
+    child.arg("--log-view").arg(log_view);
+    finish_menu(child, &input)
 }
 
 fn run_action_with_sidecar(

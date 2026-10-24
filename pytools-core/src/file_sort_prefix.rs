@@ -14,7 +14,7 @@ use std::collections::BTreeMap;
 use std::fs::{self, OpenOptions};
 use std::io;
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 const CONFIG_SHEET: &str = "文件排序配置";
 const REPORT_SHEET: &str = "文件排序前缀结果";
@@ -94,6 +94,129 @@ pub struct FileSortPrefixRemovalRunReport {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct FileSortProgressEvent {
+    pub sequence: usize,
+    pub feature_id: String,
+    pub phase: String,
+    pub status: String,
+    pub completed_files: usize,
+    pub total_files: usize,
+    pub elapsed_ms: u128,
+    pub components: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub actual_engine: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_type: Option<String>,
+    pub user_message: String,
+}
+
+fn emit_file_sort_event<F>(
+    on_event: &mut F,
+    sequence: &mut usize,
+    started: &Instant,
+    feature_id: &str,
+    phase: &str,
+    status: &str,
+    completed_files: usize,
+    total_files: usize,
+    components: &[&str],
+    actual_engine: Option<&str>,
+    error_type: Option<&str>,
+    user_message: impl Into<String>,
+) where
+    F: FnMut(&FileSortProgressEvent),
+{
+    *sequence += 1;
+    on_event(&FileSortProgressEvent {
+        sequence: *sequence,
+        feature_id: feature_id.to_owned(),
+        phase: phase.to_owned(),
+        status: status.to_owned(),
+        completed_files,
+        total_files,
+        elapsed_ms: started.elapsed().as_millis(),
+        components: components
+            .iter()
+            .map(|component| (*component).to_owned())
+            .collect(),
+        actual_engine: actual_engine.map(str::to_owned),
+        error_type: error_type.map(str::to_owned),
+        user_message: user_message.into(),
+    });
+}
+
+fn prepare_file_sort_output_dir<F>(
+    output_dir: &Path,
+    on_event: &mut F,
+    sequence: &mut usize,
+    started: &Instant,
+    feature_id: &str,
+    total_files: usize,
+) -> Result<()>
+where
+    F: FnMut(&FileSortProgressEvent),
+{
+    emit_file_sort_event(
+        on_event,
+        sequence,
+        started,
+        feature_id,
+        "output_directory_prepare",
+        "started",
+        0,
+        total_files,
+        &["Rust"],
+        None,
+        None,
+        "正在准备输出目录。",
+    );
+    if let Err(error) = fs::create_dir_all(output_dir) {
+        emit_file_sort_event(
+            on_event,
+            sequence,
+            started,
+            feature_id,
+            "output_directory_prepare",
+            "failed",
+            0,
+            total_files,
+            &["Rust"],
+            Some("RustFilesystem"),
+            Some("output_directory_create_failed"),
+            "输出目录准备失败。",
+        );
+        return Err(error)
+            .with_context(|| format!("create output directory {}", output_dir.display()));
+    }
+    emit_file_sort_event(
+        on_event,
+        sequence,
+        started,
+        feature_id,
+        "output_directory_prepare",
+        "completed",
+        0,
+        total_files,
+        &["Rust"],
+        Some("RustFilesystem"),
+        None,
+        "输出目录已准备。",
+    );
+    Ok(())
+}
+
+fn file_sort_processing_engine(used_calamine: bool) -> (&'static [&'static str], &'static str) {
+    if used_calamine {
+        (
+            &["Rust", "excel-reader", "Calamine", "RustFilesystem"],
+            "Calamine + RustFilesystem",
+        )
+    } else {
+        (&["Rust", "RustFilesystem"], "RustFilesystem")
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ContentPrefixRenameRow {
     pub source_path: String,
     pub original_name: String,
@@ -147,11 +270,24 @@ pub fn run_file_sort_prefix(
     files: &[PathBuf],
     output_dir: impl AsRef<Path>,
 ) -> Result<FileSortPrefixRunReport> {
-    run_file_sort_prefix_with_report_writer(
+    run_file_sort_prefix_with_progress(config_path, files, output_dir, |_| {})
+}
+
+pub fn run_file_sort_prefix_with_progress<F>(
+    config_path: impl AsRef<Path>,
+    files: &[PathBuf],
+    output_dir: impl AsRef<Path>,
+    on_event: F,
+) -> Result<FileSortPrefixRunReport>
+where
+    F: FnMut(&FileSortProgressEvent),
+{
+    run_file_sort_prefix_with_report_writer_and_progress(
         config_path.as_ref(),
         files,
         output_dir.as_ref(),
         write_report,
+        on_event,
     )
 }
 
@@ -168,11 +304,24 @@ pub fn run_remove_file_sort_prefix(
     files: &[PathBuf],
     output_dir: impl AsRef<Path>,
 ) -> Result<FileSortPrefixRemovalRunReport> {
-    run_remove_file_sort_prefix_with_report_writer(
+    run_remove_file_sort_prefix_with_progress(config_path, files, output_dir, |_| {})
+}
+
+pub fn run_remove_file_sort_prefix_with_progress<F>(
+    config_path: impl AsRef<Path>,
+    files: &[PathBuf],
+    output_dir: impl AsRef<Path>,
+    on_event: F,
+) -> Result<FileSortPrefixRemovalRunReport>
+where
+    F: FnMut(&FileSortProgressEvent),
+{
+    run_remove_file_sort_prefix_with_report_writer_and_progress(
         config_path.as_ref(),
         files,
         output_dir.as_ref(),
         write_remove_report,
+        on_event,
     )
 }
 
@@ -403,6 +552,7 @@ pub fn run_content_prefix_unrename_xlsx_candidate(
     })
 }
 
+#[cfg(test)]
 fn run_remove_file_sort_prefix_with_report_writer<F>(
     config_path: &Path,
     files: &[PathBuf],
@@ -412,11 +562,79 @@ fn run_remove_file_sort_prefix_with_report_writer<F>(
 where
     F: FnOnce(&Path, &[FileSortPrefixRemovalRow]) -> Result<PathBuf>,
 {
-    let rules = load_file_sort_rules(config_path)?;
+    run_remove_file_sort_prefix_with_report_writer_and_progress(
+        config_path,
+        files,
+        output_dir,
+        report_writer,
+        |_| {},
+    )
+}
+
+fn run_remove_file_sort_prefix_with_report_writer_and_progress<F, G>(
+    config_path: &Path,
+    files: &[PathBuf],
+    output_dir: &Path,
+    report_writer: F,
+    mut on_event: G,
+) -> Result<FileSortPrefixRemovalRunReport>
+where
+    F: FnOnce(&Path, &[FileSortPrefixRemovalRow]) -> Result<PathBuf>,
+    G: FnMut(&FileSortProgressEvent),
+{
+    let started = Instant::now();
+    let mut sequence = 0;
+    emit_file_sort_event(
+        &mut on_event,
+        &mut sequence,
+        &started,
+        "PT-4-10",
+        "configuration_read",
+        "started",
+        0,
+        files.len(),
+        &["Rust", "excel-reader", "Calamine"],
+        Some("Calamine"),
+        None,
+        "正在读取文件排序配置。",
+    );
+    let rules = match load_file_sort_rules(config_path) {
+        Ok(rules) => rules,
+        Err(error) => {
+            emit_file_sort_event(
+                &mut on_event,
+                &mut sequence,
+                &started,
+                "PT-4-10",
+                "configuration_read",
+                "failed",
+                0,
+                files.len(),
+                &["Rust", "excel-reader", "Calamine"],
+                Some("Calamine"),
+                Some("configuration_read_failed"),
+                "配置读取失败。",
+            );
+            return Err(error);
+        }
+    };
     if rules.is_empty() {
+        emit_file_sort_event(
+            &mut on_event,
+            &mut sequence,
+            &started,
+            "PT-4-10",
+            "configuration_read",
+            "failed",
+            0,
+            files.len(),
+            &["Rust", "excel-reader", "Calamine"],
+            Some("Calamine"),
+            Some("no_enabled_sort_rules"),
+            "没有启用的排序规则。",
+        );
         bail!("文件排序配置 没有启用且有效的排序规则。");
     }
-
     let mut prefixes = rules
         .iter()
         .map(|rule| rule.prefix.clone())
@@ -434,8 +652,29 @@ where
         .and_then(|spec| parse_sheet_cell_spec(&spec))
         .unwrap_or_default();
 
-    fs::create_dir_all(output_dir)
-        .with_context(|| format!("create output directory {}", output_dir.display()))?;
+    emit_file_sort_event(
+        &mut on_event,
+        &mut sequence,
+        &started,
+        "PT-4-10",
+        "configuration_read",
+        "completed",
+        0,
+        files.len(),
+        &["Rust", "excel-reader", "Calamine"],
+        Some("Calamine"),
+        None,
+        format!("已读取 {} 条有效排序规则及内容前缀设置。", rules.len()),
+    );
+
+    prepare_file_sort_output_dir(
+        output_dir,
+        &mut on_event,
+        &mut sequence,
+        &started,
+        "PT-4-10",
+        files.len(),
+    )?;
 
     let mut rows = Vec::with_capacity(files.len());
     let mut renamed = 0;
@@ -443,7 +682,22 @@ where
     let mut failed = 0;
     let mut moved = Vec::<(PathBuf, PathBuf)>::new();
 
-    for source in files {
+    for (index, source) in files.iter().enumerate() {
+        let file_started = Instant::now();
+        emit_file_sort_event(
+            &mut on_event,
+            &mut sequence,
+            &started,
+            "PT-4-10",
+            "file_processing",
+            "started",
+            index,
+            files.len(),
+            &["Rust"],
+            None,
+            None,
+            format!("正在处理文件 {}/{}。", index + 1, files.len()),
+        );
         let mut row = FileSortPrefixRemovalRow {
             source_path: source.to_string_lossy().into_owned(),
             original_name: source
@@ -454,11 +708,27 @@ where
             status: String::new(),
             remark: String::new(),
         };
+        let mut used_calamine = false;
 
         if !source.exists() || !source.is_file() {
             skipped += 1;
             row.status = "跳过：非文件".to_owned();
             rows.push(row);
+            let (components, engine) = file_sort_processing_engine(used_calamine);
+            emit_file_sort_event(
+                &mut on_event,
+                &mut sequence,
+                &started,
+                "PT-4-10",
+                "file_processing",
+                "completed",
+                index + 1,
+                files.len(),
+                components,
+                Some(engine),
+                None,
+                format!("已处理 {}/{} 个文件（跳过）。", index + 1, files.len()),
+            );
             continue;
         }
 
@@ -473,13 +743,37 @@ where
                 "已取消排序前缀".to_owned(),
             )
         } else {
-            match content_prefixed_base_name(original_name, &prefixes, &content_spec_items, source)
-            {
+            match content_prefixed_base_name(
+                original_name,
+                &prefixes,
+                &content_spec_items,
+                source,
+                &mut used_calamine,
+            ) {
                 Some(name) => (name, "已取消排序前缀（保留内容前缀）".to_owned()),
                 None => {
                     skipped += 1;
                     row.status = "跳过：无匹配排序前缀".to_owned();
                     rows.push(row);
+                    let (components, engine) = file_sort_processing_engine(used_calamine);
+                    emit_file_sort_event(
+                        &mut on_event,
+                        &mut sequence,
+                        &started,
+                        "PT-4-10",
+                        "file_processing",
+                        "completed",
+                        index + 1,
+                        files.len(),
+                        components,
+                        Some(engine),
+                        None,
+                        format!(
+                            "已处理 {}/{} 个文件（无匹配规则）。",
+                            index + 1,
+                            files.len()
+                        ),
+                    );
                     continue;
                 }
             }
@@ -489,6 +783,25 @@ where
             skipped += 1;
             row.status = "跳过：无匹配排序前缀".to_owned();
             rows.push(row);
+            let (components, engine) = file_sort_processing_engine(used_calamine);
+            emit_file_sort_event(
+                &mut on_event,
+                &mut sequence,
+                &started,
+                "PT-4-10",
+                "file_processing",
+                "completed",
+                index + 1,
+                files.len(),
+                components,
+                Some(engine),
+                None,
+                format!(
+                    "已处理 {}/{} 个文件（无匹配规则）。",
+                    index + 1,
+                    files.len()
+                ),
+            );
             continue;
         }
 
@@ -514,23 +827,130 @@ where
                 row.remark = error.to_string();
             }
         }
+        let row_status = row.status.as_str();
+        let event_status = if row_status == "失败" {
+            "failed"
+        } else {
+            "completed"
+        };
+        let event_message = if row_status == "失败" {
+            format!("文件 {}/{} 处理失败。", index + 1, files.len())
+        } else {
+            format!("已处理 {}/{} 个文件。", index + 1, files.len())
+        };
         rows.push(row);
+        let (components, engine) = file_sort_processing_engine(used_calamine);
+        emit_file_sort_event(
+            &mut on_event,
+            &mut sequence,
+            &started,
+            "PT-4-10",
+            "file_processing",
+            event_status,
+            index + 1,
+            files.len(),
+            components,
+            Some(engine),
+            (event_status == "failed").then_some("file_rename_failed"),
+            format!(
+                "{event_message} 本文件用时 {}ms。",
+                file_started.elapsed().as_millis()
+            ),
+        );
     }
 
+    emit_file_sort_event(
+        &mut on_event,
+        &mut sequence,
+        &started,
+        "PT-4-10",
+        "report_write",
+        "started",
+        files.len(),
+        files.len(),
+        &["Rust", "excel-writer", "rust_xlsxwriter"],
+        Some("rust_xlsxwriter"),
+        None,
+        "正在生成结果报表。",
+    );
     let output = match report_writer(output_dir, &rows) {
         Ok(path) => path,
         Err(error) => {
             let rollback_errors = rollback_moves(&moved);
             if rollback_errors.is_empty() {
+                emit_file_sort_event(
+                    &mut on_event,
+                    &mut sequence,
+                    &started,
+                    "PT-4-10",
+                    "report_write",
+                    "failed",
+                    files.len(),
+                    files.len(),
+                    &["Rust", "excel-writer", "rust_xlsxwriter"],
+                    Some("rust_xlsxwriter"),
+                    Some("report_write_failed"),
+                    "结果报表生成失败，已回滚文件改名。",
+                );
                 return Err(error)
                     .context("write file-sort-prefix-removal report; file moves rolled back");
             }
+            emit_file_sort_event(
+                &mut on_event,
+                &mut sequence,
+                &started,
+                "PT-4-10",
+                "report_write",
+                "failed",
+                files.len(),
+                files.len(),
+                &["Rust", "excel-writer", "rust_xlsxwriter"],
+                Some("rust_xlsxwriter"),
+                Some("report_write_and_rollback_failed"),
+                "结果报表生成及文件回滚失败。",
+            );
             return Err(anyhow!(
                 "write file-sort-prefix-removal report failed: {error:#}; rollback also failed: {}",
                 rollback_errors.join("; ")
             ));
         }
     };
+
+    emit_file_sort_event(
+        &mut on_event,
+        &mut sequence,
+        &started,
+        "PT-4-10",
+        "report_write",
+        "completed",
+        files.len(),
+        files.len(),
+        &["Rust", "excel-writer", "rust_xlsxwriter"],
+        Some("rust_xlsxwriter"),
+        None,
+        "结果报表已生成。",
+    );
+    emit_file_sort_event(
+        &mut on_event,
+        &mut sequence,
+        &started,
+        "PT-4-10",
+        "task",
+        if failed == 0 {
+            "completed"
+        } else {
+            "partial_failure"
+        },
+        files.len(),
+        files.len(),
+        &["Rust"],
+        None,
+        (failed > 0).then_some("one_or_more_files_failed"),
+        format!(
+            "完成：重命名 {} 个，跳过 {} 个，失败 {} 个。",
+            renamed, skipped, failed
+        ),
+    );
 
     Ok(FileSortPrefixRemovalRunReport {
         output,
@@ -654,6 +1074,7 @@ fn content_prefixed_base_name(
     prefixes: &[String],
     specs: &[(String, String)],
     source: &Path,
+    used_calamine: &mut bool,
 ) -> Option<String> {
     if specs.is_empty() {
         return None;
@@ -666,6 +1087,7 @@ fn content_prefixed_base_name(
         if position == 0 {
             continue;
         }
+        *used_calamine = true;
         let Ok(values) = read_content_prefix_items(source, specs) else {
             continue;
         };
@@ -775,6 +1197,7 @@ fn remove_content_prefix_keep_sort_prefix(
     remove_content_prefix(file_name, prefix_items)
 }
 
+#[cfg(test)]
 fn run_file_sort_prefix_with_report_writer<F>(
     config_path: &Path,
     files: &[PathBuf],
@@ -784,13 +1207,102 @@ fn run_file_sort_prefix_with_report_writer<F>(
 where
     F: FnOnce(&Path, &[FileSortPrefixRow]) -> Result<PathBuf>,
 {
-    let rules = load_file_sort_rules(config_path)?;
+    run_file_sort_prefix_with_report_writer_and_progress(
+        config_path,
+        files,
+        output_dir,
+        report_writer,
+        |_| {},
+    )
+}
+
+fn run_file_sort_prefix_with_report_writer_and_progress<F, G>(
+    config_path: &Path,
+    files: &[PathBuf],
+    output_dir: &Path,
+    report_writer: F,
+    mut on_event: G,
+) -> Result<FileSortPrefixRunReport>
+where
+    F: FnOnce(&Path, &[FileSortPrefixRow]) -> Result<PathBuf>,
+    G: FnMut(&FileSortProgressEvent),
+{
+    let started = Instant::now();
+    let mut sequence = 0;
+    emit_file_sort_event(
+        &mut on_event,
+        &mut sequence,
+        &started,
+        "PT-4-9",
+        "configuration_read",
+        "started",
+        0,
+        files.len(),
+        &["Rust", "excel-reader", "Calamine"],
+        Some("Calamine"),
+        None,
+        "正在读取文件排序配置。",
+    );
+    let rules = match load_file_sort_rules(config_path) {
+        Ok(rules) => rules,
+        Err(error) => {
+            emit_file_sort_event(
+                &mut on_event,
+                &mut sequence,
+                &started,
+                "PT-4-9",
+                "configuration_read",
+                "failed",
+                0,
+                files.len(),
+                &["Rust", "excel-reader", "Calamine"],
+                Some("Calamine"),
+                Some("configuration_read_failed"),
+                "配置读取失败。",
+            );
+            return Err(error);
+        }
+    };
     if rules.is_empty() {
+        emit_file_sort_event(
+            &mut on_event,
+            &mut sequence,
+            &started,
+            "PT-4-9",
+            "configuration_read",
+            "failed",
+            0,
+            files.len(),
+            &["Rust", "excel-reader", "Calamine"],
+            Some("Calamine"),
+            Some("no_enabled_sort_rules"),
+            "没有启用的排序规则。",
+        );
         bail!("文件排序配置 没有启用且有效的排序规则。");
     }
+    emit_file_sort_event(
+        &mut on_event,
+        &mut sequence,
+        &started,
+        "PT-4-9",
+        "configuration_read",
+        "completed",
+        0,
+        files.len(),
+        &["Rust", "excel-reader", "Calamine"],
+        Some("Calamine"),
+        None,
+        format!("已读取 {} 条有效排序规则。", rules.len()),
+    );
 
-    fs::create_dir_all(output_dir)
-        .with_context(|| format!("create output directory {}", output_dir.display()))?;
+    prepare_file_sort_output_dir(
+        output_dir,
+        &mut on_event,
+        &mut sequence,
+        &started,
+        "PT-4-9",
+        files.len(),
+    )?;
 
     let mut rows = Vec::with_capacity(files.len());
     let mut renamed = 0;
@@ -799,7 +1311,22 @@ where
     let mut failed = 0;
     let mut moved = Vec::<(PathBuf, PathBuf)>::new();
 
-    for source in files {
+    for (index, source) in files.iter().enumerate() {
+        let file_started = Instant::now();
+        emit_file_sort_event(
+            &mut on_event,
+            &mut sequence,
+            &started,
+            "PT-4-9",
+            "file_processing",
+            "started",
+            index,
+            files.len(),
+            &["Rust"],
+            Some("RustFilesystem"),
+            None,
+            format!("正在处理文件 {}/{}。", index + 1, files.len()),
+        );
         let source_path = source.to_string_lossy().into_owned();
         let original_name = source
             .file_name()
@@ -820,6 +1347,20 @@ where
             skipped += 1;
             row.status = "跳过：非文件".to_owned();
             rows.push(row);
+            emit_file_sort_event(
+                &mut on_event,
+                &mut sequence,
+                &started,
+                "PT-4-9",
+                "file_processing",
+                "completed",
+                index + 1,
+                files.len(),
+                &["Rust"],
+                Some("RustFilesystem"),
+                None,
+                format!("已处理 {}/{} 个文件（跳过）。", index + 1, files.len()),
+            );
             continue;
         }
 
@@ -827,6 +1368,24 @@ where
             unmatched += 1;
             row.status = "未命中".to_owned();
             rows.push(row);
+            emit_file_sort_event(
+                &mut on_event,
+                &mut sequence,
+                &started,
+                "PT-4-9",
+                "file_processing",
+                "completed",
+                index + 1,
+                files.len(),
+                &["Rust"],
+                Some("RustFilesystem"),
+                None,
+                format!(
+                    "已处理 {}/{} 个文件（无匹配规则）。",
+                    index + 1,
+                    files.len()
+                ),
+            );
             continue;
         };
 
@@ -864,22 +1423,128 @@ where
                 row.remark = error.to_string();
             }
         }
+        let row_status = row.status.as_str();
+        let event_status = if row_status == "失败" {
+            "failed"
+        } else {
+            "completed"
+        };
+        let event_message = if row_status == "失败" {
+            format!("文件 {}/{} 处理失败。", index + 1, files.len())
+        } else {
+            format!("已处理 {}/{} 个文件。", index + 1, files.len())
+        };
         rows.push(row);
+        emit_file_sort_event(
+            &mut on_event,
+            &mut sequence,
+            &started,
+            "PT-4-9",
+            "file_processing",
+            event_status,
+            index + 1,
+            files.len(),
+            &["Rust"],
+            Some("RustFilesystem"),
+            (event_status == "failed").then_some("file_rename_failed"),
+            format!(
+                "{event_message} 本文件用时 {}ms。",
+                file_started.elapsed().as_millis()
+            ),
+        );
     }
 
+    emit_file_sort_event(
+        &mut on_event,
+        &mut sequence,
+        &started,
+        "PT-4-9",
+        "report_write",
+        "started",
+        files.len(),
+        files.len(),
+        &["Rust", "excel-writer", "rust_xlsxwriter"],
+        Some("rust_xlsxwriter"),
+        None,
+        "正在生成结果报表。",
+    );
     let output = match report_writer(output_dir, &rows) {
         Ok(path) => path,
         Err(error) => {
             let rollback_errors = rollback_moves(&moved);
             if rollback_errors.is_empty() {
+                emit_file_sort_event(
+                    &mut on_event,
+                    &mut sequence,
+                    &started,
+                    "PT-4-9",
+                    "report_write",
+                    "failed",
+                    files.len(),
+                    files.len(),
+                    &["Rust", "excel-writer", "rust_xlsxwriter"],
+                    Some("rust_xlsxwriter"),
+                    Some("report_write_failed"),
+                    "结果报表生成失败，已回滚文件改名。",
+                );
                 return Err(error).context("write file-sort-prefix report; file moves rolled back");
             }
+            emit_file_sort_event(
+                &mut on_event,
+                &mut sequence,
+                &started,
+                "PT-4-9",
+                "report_write",
+                "failed",
+                files.len(),
+                files.len(),
+                &["Rust", "excel-writer", "rust_xlsxwriter"],
+                Some("rust_xlsxwriter"),
+                Some("report_write_and_rollback_failed"),
+                "结果报表生成及文件回滚失败。",
+            );
             return Err(anyhow!(
                 "write file-sort-prefix report failed: {error:#}; rollback also failed: {}",
                 rollback_errors.join("; ")
             ));
         }
     };
+
+    emit_file_sort_event(
+        &mut on_event,
+        &mut sequence,
+        &started,
+        "PT-4-9",
+        "report_write",
+        "completed",
+        files.len(),
+        files.len(),
+        &["Rust", "excel-writer", "rust_xlsxwriter"],
+        Some("rust_xlsxwriter"),
+        None,
+        "结果报表已生成。",
+    );
+    emit_file_sort_event(
+        &mut on_event,
+        &mut sequence,
+        &started,
+        "PT-4-9",
+        "task",
+        if failed == 0 {
+            "completed"
+        } else {
+            "partial_failure"
+        },
+        files.len(),
+        files.len(),
+        &["Rust"],
+        None,
+        (failed > 0).then_some("one_or_more_files_failed"),
+        format!(
+            "完成：重命名 {} 个，未命中 {} 个，跳过 {} 个，失败 {} 个。",
+            renamed, unmatched, skipped, failed
+        ),
+    );
 
     Ok(FileSortPrefixRunReport {
         output,
