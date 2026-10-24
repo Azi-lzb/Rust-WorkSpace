@@ -78,7 +78,7 @@ OOXML 是补丁和缺失元数据读取层，不是主要读写库。使用 name
 
 以下能力都必须显式触发、按具体能力登记并验证结果；它们不得成为核心主路径的启动依赖：
 
-1. **公式计算（独立 ExcelCalculator）**：默认不计算。候选为 LibreOffice Calc（Windows/Linux）、Microsoft Excel COM、WPS COM（后两者仅 Windows且须分别验证）。允许显式请求普通重算或完整重算；必须对拍公式语义、结果和依赖关系，并检查保存引起的公式、样式、结构变化。不得宣称 LO、Excel、WPS 完全等价。LibreOffice 基础计算已有用户报告的实测反馈，但不等于全公式兼容、文件保真或目标系统部署验收。ExcelCalculator 与 ExcelModifier 分离；不强制其全部实现 JSON IPC。运行时不可用时报告“该功能需要外部引擎”，不得用旧缓存或值重建冒充重算。
+1. **公式计算（独立 ExcelCalculator）**：默认不计算。候选为 LibreOffice Calc（Windows/Linux）、Microsoft Excel COM、WPS COM（后两者仅 Windows且须分别验证）。允许显式请求普通重算或完整重算；必须对拍公式语义、结果和依赖关系，并检查保存引起的公式、样式、结构变化。不得宣称 LO、Excel、WPS 完全等价。LibreOffice 基础公式计算的可行性已由用户实际测试确认，不重复泛泛的可行性调研；具体业务公式覆盖、文件保真和目标系统部署仍须验收。ExcelCalculator 与 ExcelModifier 分离；不强制其全部实现 JSON IPC。运行时不可用时报告“该功能需要外部引擎”，不得用旧缓存或值重建冒充重算。
 2. **同类格式转换**：首批为 Excel .et→.xlsx、Excel .xls→.xlsx（供 sheet 改名等 Rust 不支持的修改前转换）、Word .doc→.docx。用户可选择保真转换或经说明的 Rust/Go 原生转换；转换后检查工作表和数据。PDF 导出、跨类别转换不在范围内。
 3. **Windows COM 修改**：未来由 ExcelModifier 显式调用 Microsoft Excel COM 或 WPS 表格 COM，仅在真实 COM 接口可用且具体操作 capability 已验收时开放。优先用独立 pywin32 Worker 与 JSON IPC。COM 不提供读取或新建能力，也不作为 Linux 依赖。
 
@@ -123,7 +123,7 @@ OOXML 是补丁和缺失元数据读取层，不是主要读写库。使用 name
 - 现有两个项目真实模板不含图表、透视表、切片器、图片、工作表保护或 VBA 宏。此事实只覆盖已检查模板，不等于未来输入文件都没有这些对象。
 - py_statistics_tools 的工作表提取以不带批注普通版为准；COM 批注版不迁移。
 - 公式重算默认关闭，但允许用户显式触发独立 sidecar。
-- LibreOffice Calc 的基础公式计算已有用户实测反馈；其公式覆盖、Excel/WPS 结果一致性、保存保真及目标 Linux 离线运行时均待验收。未来 Windows Excel COM/WPS COM 修改与计算是可选候选，不是当前能力。
+- LibreOffice Calc 的基础公式计算可行性已由用户实际测试确认，不重复泛泛调研；其具体公式覆盖、Excel/WPS 结果一致性、保存保真及目标 Linux 离线运行时均待验收。未来 Windows Excel COM/WPS COM 修改与计算是可选候选，不是当前能力。
 - 打印只写页面设置；PDF 不做。
 - 首批转换为 .et→.xlsx、.xls→.xlsx、.doc→.docx；不做 PDF 或跨类别转换。
 - 开发环境是 Windows 11 x64；目标系统是麒麟 V10 x86_64/glibc 2.31 和统信 V20 x86_64/glibc 2.28。目标机 Python 3.8.10 不是系统依赖；如 deb 启用 openpyxl，必须另行内置并验证隔离 runtime。
