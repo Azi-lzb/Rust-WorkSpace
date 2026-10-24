@@ -1358,6 +1358,9 @@ fn apply_operation(workbook: &mut crate::Workbook, operation: &EditOperation) ->
             // operation. Print-area localSheetId values are applied once the
             // final sheet collection is known.
         }
+        EditOperation::SetFreezePanes { .. } | EditOperation::SetAutoFilter { .. } => {
+            bail!("umya backend does not implement freeze-pane or AutoFilter edits")
+        }
         EditOperation::ReplaceHeaderText { .. } => {
             bail!("header replacement must use the namespace-aware OOXML header backend")
         }

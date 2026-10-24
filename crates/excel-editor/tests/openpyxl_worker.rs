@@ -181,6 +181,18 @@ fn plan(
             EditOperation::CreateSheet {
                 name: "Generated".to_owned(),
             },
+            EditOperation::CreateSheetAt {
+                name: "History".to_owned(),
+                index: 0,
+            },
+            EditOperation::SetFreezePanes {
+                sheet: "History".to_owned(),
+                cell: Some("A2".to_owned()),
+            },
+            EditOperation::SetAutoFilter {
+                sheet: "History".to_owned(),
+                range: Some("A1:M2".to_owned()),
+            },
         ],
         preserve: [
             PreservationRequirement::CellValuesAndTypes,
@@ -188,6 +200,8 @@ fn plan(
             PreservationRequirement::CommentsAndPositions,
             PreservationRequirement::MergedRanges,
             PreservationRequirement::SheetIdentityAndOrder,
+            PreservationRequirement::FreezePanes,
+            PreservationRequirement::AutoFilter,
         ]
         .into_iter()
         .collect(),
@@ -335,6 +349,8 @@ fn rust_modifier_invokes_one_batch_worker_and_preserves_source() -> Result<()> {
     );
     let dump = excel_reader::read_workbook(&output)?;
     assert!(dump.sheets.iter().any(|sheet| sheet.name == "Information"));
+    assert_eq!(dump.sheets[0].name, "History");
+    assert_eq!(dump.sheets[1].name, "Data");
     let data = dump
         .sheets
         .iter()
