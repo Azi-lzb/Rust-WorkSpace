@@ -657,6 +657,7 @@ def _apply(request: Dict[str, Any]) -> Dict[str, Any]:
     except Exception as error:
         raise WorkerError("workbook_open_failed", str(error))
     try:
+        initial_sheet_names = list(workbook.sheetnames)
         for operation in operations:
             try:
                 _apply_operation(workbook, cached_workbook, operation)
@@ -683,7 +684,7 @@ def _apply(request: Dict[str, Any]) -> Dict[str, Any]:
         verification = openpyxl.load_workbook(str(output_path), read_only=False, data_only=False, keep_links=True)
         if not verification.worksheets:
             raise WorkerError("output_reopen_failed", "saved workbook has no worksheets")
-        _verify_plan(verification, operations)
+        _verify_plan(verification, operations, initial_sheet_names)
         verification.close()
     except WorkerError:
         raise
@@ -706,10 +707,58 @@ def _apply(request: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def _verify_plan(workbook: Any, operations: List[Dict[str, Any]]) -> None:
+def _final_sheet_names(initial_names: List[str], operations: List[Dict[str, Any]]) -> List[str]:
+    """Apply sheet-name operations to the original order for final-state checks."""
+    expected = list(initial_names)
+    for operation in operations:
+        kind = operation["operation"]
+        if kind == "rename_sheet":
+            old_name, new_name = operation["old_name"], operation["new_name"]
+            try:
+                index = expected.index(old_name)
+            except ValueError:
+                raise WorkerError(
+                    "output_verification_failed",
+                    "worksheet rename source missing from planned state",
+                )
+            expected[index] = new_name
+        elif kind == "create_sheet":
+            expected.append(operation["name"])
+        elif kind == "create_sheet_at":
+            index = operation["index"]
+            if index < 0 or index > len(expected):
+                raise WorkerError(
+                    "output_verification_failed",
+                    "worksheet insertion index is invalid in planned state",
+                )
+            expected.insert(index, operation["name"])
+        elif kind == "delete_sheet":
+            name = operation["name"]
+            try:
+                expected.remove(name)
+            except ValueError:
+                raise WorkerError(
+                    "output_verification_failed",
+                    "worksheet deletion target missing from planned state",
+                )
+    return expected
+
+
+def _verify_plan(
+    workbook: Any,
+    operations: List[Dict[str, Any]],
+    initial_sheet_names: List[str],
+) -> None:
     """Read back simple edits with openpyxl; Rust separately reopens the file."""
     from decimal import Decimal
     from openpyxl.utils.cell import get_column_letter
+
+    expected_sheet_names = _final_sheet_names(initial_sheet_names, operations)
+    if workbook.sheetnames != expected_sheet_names:
+        raise WorkerError(
+            "output_verification_failed",
+            "worksheet names/order readback mismatch",
+        )
 
     for operation in operations:
         kind = operation["operation"]
@@ -744,15 +793,6 @@ def _verify_plan(workbook: Any, operations: List[Dict[str, Any]]) -> None:
             actual = workbook[payload["sheet"]].row_dimensions[payload["row_index"]].height
             if actual is None or abs(float(actual) - float(payload["height"])) > 1e-10:
                 raise WorkerError("output_verification_failed", "row height readback mismatch")
-        elif kind == "rename_sheet":
-            if payload["old_name"] in workbook.sheetnames or payload["new_name"] not in workbook.sheetnames:
-                raise WorkerError("output_verification_failed", "worksheet rename readback mismatch")
-        elif kind == "create_sheet":
-            if payload["name"] not in workbook.sheetnames:
-                raise WorkerError("output_verification_failed", "worksheet creation readback mismatch")
-        elif kind == "create_sheet_at":
-            if payload["name"] not in workbook.sheetnames or workbook.sheetnames.index(payload["name"]) != payload["index"]:
-                raise WorkerError("output_verification_failed", "worksheet insertion order readback mismatch")
         elif kind == "set_freeze_panes":
             actual = workbook[payload["sheet"]].freeze_panes
             actual = None if actual is None else str(actual)
@@ -762,9 +802,6 @@ def _verify_plan(workbook: Any, operations: List[Dict[str, Any]]) -> None:
             actual = workbook[payload["sheet"]].auto_filter.ref
             if actual != payload.get("range"):
                 raise WorkerError("output_verification_failed", "AutoFilter readback mismatch")
-        elif kind == "delete_sheet":
-            if payload["name"] in workbook.sheetnames:
-                raise WorkerError("output_verification_failed", "worksheet deletion readback mismatch")
         elif kind == "set_cell_fill_color":
             expected = payload["argb"].strip().lstrip("#").upper()
             if len(expected) == 6:

@@ -188,6 +188,22 @@ class OpenpyxlWorkerTests(unittest.TestCase):
         self.assertAlmostEqual(sheet.column_dimensions["J"].width, 22)
         saved.close()
 
+    def test_delete_and_recreate_same_sheet_validates_final_names_and_order(self):
+        output = self.root / "recreated-sheet.xlsx"
+        plan = self.base_plan(output, [
+            operation("delete_sheet", name="DeleteMe"),
+            operation("create_sheet_at", name="DeleteMe", index=1),
+        ])
+
+        process, response = run_worker(plan, output)
+
+        self.assertEqual(process.returncode, 0, process.stderr)
+        self.assertEqual(response["status"], "applied", response)
+        self.assertEqual(response["operation_count"], 2)
+        saved = openpyxl.load_workbook(output, data_only=False)
+        self.assertEqual(saved.sheetnames, ["Data", "DeleteMe", "Notes"])
+        saved.close()
+
     def test_unsupported_row_shift_is_rejected_before_output_write(self):
         output = self.root / "unsupported.xlsx"
         plan = self.base_plan(output, [operation("insert_rows", sheet="Data", first_row=2, count=1)])
