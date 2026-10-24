@@ -1159,7 +1159,7 @@ def main() -> int:
         }
         previous_rust_behavior = previous_unknown_probe.get(
             "rust_cli_before_reader_compatibility_api",
-            previous_unknown_rust,
+            previous_unknown_probe.get("previous_rust_behavior_before_shared_reader_api"),
         )
         report = {
             "schema_version": 1,
@@ -1232,7 +1232,6 @@ def main() -> int:
                     "developer_history_omits_cell_token": True,
                 },
                 "business_parity": "exact",
-                "previous_rust_behavior_before_shared_reader_api": previous_rust_behavior,
                 "cross_platform_runs_after_shared_reader_api": cross_platform_runs,
                 "note": (
                     "PT-6-1 opts into the shared reader's narrow literal error-token normalization API. "
@@ -1275,6 +1274,10 @@ def main() -> int:
                 "A synthetic XLSX t=e #DATA! cell is written as a string by PyCode; PT-6-1 now uses the shared reader's narrow literal-token normalization API and matches this case. No broader token or format support is inferred.",
             ],
         }
+        if previous_rust_behavior is not None:
+            report["unknown_cell_error_probe"][
+                "previous_rust_behavior_before_shared_reader_api"
+            ] = previous_rust_behavior
         for key, value in previous_report.items():
             if key not in report:
                 report[key] = value

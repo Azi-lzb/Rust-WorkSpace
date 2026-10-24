@@ -250,56 +250,130 @@
         "input_filter_events_have_no_engine": true
       },
       "developer_compatibility_event_count": 1,
-      "developer_history_omits_cell_token": true
+      "developer_history_omits_cell_token": true,
+      "windows_gnu_debug": {
+        "runtime": "Windows 11 x64; Windows GNU debug CLI executed from PowerShell",
+        "actual_executable": "target/x86_64-pc-windows-gnu/debug/pytools.exe",
+        "views": {
+          "user": {
+            "output_projection": "exact with PyCode",
+            "rows": 1
+          },
+          "developer": {
+            "output_projection": "exact with PyCode",
+            "rows": 1,
+            "event_count": 12,
+            "compatibility_event_count": 1,
+            "event_history_match": true,
+            "log_omits_cell_token": true
+          },
+          "off": {
+            "output_projection": "exact with PyCode",
+            "rows": 1,
+            "application_progress_events": 0
+          }
+        }
+      },
+      "linux_glibc_2_28_release": {
+        "runtime": "WSL Ubuntu; x86_64-unknown-linux-gnu.2.28 release CLI",
+        "actual_executable": "target/x86_64-unknown-linux-gnu/release/pytools",
+        "maximum_glibc_symbol": "GLIBC_2.28",
+        "views": {
+          "user": {
+            "output_projection": "exact with PyCode",
+            "rows": 1
+          },
+          "developer": {
+            "output_projection": "exact with PyCode",
+            "rows": 1,
+            "event_count": 12,
+            "compatibility_event_count": 1,
+            "event_history_match": true,
+            "log_omits_cell_token": true
+          },
+          "off": {
+            "output_projection": "exact with PyCode",
+            "rows": 1,
+            "application_progress_events": 0
+          }
+        }
+      }
     },
     "business_parity": "exact",
     "previous_rust_behavior_before_shared_reader_api": {
-      "status": "succeeded",
+      "status": "failed_closed",
+      "message_contains": "Unsupported cell error value '#DATA!'",
+      "reader_engine": "calamine",
       "entrypoint": "pytools summary-used-range",
-      "reader_api": "read_workbook_with_unknown_error_tokens_as_text",
-      "reader_engine": "calamine + OOXML error-token normalization",
-      "writer_engine": "rust_xlsxwriter",
-      "normalized_cell_count": 1,
-      "output_value": "#DATA!",
-      "output_type": "s",
-      "rows": 1,
-      "progress_log": {
-        "view": "developer",
-        "status": "succeeded",
-        "event_stream_matches_saved_history": true,
-        "event_count": 12,
-        "phases": [
-          "extent_scan",
-          "output_save",
-          "output_workbook",
-          "row_write",
-          "run",
-          "value_read",
-          "value_read_compatibility"
-        ],
-        "actual_engines": [
-          "calamine",
-          "calamine + OOXML error-token normalization",
-          "excel-reader::read_xlsx_worksheet_extents",
-          "rust_xlsxwriter"
-        ],
-        "completed_stage_elapsed_ms": {
-          "extent_scan": 2,
-          "value_read_compatibility": 28,
-          "value_read": 28,
-          "row_write": 0,
-          "output_save": 10,
-          "output_workbook": 11,
-          "run": 43
-        },
-        "skipped_input_names": [],
-        "input_filter_events_have_no_engine": true
-      },
-      "developer_compatibility_event_count": 1,
-      "developer_history_omits_cell_token": true
+      "runtime": "Windows GNU debug CLI",
+      "actual_executable": "target/x86_64-pc-windows-gnu/debug/pytools.exe",
+      "exit_code": 2,
+      "failure_stage": "value_read",
+      "partial_output_created": false,
+      "failed_run_log_count": 1
     },
-    "cross_platform_runs_after_shared_reader_api": {},
-    "note": "PT-6-1 opts into the shared reader's narrow literal error-token normalization API. Ordinary read_workbook remains fail-closed; this probe does not infer support for other tokens."
+    "cross_platform_runs_after_shared_reader_api": {
+      "windows_gnu_debug": {
+        "runtime": "Windows 11 x64; Windows GNU debug CLI executed from PowerShell",
+        "actual_executable": "target/x86_64-pc-windows-gnu/debug/pytools.exe",
+        "views": {
+          "user": {
+            "output_projection": "exact with PyCode",
+            "rows": 1
+          },
+          "developer": {
+            "output_projection": "exact with PyCode",
+            "rows": 1,
+            "event_count": 12,
+            "compatibility_event_count": 1,
+            "event_history_match": true,
+            "log_omits_cell_token": true
+          },
+          "off": {
+            "output_projection": "exact with PyCode",
+            "rows": 1,
+            "application_progress_events": 0
+          }
+        }
+      },
+      "linux_glibc_2_28_release": {
+        "runtime": "WSL Ubuntu; x86_64-unknown-linux-gnu.2.28 release CLI",
+        "actual_executable": "target/x86_64-unknown-linux-gnu/release/pytools",
+        "maximum_glibc_symbol": "GLIBC_2.28",
+        "views": {
+          "user": {
+            "output_projection": "exact with PyCode",
+            "rows": 1
+          },
+          "developer": {
+            "output_projection": "exact with PyCode",
+            "rows": 1,
+            "event_count": 12,
+            "compatibility_event_count": 1,
+            "event_history_match": true,
+            "log_omits_cell_token": true
+          },
+          "off": {
+            "output_projection": "exact with PyCode",
+            "rows": 1,
+            "application_progress_events": 0
+          }
+        }
+      }
+    },
+    "note": "PT-6-1 opts into the shared reader's narrow literal error-token normalization API. Ordinary read_workbook remains fail-closed; this probe does not infer support for other tokens.",
+    "rust_cli_before_reader_compatibility_api": {
+      "status": "failed_closed",
+      "message_contains": "Unsupported cell error value '#DATA!'",
+      "reader_engine": "calamine",
+      "entrypoint": "pytools summary-used-range",
+      "runtime": "Windows GNU debug CLI",
+      "actual_executable": "target/x86_64-pc-windows-gnu/debug/pytools.exe",
+      "exit_code": 2,
+      "failure_stage": "value_read",
+      "partial_output_created": false,
+      "failed_run_log_count": 1
+    }
   },
   "comment_summary_probe": {
     "baseline_rows": 6,

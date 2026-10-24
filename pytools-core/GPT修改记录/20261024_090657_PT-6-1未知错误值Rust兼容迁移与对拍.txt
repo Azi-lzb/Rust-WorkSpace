@@ -31,10 +31,11 @@
 回滚：对本功能提交执行 git revert。
 【组件版本】：不升级，当前 0.1.0。
 
-本轮追加验证（2026-10-24 10:22 中国标准时间）：
+本轮追加验证（2026-10-24 10:25 中国标准时间）：
 - 当前分支已同步公共提交 `12fa8fe`、`6884bb5`、`aa2797d`、`9c869de`。在最新 HEAD 上通过 `cargo fmt --check -p pytools-core` 与 `cargo test --offline --locked -p pytools-core --test summary_used_range_error`（4/4）；并从 WSL 使用锁定离线依赖重建 Windows GNU debug CLI。
 - 完整 real-sample 探针运行于 `aa2797d` 构建的 Windows GNU debug CLI：合成 PT-6-1 的 19 行投影与 PyCode 精确一致，7 个常见 Excel 错误值仍由输出契约保持，字面 `#DATA!` 输出为字符串；13 份原 PyTools XLSX、96 张工作表、203,580 行按 4 批均完整投影一致。四批的 reader/writer 分别为 Calamine/rust_xlsxwriter；开发者事件数 26/14/27/63 均与保存历史逐项相同；输入文件前后指纹一致。完整机器结果见两份 `summary_used_range_*_20261024.json`。
 - 随后同步的 `9c869de` 只修改共享 `excel-editor` 工作表布局能力。其后针对最新 HEAD 再通过上述格式检查、4 项 PT-6-1 测试和 Windows GNU CLI 构建；未重跑全量读取对拍。该 commit 不改变本次汇总的 reader/writer 调用链。
 - 探针支持通过 `PYTOOLS_RUST_CLI` 指定本机 Rust CLI；本轮完整对拍使用当前重建的 Windows GNU 可执行文件，并按实际宿主更新报告。对该配置分别执行 `summary-used-range` 与 `summary-comments` 小型 CLI/PyCode 投影冒烟对拍，均通过。
+- 报告复核发现当前生成器曾把“接入 API 前行为”回退为当次成功结果，并丢掉已记录的跨平台 `#DATA!` 结果。本轮从 PT-6-1 提交 `fcae2e0` 的机器报告恢复失败关闭基线和 Windows/glibc 2.28 三视图记录；探针现只保留显式存档的旧基线，不再以当前结果代替缺失的历史值。JSON 与 Python 语法复核通过，未重跑完整业务对拍（本次只修复历史字段保存）。
 - 本轮尝试重建最新 `x86_64-unknown-linux-gnu.2.28` release，但 WSL 缺少 Zig（`cargo zigbuild` 报 `Failed to find zig`），因此没有更新最新 commit 的 GLIBC 符号或 release 运行证据；之前已有的 glibc 2.28 对拍仍保留为其原报告范围。麒麟 V10/UOS V20 实机、deb 安装和离线交付仍未验证。
 - 本轮只修改 pytools-core 的探针、PT-6-1 报告、迁移清单和本记录；未修改共享 crate、Cargo 文件、Audit 或 `DEVELOPMENT_GOAL.md`。Windows 临时输入/输出由 TemporaryDirectory 清理，未纳入仓库。
