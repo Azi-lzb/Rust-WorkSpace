@@ -846,6 +846,30 @@
         ],
         "source_metadata_unchanged": true,
         "target_os_acceptance": "not_claimed"
+      },
+      "linux_musl_release_current_9837336": {
+        "status": "passed",
+        "current_head": "9837336",
+        "target": "x86_64-unknown-linux-musl",
+        "runtime": "WSL Ubuntu; release static PIE",
+        "build_command": "cargo build --release --offline --locked -p pytools-core --bin pytools --target x86_64-unknown-linux-musl",
+        "sample_scope": "largest original PyTools backup XLSX; name omitted",
+        "source_bytes": 3800854,
+        "summary_data_rows": 39171,
+        "python_rust_full_projection": "exact",
+        "developer_log": {
+          "status": "succeeded",
+          "event_count": 18,
+          "event_stream_matches_saved_history": true
+        },
+        "actual_engines": [
+          "calamine",
+          "rust_xlsxwriter"
+        ],
+        "source_size_and_mtime_unchanged": true,
+        "elf_inspection": "static PIE; ldd reports statically linked",
+        "current_head_glibc_2_28_release": "not built: Zig unavailable; direct TLS connection to the official download host timed out from Windows and WSL",
+        "target_os_acceptance": "not claimed"
       }
     }
   },

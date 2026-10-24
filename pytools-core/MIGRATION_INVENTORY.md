@@ -456,3 +456,11 @@ Rust 集成回归 `summary_used_range_cli_preserves_common_and_textual_error_tok
 Windows SDK 安装完成后，使用 native `cargo test` 构建的 `target/debug/pytools.exe` 运行既有 `compare_summary_tools.py`。PyCode 与 Rust 真实入口对原 PyTools `xlsx/` 目录 13 份工作簿分 4 批完整投影对拍一致：96 张工作表、203,580 行；值/类型、样式、工作表及维度、公式、合并、定义名称、冻结窗格与页面属性通过。1,212 个 Excel 错误单元格由既有 OOXML Patch 保留；批次事件流与保存运行记录一致，源文件前后完整性检查通过。合成错误值、未知 `#DATA!`、扩展错误 token、VBA 启用测试簿、输入扩展名过滤和双视图测试均通过。NoComPyTools 与 PyCode 的既有差异保持为变体差异，不作为 PyCode/Rust 失败或生产合同变更。
 
 Windows 原生测试：`cargo test --offline --locked -p pytools-core --lib comment_region_tests` 2/2；`--test summary_comments_cli` 4/4；`--test summary_used_range_error` 5/5；`cargo fmt --manifest-path pytools-core/Cargo.toml -- --check` 通过。Windows 原生结果记录于 `probe/reports/summary_used_range_windows_native_20261024.json`；此前 WSL/glibc 阶段报告保留不变。运行时间仅记录该次 Windows debug 环境，不作跨实现性能结论；本轮没有重建 glibc 2.28 release。PT-6-1 整体仍待原 PyTools 业务含 VBA 的 XLSM 样本、麒麟 V10/UOS V20、deb 和离线交付验收。
+
+### 2026-10-24 PT-6-1 当前分支 musl release 真实样本复验
+
+在当前 `pytools-dev` HEAD `9837336` 使用 WSL musl release 二进制运行真实 CLI `summary-used-range`，对原 PyTools 最大备份 XLSX（3,800,854 字节）的 39,171 行汇总，与只读 PyCode 完整工作簿投影精确一致。实际引擎为 Calamine 与 rust_xlsxwriter；developer 视图 18 条事件与保存历史逐项匹配，源文件大小和修改时间未变。ELF 检查为静态 PIE，`ldd` 报告静态链接。
+
+当前 HEAD 的 Windows 原生 PT-6-1/PT-6-2 回归 9/9 通过；VBA 启用 XLSM 合成夹具由原 PyCode 与真实 Rust CLI 输出精确一致，宏部件未复制到新汇总簿。此夹具不是原 PyTools 业务 XLSM 样本。
+
+机器结果见 `probe/reports/summary_used_range_real_parity_20261024.json` 的 `additional_project_assets_20261024.platform_validation.linux_musl_release_current_9837336`。本轮未能重建 glibc 2.28 release：WSL 缺 Zig，Windows/WSL 对 Zig 官方下载站的 TLS 连接均超时。此项只证明当前 HEAD 的 WSL musl 阶段行为，不代表麒麟 V10/UOS V20 实机、glibc 2.28、deb 或离线验收；PT-6-1 最终验收仍未完成。
