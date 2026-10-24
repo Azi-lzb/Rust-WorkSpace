@@ -1,0 +1,38 @@
+时间：2026-10-24 23:39:57 +08:00
+执行者：Codex Audit migration agent
+修改前 commit：c728f25
+修改后 commit：随本地证据提交落地
+WIP：开始时工作树干净；真实工作簿、源 Python 和源项目均只读，本次输出写入 F: 临时目录。
+
+## 目的
+
+继续 Audit S1-F02 命名区域汇总的真实样本验证。使用用户提供的 2026-07-31 个人贷款样本，在旧 Python `run_region_summaries` 与现有 Rust `s1-region-summary` CLI 之间进行对拍；本次只使用源内置映射，不改变生产路由，也不修改 S1-F01 公式复制状态。
+
+## 修改文件
+
+- `audit-core/probe/reports/s1_f02_named_region_real_personal_batch_windows_native_20261024.json`：保存脱敏汇总证据，不包含样本路径、文件名、单元格值或机构配置名称。
+- `audit-core/MIGRATION_INVENTORY.md`：记录真实数据/结构对拍结果及仍未验证的格式偏差，S1-F02 整体保持未验证。
+- 本记录。
+
+## 行为与边界
+
+- 通过 `open-data-audit s1-region-summary --feature-name 任意行汇总 --developer-view` 执行 Rust 流程；映射采用源内置默认值。Rust reader 为 Calamine + namespace-aware OOXML，writer 为 rust_xlsxwriter 0.101.0。
+- Python 基线调用旧 `base_audit.region_summary.run_region_summaries`，Windows Microsoft Excel 为其表格引擎。Python/Rust 输出与输入均位于 F: 临时目录/原只读样本；未修改源 Python 或真实输入。
+- 本次结果不涉及自定义映射配置、公式重算或原位修改，不代表 S1-F02 完成或 S1-F01 公式复制验收。
+
+## 测试证据
+
+- Windows 原生真实样本对拍：7 个源工作簿、27 张源工作表；两端各输出 4 张表、44 行。表序、尺寸、值、单元格类型、数字格式、表头强调、筛选、冻结、公式、合并区域、定义名、页面设置、打印区域及超链接比较差异均为 0；模板和 7 个输入工作簿未改变。
+- 输出格式存在可复现偏差：Python Excel Normal 样式字体为等线 11、Rust 为 Calibri 11；字体和对齐各有 588 个非空单元格位置不同；54 列宽不同，最大偏差 12.92578125 字符。故仅数据/结构契约对拍通过，完整格式契约未验收。
+- Rust CLI 退出码 0；样本总耗时 297 ms（发现 1 ms、模板读取 16 ms、源读取 160 ms、计算 0 ms、写入 45 ms、校验 60 ms），开发者视图发出 2 条 JSON 日志。Python 基线调用耗时 15,760 ms；以上仅是该样本观测值，不作通用性能承诺。
+- `cargo test --offline --locked -p audit-core --test s1_region_summary_cli -j 1`：5/5 通过（Windows 原生 Rust 工具链）。
+
+## 未执行项与已知问题
+
+- 未使用自定义映射工作簿；用户样本目录中的工作簿没有可应用的“模块化功能”映射表，因此本次显式使用两端一致的内置默认映射。
+- 字体、对齐和列宽仍有差异，S1-F02 整体继续标记为未验证；尚未在 Linux、麒麟 V10、统信 V20 或 deb 上验证。
+- S1-F01 公式复制候选仍因合并非锚点/公式缓存保护未通过写入门禁，生产路由保持 Unverified；本次未改共享 ExcelModifier。
+
+## 回滚
+
+- 本次仅添加脱敏证据并更新迁移清单；可用 `git revert <本次提交>` 回滚，无需恢复任何用户工作簿。

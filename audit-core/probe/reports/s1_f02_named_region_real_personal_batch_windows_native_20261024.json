@@ -1,0 +1,86 @@
+{
+  "schema_version": 1,
+  "suite": "s1_f02_named_region_real_sample_parity",
+  "status": "partial",
+  "scope": {
+    "sample_period": "2026-07-31",
+    "business_area": "personal-loan",
+    "feature": "任意行汇总",
+    "source_workbooks": 7,
+    "source_sheets": 27,
+    "custom_mapping_applied": false,
+    "mapping_source": "source built-in defaults"
+  },
+  "execution": {
+    "python_baseline": {
+      "function": "base_audit.region_summary.run_region_summaries",
+      "engine": "Microsoft Excel",
+      "elapsed_ms": 15760
+    },
+    "rust": {
+      "entrypoint": "open-data-audit s1-region-summary",
+      "exit_code": 0,
+      "reader": "calamine+namespace_aware_ooxml",
+      "writer": "rust_xlsxwriter 0.101.0",
+      "elapsed_ms": 297,
+      "discovery_time_ms": 1,
+      "template_read_time_ms": 16,
+      "source_read_time_ms": 160,
+      "calculation_time_ms": 0,
+      "write_time_ms": 45,
+      "validation_time_ms": 60,
+      "developer_log_events": 2
+    }
+  },
+  "output": {
+    "python_sheets": 4,
+    "rust_sheets": 4,
+    "python_data_rows": 44,
+    "rust_data_rows": 44
+  },
+  "parity": {
+    "data_and_structure": "passed",
+    "sheet_order_mismatches": 0,
+    "dimension_mismatches": 0,
+    "value_mismatches": 0,
+    "cell_type_mismatches": 0,
+    "number_format_mismatches": 0,
+    "header_bold_fill_mismatches": 0,
+    "autofilter_mismatches": 0,
+    "freeze_pane_mismatches": 0,
+    "formula_mismatches": 0,
+    "python_formula_cells": 0,
+    "rust_formula_cells": 0,
+    "merged_range_mismatches": 0,
+    "defined_name_mismatches": 0,
+    "page_setup_mismatches": 0,
+    "print_area_mismatches": 0,
+    "hyperlink_mismatches": 0,
+    "format_variance": {
+      "status": "unverified",
+      "font_name": {
+        "python_default": "等线 11",
+        "rust_default": "Calibri 11",
+        "different_cells": 634,
+        "different_nonempty_cells": 588
+      },
+      "alignment": {
+        "python_default": "body cells centered horizontally; emitted cells centered vertically",
+        "rust_default": "unset",
+        "different_cells": 634,
+        "different_nonempty_cells": 588
+      },
+      "column_widths": {
+        "different_columns": 54,
+        "maximum_absolute_delta_characters": 12.92578125
+      }
+    }
+  },
+  "inputs_unchanged": true,
+  "raw_business_values_or_paths_persisted": false,
+  "limitations": [
+    "This run used source built-in mappings; it does not verify custom mapping workbooks.",
+    "Font, alignment, and column-width variance prevent claiming full output-format parity.",
+    "The result covers this real sample and does not complete S1-F02 or validate Linux, target systems, or deb packaging."
+  ]
+}
