@@ -1,7 +1,7 @@
 时间：2026-10-24 19:31:04（Asia/Shanghai）
 执行者：Codex
 修改前 commit：bf976d5 test(audit): classify S1 formula-copy preflight guards
-修改后 commit：2f2fde5 feat(audit): preflight S1 template health
+修改后 commit：4a157f2 feat(audit): preflight S1 template health
 WIP 情况：工作树原有本轮 Audit 代码改动继续保留；未跟踪的 audit-core/examples/ 为既有用户内容，保持原样且不纳入提交。分支 audit-dev，提交前 origin/audit-dev 与修改前 HEAD 一致。
 
 目的：将源 Python Audit 工作流中的静态 S1 模板健康检查接入 Rust 规则查看和 S1 目录审核入口，并与 Python 基线在真实模板上对拍；不覆盖或替代尚未通过对象级验证的公式复制写入。
