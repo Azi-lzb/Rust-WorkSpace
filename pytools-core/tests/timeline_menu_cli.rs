@@ -151,6 +151,173 @@ fn interactive_timeline_menu_routes_compare_wide_modes_and_precheck() -> Result<
 }
 
 #[test]
+fn header_path_compare_menu_supports_user_developer_and_off_views() -> Result<()> {
+    let root = TestDirectory::new()?;
+    let config = create_timeline_config(root.path())?;
+    let template = root.path().join("compare template.xlsx");
+    let source = root.path().join("sample compare source.xlsx");
+    let broken = root.path().join("broken compare source.xlsx");
+    create_wide_source(&template, "模板甲", 10.0)?;
+    create_wide_source(&source, "来源甲", 12.0)?;
+    fs::write(&broken, b"not an xlsx workbook")?;
+    let log_dir = root.path().join("app").join("logs");
+
+    let user = run_menu_with_view(
+        &config,
+        "user",
+        &format!("1\n1\n{}\n{}\n0\n", template.display(), source.display()),
+    )?;
+    assert!(
+        user.status.success(),
+        "user-view compare failed: {}",
+        String::from_utf8_lossy(&user.stderr)
+    );
+    let user_stderr = String::from_utf8_lossy(&user.stderr);
+    assert!(user_stderr.contains("正在读取表头比对配置"));
+    assert!(user_stderr.contains("表头比对模板读取完成"));
+    assert!(user_stderr.contains("已处理 1/1 个源工作簿"));
+    assert!(user_stderr.contains("表头路径比对结束"));
+    assert!(user_stderr.contains("阶段用时"));
+    assert!(!user_stderr.contains(&source.display().to_string()));
+    assert!(!user_stderr.contains("来源甲"));
+    let user_report = latest_timeline_compare_report(&user)?;
+    assert!(user_report.get("output").is_some());
+    assert!(user_report.get("run_history_path").is_none());
+    assert!(!log_dir.exists() || run_history_paths(&log_dir)?.is_empty());
+
+    let developer_sources = format!(
+        "{};{};{}",
+        source.display(),
+        broken.display(),
+        template.display()
+    );
+    let developer = run_menu_with_view(
+        &config,
+        "developer",
+        &format!("1\n1\n{}\n{}\n0\n", template.display(), developer_sources),
+    )?;
+    assert!(
+        developer.status.success(),
+        "developer-view compare failed: {}",
+        String::from_utf8_lossy(&developer.stderr)
+    );
+    let developer_report = latest_timeline_compare_report(&developer)?;
+    let history_path = PathBuf::from(
+        developer_report["run_history_path"]
+            .as_str()
+            .context("developer run-history path missing")?,
+    );
+    let history_bytes = fs::read(&history_path)?;
+    let history_text = String::from_utf8_lossy(&history_bytes);
+    assert!(!history_text.contains(&source.display().to_string()));
+    assert!(!history_text.contains(&broken.display().to_string()));
+    assert!(!history_text.contains("来源甲"));
+    assert!(!history_text.contains("not an xlsx workbook"));
+    let history: Value = serde_json::from_slice(&history_bytes)?;
+    assert_eq!(history["feature_id"], "PT-1-1");
+    assert_eq!(history["status"], "partial");
+    assert_eq!(history["progress"]["total_inputs"], 3);
+    assert_eq!(history["progress"]["completed_inputs"], 1);
+    assert_eq!(history["progress"]["failed_inputs"], 1);
+    assert_eq!(history["progress"]["skipped_inputs"], 1);
+    for phase in [
+        "configuration_read",
+        "template_read",
+        "source_read",
+        "source_compare",
+        "report_write",
+        "task",
+    ] {
+        assert!(
+            history["events"]
+                .as_array()
+                .is_some_and(|events| events.iter().any(|event| event["phase"] == phase)),
+            "missing {phase} event"
+        );
+    }
+    assert!(history["actual_engines"].as_array().is_some_and(|engines| {
+        engines.iter().any(|engine| engine == "calamine")
+            && engines.iter().any(|engine| engine == "rust_xlsxwriter")
+    }));
+    let developer_events = String::from_utf8_lossy(&developer.stderr)
+        .lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .collect::<Vec<_>>();
+    assert!(developer_events.len() >= 10);
+    assert!(developer_events.iter().all(|event| {
+        event["stage_elapsed_ms"].is_number() && event["total_elapsed_ms"].is_number()
+    }));
+
+    let history_count_before_off = run_history_paths(&log_dir)?.len();
+    let off = run_menu_with_view(
+        &config,
+        "off",
+        &format!("1\n1\n{}\n{}\n0\n", template.display(), source.display()),
+    )?;
+    assert!(
+        off.status.success(),
+        "off-view compare failed: {}",
+        String::from_utf8_lossy(&off.stderr)
+    );
+    assert!(String::from_utf8_lossy(&off.stderr).is_empty());
+    assert!(latest_timeline_compare_report(&off)?
+        .get("run_history_path")
+        .is_none());
+    assert_eq!(run_history_paths(&log_dir)?.len(), history_count_before_off);
+    Ok(())
+}
+
+#[test]
+fn header_path_compare_menu_records_terminal_failure_summary() -> Result<()> {
+    let root = TestDirectory::new()?;
+    let config = create_timeline_config(root.path())?;
+    let template = root.path().join("broken template.xlsx");
+    let source = root.path().join("valid source.xlsx");
+    fs::write(&template, b"not an xlsx workbook")?;
+    create_wide_source(&source, "来源甲", 12.0)?;
+
+    let user = run_menu_with_view(
+        &config,
+        "user",
+        &format!("1\n1\n{}\n{}\n0\n", template.display(), source.display()),
+    )?;
+    assert!(!user.status.success());
+    let user_stderr = String::from_utf8_lossy(&user.stderr);
+    assert!(user_stderr.contains("表头比对模板读取失败"));
+    assert!(user_stderr.contains("表头路径比对任务失败"));
+    assert!(!user_stderr.contains(&template.display().to_string()));
+    assert!(!user_stderr.contains("not an xlsx workbook"));
+    assert!(!user_stderr.contains("calamine"));
+
+    let log_dir = root.path().join("app").join("logs");
+    assert!(!log_dir.exists() || run_history_paths(&log_dir)?.is_empty());
+
+    let developer = run_menu_with_view(
+        &config,
+        "developer",
+        &format!("1\n1\n{}\n{}\n0\n", template.display(), source.display()),
+    )?;
+    assert!(!developer.status.success());
+    let history = read_single_run_history(&log_dir, "PT-1-1")?;
+    assert_eq!(history["status"], "failed");
+    assert_eq!(history["error_type"], "template_read_error");
+    let history_text = serde_json::to_string(&history)?;
+    assert!(!history_text.contains(&template.display().to_string()));
+    assert!(!history_text.contains("not an xlsx workbook"));
+    assert!(history["events"].as_array().is_some_and(|events| {
+        events
+            .iter()
+            .any(|event| event["phase"] == "template_read" && event["status"] == "failed")
+            && events.iter().any(|event| {
+                event["phase"] == "task"
+                    && event["status"] == "failed"
+                    && event["error_type"] == "template_read_error"
+            })
+    }));
+    Ok(())
+}
+
+#[test]
 fn interactive_wide_summary_menu_commits_new_target_after_confirmation() -> Result<()> {
     let root = TestDirectory::new()?;
     let target = root.path().join("configured target.xlsx");
@@ -645,6 +812,19 @@ fn latest_menu_json_report(output: &Output) -> Result<Value> {
                 .filter(|value| value.get("target_append_plans").is_some())
         })
         .context("interactive menu did not print a wide-summary report")
+}
+
+fn latest_timeline_compare_report(output: &Output) -> Result<Value> {
+    let start = output
+        .stdout
+        .iter()
+        .position(|byte| *byte == b'{')
+        .context("interactive menu did not print a timeline comparison report")?;
+    serde_json::Deserializer::from_slice(&output.stdout[start..])
+        .into_iter::<Value>()
+        .next()
+        .context("timeline comparison JSON missing")?
+        .context("decode timeline comparison JSON")
 }
 
 fn create_wide_source(path: &Path, organization: &str, amount: f64) -> Result<()> {

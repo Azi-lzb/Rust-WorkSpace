@@ -75,6 +75,39 @@ pub struct WideSummaryRunEvent {
     pub error_type: Option<String>,
 }
 
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct HeaderPathCompareProgress {
+    pub total_inputs: usize,
+    pub processed_inputs: usize,
+    pub completed_inputs: usize,
+    pub failed_inputs: usize,
+    pub skipped_inputs: usize,
+    pub compared_sheets: usize,
+    pub different_inputs: usize,
+    pub positional_differences: usize,
+    pub path_differences: usize,
+    pub current_input: Option<usize>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct HeaderPathCompareRunEvent {
+    pub sequence: usize,
+    pub timestamp: String,
+    pub feature_id: String,
+    pub phase: String,
+    pub status: String,
+    pub user_message: String,
+    pub progress: HeaderPathCompareProgress,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stage_elapsed_ms: Option<u128>,
+    pub total_elapsed_ms: u128,
+    pub components: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub actual_engine: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_type: Option<String>,
+}
+
 struct WideSummaryProgressEmitter<'a> {
     started: Instant,
     sequence: usize,
@@ -642,17 +675,130 @@ pub fn run_header_path_compare(
     rules: &[TimelineRule],
     global: &GlobalConfig,
 ) -> Result<PathBuf> {
+    run_header_path_compare_with_progress(template_path, source_paths, rules, global, |_| {})
+}
+
+pub fn run_header_path_compare_with_progress<F>(
+    template_path: impl AsRef<Path>,
+    source_paths: &[PathBuf],
+    rules: &[TimelineRule],
+    global: &GlobalConfig,
+    mut on_event: F,
+) -> Result<PathBuf>
+where
+    F: FnMut(&HeaderPathCompareRunEvent),
+{
+    let run_started = Instant::now();
+    let mut sequence = 0usize;
+    let mut progress = HeaderPathCompareProgress {
+        total_inputs: source_paths.len(),
+        ..HeaderPathCompareProgress::default()
+    };
     let template_path = template_path.as_ref();
+    let template_started = Instant::now();
+    emit_header_path_compare_event(
+        &mut on_event,
+        &mut sequence,
+        &run_started,
+        &template_started,
+        &progress,
+        "template_read",
+        "started",
+        "正在读取表头比对模板".to_owned(),
+        &["excel-reader", "calamine"],
+        None,
+        None,
+    );
     if !template_path.is_file() {
+        emit_header_path_compare_event(
+            &mut on_event,
+            &mut sequence,
+            &run_started,
+            &template_started,
+            &progress,
+            "template_read",
+            "failed",
+            "表头比对模板不存在".to_owned(),
+            &["excel-reader", "calamine"],
+            None,
+            Some("missing_template"),
+        );
         bail!("template does not exist: {}", template_path.display());
     }
-    let template = read_workbook(template_path)?;
+    let template = match read_workbook(template_path) {
+        Ok(value) => value,
+        Err(error) => {
+            emit_header_path_compare_event(
+                &mut on_event,
+                &mut sequence,
+                &run_started,
+                &template_started,
+                &progress,
+                "template_read",
+                "failed",
+                "表头比对模板读取失败".to_owned(),
+                &["excel-reader", "calamine"],
+                Some("calamine"),
+                Some("template_read_error"),
+            );
+            return Err(error);
+        }
+    };
+    emit_header_path_compare_event(
+        &mut on_event,
+        &mut sequence,
+        &run_started,
+        &template_started,
+        &progress,
+        "template_read",
+        "completed",
+        "表头比对模板读取完成".to_owned(),
+        &["excel-reader", "calamine"],
+        Some("calamine"),
+        None,
+    );
     let mut diff_rows: Vec<Vec<String>> = Vec::new();
     let mut summary_rows: Vec<Vec<String>> = Vec::new();
-    for source_path in source_paths {
+    for (index, source_path) in source_paths.iter().enumerate() {
+        progress.current_input = Some(index + 1);
         if same_path(source_path, template_path) {
+            progress.processed_inputs = index + 1;
+            progress.skipped_inputs += 1;
+            let skipped_started = Instant::now();
+            emit_header_path_compare_event(
+                &mut on_event,
+                &mut sequence,
+                &run_started,
+                &skipped_started,
+                &progress,
+                "source_processing",
+                "skipped",
+                format!(
+                    "已处理 {}/{} 个源工作簿：与模板相同，已跳过",
+                    index + 1,
+                    source_paths.len()
+                ),
+                &["pytools-core"],
+                None,
+                None,
+            );
+            progress.current_input = None;
             continue;
         }
+        let source_started = Instant::now();
+        emit_header_path_compare_event(
+            &mut on_event,
+            &mut sequence,
+            &run_started,
+            &source_started,
+            &progress,
+            "source_read",
+            "started",
+            format!("正在读取第 {}/{} 个源工作簿", index + 1, source_paths.len()),
+            &["excel-reader", "calamine"],
+            None,
+            None,
+        );
         let source = match read_workbook(source_path) {
             Ok(value) => value,
             Err(error) => {
@@ -663,77 +809,155 @@ pub fn run_header_path_compare(
                     "0".into(),
                     format!("打开失败: {error:#}"),
                 ]);
+                progress.processed_inputs = index + 1;
+                progress.failed_inputs += 1;
+                emit_header_path_compare_event(
+                    &mut on_event,
+                    &mut sequence,
+                    &run_started,
+                    &source_started,
+                    &progress,
+                    "source_read",
+                    "failed",
+                    format!(
+                        "第 {}/{} 个源工作簿读取失败，已记入结果",
+                        index + 1,
+                        source_paths.len()
+                    ),
+                    &["excel-reader", "calamine"],
+                    Some("calamine"),
+                    Some("workbook_read_error"),
+                );
+                progress.current_input = None;
                 continue;
             }
         };
+        emit_header_path_compare_event(
+            &mut on_event,
+            &mut sequence,
+            &run_started,
+            &source_started,
+            &progress,
+            "source_read",
+            "completed",
+            format!("第 {}/{} 个源工作簿读取完成", index + 1, source_paths.len()),
+            &["excel-reader", "calamine"],
+            Some("calamine"),
+            None,
+        );
         let mut pos_count = 0usize;
         let mut path_count = 0usize;
-        for rule in pick_rules_for_workbook(
-            rules,
-            &file_name(source_path),
-            &global.timeline_rule_match_mode,
-        ) {
-            let source_sheets = source
-                .sheets
-                .iter()
-                .filter(|sheet| keyword_match(&sheet.name, &rule.sheet_keyword))
-                .collect::<Vec<_>>();
-            let template_sheets = template
-                .sheets
-                .iter()
-                .filter(|sheet| keyword_match(&sheet.name, &rule.sheet_keyword))
-                .collect::<Vec<_>>();
-            for source_sheet in source_sheets {
-                let template_sheet = template
+        let mut compared_sheets = 0usize;
+        let comparison_started = Instant::now();
+        emit_header_path_compare_event(
+            &mut on_event,
+            &mut sequence,
+            &run_started,
+            &comparison_started,
+            &progress,
+            "source_compare",
+            "started",
+            format!("正在比较第 {}/{} 个源工作簿", index + 1, source_paths.len()),
+            &["pytools-core"],
+            None,
+            None,
+        );
+        let comparison = (|| -> Result<()> {
+            for rule in pick_rules_for_workbook(
+                rules,
+                &file_name(source_path),
+                &global.timeline_rule_match_mode,
+            ) {
+                let source_sheets = source
                     .sheets
                     .iter()
-                    .find(|sheet| sheet.name == source_sheet.name)
-                    .or_else(|| (template_sheets.len() == 1).then(|| template_sheets[0]));
-                let Some(template_sheet) = template_sheet else {
-                    continue;
-                };
-                let (template_matrix, _) = matrix_from_dump(template_sheet)?;
-                let (source_matrix, _) = matrix_from_dump(source_sheet)?;
-                let positional = position_differences(&template_matrix, &source_matrix, rule);
-                for (kind, source_value, template_value) in &positional {
-                    diff_rows.push(vec![
-                        "".into(),
-                        "".into(),
-                        rule.name.clone(),
-                        rule.wb_keyword.clone(),
-                        rule.sheet_keyword.clone(),
-                        kind.clone(),
-                        "精确".into(),
-                        source_value.clone(),
-                        template_value.clone(),
-                        "按位置".into(),
-                        file_name(source_path),
-                        source_sheet.name.clone(),
-                    ]);
-                }
-                pos_count += positional.len();
-                if !positional.is_empty() {
-                    for (kind, source_value, template_value) in
-                        path_differences(&template_matrix, &source_matrix, rule)
-                    {
+                    .filter(|sheet| keyword_match(&sheet.name, &rule.sheet_keyword))
+                    .collect::<Vec<_>>();
+                let template_sheets = template
+                    .sheets
+                    .iter()
+                    .filter(|sheet| keyword_match(&sheet.name, &rule.sheet_keyword))
+                    .collect::<Vec<_>>();
+                for source_sheet in source_sheets {
+                    let template_sheet = template
+                        .sheets
+                        .iter()
+                        .find(|sheet| sheet.name == source_sheet.name)
+                        .or_else(|| (template_sheets.len() == 1).then(|| template_sheets[0]));
+                    let Some(template_sheet) = template_sheet else {
+                        continue;
+                    };
+                    compared_sheets += 1;
+                    let (template_matrix, _) = matrix_from_dump(template_sheet)?;
+                    let (source_matrix, _) = matrix_from_dump(source_sheet)?;
+                    let positional = position_differences(&template_matrix, &source_matrix, rule);
+                    for (kind, source_value, template_value) in &positional {
                         diff_rows.push(vec![
                             "".into(),
                             "".into(),
                             rule.name.clone(),
                             rule.wb_keyword.clone(),
                             rule.sheet_keyword.clone(),
-                            kind,
+                            kind.clone(),
                             "精确".into(),
-                            source_value,
-                            template_value,
-                            "按路径".into(),
+                            source_value.clone(),
+                            template_value.clone(),
+                            "按位置".into(),
                             file_name(source_path),
                             source_sheet.name.clone(),
                         ]);
-                        path_count += 1;
+                    }
+                    pos_count += positional.len();
+                    if !positional.is_empty() {
+                        for (kind, source_value, template_value) in
+                            path_differences(&template_matrix, &source_matrix, rule)
+                        {
+                            diff_rows.push(vec![
+                                "".into(),
+                                "".into(),
+                                rule.name.clone(),
+                                rule.wb_keyword.clone(),
+                                rule.sheet_keyword.clone(),
+                                kind,
+                                "精确".into(),
+                                source_value,
+                                template_value,
+                                "按路径".into(),
+                                file_name(source_path),
+                                source_sheet.name.clone(),
+                            ]);
+                            path_count += 1;
+                        }
                     }
                 }
             }
+            Ok(())
+        })();
+        if let Err(error) = comparison {
+            progress.processed_inputs = index + 1;
+            progress.failed_inputs += 1;
+            emit_header_path_compare_event(
+                &mut on_event,
+                &mut sequence,
+                &run_started,
+                &comparison_started,
+                &progress,
+                "source_compare",
+                "failed",
+                format!("第 {}/{} 个源工作簿比较失败", index + 1, source_paths.len()),
+                &["pytools-core"],
+                None,
+                Some("comparison_error"),
+            );
+            return Err(error);
+        }
+        progress.processed_inputs = index + 1;
+        progress.completed_inputs += 1;
+        progress.compared_sheets += compared_sheets;
+        progress.positional_differences += pos_count;
+        progress.path_differences += path_count;
+        if pos_count > 0 || path_count > 0 {
+            progress.different_inputs += 1;
         }
         let status = if pos_count == 0 && path_count == 0 {
             "通过"
@@ -747,37 +971,164 @@ pub fn run_header_path_compare(
             path_count.to_string(),
             String::new(),
         ]);
+        emit_header_path_compare_event(
+            &mut on_event,
+            &mut sequence,
+            &run_started,
+            &comparison_started,
+            &progress,
+            "source_compare",
+            "completed",
+            format!(
+                "已处理 {}/{} 个源工作簿：位置差异 {} 项，路径差异 {} 项",
+                index + 1,
+                source_paths.len(),
+                pos_count,
+                path_count
+            ),
+            &["pytools-core"],
+            None,
+            None,
+        );
+        progress.current_input = None;
     }
-    let path = unique_output(
-        &global.output_dir,
-        &format!("compare_3_9_3_{}", Local::now().format("%Y%m%d_%H%M%S")),
-        "xlsx",
-    )?;
-    let mut workbook = Workbook::new();
-    write_string_table(
-        &mut workbook,
-        "表头比对结果",
-        &[
-            "是否启用",
-            "映射名称",
-            "适用规则名",
-            "工作簿关键字",
-            "工作表关键字",
-            "作用对象",
-            "匹配方式",
-            "原始路径",
-            "标准路径",
-            "备注",
-            "源文件",
-            "工作表",
-        ],
-        &diff_rows,
-    )?;
-    write_compare_summary_table(&mut workbook, &summary_rows)?;
-    workbook
-        .save(&path)
-        .with_context(|| format!("save comparison report {}", path.display()))?;
+    let output_started = Instant::now();
+    emit_header_path_compare_event(
+        &mut on_event,
+        &mut sequence,
+        &run_started,
+        &output_started,
+        &progress,
+        "report_write",
+        "started",
+        "正在生成表头比对结果工作簿".to_owned(),
+        &["excel-writer", "rust_xlsxwriter"],
+        None,
+        None,
+    );
+    let write_result = (|| -> Result<PathBuf> {
+        let path = unique_output(
+            &global.output_dir,
+            &format!("compare_3_9_3_{}", Local::now().format("%Y%m%d_%H%M%S")),
+            "xlsx",
+        )?;
+        let mut workbook = Workbook::new();
+        write_string_table(
+            &mut workbook,
+            "表头比对结果",
+            &[
+                "是否启用",
+                "映射名称",
+                "适用规则名",
+                "工作簿关键字",
+                "工作表关键字",
+                "作用对象",
+                "匹配方式",
+                "原始路径",
+                "标准路径",
+                "备注",
+                "源文件",
+                "工作表",
+            ],
+            &diff_rows,
+        )?;
+        write_compare_summary_table(&mut workbook, &summary_rows)?;
+        workbook
+            .save(&path)
+            .with_context(|| format!("save comparison report {}", path.display()))?;
+        Ok(path)
+    })();
+    let path = match write_result {
+        Ok(path) => path,
+        Err(error) => {
+            emit_header_path_compare_event(
+                &mut on_event,
+                &mut sequence,
+                &run_started,
+                &output_started,
+                &progress,
+                "report_write",
+                "failed",
+                "表头比对结果工作簿生成失败".to_owned(),
+                &["excel-writer", "rust_xlsxwriter"],
+                Some("rust_xlsxwriter"),
+                Some("output_write_error"),
+            );
+            return Err(error);
+        }
+    };
+    emit_header_path_compare_event(
+        &mut on_event,
+        &mut sequence,
+        &run_started,
+        &output_started,
+        &progress,
+        "report_write",
+        "completed",
+        "表头比对结果工作簿已生成".to_owned(),
+        &["excel-writer", "rust_xlsxwriter"],
+        Some("rust_xlsxwriter"),
+        None,
+    );
+    let task_status = if progress.failed_inputs == 0 {
+        "completed"
+    } else {
+        "partial"
+    };
+    emit_header_path_compare_event(
+        &mut on_event,
+        &mut sequence,
+        &run_started,
+        &output_started,
+        &progress,
+        "task",
+        task_status,
+        format!(
+            "表头路径比对结束：已处理 {} 个，差异 {} 个，读取失败 {} 个，跳过 {} 个",
+            progress.processed_inputs,
+            progress.different_inputs,
+            progress.failed_inputs,
+            progress.skipped_inputs
+        ),
+        &["pytools-core"],
+        None,
+        (progress.failed_inputs > 0).then_some("workbook_read_error"),
+    );
     Ok(path)
+}
+
+fn emit_header_path_compare_event<F>(
+    on_event: &mut F,
+    sequence: &mut usize,
+    run_started: &Instant,
+    stage_started: &Instant,
+    progress: &HeaderPathCompareProgress,
+    phase: &str,
+    status: &str,
+    user_message: String,
+    components: &[&str],
+    actual_engine: Option<&str>,
+    error_type: Option<&str>,
+) where
+    F: FnMut(&HeaderPathCompareRunEvent),
+{
+    *sequence += 1;
+    let mut recorded_components = vec!["Rust".to_owned()];
+    recorded_components.extend(components.iter().map(|component| (*component).to_owned()));
+    on_event(&HeaderPathCompareRunEvent {
+        sequence: *sequence,
+        timestamp: Local::now().to_rfc3339(),
+        feature_id: "PT-1-1".to_owned(),
+        phase: phase.to_owned(),
+        status: status.to_owned(),
+        user_message,
+        progress: progress.clone(),
+        stage_elapsed_ms: Some(stage_started.elapsed().as_millis()),
+        total_elapsed_ms: run_started.elapsed().as_millis(),
+        components: recorded_components,
+        actual_engine: actual_engine.map(str::to_owned),
+        error_type: error_type.map(str::to_owned),
+    });
 }
 
 /// Execute selected wide-summary variants (timeline menu 1-3 and 1-4).

@@ -52,9 +52,9 @@ use pytools_core::summary_ops::{
 };
 use pytools_core::timeline_ops::{
     build_wide_target_append_plans, prepare_wide_target_replacement_source,
-    run_header_path_compare, run_timeline_precheck, run_wide_summary,
-    run_wide_summary_with_progress, validate_wide_target_replacement_candidate,
-    WideSummaryProgress, WideSummaryRunEvent,
+    run_header_path_compare, run_header_path_compare_with_progress, run_timeline_precheck,
+    run_wide_summary, run_wide_summary_with_progress, validate_wide_target_replacement_candidate,
+    HeaderPathCompareProgress, HeaderPathCompareRunEvent, WideSummaryProgress, WideSummaryRunEvent,
 };
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, BufRead, IsTerminal, Write};
@@ -1014,6 +1014,12 @@ where
                     return Ok(());
                 };
                 let mut arguments = config_cli_arguments(config_path);
+                arguments.extend([
+                    "--log-dir".to_owned(),
+                    global.log_dir.to_string_lossy().into_owned(),
+                    "--log-view".to_owned(),
+                    log_view.to_owned(),
+                ]);
                 arguments.push("--template".to_owned());
                 arguments.push(template.to_string_lossy().into_owned());
                 arguments.extend(
@@ -6478,11 +6484,304 @@ fn run_timeline_compare_cli(arguments: Vec<String>) -> Result<()> {
     let options = parse_cli_arguments(arguments)?;
     let config = required_path(&options, "config")?;
     let template = required_path(&options, "template")?;
-    let global = load_global(&config)?;
-    let rules = pytools_core::config::load_timeline_rules(&config)?;
-    let output = run_header_path_compare(&template, &options.positional, &rules, &global)?;
-    println!("{}", serde_json::json!({"output": output}));
+    let run_started = Instant::now();
+    let started_at = Local::now().to_rfc3339();
+    let log_view = options
+        .values
+        .get("log-view")
+        .map(String::as_str)
+        .unwrap_or("user");
+    anyhow::ensure!(
+        matches!(log_view, "user" | "developer" | "off"),
+        "--log-view must be user, developer, or off"
+    );
+    let explicit_log_dir = options.values.get("log-dir").map(PathBuf::from);
+    let mut log_dir = explicit_log_dir
+        .clone()
+        .unwrap_or_else(|| PathBuf::from("logs"));
+    let mut progress = HeaderPathCompareProgress {
+        total_inputs: options.positional.len(),
+        ..HeaderPathCompareProgress::default()
+    };
+    let mut events = Vec::<HeaderPathCompareRunEvent>::new();
+    let configuration_started = Instant::now();
+    if log_view != "off" {
+        let event = new_header_path_compare_cli_event(
+            &events,
+            &run_started,
+            &progress,
+            "configuration_read",
+            "started",
+            "正在读取表头比对配置".to_owned(),
+            &configuration_started,
+            &["excel-reader", "calamine"],
+            None,
+            None,
+        );
+        emit_header_path_compare_event_view(log_view, &mut events, event);
+    }
+    let configuration = (|| -> Result<_> {
+        let global = load_global(&config)?;
+        let rules = pytools_core::config::load_timeline_rules(&config)?;
+        Ok((global, rules))
+    })();
+    let (global, rules) = match configuration {
+        Ok(configuration) => configuration,
+        Err(_error) => {
+            let error_type = "configuration_read_error";
+            if log_view != "off" {
+                let event = new_header_path_compare_cli_event(
+                    &events,
+                    &run_started,
+                    &progress,
+                    "configuration_read",
+                    "failed",
+                    "表头比对配置读取失败".to_owned(),
+                    &configuration_started,
+                    &["excel-reader", "calamine"],
+                    Some("calamine"),
+                    Some(error_type),
+                );
+                emit_header_path_compare_event_view(log_view, &mut events, event);
+                let task_event = new_header_path_compare_cli_event(
+                    &events,
+                    &run_started,
+                    &progress,
+                    "task",
+                    "failed",
+                    "表头路径比对任务失败".to_owned(),
+                    &configuration_started,
+                    &["pytools-core"],
+                    None,
+                    Some(error_type),
+                );
+                emit_header_path_compare_event_view(log_view, &mut events, task_event);
+            }
+            let run_id = header_path_compare_run_id();
+            if log_view == "developer" {
+                match write_header_path_compare_run_history(
+                    &log_dir,
+                    &run_id,
+                    "failed",
+                    &started_at,
+                    run_started.elapsed().as_millis(),
+                    &progress,
+                    error_type,
+                    &events,
+                ) {
+                    Ok(path) => eprintln!("PT-1-1 run history: {}", path.display()),
+                    Err(history_error) => {
+                        eprintln!("pytools: warning: could not write PT-1-1 run history: {history_error:#}")
+                    }
+                }
+            }
+            bail!("表头比对配置读取失败；请检查配置文件");
+        }
+    };
+    if explicit_log_dir.is_none() {
+        log_dir = global.log_dir.clone();
+    }
+    if log_view != "off" {
+        let event = new_header_path_compare_cli_event(
+            &events,
+            &run_started,
+            &progress,
+            "configuration_read",
+            "completed",
+            "表头比对配置读取完成".to_owned(),
+            &configuration_started,
+            &["excel-reader", "calamine"],
+            Some("calamine"),
+            None,
+        );
+        emit_header_path_compare_event_view(log_view, &mut events, event);
+    }
+
+    let compare_result = if log_view == "off" {
+        run_header_path_compare(&template, &options.positional, &rules, &global)
+    } else {
+        run_header_path_compare_with_progress(
+            &template,
+            &options.positional,
+            &rules,
+            &global,
+            |core_event| {
+                let mut event = core_event.clone();
+                event.sequence = events.len() + 1;
+                event.total_elapsed_ms = run_started.elapsed().as_millis();
+                progress = event.progress.clone();
+                emit_header_path_compare_event_view(log_view, &mut events, event);
+            },
+        )
+    };
+    let status = match &compare_result {
+        Err(_) => "failed",
+        Ok(_) if progress.failed_inputs > 0 => "partial",
+        Ok(_) => "succeeded",
+    };
+    let error_type = events
+        .last()
+        .and_then(|event| event.error_type.as_deref())
+        .map(str::to_owned)
+        .unwrap_or_else(|| {
+            if compare_result.is_err() {
+                "comparison_error".to_owned()
+            } else {
+                String::new()
+            }
+        });
+    if compare_result.is_err() && log_view != "off" {
+        let event = new_header_path_compare_cli_event(
+            &events,
+            &run_started,
+            &progress,
+            "task",
+            "failed",
+            "表头路径比对任务失败".to_owned(),
+            &run_started,
+            &["pytools-core"],
+            None,
+            (!error_type.is_empty()).then_some(error_type.as_str()),
+        );
+        emit_header_path_compare_event_view(log_view, &mut events, event);
+    }
+    let history_result = if log_view == "developer" {
+        Some(write_header_path_compare_run_history(
+            &log_dir,
+            &header_path_compare_run_id(),
+            status,
+            &started_at,
+            run_started.elapsed().as_millis(),
+            &progress,
+            &error_type,
+            &events,
+        ))
+    } else {
+        None
+    };
+    let output = match compare_result {
+        Ok(path) => path,
+        Err(_error) => {
+            if let Some(Ok(history_path)) = history_result.as_ref() {
+                eprintln!("PT-1-1 run history: {}", history_path.display());
+            } else if let Some(Err(history_error)) = history_result.as_ref() {
+                eprintln!(
+                    "pytools: warning: could not write PT-1-1 run history: {history_error:#}"
+                );
+            }
+            bail!("表头路径比对未完成；请检查配置、模板、源工作簿和输出目录");
+        }
+    };
+    let mut report = serde_json::json!({"output": output});
+    if let Some(history_result) = history_result {
+        match history_result {
+            Ok(path) => report["run_history_path"] = serde_json::json!(path),
+            Err(error) => report["history_warning"] = serde_json::json!(error.to_string()),
+        }
+    }
+    println!("{}", serde_json::to_string(&report)?);
     Ok(())
+}
+
+fn new_header_path_compare_cli_event(
+    events: &[HeaderPathCompareRunEvent],
+    run_started: &Instant,
+    progress: &HeaderPathCompareProgress,
+    phase: &str,
+    status: &str,
+    user_message: String,
+    stage_started: &Instant,
+    components: &[&str],
+    actual_engine: Option<&str>,
+    error_type: Option<&str>,
+) -> HeaderPathCompareRunEvent {
+    let mut recorded_components = vec!["Rust".to_owned()];
+    recorded_components.extend(components.iter().map(|component| (*component).to_owned()));
+    HeaderPathCompareRunEvent {
+        sequence: events.len() + 1,
+        timestamp: Local::now().to_rfc3339(),
+        feature_id: "PT-1-1".to_owned(),
+        phase: phase.to_owned(),
+        status: status.to_owned(),
+        user_message,
+        progress: progress.clone(),
+        stage_elapsed_ms: Some(stage_started.elapsed().as_millis()),
+        total_elapsed_ms: run_started.elapsed().as_millis(),
+        components: recorded_components,
+        actual_engine: actual_engine.map(str::to_owned),
+        error_type: error_type.map(str::to_owned),
+    }
+}
+
+fn emit_header_path_compare_event_view(
+    log_view: &str,
+    events: &mut Vec<HeaderPathCompareRunEvent>,
+    event: HeaderPathCompareRunEvent,
+) {
+    match log_view {
+        "user" => match event.status.as_str() {
+            "started" => eprintln!("{}", event.user_message),
+            "completed" | "partial" | "failed" | "skipped" => eprintln!(
+                "{}；阶段用时 {}ms，总用时 {}ms",
+                event.user_message,
+                event.stage_elapsed_ms.unwrap_or_default(),
+                event.total_elapsed_ms
+            ),
+            _ => eprintln!("{}", event.user_message),
+        },
+        "developer" => match serde_json::to_string(&event) {
+            Ok(encoded) => eprintln!("{encoded}"),
+            Err(_) => {
+                eprintln!("{{\"phase\":\"progress_event\",\"status\":\"serialization_failed\"}}")
+            }
+        },
+        _ => return,
+    }
+    events.push(event);
+}
+
+fn write_header_path_compare_run_history(
+    log_dir: &Path,
+    run_id: &str,
+    status: &str,
+    started_at: &str,
+    total_elapsed_ms: u128,
+    progress: &HeaderPathCompareProgress,
+    error_type: &str,
+    events: &[HeaderPathCompareRunEvent],
+) -> Result<PathBuf> {
+    let mut actual_engines = Vec::<String>::new();
+    for event in events {
+        if let Some(engine) = event.actual_engine.as_ref() {
+            if !actual_engines.contains(engine) {
+                actual_engines.push(engine.clone());
+            }
+        }
+    }
+    let report = serde_json::json!({
+        "schema_version": 1,
+        "product": "pytools",
+        "feature_id": "PT-1-1",
+        "run_id": run_id,
+        "status": status,
+        "started_at": started_at,
+        "total_elapsed_ms": total_elapsed_ms,
+        "progress": progress,
+        "actual_engines": actual_engines,
+        "error_type": if error_type.is_empty() { serde_json::Value::Null } else { serde_json::json!(error_type) },
+        "events": events,
+    });
+    let path = log_dir.join(format!("PT-1-1_{run_id}.run.json"));
+    write_json_report_create_new(&path, &report)?;
+    Ok(path)
+}
+
+fn header_path_compare_run_id() -> String {
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or_default();
+    format!("pytools-pt-1-1-{}-{nonce}", std::process::id())
 }
 
 fn run_wide_summary_cli(arguments: Vec<String>, row_suffix: bool) -> Result<()> {
@@ -8606,7 +8905,7 @@ fn print_usage() {
          pytools [menu] [--config <config.xlsx>] [--log-view user|developer|off] [--capabilities <json> --platform <id>]\n\
          no command opens the migrated menu; available categories: 1 (timeline 1/3/4/5), 2 (dedup 1-6), 3 (print 1-4), 4 (conversion and file naming 1-10), 5 (configuration 1/2), 6 (summary 1/2), 7 (batch 7-1/7-8), and 8 (archive 1-5)\n\
          timeline-precheck --config <workbook.xlsx>\n\
-         timeline-compare --config <workbook.xlsx> --template <workbook.xlsx> <source.xlsx>...\n\
+         timeline-compare --config <workbook.xlsx> --template <workbook.xlsx> [--log-dir <dir>] [--log-view user|developer|off] <source.xlsx>...\n\
          wide-summary --config <workbook.xlsx> <source.xlsx>...\n\
          wide-summary-row-suffix --config <workbook.xlsx> <source.xlsx>...\n\
          wide-summary target writes produce append-plan JSON; execute with dedup-append-execute and matching capability evidence\n\
