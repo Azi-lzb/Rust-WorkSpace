@@ -663,6 +663,45 @@
         "source_metadata_unchanged": true,
         "target_os_acceptance": "not_claimed"
       },
+      "linux_musl_release_after_main_sync_15244db": {
+        "status": "passed",
+        "current_head": "15244db",
+        "merged_main_commits": [
+          "fb940ef",
+          "421486d",
+          "7cb20a9"
+        ],
+        "runtime": "WSL Ubuntu; x86_64-unknown-linux-musl release static PIE",
+        "artifact": "target/x86_64-unknown-linux-musl/release/pytools",
+        "sample_scope": "largest original PyTools backup XLSX; name omitted",
+        "summary_data_rows": 39171,
+        "output_projection_rows_including_header": 39172,
+        "views": {
+          "user": {
+            "projection": "exact",
+            "history": "succeeded",
+            "event_count": 18
+          },
+          "developer": {
+            "projection": "exact",
+            "history": "succeeded",
+            "event_count": 18,
+            "event_stream_matches_saved_history": true
+          },
+          "off": {
+            "projection": "exact",
+            "history": "not_created",
+            "event_count": 0
+          }
+        },
+        "actual_engines": [
+          "calamine",
+          "excel-reader::read_xlsx_worksheet_extents",
+          "rust_xlsxwriter"
+        ],
+        "source_metadata_unchanged": true,
+        "target_os_acceptance": "not_claimed"
+      },
       "linux_glibc_2_28_release_largest_backup": {
         "status": "passed",
         "runtime": "WSL Ubuntu; x86_64-unknown-linux-gnu.2.28 release CLI",

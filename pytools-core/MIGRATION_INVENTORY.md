@@ -367,7 +367,9 @@ PT-6-2 原项目真实批注区域模板仍未找到，当前业务及日志对�
 
 使用 WSL Ubuntu 上已构建的 x86_64-unknown-linux-musl release static PIE pytools CLI，单独处理原 PyTools 最大备份 XLSX（3,800,854 字节），并与 Windows 原 PyCode 的只读基线完整投影对拍。39,171 行输出完全一致；实际读取/写入引擎为 Calamine/rust_xlsxwriter；developer 18 条事件与保存历史逐条一致。源文件大小和修改时间未变，输出及日志位于临时目录并已清理。此项仅证明 WSL musl 阶段行为，不等于麒麟 V10/UOS V20 实机、deb 或 glibc 2.28 验收。
 
-机器结果见 probe/reports/summary_used_range_real_parity_20261024.json 的 additional_project_assets_20261024.platform_validation.linux_musl_release_largest_backup。
+合入 main 的共享 reader comment author 与 editor merged-style 更新后，在当前 HEAD `15244db` 重新构建 musl release，并再次对同一最大备份 XLSX 与只读 PyCode 完整投影对拍。39,171 行数据（输出含标题共 39,172 行）在 user/developer/off 三视图均精确一致；user/developer 历史各有 18 条事件，developer stderr 事件流与保存历史一致，off 未写历史。实际引擎为 Calamine、`excel-reader::read_xlsx_worksheet_extents`、rust_xlsxwriter；源文件大小和修改时间未变。此结果仍仅代表 WSL musl 阶段，不代表麒麟/UOS 实机或 deb 验收。
+
+原始机器证据见 `probe/reports/summary_used_range_real_parity_20261024.json` 的 `additional_project_assets_20261024.platform_validation.linux_musl_release_largest_backup`；main 同步后当前 HEAD 复验见 `linux_musl_release_after_main_sync_15244db`。
 
 
 ### 2026-10-24 PT-1-1 关键字筛选与 CLI 语义对拍
