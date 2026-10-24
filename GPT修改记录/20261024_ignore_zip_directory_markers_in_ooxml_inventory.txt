@@ -1,0 +1,22 @@
+日期：2026-10-24
+
+变更：
+- crates/excel-editor/src/workbook_profile.rs：工作簿 profile 清点时跳过 ZIP directory entries；只将实际文件部件用于支持特征、未知部件和重复名称判断。
+- crates/ooxml-patch/src/lib.rs：`unverified_parts` 跳过 ZIP directory entries；继续对所有实际文件部件执行原有严格阻断分类。
+- crates/excel-editor/src/workbook_profile.rs 测试：增加带 `xl/drawings/` 目录项的 XLSX 回归样本，确认目录标记不导致 inventory incomplete。
+- crates/ooxml-patch/src/lib.rs 测试：确认单独目录标记不被阻断，而实际 `xl/drawings/drawing1.xml` 仍被列为未验证部件。
+
+目的：排除 ZIP 目录占位项造成的假阳性拒绝，不放宽真实 OOXML 文件部件的保留/安全判断。
+
+测试：
+- `cargo fmt -p excel-editor -p ooxml-patch`（Ubuntu/WSL2）：通过。
+- `cargo test -p excel-editor --locked`：13 项单元测试、2 项集成测试通过；4 项需隔离 openpyxl runtime 的集成测试仍按现状忽略。
+- `cargo test -p ooxml-patch --locked`：15 项测试通过。
+- `git diff --check`：通过。
+
+未验证/未执行：
+- Audit 所报告 7 份真实 S1 输入尚未在应用补丁的 audit-dev 上复跑。
+- 未改变任何业务默认路由；真实 ImportRange 的范围与全工作簿保留对拍仍由 Audit 负责。
+- Windows 原生、麒麟 V10、统信 UOS/glibc 2.28 与 deb 未验证。
+
+回滚：仅回滚两个共享扫描器对此类 ZIP directory entries 的跳过、对应回归测试和本记录；保留其他未验证文件部件的拒绝逻辑。
