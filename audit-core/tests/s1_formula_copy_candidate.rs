@@ -30,6 +30,31 @@ fn openpyxl_worker_path() -> PathBuf {
         .join("crates/excel-editor/python/openpyxl_worker.py")
 }
 
+fn readback_failure_category(message: &str) -> &'static str {
+    let message = message.to_ascii_lowercase();
+    if message.contains("rust unmodified-style readback mismatch") {
+        "unmodified_style_semantic_mismatch"
+    } else if message.contains("rust style readback mismatch") {
+        "imported_style_semantic_mismatch"
+    } else if message.contains("unmodified cell value changed") {
+        "unmodified_cell_value_changed"
+    } else if message.contains("unmodified formula changed") {
+        "unmodified_formula_changed"
+    } else if message.contains("comment") {
+        "comment_preservation_mismatch"
+    } else if message.contains("style") {
+        "style_preservation_mismatch"
+    } else if message.contains("merge") {
+        "merged_range_preservation_mismatch"
+    } else if message.contains("calculation") {
+        "calculation_properties_mismatch"
+    } else if message.contains("relationship") || message.contains("defined name") {
+        "ooxml_metadata_preservation_mismatch"
+    } else {
+        "other_readback_validation_failure"
+    }
+}
+
 #[test]
 #[ignore = "manual candidate probe; direct Unverified backend is not a production route"]
 fn probes_s1_formula_copy_import_ranges_without_claiming_capability() {
@@ -54,6 +79,24 @@ fn probes_s1_formula_copy_import_ranges_without_claiming_capability() {
         .operations
         .iter()
         .filter(|operation| operation.kind() == EditOperationKind::ImportRange)
+        .count();
+    let set_comment_count = plan
+        .operations
+        .iter()
+        .filter(|operation| operation.kind() == EditOperationKind::SetComment)
+        .count();
+    let legacy_empty_author_compat_count = plan
+        .operations
+        .iter()
+        .filter(|operation| {
+            matches!(
+                operation,
+                EditOperation::SetComment {
+                    author: Some(author),
+                    ..
+                } if author == "None"
+            )
+        })
         .count();
     assert_eq!(
         range_import_count, 4,
@@ -91,6 +134,7 @@ fn probes_s1_formula_copy_import_ranges_without_claiming_capability() {
         format: WorkbookFormat::Xlsx,
         operations: [
             EditOperationKind::ImportRange,
+            EditOperationKind::SetComment,
             EditOperationKind::SetWorkbookCalculationProperties,
         ]
         .into_iter()
@@ -121,7 +165,10 @@ fn probes_s1_formula_copy_import_ranges_without_claiming_capability() {
                 OpenpyxlXlsxValidator
                     .validate(&plan, &output)
                     .err()
-                    .map(|_| "rust_readback_validation_failed")
+                    .map(|error| {
+                        let message = format!("{error:#}");
+                        readback_failure_category(&message)
+                    })
             } else {
                 None
             };
@@ -181,7 +228,9 @@ fn probes_s1_formula_copy_import_ranges_without_claiming_capability() {
     let candidate_report = serde_json::json!({
         "status": status,
         "range_import_count": range_import_count,
-        "operation_count": range_import_count + if include_calculation_properties { 1 } else { 0 },
+        "set_comment_count": set_comment_count,
+        "legacy_empty_author_compat_count": legacy_empty_author_compat_count,
+        "operation_count": plan.operations.len(),
         "range_resolution": "rust_s1_template_rule_plan",
         "engine": match engine {
             EngineId::OoxmlPatch => "ooxml-patch",

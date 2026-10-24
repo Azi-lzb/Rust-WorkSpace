@@ -1,0 +1,39 @@
+时间：2026-10-24 14:18:25 +08:00
+执行者：Codex Audit 专属开发 Agent
+修改前 commit：c03e9cb（audit-dev）；修改后：本地提交前
+WIP：开始时已有三项未提交 Audit WIP（S1 计划生成器、对拍脚本、候选测试）；本记录及报告为新增文件，未覆盖既有记录和业务样本。已 cherry-pick 的共享 OOXML comment API 位于前序提交 c03e9cb，不在本次文件变更中。
+
+修改目的：
+完成 S1-F01 公式复制计划中的批注作者/文本映射，并以同一真实批次七份工作簿复核候选输出；为合并单元格导致的共享样式 validator 假阳性提供脱敏证据。生产能力仍保持 Unverified。
+
+修改文件：
+- audit-core/src/s1_formula_copy.rs：复制范围关闭 ImportRange 批注自动复制，基于共享 OOXML 批注读取 API 生成坐标平移后的 SetComment；兼容空 author 映射为旧 openpyxl 输出字符串 “None”，无法解析的作者引用拒绝计划。
+- audit-core/tests/s1_formula_copy_candidate.rs：候选 probe 覆盖 SetComment，报告批注操作数、空作者兼容计数和分类后的读回失败；不登记或启用能力。
+- audit-core/tests/compare/compare_s1_formula_copy_candidate.py：Rust 候选默认使用 Windows 原生运行时；WSL 明确选择才使用；worker Python 参数统一为 --openpyxl-python（保留旧别名）。
+- audit-core/probe/reports/s1_f01_formula_copy_real_batch_20261024.json：七样本脱敏对拍及首错合并区诊断，无工作簿路径、名称、单元格业务值或批注文本。
+- audit-core/GPT修改记录/20261024_141825_S1F01真实样本批注与合并格复核.txt：本记录。
+
+验证：
+- Windows 原生 cargo 1.99.1 / rustc 1.99.1 MSVC；Windows Python 3.12.10、openpyxl 3.1.5 仅作为测试 worker/对拍基线；未使用 WSL 测试 Python；最终 deb runtime 未测试。
+- cargo fmt --all -- --check：通过。
+- cargo test -p audit-core --lib s1_formula_copy:: --locked：5 项通过。
+- cargo test -p audit-core --test s1_formula_copy_candidate --locked --no-run：编译通过。
+- 手工直接候选七次：七次测试 harness 均通过并生成 Unverified 输出；候选读回仍报告 unmodified_style_semantic_mismatch。
+- 七样本 Python/Rust 完整对拍：七份均 comparison_incomplete；范围内批注差异均为 0；目标其余区域样式差异均为 0；模板复制范围样式差异计数为 2、2、2、2、2、0、2；目标其余区域值/类型差异为 211、207、211、219、223、209、216。首样本 211 项均为显式空字符串变为空白，Python 基线与 Rust 候选变化坐标一致；其他样本类型未分类。
+- 对七份各自首个 Rust 样式失败点复核：工作表序号均为 1；依次为 A64∈A56:A87、A29∈A27:A55、A62∈A56:A87、A65∈A56:A87、A35∈A27:A55、A52∈A27:A55、B1∈A1:I1；全部为合并非锚点 MergedCell。源/候选合并范围集合相同，Python openpyxl style_signature 相同。此结论与 main 已复核的 A43 合并格问题相符，已向 main 提供脱敏摘要。
+- 七份 Python 基线和 Rust 候选的非空公式缓存数均为 0；本轮没有进行公式重算、没有调用 LO/COM sidecar。
+- 输入工作簿未修改。没有映射配置参与本轮。编译时出现的 umya-spreadsheet 弃用 API 警告来自共享 crate，本次未修改共享代码。
+
+未执行项与已知问题：
+- S1 公式复制尚未接入生产 GUI/CLI；无 Passed capability，生产路由未变化。
+- 复制范围仍有六份报告样式差异；目标其余区域仍有值/类型差异；以上业务级差异尚未解决，不因 shared validator 假阳性消失而自动视为通过。
+- main 已本地提交共享 validator 合并格修复 421486d，但该提交尚未通过 Git 同步到本分支；本次真实批次运行属于修复前证据。获取提交后只按 main 要求复验同七份样本。
+- 公式缓存没有重算，不能把空缓存报告为计算结果；Windows 测试 worker、WSL Python、最终 deb runtime 分开验收。
+- 初次单样本命令直接使用了 WSL 清单路径，因 Windows 文件路径不可访问而未运行；修正路径转换后七样本候选均完成。未触发任何样本写入，候选产物均位于临时目录。
+- 未修改 DEVELOPMENT_GOAL.md、共享 crates、根 Cargo 配置、源 Python 项目、用户业务文件或 pytools-core；产品组件版本 0.1.0 不变。
+
+删除清单与回滚：
+- 回滚本地 Audit 功能提交可撤销本次批注映射/对拍器调整及脱敏报告、记录；不涉及用户工作簿或模板。
+- 临时候选输出和诊断脚本保留在系统临时目录，不纳入 Git。
+
+【组件版本】：audit-core 0.1.0（不升级）

@@ -5,12 +5,16 @@
 //! recalculate formulas; those decisions remain with ExcelModifier and the
 //! explicitly requested formula sidecar respectively.
 
-use crate::s1_template_rules::{load_s1_template_rule_plan, S1TemplateRuleSummary};
+use crate::{
+    models::CopyRange,
+    s1_template_rules::{load_s1_template_rule_plan, S1TemplateRuleSummary},
+};
 use anyhow::{ensure, Context, Result};
 use excel_editor::{
     inspect_xlsx_profile, EditOperation, ExcelEditPlan, PreservationRequirement, RangeStyleMode,
     WorkbookProfile,
 };
+use excel_reader::{read_ooxml_comments, WorkbookComment};
 use std::{collections::BTreeMap, fs, path::Path};
 
 #[derive(Clone, Debug)]
@@ -79,11 +83,18 @@ pub fn build_s1_formula_copy_edit_plan(
     let target_profile = inspect_xlsx_profile(target_workbook).context("检查 S1 目标工作簿结构")?;
     let template_profile =
         inspect_xlsx_profile(template_workbook).context("检查 S1 公式模板结构")?;
+    let template_comments =
+        read_ooxml_comments(template_workbook).context("读取 S1 公式模板批注作者和文本")?;
 
     let mut operations = Vec::with_capacity(template.definition.copy_ranges.len() + 1);
     for range in &template.definition.copy_ranges {
         let target_start = range_target_start(&range.address)
             .with_context(|| format!("解析公式复制目标坐标 {}", range.address))?;
+        let comment_operations = comment_operations_for_range(
+            range,
+            &target_start,
+            template_comments.get(&range.sheet_name),
+        )?;
         operations.push(EditOperation::ImportRange {
             source_workbook: template_canonical.clone(),
             source_sheet: range.sheet_name.clone(),
@@ -93,7 +104,10 @@ pub fn build_s1_formula_copy_edit_plan(
             copy_values: true,
             copy_formulas: true,
             style_mode: RangeStyleMode::Full,
-            copy_comments: true,
+            // Copy nonempty source comments as per-cell SetComment operations
+            // below. This preserves existing target comments where the source
+            // template has no comment at that coordinate.
+            copy_comments: false,
             copy_merges: false,
             copy_row_heights: false,
             copy_column_widths: false,
@@ -107,6 +121,7 @@ pub fn build_s1_formula_copy_edit_plan(
             materialize_blank_cells: true,
             hide_zero: false,
         });
+        operations.extend(comment_operations);
     }
     operations.push(EditOperation::SetWorkbookCalculationProperties {
         full_calc_on_load: Some(true),
@@ -169,32 +184,133 @@ fn same_path(left: &Path, right: &Path) -> bool {
 }
 
 fn range_target_start(address: &str) -> Result<String> {
-    let range = address.rsplit('!').next().unwrap_or(address).trim();
-    let first_cell = range
-        .split(':')
-        .next()
-        .unwrap_or(range)
-        .trim()
-        .replace('$', "");
-    let split = first_cell
-        .find(|character: char| character.is_ascii_digit())
-        .context("区域没有有效的起始单元格")?;
-    let (column, row) = first_cell.split_at(split);
+    let range = range_without_sheet(address).replace('$', "");
+    let first_cell = range.split(':').next().unwrap_or(&range).trim();
+    let (row, column) = parse_a1_cell(first_cell).context("区域没有有效的起始单元格")?;
+    Ok(a1_cell(row, column))
+}
+
+fn comment_operations_for_range(
+    range: &CopyRange,
+    target_start: &str,
+    comments: Option<&BTreeMap<String, WorkbookComment>>,
+) -> Result<Vec<EditOperation>> {
+    let Some(comments) = comments else {
+        return Ok(Vec::new());
+    };
+    let mut operations = Vec::new();
+    for (source_cell, comment) in comments {
+        let Some(target_cell) =
+            map_source_cell_to_target(&range.address, target_start, source_cell)?
+        else {
+            continue;
+        };
+        let author = comment
+            .author
+            .as_deref()
+            .context("S1 模板批注作者无法解析")?;
+        operations.push(EditOperation::SetComment {
+            sheet: range.sheet_name.clone(),
+            cell: target_cell,
+            text: Some(comment.text.clone()),
+            // openpyxl's legacy copy path exposes an empty XML author as the
+            // string "None". Preserve that output while rejecting unresolved
+            // authorId references above.
+            author: Some(if author.is_empty() {
+                "None".to_owned()
+            } else {
+                author.to_owned()
+            }),
+        });
+    }
+    Ok(operations)
+}
+
+fn map_source_cell_to_target(
+    source_range: &str,
+    target_start: &str,
+    source_cell: &str,
+) -> Result<Option<String>> {
+    let (source_start_row, source_start_column, source_end_row, source_end_column) =
+        parse_a1_range(source_range)?;
+    let (target_start_row, target_start_column) = parse_a1_cell(target_start)?;
+    let (source_row, source_column) = parse_a1_cell(source_cell)?;
+    if source_row < source_start_row
+        || source_row > source_end_row
+        || source_column < source_start_column
+        || source_column > source_end_column
+    {
+        return Ok(None);
+    }
+    let target_row = target_start_row
+        .checked_add(source_row - source_start_row)
+        .context("批注目标行坐标溢出")?;
+    let target_column = target_start_column
+        .checked_add(source_column - source_start_column)
+        .context("批注目标列坐标溢出")?;
+    Ok(Some(a1_cell(target_row, target_column)))
+}
+
+fn parse_a1_range(address: &str) -> Result<(u32, u32, u32, u32)> {
+    let range = range_without_sheet(address).replace('$', "");
+    let (start, end) = range.split_once(':').unwrap_or((&range, &range));
+    let (start_row, start_column) = parse_a1_cell(start.trim())?;
+    let (end_row, end_column) = parse_a1_cell(end.trim())?;
     ensure!(
-        !column.is_empty()
-            && column.bytes().all(|byte| byte.is_ascii_alphabetic())
-            && !row.is_empty()
-            && row.bytes().all(|byte| byte.is_ascii_digit())
-            && row.parse::<u32>().is_ok_and(|row| row > 0),
-        "区域起始单元格坐标无效"
+        start_row <= end_row && start_column <= end_column,
+        "公式复制区域边界无效"
     );
-    Ok(format!("{}{}", column.to_ascii_uppercase(), row))
+    Ok((start_row, start_column, end_row, end_column))
+}
+
+fn range_without_sheet(address: &str) -> &str {
+    address.rsplit('!').next().unwrap_or(address).trim()
+}
+
+fn parse_a1_cell(address: &str) -> Result<(u32, u32)> {
+    let mut row = 0u32;
+    let mut column = 0u32;
+    let mut reading_row = false;
+    for character in address.trim().chars() {
+        if character == '$' {
+            continue;
+        }
+        if character.is_ascii_alphabetic() && !reading_row {
+            column = column
+                .checked_mul(26)
+                .and_then(|value| {
+                    value.checked_add(character.to_ascii_uppercase() as u32 - 'A' as u32 + 1)
+                })
+                .context("单元格列坐标溢出")?;
+        } else if character.is_ascii_digit() {
+            reading_row = true;
+            row = row
+                .checked_mul(10)
+                .and_then(|value| value.checked_add(character as u32 - '0' as u32))
+                .context("单元格行坐标溢出")?;
+        } else {
+            anyhow::bail!("无效 A1 单元格坐标");
+        }
+    }
+    ensure!(reading_row && row > 0 && column > 0, "无效 A1 单元格坐标");
+    Ok((row, column))
+}
+
+fn a1_cell(row: u32, mut column: u32) -> String {
+    let mut letters = Vec::new();
+    while column > 0 {
+        let digit = (column - 1) % 26;
+        letters.push((b'A' + digit as u8) as char);
+        column = (column - 1) / 26;
+    }
+    format!("{}{}", letters.into_iter().rev().collect::<String>(), row)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use excel_editor::{EditOperationKind, WorkbookFormat};
+    use excel_reader::WorkbookComment;
     use excel_writer::Workbook;
     use std::{
         fs,
@@ -270,7 +386,7 @@ mod tests {
                 target_start,
                 copy_values: true,
                 copy_formulas: true,
-                copy_comments: true,
+                copy_comments: false,
                 materialize_blank_cells: true,
                 style_mode: RangeStyleMode::Full,
                 ..
@@ -307,5 +423,115 @@ mod tests {
             b"keep existing output"
         );
         fs::remove_dir_all(directory).expect("remove formula-copy test directory");
+    }
+
+    #[test]
+    fn maps_only_template_comments_in_copy_range_and_keeps_explicit_author() {
+        let range = CopyRange {
+            sheet_name: "检查表".to_owned(),
+            address: "$C$4:$D$6".to_owned(),
+        };
+        let comments = BTreeMap::from([
+            (
+                "C4".to_owned(),
+                WorkbookComment {
+                    text: "top-left".to_owned(),
+                    author: Some("reviewer".to_owned()),
+                },
+            ),
+            (
+                "D6".to_owned(),
+                WorkbookComment {
+                    text: "bottom-right".to_owned(),
+                    author: Some("reviewer".to_owned()),
+                },
+            ),
+            (
+                "D5".to_owned(),
+                WorkbookComment {
+                    text: "empty-author".to_owned(),
+                    author: Some(String::new()),
+                },
+            ),
+            (
+                "B3".to_owned(),
+                WorkbookComment {
+                    text: "outside".to_owned(),
+                    author: Some("reviewer".to_owned()),
+                },
+            ),
+        ]);
+
+        let operations = comment_operations_for_range(&range, "F9", Some(&comments))
+            .expect("create mapped template comment operations");
+
+        assert_eq!(operations.len(), 3);
+        assert!(matches!(
+            &operations[0],
+            EditOperation::SetComment {
+                sheet,
+                cell,
+                text: Some(text),
+                author: Some(author),
+            } if sheet == "检查表" && cell == "F9" && text == "top-left" && author == "reviewer"
+        ));
+        assert!(matches!(
+            &operations[1],
+            EditOperation::SetComment {
+                sheet,
+                cell,
+                text: Some(text),
+                author: Some(author),
+            } if sheet == "检查表" && cell == "G10" && text == "empty-author" && author == "None"
+        ));
+        assert!(matches!(
+            &operations[2],
+            EditOperation::SetComment {
+                sheet,
+                cell,
+                text: Some(text),
+                author: Some(author),
+            } if sheet == "检查表" && cell == "G11" && text == "bottom-right" && author == "reviewer"
+        ));
+    }
+
+    #[test]
+    fn emits_no_comment_operation_when_template_has_no_comment_in_range() {
+        let range = CopyRange {
+            sheet_name: "检查表".to_owned(),
+            address: "A1:B2".to_owned(),
+        };
+        let comments = BTreeMap::from([(
+            "C3".to_owned(),
+            WorkbookComment {
+                text: "outside".to_owned(),
+                author: Some("reviewer".to_owned()),
+            },
+        )]);
+
+        let operations = comment_operations_for_range(&range, "A1", Some(&comments))
+            .expect("skip comments outside the copied range");
+
+        assert!(operations.is_empty());
+    }
+
+    #[test]
+    fn rejects_an_in_range_comment_with_unresolved_author() {
+        let range = CopyRange {
+            sheet_name: "检查表".to_owned(),
+            address: "A1:B2".to_owned(),
+        };
+        let comments = BTreeMap::from([(
+            "A1".to_owned(),
+            WorkbookComment {
+                text: "note".to_owned(),
+                author: None,
+            },
+        )]);
+
+        let error = comment_operations_for_range(&range, "A1", Some(&comments))
+            .expect_err("unresolved authorId must not be replaced with a default");
+
+        assert!(format!("{error:#}").contains("批注作者无法解析"));
     }
 }

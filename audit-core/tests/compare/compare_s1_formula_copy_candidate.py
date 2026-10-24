@@ -655,26 +655,32 @@ def invoke_candidate(
     workspace: Path,
     paths: dict[str, Path],
     distribution: str,
+    runtime: str,
     engine: str,
     openpyxl_python: str | None,
     include_calculation_properties: bool,
 ):
-    environment_values = {
-        key: wsl_path(value) if os.name == "nt" else str(value)
-        for key, value in paths.items()
-    }
+    if runtime not in ("native", "wsl"):
+        raise ValueError("candidate runtime must be native or wsl")
+    environment_values = {key: str(value) for key, value in paths.items()}
     environment_values["AUDIT_S1_COPY_CANDIDATE_ENGINE"] = engine
     environment_values["AUDIT_S1_COPY_CANDIDATE_CALC_PROPERTIES"] = (
         "1" if include_calculation_properties else "0"
     )
     if engine == "openpyxl-worker":
         if not openpyxl_python:
-            raise ValueError("openpyxl-worker requires --openpyxl-python-wsl")
+            raise ValueError("openpyxl-worker requires --openpyxl-python")
         environment_values["RUST_WORKSPACE_OPENPYXL_PYTHON"] = openpyxl_python
 
-    if os.name == "nt":
+    if runtime == "wsl":
+        if os.name != "nt":
+            raise ValueError("the explicit WSL candidate runtime is available from Windows only")
+        wsl_environment_values = {
+            key: wsl_path(value) if key in paths else value
+            for key, value in environment_values.items()
+        }
         assignments = " ".join(
-            f"{key}={shlex.quote(value)}" for key, value in environment_values.items()
+            f"{key}={shlex.quote(value)}" for key, value in wsl_environment_values.items()
         )
         command = (
             f"cd {shlex.quote(wsl_path(workspace))} && {assignments} "
@@ -713,14 +719,22 @@ def main() -> int:
     parser.add_argument("--workspace", type=Path, default=ROOT)
     parser.add_argument("--wsl-distribution", default="Ubuntu")
     parser.add_argument(
+        "--runtime",
+        choices=("native", "wsl"),
+        default="native",
+        help="Run the Rust candidate in the current Windows environment; WSL is explicit opt-in",
+    )
+    parser.add_argument(
         "--engine",
         choices=("umya", "openpyxl-worker"),
         default="umya",
         help="Direct Unverified candidate backend; this never changes production routing",
     )
     parser.add_argument(
+        "--openpyxl-python",
         "--openpyxl-python-wsl",
-        help="Test-only isolated Python executable path visible inside WSL",
+        dest="openpyxl_python",
+        help="Test-only worker Python path for the selected runtime; not a packaged product runtime",
     )
     parser.add_argument(
         "--scope",
@@ -800,8 +814,9 @@ def main() -> int:
             workspace,
             candidate_paths,
             args.wsl_distribution,
+            args.runtime,
             args.engine,
-            args.openpyxl_python_wsl,
+            args.openpyxl_python,
             args.scope == "full-s1",
         )
         rust_elapsed_ms = round((time.perf_counter() - rust_started) * 1000)
