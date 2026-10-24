@@ -575,7 +575,11 @@ pub fn unverified_parts(path: impl AsRef<Path>) -> Result<Vec<String>> {
     let mut zip = ZipArchive::new(file)?;
     let mut found = Vec::new();
     for index in 0..zip.len() {
-        let name = zip.by_index(index)?.name().to_owned();
+        let entry = zip.by_index(index)?;
+        if entry.is_dir() {
+            continue;
+        }
+        let name = entry.name().to_owned();
         let lower = name.to_ascii_lowercase();
         let blocked = lower.starts_with("xl/charts/")
             || lower.starts_with("xl/pivot")
@@ -600,6 +604,54 @@ pub fn reject_unverified_parts(path: impl AsRef<Path>) -> Result<()> {
         Ok(())
     } else {
         bail!("refusing unverified workbook parts: {}", found.join(", "))
+    }
+}
+
+#[cfg(test)]
+mod unverified_directory_entry_tests {
+    use super::unverified_parts;
+    use anyhow::Result;
+    use std::{fs, io::Write};
+    use zip::{write::SimpleFileOptions, ZipWriter};
+
+    fn fixture(include_drawing_part: bool) -> std::path::PathBuf {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "ooxml_unverified_directory_{}_{}.xlsx",
+            std::process::id(),
+            nonce
+        ));
+        let mut zip = ZipWriter::new(fs::File::create(&path).unwrap());
+        zip.add_directory("xl/drawings/", SimpleFileOptions::default())
+            .unwrap();
+        zip.start_file("xl/worksheets/sheet1.xml", SimpleFileOptions::default())
+            .unwrap();
+        zip.write_all(b"<worksheet/>").unwrap();
+        if include_drawing_part {
+            zip.start_file("xl/drawings/drawing1.xml", SimpleFileOptions::default())
+                .unwrap();
+            zip.write_all(b"<drawing/>").unwrap();
+        }
+        zip.finish().unwrap();
+        path
+    }
+
+    #[test]
+    fn directory_markers_are_ignored_but_unverified_file_parts_stay_blocked() -> Result<()> {
+        let directory_only = fixture(false);
+        assert!(unverified_parts(&directory_only)?.is_empty());
+        fs::remove_file(directory_only)?;
+
+        let with_drawing = fixture(true);
+        assert_eq!(
+            unverified_parts(&with_drawing)?,
+            ["xl/drawings/drawing1.xml"]
+        );
+        fs::remove_file(with_drawing)?;
+        Ok(())
     }
 }
 

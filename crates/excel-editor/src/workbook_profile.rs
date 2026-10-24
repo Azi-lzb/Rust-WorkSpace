@@ -28,6 +28,9 @@ pub fn inspect_xlsx_profile(path: impl AsRef<Path>) -> Result<WorkbookProfile> {
 
     for index in 0..archive.len() {
         let mut entry = archive.by_index(index)?;
+        if entry.is_dir() {
+            continue;
+        }
         let name = entry.name().to_owned();
         let lower = name.to_ascii_lowercase();
         names.push(name.clone());
@@ -160,10 +163,61 @@ fn known_part(name: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::known_part;
+    use super::{inspect_xlsx_profile, known_part};
+    use crate::WorkbookFeature;
+    use std::{fs, io};
+    use zip::{write::SimpleFileOptions, ZipArchive, ZipWriter};
 
     #[test]
     fn recognizes_openpyxl_legacy_comment_vml_part_name() {
         assert!(known_part("xl/drawings/commentsDrawing1.vml"));
+    }
+
+    #[test]
+    fn ignores_zip_directory_entries_but_keeps_file_part_inventory() {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let source = std::env::temp_dir().join(format!(
+            "excel_profile_directory_source_{}_{}.xlsx",
+            std::process::id(),
+            nonce
+        ));
+        let output = std::env::temp_dir().join(format!(
+            "excel_profile_directory_output_{}_{}.xlsx",
+            std::process::id(),
+            nonce
+        ));
+        let mut workbook = rust_xlsxwriter::Workbook::new();
+        workbook.add_worksheet().set_name("Data").unwrap();
+        workbook.save(&source).unwrap();
+
+        let mut input = ZipArchive::new(fs::File::open(&source).unwrap()).unwrap();
+        let mut writer = ZipWriter::new(fs::File::create(&output).unwrap());
+        for index in 0..input.len() {
+            let mut entry = input.by_index(index).unwrap();
+            if entry.is_dir() {
+                continue;
+            }
+            let name = entry.name().to_owned();
+            writer
+                .start_file(name, SimpleFileOptions::default())
+                .unwrap();
+            io::copy(&mut entry, &mut writer).unwrap();
+        }
+        writer
+            .add_directory("xl/drawings/", SimpleFileOptions::default())
+            .unwrap();
+        writer.finish().unwrap();
+
+        let profile = inspect_xlsx_profile(&output).unwrap();
+        assert!(profile.inventory_complete);
+        assert!(!profile
+            .features_present
+            .contains(&WorkbookFeature::UnknownExtensions));
+
+        fs::remove_file(source).unwrap();
+        fs::remove_file(output).unwrap();
     }
 }
