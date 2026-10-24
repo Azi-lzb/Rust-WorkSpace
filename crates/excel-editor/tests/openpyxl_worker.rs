@@ -66,6 +66,7 @@ fn make_import_source(path: &Path) -> Result<()> {
     let sheet = workbook.add_worksheet();
     sheet.set_name("Source")?;
     sheet.write_string_with_format(0, 0, "imported", &Format::new().set_bold())?;
+    sheet.write_formula(0, 2, "=1+1")?;
     sheet.merge_range(1, 0, 1, 1, "import merge", &Format::new())?;
     workbook.save(path)?;
     Ok(())
@@ -156,7 +157,7 @@ fn plan(
             EditOperation::ImportRange {
                 source_workbook: import_source.to_path_buf(),
                 source_sheet: "Source".to_owned(),
-                source_range: "A1:B2".to_owned(),
+                source_range: "A1:C2".to_owned(),
                 target_sheet: "Data".to_owned(),
                 target_start: "J1".to_owned(),
                 copy_values: true,
@@ -192,6 +193,10 @@ fn plan(
             EditOperation::SetAutoFilter {
                 sheet: "History".to_owned(),
                 range: Some("A1:M2".to_owned()),
+            },
+            EditOperation::SetWorkbookCalculationProperties {
+                full_calc_on_load: Some(true),
+                force_full_calc: Some(true),
             },
         ],
         preserve: [
@@ -362,7 +367,11 @@ fn rust_modifier_invokes_one_batch_worker_and_preserves_source() -> Result<()> {
     assert!(data.merges.contains(&"D1:E1".to_owned()));
     assert!(data.merges.contains(&"J2:K2".to_owned()));
     assert_eq!(data.values["J1"]["value"], "imported");
+    assert_eq!(data.formulas["L1"].trim_start_matches('='), "1+1");
     assert_eq!(data.values["H5"]["value"], "changed");
+    let calculation = ooxml_patch::read_workbook_calculation_properties(&output)?;
+    assert_eq!(calculation.full_calc_on_load, Some(true));
+    assert_eq!(calculation.force_full_calc, Some(true));
     Ok(())
 }
 

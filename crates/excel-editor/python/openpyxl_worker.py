@@ -37,6 +37,7 @@ SUPPORTED_OPERATIONS = {
     "set_cell_fill_color",
     "copy_range",
     "import_range",
+    "set_workbook_calculation_properties",
     "set_page_settings",
     "replace_header_text",
 }
@@ -129,12 +130,6 @@ def _preflight(request: Dict[str, Any]) -> Tuple[Path, Path, List[Dict[str, Any]
             source = Path(value).resolve(strict=True)
             if source.suffix.lower() != ".xlsx" or not source.is_file() or not zipfile.is_zipfile(str(source)):
                 raise WorkerError("unsupported_import_source", "ImportRange currently accepts valid XLSX sources only", unsupported=True)
-            if _formula_cache_present(source):
-                raise WorkerError(
-                    "formula_cache_not_preserved",
-                    "ImportRange source has a cached formula result that openpyxl would discard",
-                    unsupported=True,
-                )
     return input_path, output_path, operations
 
 
@@ -530,6 +525,16 @@ def _apply_operation(workbook: Any, cached_workbook: Any, operation: Dict[str, A
             sheet.print_options.verticalCentered = settings["vertical_centered"]
         if settings.get("footer") is not None:
             sheet.oddFooter.center.text = settings["footer"]
+    elif kind == "set_workbook_calculation_properties":
+        calculation = workbook.calculation
+        if calculation is None:
+            from openpyxl.workbook.properties import CalcProperties
+            calculation = CalcProperties()
+            workbook.calculation = calculation
+        if payload.get("full_calc_on_load") is not None:
+            calculation.fullCalcOnLoad = payload["full_calc_on_load"]
+        if payload.get("force_full_calc") is not None:
+            calculation.forceFullCalc = payload["force_full_calc"]
     elif kind == "replace_header_text":
         sheet = workbook[payload["sheet"]]
         search, replacement = payload["search"], payload["replacement"]
@@ -696,6 +701,12 @@ def _verify_plan(workbook: Any, operations: List[Dict[str, Any]]) -> None:
                     raise WorkerError("output_verification_failed", "print area readback mismatch")
             if settings.get("footer") is not None and sheet.oddFooter.center.text != settings["footer"]:
                 raise WorkerError("output_verification_failed", "footer readback mismatch")
+        elif kind == "set_workbook_calculation_properties":
+            calculation = workbook.calculation
+            if payload.get("full_calc_on_load") is not None and calculation.fullCalcOnLoad != payload["full_calc_on_load"]:
+                raise WorkerError("output_verification_failed", "fullCalcOnLoad readback mismatch")
+            if payload.get("force_full_calc") is not None and calculation.forceFullCalc != payload["force_full_calc"]:
+                raise WorkerError("output_verification_failed", "forceFullCalc readback mismatch")
         elif kind in ("copy_range", "import_range", "replace_header_text"):
             # These operations receive independent range/metadata checks in the
             # Rust validator and dedicated fixture tests; opening the saved

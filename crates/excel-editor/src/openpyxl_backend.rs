@@ -464,6 +464,7 @@ fn supported_operation(operation: EditOperationKind) -> bool {
             | EditOperationKind::SetCellFillColor
             | EditOperationKind::CopyRange
             | EditOperationKind::ImportRange
+            | EditOperationKind::SetWorkbookCalculationProperties
             | EditOperationKind::SetPageSettings
     )
 }
@@ -487,6 +488,7 @@ impl OutputValidator for OpenpyxlXlsxValidator {
         );
         validate_sheet_names(&source.sheets, &output.sheets, &plan.operations)?;
         validate_requested_operations(&source.sheets, &output.sheets, &plan.operations)?;
+        validate_calculation_properties(candidate_output, &plan.operations)?;
         if plan.operations.iter().any(needs_umya_readback)
             || plan.preserve.contains(&PreservationRequirement::Styles)
         {
@@ -1175,6 +1177,41 @@ fn validate_requested_operations(
             }
             _ => {}
         }
+    }
+    Ok(())
+}
+
+fn validate_calculation_properties(
+    candidate_output: &Path,
+    operations: &[EditOperation],
+) -> Result<()> {
+    let Some((full_calc_on_load, force_full_calc)) = operations.iter().find_map(|operation| {
+        if let EditOperation::SetWorkbookCalculationProperties {
+            full_calc_on_load,
+            force_full_calc,
+        } = operation
+        {
+            Some((*full_calc_on_load, *force_full_calc))
+        } else {
+            None
+        }
+    }) else {
+        return Ok(());
+    };
+    let actual = ooxml_patch::read_workbook_calculation_properties(candidate_output)?;
+    if let Some(expected) = full_calc_on_load {
+        anyhow::ensure!(
+            actual.full_calc_on_load == Some(expected),
+            "fullCalcOnLoad readback mismatch: expected {expected}, got {:?}",
+            actual.full_calc_on_load
+        );
+    }
+    if let Some(expected) = force_full_calc {
+        anyhow::ensure!(
+            actual.force_full_calc == Some(expected),
+            "forceFullCalc readback mismatch: expected {expected}, got {:?}",
+            actual.force_full_calc
+        );
     }
     Ok(())
 }
