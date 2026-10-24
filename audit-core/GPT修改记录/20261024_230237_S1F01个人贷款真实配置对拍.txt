@@ -1,0 +1,28 @@
+时间：2026-10-24 23:02:37（Asia/Shanghai）
+执行者：Codex Audit 开发 Agent
+修改前 commit：ad6018d26c30f5e53fc350538a4630ccc81ffceb
+修改后 commit：本记录与脱敏对拍汇总一并提交；提交哈希以 Git 记录为准。
+WIP：操作前确认 F 盘 audit-dev 副本工作树干净，分支与 origin/audit-dev 同步；C 盘空间为 0，未改动 C 盘原工作树。
+
+目的：保存 S1-F01 个人贷款真实模板及机构非内置映射配置批次的 Rust/Python 对拍结果，不改变生产路由或 S1-F01 总体状态。
+
+修改文件：
+- probe/reports/s1_personal_loan_real_config_batch_windows_native_20261024.json：新增 7 组逐本对拍的脱敏汇总，仅记录规则/Issue/行数/差异计数、引擎与耗时，不保存源文件名、路径、机构配置名称、原始问题值或模板公式文本。
+- MIGRATION_INVENTORY.md：补充本批范围和报告链接，S1-F01 总体仍标为未验证。
+- GPT修改记录/本记录：登记本次证据保存、验证范围和限制。
+
+逻辑、配置及版本影响：仅新增对拍证据与迁移进度留痕；未更改 Rust 业务逻辑、用户入口、生产引擎路由、配置格式、VBA、公共 crate、根 Cargo 配置、Cargo.lock 或版本号。
+
+实际验证：
+- Windows 原生 Python/Rust 模板规则发现对拍：同一真实模板和非内置映射配置，895 条规则、4 个公式命名区域、4 个复制区域、8 个结构区域、4 个提取区域；定义/摘要/健康差异均为 0，模板未变。Rust 读取引擎为 Calamine + namespace-aware OOXML。
+- Windows 原生 Python/Rust S1 审核对拍：7/7 组通过，公式 Issue 共 27 条，条件格式 Issue 为 0，合并及结果簿共 27 行，逐本 mismatch 为 0，所有输入工作簿未变；结果簿引擎为 rust_xlsxwriter 0.101.0。
+- Windows 原生 cargo test --locked -p audit-core --test s1_audit_directory_cli --test s1_template_rules_cli：5 项通过；cargo test --locked -p audit-core --lib s1_formula_copy：5 项通过（当前源代码 commit 未变）。
+- 汇总记录 Rust CLI 单本耗时合计 41,929 ms，结果簿 writer 耗时合计 392 ms；这是 7 次单本 CLI 计时求和，不是并行批次墙钟时间。
+
+未执行项与已知问题：
+- 本批输入是先前保存的审核副本，未验证 Rust 公式复制及公式重算；未提供历史工作簿；本批没有条件格式触发样本。
+- 公式复制候选因目标工作簿合并区域非锚点单元格负载未通过 worker 校验，未生成候选输出，生产 capability 仍未验证。
+- 历史工作簿候选的输出校验失败未获得可接受的对象级诊断，历史写回 capability 仍未验证。
+- 未执行 Linux 兼容性测试和 deb runtime 验收；S1-F01 整体仍未验证。
+
+删除清单：无。回滚：可用 Git revert 回滚本次提交；该操作只移除新增汇总/记录并撤销迁移清单的一处附注，不触碰原始样本。
