@@ -1,0 +1,20 @@
+时间：2026-10-25 06:27:19
+执行者：Codex
+修改前 commit：79c15fc
+修改后 commit：待本地提交
+WIP：只有用户既有 `DEVELOPMENT_GOAL.md` 工作区修改；保留且不暂存。原 Python 源码和用户真实工作簿只读。
+
+目的：用已提供的 S1 真实批次验证校验公式扫描 Issue 通过实际 Rust CLI 进入本期和新建历史结果工作簿。
+
+修改文件：
+- audit-core/probe/reports/s1_validation_formula_scan_real_parity_windows_native_20261025.json：追加真实输出链路证据，不记录源路径、文件名或业务值。
+- audit-core/MIGRATION_INVENTORY.md：更新 S1-F01 局部进度；整体状态仍未验证。
+- audit-core/GPT修改记录/20261025_062719_S1真实结果工作簿链路验收.txt：本记录。
+
+真实运行：Windows 原生 `open-data-audit s1-audit-directory` 使用用户提供的 7 本只读源文件、既有审核副本 manifest 和 1 个模板；扫描 7,504 个公式单元格，1 个扫描 Issue 合入当前 Issue 并保留到合并历史。本期结果表 323 行、历史结果表 323 行，实际引擎均为 rust_xlsxwriter 0.101.0，两个开发视图写入日志均报告完成。Rust CLI 内部输出校验成功；同一合成入口回归另以 Rust Calamine 读回本期/历史结果工作簿，并核对扫描 Issue ID、类型和值。输入、审核副本、manifest、模板前后大小和修改时间一致；临时输出在验证后删除。此次真实输出运行没有执行 Python/openpyxl、WSL 或 deb runtime。
+
+额外回归：`cargo test --offline --locked -p audit-core --test s1_audit_directory_cli -- --nocapture`：5 项通过。Rustfmt 检查该测试文件仍提示既有 import 顺序和先前断言格式差异；为避免全文件格式改动，未执行自动格式化。
+
+未执行/已知限制：历史工作簿原位修改仍因共享 DefinedNames 保留校验差异处于 Unverified；S1-F01 整体仍未验证。未执行公式重算、共享 worker 候选复验、Linux/deb 验收。
+
+组件版本：不升级。删除清单：无。回滚：反向回滚本提交，或还原报告、清单新增句及本记录。

@@ -32,7 +32,7 @@
     "raw_paths_filenames_formulas_and_business_values_recorded": false,
     "input_workbooks_modified": false,
     "template_modified": false,
-    "result_workbook_written": false
+    "parity_run_result_workbook_written": false
   },
   "native_windows_timing_ms_observation": {
     "complete_s1_audit_cli": 2279,
@@ -53,5 +53,26 @@
     "This evidence covers only this seven-workbook sample and the selected template.",
     "S1-F01 remains unverified overall; formula-copy editing, history-workbook write preservation, repeated-run parity, and target Linux/deb acceptance remain separate gates.",
     "The Windows Python run is a read-only parity baseline, not a production Python path or isolated openpyxl worker validation."
-  ]
+  ],
+  "real_sample_output_integration": {
+    "entry_point": "open-data-audit s1-audit-directory",
+    "source_workbooks": 7,
+    "formula_cells_scanned_total": 7504,
+    "validation_formula_error_issues": 1,
+    "current_result_workbook": {
+      "issue_count": 323,
+      "engine": "rust_xlsxwriter 0.101.0",
+      "write_log_completed": true
+    },
+    "history_result_workbook": {
+      "issue_count": 323,
+      "engine": "rust_xlsxwriter 0.101.0",
+      "scanner_issue_id_in_merged_history": true,
+      "write_log_completed": true
+    },
+    "source_audit_copies_manifest_and_template_unchanged": true,
+    "outputs_created_under_temp_and_removed_after_validation": true,
+    "raw_paths_filenames_and_business_values_recorded": false,
+    "scope_note": "Rust CLI writer completed both outputs; synthetic entry-point regression separately reads both XLSX files with Rust Calamine and asserts the validation issue identity, type, and value."
+  }
 }
