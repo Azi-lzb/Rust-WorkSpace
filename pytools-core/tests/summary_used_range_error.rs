@@ -5,8 +5,11 @@ use std::{
     io::Read,
     path::{Path, PathBuf},
     process::Command,
+    sync::atomic::{AtomicU64, Ordering},
     time::{SystemTime, UNIX_EPOCH},
 };
+
+static NEXT_TEST_DIRECTORY_ID: AtomicU64 = AtomicU64::new(0);
 
 #[test]
 fn summary_used_range_cli_preserves_excel_error_cells() -> Result<()> {
@@ -678,12 +681,21 @@ fn summary_used_range_cli_reports_no_reader_when_no_workbook_is_read() -> Result
 }
 
 fn unique_test_dir() -> PathBuf {
-    let nonce = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("system clock after Unix epoch")
-        .as_nanos();
-    std::env::temp_dir().join(format!(
-        "pytools-summary-error-{}-{nonce}",
-        std::process::id()
-    ))
+    let temp_dir = std::env::temp_dir();
+    loop {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock after Unix epoch")
+            .as_nanos();
+        let sequence = NEXT_TEST_DIRECTORY_ID.fetch_add(1, Ordering::Relaxed);
+        let candidate = temp_dir.join(format!(
+            "pytools-summary-error-{}-{nonce}-{sequence}",
+            std::process::id()
+        ));
+        match fs::create_dir(&candidate) {
+            Ok(()) => return candidate,
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => panic!("create unique test directory: {error}"),
+        }
+    }
 }
