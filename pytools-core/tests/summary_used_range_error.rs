@@ -2,6 +2,7 @@ use anyhow::{Context, Result};
 use serde_json::Value;
 use std::{
     fs,
+    io::Read,
     path::{Path, PathBuf},
     process::Command,
     time::{SystemTime, UNIX_EPOCH},
@@ -254,6 +255,118 @@ fn summary_used_range_cli_preserves_excel_error_cells() -> Result<()> {
 }
 
 #[test]
+fn summary_used_range_cli_preserves_common_and_textual_error_token_matrix() -> Result<()> {
+    const TOKENS: [&str; 15] = [
+        "#DIV/0!",
+        "#N/A",
+        "#NAME?",
+        "#NULL!",
+        "#NUM!",
+        "#REF!",
+        "#VALUE!",
+        "#DATA!",
+        "#SPILL!",
+        "#CALC!",
+        "#FIELD!",
+        "#BLOCKED!",
+        "#UNKNOWN!",
+        "#CONNECT!",
+        "#BUSY!",
+    ];
+    const INPUT_CELLS: [&str; 15] = [
+        "A1", "B1", "C1", "D1", "E1", "F1", "G1", "H1", "I1", "J1", "K1", "L1", "M1", "N1", "O1",
+    ];
+    const OUTPUT_CELLS: [&str; 15] = [
+        "D2", "E2", "F2", "G2", "H2", "I2", "J2", "K2", "L2", "M2", "N2", "O2", "P2", "Q2", "R2",
+    ];
+
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/summary_used_range/error_token_matrix.xlsx");
+    let original = fs::read(&fixture)?;
+    let output_dir = unique_test_dir();
+    let (output, report) = run_unknown_error_cli(&fixture, &output_dir, Some("developer"))?;
+    assert!(
+        output.status.success(),
+        "matrix CLI failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(report["saved"], true);
+    assert_eq!(report["rows"], 1);
+    assert_eq!(report["files"], 1);
+    assert_eq!(
+        report["execution"]["reader_engine"],
+        "calamine + OOXML error-token normalization"
+    );
+    assert_eq!(
+        report["execution"]["unknown_error_token_cells_normalized"],
+        8
+    );
+    assert_eq!(report["execution"]["ooxml_error_cells_patched"], 7);
+
+    for (coordinate, token) in INPUT_CELLS.iter().zip(TOKENS) {
+        let (cell_type, cell_value) = worksheet_cell_type_and_value(&fixture, coordinate)?;
+        assert_eq!(cell_type, "e", "fixture {coordinate} must be an error cell");
+        assert_eq!(cell_value.as_deref(), Some(token));
+    }
+
+    let output_path = PathBuf::from(
+        report["path"]
+            .as_str()
+            .context("matrix summary output path must be a string")?,
+    );
+    let workbook = excel_reader::read_workbook(&output_path)?;
+    let summary = workbook
+        .sheets
+        .iter()
+        .find(|sheet| sheet.name == "汇总")
+        .context("matrix summary sheet missing")?;
+    for (index, (coordinate, token)) in OUTPUT_CELLS.iter().zip(TOKENS).enumerate() {
+        let cell_value = summary
+            .values
+            .get(*coordinate)
+            .with_context(|| format!("matrix summary cell {coordinate} missing"))?;
+        let cell_value = excel_reader::CellValue::from_probe_json(cell_value)?;
+        let (cell_type, raw_value) = worksheet_cell_type_and_value(&output_path, coordinate)?;
+        if index < 7 {
+            assert!(
+                matches!(&cell_value, excel_reader::CellValue::Error(_)),
+                "{coordinate} must remain an Excel error: {cell_value:?}"
+            );
+            assert_eq!(cell_type, "e", "{coordinate} must retain error type");
+            assert_eq!(raw_value.as_deref(), Some(token));
+        } else {
+            assert_eq!(
+                cell_value,
+                excel_reader::CellValue::Text(token.to_string()),
+                "{coordinate} must be text after unknown-token compatibility read"
+            );
+            assert_ne!(cell_type, "e", "{coordinate} must be written as text");
+        }
+    }
+
+    let developer_log_path = PathBuf::from(
+        report["run_log_path"]
+            .as_str()
+            .context("matrix developer run log path must be a string")?,
+    );
+    let developer_log_bytes = fs::read(&developer_log_path)?;
+    let developer_log_text = String::from_utf8_lossy(&developer_log_bytes);
+    let developer_log: Value = serde_json::from_slice(&developer_log_bytes)
+        .context("parse error-token matrix PT-6-1 run log")?;
+    assert_eq!(developer_log["status"], "succeeded");
+    for token in TOKENS {
+        assert!(
+            !developer_log_text.contains(token),
+            "developer history must not expose the {token} cell value"
+        );
+    }
+    assert_eq!(fs::read(&fixture)?, original, "source fixture changed");
+
+    fs::remove_dir_all(output_dir)?;
+    Ok(())
+}
+
+#[test]
 fn summary_used_range_cli_reads_vba_enabled_xlsm() -> Result<()> {
     // This XlsxWriter test fixture is pinned at commit a880ecc15c1573449dba051e5c21025f00c7c9fc.
     // It contains a real xl/vbaProject.bin; this test reads the workbook and never executes VBA.
@@ -488,6 +601,36 @@ fn summary_output_projection(report: &Value) -> Result<(Value, Value)> {
         .context("normalized #DATA! output cell missing")?
         .clone();
     Ok((serde_json::to_value(&workbook.sheets)?, error_value))
+}
+
+fn worksheet_cell_type_and_value(
+    workbook_path: &Path,
+    coordinate: &str,
+) -> Result<(String, Option<String>)> {
+    let mut archive = zip::ZipArchive::new(fs::File::open(workbook_path)?)
+        .with_context(|| format!("open workbook package {}", workbook_path.display()))?;
+    let mut worksheet_xml = String::new();
+    archive
+        .by_name("xl/worksheets/sheet1.xml")?
+        .read_to_string(&mut worksheet_xml)
+        .context("read first worksheet XML")?;
+    let document = roxmltree::Document::parse(&worksheet_xml)
+        .with_context(|| format!("parse first worksheet XML in {}", workbook_path.display()))?;
+    let cell = document
+        .descendants()
+        .find(|node| {
+            node.is_element()
+                && node.tag_name().name() == "c"
+                && node.attribute("r") == Some(coordinate)
+        })
+        .with_context(|| format!("worksheet cell {coordinate} missing"))?;
+    let cell_type = cell.attribute("t").unwrap_or_default().to_string();
+    let raw_value = cell
+        .children()
+        .find(|node| node.is_element() && node.tag_name().name() == "v")
+        .and_then(|node| node.text())
+        .map(str::to_string);
+    Ok((cell_type, raw_value))
 }
 
 #[test]
