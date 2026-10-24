@@ -57,6 +57,13 @@ pub struct FormulaCachePatchReport {
     pub package_parts: usize,
 }
 
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct FormulaCachesClearedReport {
+    pub worksheet_parts: Vec<String>,
+    pub formula_cells: usize,
+    pub cache_values_removed: usize,
+}
+
 /// Calculation flags stored in the workbook's `calcPr` element. `None`
 /// means the caller does not request a change to that attribute.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -288,6 +295,181 @@ fn patch_calc_pr_xml(xml: &[u8], requested: WorkbookCalculationProperties) -> Re
         .min()
         .unwrap_or(closing_tag_start(xml, root.range())?);
     apply_xml_edits(xml, vec![(insertion..insertion, element.into_bytes())])
+}
+
+/// Remove cached values and cached result types from ordinary formula cells in
+/// an XLSX copy. This lets an external calculation engine treat formulas as
+/// needing evaluation instead of reusing writer-provided placeholder caches.
+/// Formula text and every non-worksheet package part are preserved. Formula
+/// structures with attributes (such as shared/array formulas) are rejected.
+pub fn clear_formula_caches_for_recalculation(
+    source: impl AsRef<Path>,
+    output: impl AsRef<Path>,
+) -> Result<FormulaCachesClearedReport> {
+    let source = source.as_ref();
+    let output = output.as_ref();
+    let canonical_source = fs::canonicalize(source).context("resolve source workbook")?;
+    ensure!(
+        source != output && (!output.exists() || fs::canonicalize(output)? != canonical_source),
+        "formula-cache clearing requires a distinct output path"
+    );
+    ensure!(
+        !output.exists(),
+        "formula-cache clearing refuses to overwrite an existing output"
+    );
+    validate_header_package(source)
+        .context("validate formula recalculation input package safety")?;
+
+    let mut input_zip = ZipArchive::new(fs::File::open(source)?)?;
+    let worksheet_parts = strict_sheet_parts_from_zip(&mut input_zip, source)?;
+    let mut replacements = BTreeMap::new();
+    let mut report = FormulaCachesClearedReport::default();
+    for (_, worksheet_part) in worksheet_parts {
+        let xml = read_zip_part(&mut input_zip, &worksheet_part)?;
+        let (patched, formula_cells, cache_values_removed) =
+            clear_formula_caches_for_recalculation_xml(&xml)?;
+        report.formula_cells += formula_cells;
+        report.cache_values_removed += cache_values_removed;
+        if patched != xml {
+            report.worksheet_parts.push(worksheet_part.clone());
+            replacements.insert(worksheet_part, patched);
+        }
+    }
+    ensure!(report.formula_cells > 0, "workbook contains no formulas");
+
+    if let Some(parent) = output
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        fs::create_dir_all(parent)?;
+    }
+    let mut created = false;
+    let result = (|| -> Result<()> {
+        let file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(output)
+            .with_context(|| format!("create formula-cache-free copy {}", output.display()))?;
+        created = true;
+        let mut writer = ZipWriter::new(file);
+        for index in 0..input_zip.len() {
+            let mut entry = input_zip.by_index(index)?;
+            let name = entry.name().to_owned();
+            let mut options = SimpleFileOptions::default().compression_method(entry.compression());
+            if let Some(modified) = entry.last_modified() {
+                options = options.last_modified_time(modified);
+            }
+            if entry.is_dir() {
+                writer.add_directory(name, options)?;
+            } else {
+                writer.start_file(&name, options)?;
+                if let Some(bytes) = replacements.get(&name) {
+                    writer.write_all(bytes)?;
+                } else {
+                    std::io::copy(&mut entry, &mut writer)?;
+                }
+            }
+        }
+        writer.finish()?;
+
+        let mut output_zip = ZipArchive::new(fs::File::open(output)?)?;
+        for worksheet_part in &report.worksheet_parts {
+            let xml = read_zip_part(&mut output_zip, worksheet_part)?;
+            let (_, remaining_formula_cells, remaining_cache_values) =
+                clear_formula_caches_for_recalculation_xml(&xml)?;
+            ensure!(
+                remaining_formula_cells > 0 && remaining_cache_values == 0,
+                "formula cache removal readback failed for {worksheet_part}"
+            );
+        }
+        Ok(())
+    })();
+    if result.is_err() && created {
+        let _ = fs::remove_file(output);
+    }
+    result?;
+    Ok(report)
+}
+
+fn clear_formula_caches_for_recalculation_xml(
+    source_xml: &[u8],
+) -> Result<(Vec<u8>, usize, usize)> {
+    let xml = std::str::from_utf8(source_xml).context("worksheet XML must be UTF-8")?;
+    let document = Document::parse(xml).context("parse worksheet XML")?;
+    let root = document.root_element();
+    ensure!(
+        root.tag_name().namespace() == Some(MAIN_NS) && root.tag_name().name() == "worksheet",
+        "expected a SpreadsheetML worksheet root"
+    );
+
+    let mut formula_cells = 0usize;
+    let mut cache_values_removed = 0usize;
+    let mut ranges = Vec::new();
+    for cell in root.descendants().filter(|node| {
+        node.is_element()
+            && node.tag_name().namespace() == Some(MAIN_NS)
+            && node.tag_name().name() == "c"
+    }) {
+        let formulas = cell
+            .children()
+            .filter(|node| {
+                node.is_element()
+                    && node.tag_name().namespace() == Some(MAIN_NS)
+                    && node.tag_name().name() == "f"
+            })
+            .collect::<Vec<_>>();
+        if formulas.is_empty() {
+            continue;
+        }
+        ensure!(
+            formulas.len() == 1 && formulas[0].attributes().next().is_none(),
+            "formula cell {:?} uses an unsupported shared/array or annotated formula",
+            cell.attribute("r")
+        );
+        formula_cells += 1;
+        let values = cell
+            .children()
+            .filter(|node| {
+                node.is_element()
+                    && node.tag_name().namespace() == Some(MAIN_NS)
+                    && node.tag_name().name() == "v"
+            })
+            .collect::<Vec<_>>();
+        ensure!(
+            values.len() <= 1,
+            "formula cell {:?} contains multiple cached value nodes",
+            cell.attribute("r")
+        );
+        if let Some(value) = values.first() {
+            ensure!(
+                !value.children().any(|node| node.is_element()),
+                "formula cell {:?} has nested cache XML",
+                cell.attribute("r")
+            );
+            ranges.push(value.range());
+            cache_values_removed += 1;
+        }
+        let result_type = cell
+            .attributes()
+            .find(|attribute| attribute.namespace().is_none() && attribute.name() == "t");
+        ensure!(
+            !cell
+                .attributes()
+                .any(|attribute| attribute.name() == "t" && attribute.namespace().is_some()),
+            "formula cell {:?} has a namespaced result type",
+            cell.attribute("r")
+        );
+        if let Some(attribute) = result_type {
+            ranges.push(attribute.range());
+        }
+    }
+
+    ranges.sort_by_key(|range| std::cmp::Reverse(range.start));
+    let mut patched = source_xml.to_vec();
+    for range in ranges {
+        patched = splice_bytes(&patched, range, b"");
+    }
+    Ok((patched, formula_cells, cache_values_removed))
 }
 
 /// The three worksheet header variants stored in a SpreadsheetML worksheet.
@@ -2818,6 +3000,121 @@ mod external_hyperlink_tests {
 
         fs::remove_file(source)?;
         fs::remove_file(output)?;
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod formula_cache_recalculation_tests {
+    use super::{clear_formula_caches_for_recalculation, MAIN_NS, PACKAGE_REL_NS, REL_NS};
+    use anyhow::Result;
+    use roxmltree::Document;
+    use std::{
+        fs::{self, File},
+        io::{Read, Write},
+        path::PathBuf,
+    };
+    use zip::{write::SimpleFileOptions, ZipArchive, ZipWriter};
+
+    fn temp_path(label: &str) -> PathBuf {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "ooxml_formula_cache_{}_{}_{}",
+            std::process::id(),
+            nonce,
+            label
+        ))
+    }
+
+    fn fixture(path: &PathBuf) -> Result<()> {
+        let root_rels = format!(
+            r#"<Relationships xmlns="{PACKAGE_REL_NS}"><Relationship Id="rId0" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>"#
+        );
+        let workbook = format!(
+            r#"<x:workbook xmlns:x="{MAIN_NS}" xmlns:r="{REL_NS}"><x:sheets><x:sheet name="Formula" sheetId="1" r:id="rId1"/></x:sheets></x:workbook>"#
+        );
+        let workbook_rels = format!(
+            r#"<Relationships xmlns="{PACKAGE_REL_NS}"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>"#
+        );
+        let worksheet = format!(
+            r#"<x:worksheet xmlns:x="{MAIN_NS}"><x:sheetData><x:row r="1"><x:c r="A1" t="str"><x:f>1+1</x:f><x:v>0</x:v></x:c><x:c r="B1"><x:v>9</x:v></x:c></x:row></x:sheetData></x:worksheet>"#
+        );
+        let mut zip = ZipWriter::new(File::create(path)?);
+        for (name, content) in [
+            ("_rels/.rels", root_rels),
+            ("xl/workbook.xml", workbook),
+            ("xl/_rels/workbook.xml.rels", workbook_rels),
+            ("xl/worksheets/sheet1.xml", worksheet),
+            ("custom/keep.txt", "keep unchanged".to_owned()),
+        ] {
+            zip.start_file(name, SimpleFileOptions::default())?;
+            zip.write_all(content.as_bytes())?;
+        }
+        zip.finish()?;
+        Ok(())
+    }
+
+    #[test]
+    fn clears_formula_caches_only_and_preserves_source_and_other_parts() -> Result<()> {
+        let source = temp_path("source.xlsx");
+        let output = temp_path("cacheless.xlsx");
+        fixture(&source)?;
+        let report = clear_formula_caches_for_recalculation(&source, &output)?;
+        assert_eq!(report.formula_cells, 1);
+        assert_eq!(report.cache_values_removed, 1);
+        assert_eq!(report.worksheet_parts, ["xl/worksheets/sheet1.xml"]);
+
+        let mut source_zip = ZipArchive::new(File::open(&source)?)?;
+        let mut source_xml = String::new();
+        source_zip
+            .by_name("xl/worksheets/sheet1.xml")?
+            .read_to_string(&mut source_xml)?;
+        assert!(source_xml.contains("<x:v>0</x:v>"));
+
+        let mut output_zip = ZipArchive::new(File::open(&output)?)?;
+        let mut output_xml = String::new();
+        output_zip
+            .by_name("xl/worksheets/sheet1.xml")?
+            .read_to_string(&mut output_xml)?;
+        let document = Document::parse(&output_xml)?;
+        let formula = document
+            .descendants()
+            .find(|node| {
+                node.is_element()
+                    && node.tag_name().namespace() == Some(MAIN_NS)
+                    && node.tag_name().name() == "c"
+                    && node.attribute("r") == Some("A1")
+            })
+            .unwrap();
+        assert!(formula
+            .children()
+            .any(|node| node.is_element() && node.tag_name().name() == "f"));
+        assert!(!formula
+            .children()
+            .any(|node| node.is_element() && node.tag_name().name() == "v"));
+        assert_eq!(formula.attribute("t"), None);
+        let mut kept = String::new();
+        output_zip
+            .by_name("custom/keep.txt")?
+            .read_to_string(&mut kept)?;
+        assert_eq!(kept, "keep unchanged");
+
+        fs::remove_file(source)?;
+        fs::remove_file(output)?;
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_shared_or_annotated_formula_shapes_without_output() -> Result<()> {
+        let xml = format!(
+            r#"<x:worksheet xmlns:x="{MAIN_NS}"><x:sheetData><x:row r="1"><x:c r="A1"><x:f t="shared">1+1</x:f><x:v>0</x:v></x:c></x:row></x:sheetData></x:worksheet>"#
+        );
+        let error = super::clear_formula_caches_for_recalculation_xml(xml.as_bytes())
+            .expect_err("shared formula shape must be rejected");
+        assert!(error.to_string().contains("unsupported shared/array"));
         Ok(())
     }
 }

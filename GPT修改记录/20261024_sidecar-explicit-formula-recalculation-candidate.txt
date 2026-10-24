@@ -4,24 +4,26 @@
 - sidecar/lo-convert/src/main.rs：新增显式 `recalculate --input <xlsx> --output <new.xlsx> [--engine auto|lo|com]`。只接收 XLSX，输入输出不得相同，拒绝覆盖已有目标。对临时副本写入 fullCalcOnLoad/forceFullCalc 后调用一个实际引擎；Windows auto 选 COM，非 Windows auto 选 LibreOffice，不在引擎失败后静默切换。通过结构校验后将临时结果改名发布。
 - 输出验证要求工作表名称/顺序和公式文本不变；每个公式单元格都存在 `<v>` 缓存节点，公式和缓存单元格计数一致。使用 shared reader 的未知错误 token 文本兼容 API读取输入/输出。JSON 输出记录实际引擎名称、输入/输出与验证摘要。
 - 重算请求副本与引擎输出分别放在隔离目录；LibreOffice 只接受预期文件名的新输出，不枚举输入副本作为候选。若预期输出不存在或为空，验证失败且不发布目标文件。增加缺失输出回归测试。
+- 实测发现 rust_xlsxwriter 公式的占位 `<v>0</v>` 会被当前 LibreOffice `--convert-to` 路径保留为 0；在 sidecar 中新增调用 `ooxml-patch::clear_formula_caches_for_recalculation`，只对临时副本清除普通公式格旧缓存和值类型，再补 full-calc 标志。namespace-aware 补丁拒绝带属性的共享/数组公式结构，源文件不变；清除缓存数写入 JSON 执行报告。
 - sidecar/lo-convert/Cargo.toml、Cargo.lock：增加 namespace-aware OOXML 关系/缓存扫描依赖和 calcPr patch 共享 crate。
 - EXCEL_ENGINE_ARCHITECTURE.md、docs/architecture/migration-gap-analysis.md：将公式重算侧车状态更新为候选已实现、外部引擎/目标平台未验收。
 
 目的：为 Audit S1 公式复制后需要本轮缓存值的路径提供显式旁路，不隐式加入公式复制或审核默认主路径。
 
 测试：
-- `wsl.exe -e bash -lc 'cd /mnt/c/Users/AZI/Desktop/VibeCode/1.rust-workspace && cargo test -p lo-convert'`：1 项缓存结构单元测试通过。
+- `cargo fmt -p ooxml-patch -p lo-convert`：通过。
+- `cargo test -p ooxml-patch --locked`：14 项通过，覆盖缓存移除、公式保留、非目标部件保留、源文件不变及共享公式拒绝。
+- `LO_CONVERT_REQUIRE_LO_TEST=1 cargo test -p lo-convert --locked -- --nocapture`（Ubuntu/WSL2，LibreOffice 24.2.7.2）：3 项单元测试及 1 项真实 headless CLI 集成测试通过；集成测试断言 `=SUM(A1:B1)` 的输出缓存为 5、公式文本保留。
 - `cargo run -q -p lo-convert -- recalculate --help`：显示新命令用法。
-- `cargo test -p lo-convert`：重跑 2 项 sidecar 单元测试通过（含“引擎未创建输出时拒绝输入副本”回归）。
 - `git diff --check`：通过。
 
 未验证/未执行：
-- 当前开发机没有发现 soffice，因此未执行 LibreOffice 实际重算；未在 Windows Excel/WPS COM、麒麟/UOS 或 glibc 2.28 环境执行。
+- 已在 Ubuntu/WSL2 执行 LibreOffice 24.2.7.2 合成重算；未在 Windows Excel/WPS COM、麒麟/UOS 或 glibc 2.28 环境执行。
 - 未对 Audit 真实 S1 文件与旧 Python/COM/LO 结果做对拍；此命令不构成任何业务 capability Passed 或生产路由。
 - 未测超时处理、大型工作簿性能、XLSM、XLS/XLSB 或循环/外部链接公式。
 
 已知边界：
-- “公式文本不变 + 缓存节点存在”只能证明结构完整，不能单独证明结果正确或缓存值已刷新。业务验收必须用旧实现/独立期望值对拍。
+- 合成 `SUM` 测试只覆盖普通公式。通用输出的缓存节点存在不证明所有公式结果正确或已刷新；业务验收必须用旧实现/独立期望值对拍。
 - 首版只支持 XLSX；sidecar 执行失败或验证失败时不发布输出，使用方应保留原文件并报告外部引擎错误。
 - COM/LO 运行可能耗时；当前未实现进程超时中止策略，实机测试前不能用于生产默认。
 

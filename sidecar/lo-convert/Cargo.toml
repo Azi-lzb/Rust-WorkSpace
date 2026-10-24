@@ -19,3 +19,6 @@ roxmltree.workspace = true
 serde_json.workspace = true
 zip.workspace = true
 
+[dev-dependencies]
+rust_xlsxwriter.workspace = true
+

@@ -101,7 +101,7 @@
 | P4 | 样式/批注读取能力缺口：calamine 无样式模型；OOXML 补读仅批注/CF/DV/页眉/extents | `crates/excel-reader/src/lib.rs` API 清单 | 打印（全样式复制）、去重（批注定位）、按批注汇总（批注指令）在 Rust 无完整读取链 |
 | P5 | 行插入/删除与 sheet 结构操作的引擎未验收，且源两档语义不同（openpyxl 不修正合并区 vs COM 随行移动） | `feature_1_1_split_village_bank.py:124-125`、`dedup_311.py:160-161` vs COM 版 | PT-7-1/7-3/2-2/2-4/4-4 的对拍基准本身二义，须先定语义口径 |
 | P6 | ODA S1 条件格式审核引擎（COM 条件格式求值）无 Rust 对应 | `conditional_engine.py`、`conditional_evaluators.py`；workspace 仅有 CF 元数据读取 | AUD-S1-F01 核心不可迁移；是 audit 侧最大工作量 |
-| P7 | 公式重算 sidecar 已有 `recalculate` XLSX 候选命令、full-calc 标志准备、公式文本/缓存节点结构校验；尚未在 LO/COM 和目标平台执行，且缓存节点存在不等于计算值正确 | `sidecar/lo-convert/src/main.rs`；`ODA engines/libreoffice_adapter.py` | AUD-S1 必须显式触发；真实样本仍须与旧版重算结果对拍，外部引擎及目标平台未验收 |
+| P7 | 公式重算 sidecar 有 `recalculate` XLSX 候选命令：临时副本先清除旧公式缓存，再请求 full-calc；Ubuntu/WSL2 LO 合成公式 `=SUM(A1:B1)` 的输出缓存实测为 5，且公式文本保留。缓存节点结构本身不证明通用公式结果正确 | `sidecar/lo-convert/src/main.rs`、`crates/ooxml-patch/src/lib.rs`；`ODA engines/libreoffice_adapter.py` | AUD-S1 仍须显式触发并与真实旧版重算结果对拍；COM、麒麟/UOS 与真实 S1 样本未验收 |
 | P8 | 文档滞后与编号不一致：架构文档称 sidecar"未接入"（实际 `conversion.rs:155` 已接）；清单称 fx-header"未接 CLI"（实际 `pytools.rs:102` 已接）；`run_batch_rename_33` 记在"3-3"标题而菜单为 4-1；PyCode/NoCom 转换组菜单序不同 | `EXCEL_ENGINE_ARCHITECTURE.md:50`、`MIGRATION_INVENTORY.md:59` 与代码对照 | 误导后续迁移决策与验收口径 |
 | P9 | 源产品死代码/未接线：PT-SV1 菜单路由丢失；去重 write_mode 死配置；PyCode 冗余 dispatch 键 | `PyC/main.py:198-203,1327-1345`；`config_xlsx.py:477` | 迁移范围确认遗漏风险 |
 | P10 | 重复读取/重复序列化：P-01/P-02 每文件双开（样式+值）；PT-6-1 整批两遍打开；Rust region_sum 写出后补丁再重开 zip | `print_310.py:61-62,452-457`；`summary_321_322.py:217,240`；`region_sum.rs:564` | 性能与一致性成本；迁移时应单次读取+定点补丁（详见 excel-engine-routing-review §4） |
