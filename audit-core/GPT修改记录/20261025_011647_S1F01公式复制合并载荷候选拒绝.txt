@@ -1,0 +1,16 @@
+时间：2026-10-25 01:16（Asia/Shanghai）
+执行者：Codex
+修改前 commit：59ecc45ee0a24e9f3267dc5f03a853ead813d10d；修改前工作区干净。
+目的：记录 S1-F01 公式复制 openpyxl-worker 当前 Windows 原生真实样本候选的写前拒绝及数据保留证据；生产路由继续保持 Unverified。
+修改文件：
+- audit-core/probe/reports/s1_formula_copy_target_merged_payload_guard_20261025.json：新增机器可读聚合报告，不含文件名、工作表名、坐标或业务值。
+- audit-core/MIGRATION_INVENTORY.md：补充 S1-F01 真实候选状态与报告引用。
+- audit-core/GPT修改记录/20261025_011647_S1F01公式复制合并载荷候选拒绝.txt：本记录。
+逻辑或业务变化：没有 Rust 业务代码变化。真实模板经 Windows 原生 `open-data-audit s1-template-rules` 读取通过：1,072 条启用规则、4 个复制区、模板健康检查通过。真实 S1 批次中的两个定向样本经 `compare_s1_formula_copy_candidate.py --runtime native --engine openpyxl-worker --scope full-s1` 对拍；候选均因 `target_merged_non_anchor_payload` 在写前拒绝，输出未创建，输入保持不变。每个目标工作簿有 855 个合并区非锚点载荷单元格，均在 4 个目标复制区外，涉及 31 个不相交的载荷合并区域，跨界/区内均为 0。因没有 Rust 输出，公式复制对象保留对拍未完成，不能登记能力或切换路由。结果见 `audit-core/probe/reports/s1_formula_copy_target_merged_payload_guard_20261025.json`。
+配置及 VBA 迁移影响：无。
+实际测试结果：Rust 模板规则 CLI 真实模板预检通过（Calamine + namespace-aware OOXML；读取 314 ms，单次总耗时 329 ms）。候选对拍脚本两次正常完成并报告写前拒绝；公式未重算；真实审核工作簿与模板均未被修改。
+未执行项：未重跑剩余 5 个目标样本；未执行公式重算、候选输出对象级对拍、COM 或目标 Linux/deb 验收。能力状态为 Unverified，生产路由未启用。
+已知问题：openpyxl 普通加载/保存会移除合并区域的非锚点载荷；目标矩形外仍存在此类载荷，因此全局安全预检拒绝本批候选。不得将预检缩至目标复制区，也不得绕过拒绝。
+删除清单：无。
+回滚提示：若撤回本轮证据记录，可单独还原上述报告及本记录，并撤销 MIGRATION_INVENTORY.md 对应追加说明；未修改业务代码或用户工作簿。
+【组件版本】：不升级。

@@ -1,0 +1,83 @@
+{
+  "schema_version": 1,
+  "suite": "audit.s1_formula_copy_target_merged_payload_guard",
+  "feature_id": "S1-F01",
+  "captured_at": "2026-10-25T01:16:47+08:00",
+  "worktree": {
+    "branch": "audit-dev",
+    "head_before": "59ecc45ee0a24e9f3267dc5f03a853ead813d10d"
+  },
+  "platform": {
+    "os": "Windows 11 x64",
+    "rust_target": "x86_64-pc-windows-msvc",
+    "runtime_mode": "native_windows"
+  },
+  "sample_scope": {
+    "kind": "real_s1_batch",
+    "xlsx_workbooks_in_batch": 7,
+    "targeted_workbooks": 2,
+    "selected_sorted_ordinals_1_based": [1, 6]
+  },
+  "template_preflight": {
+    "entry": "open-data-audit s1-template-rules",
+    "status": "passed",
+    "template_mode": "named_formula_ranges",
+    "enabled_rules": 1072,
+    "copy_ranges": 4,
+    "template_health_passed": true,
+    "broken_reference_rules": 0,
+    "reader": "calamine+namespace_aware_ooxml",
+    "read_time_ms": 314,
+    "elapsed_ms": 329
+  },
+  "candidate": {
+    "entry": "compare_s1_formula_copy_candidate.py",
+    "engine": "openpyxl-worker",
+    "operation_scope": "full-s1",
+    "operation_count": 60,
+    "range_import_count": 4,
+    "formula_cells": 1072,
+    "range_comment_count_python": 55,
+    "status": "unsupported_before_write",
+    "failure_category": "target_merged_non_anchor_payload",
+    "samples": [
+      {
+        "sorted_ordinal_1_based": 1,
+        "candidate_elapsed_ms": 423,
+        "python_baseline_elapsed_ms": 915,
+        "output_created": false,
+        "input_unchanged": true
+      },
+      {
+        "sorted_ordinal_1_based": 6,
+        "candidate_elapsed_ms": 427,
+        "python_baseline_elapsed_ms": 985,
+        "output_created": false,
+        "input_unchanged": true
+      }
+    ],
+    "merged_non_anchor_payload_relation_per_sample": {
+      "payload_cells_total": 855,
+      "payload_cells_inside_copy_ranges": 0,
+      "payload_cells_outside_copy_ranges": 855,
+      "payload_bearing_merged_areas_inside_copy_ranges": 0,
+      "payload_bearing_merged_areas_outside_copy_ranges": 31,
+      "payload_bearing_merged_areas_crossing_copy_range_boundaries": 0
+    },
+    "formula_recalculation_performed": false,
+    "rust_output_readback_performed": false,
+    "input_workbooks_unchanged": true,
+    "production_route_eligible": false,
+    "capability_status": "unverified"
+  },
+  "parity": {
+    "status": "not_completed",
+    "reason": "Rust candidate was rejected before write; no Rust output exists for object-level comparison."
+  },
+  "data_safety": {
+    "file_paths_recorded": false,
+    "workbook_or_sheet_names_recorded": false,
+    "cell_coordinates_recorded": false,
+    "business_values_recorded": false
+  }
+}
