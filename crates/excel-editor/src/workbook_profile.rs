@@ -107,6 +107,12 @@ pub fn inspect_xlsx_profile(path: impl AsRef<Path>) -> Result<WorkbookProfile> {
                     "headerFooter" => {
                         features.insert(WorkbookFeature::HeadersFooters);
                     }
+                    "pane" => {
+                        features.insert(WorkbookFeature::FreezePanes);
+                    }
+                    "autoFilter" => {
+                        features.insert(WorkbookFeature::AutoFilter);
+                    }
                     "f" => {
                         features.insert(WorkbookFeature::Formulas);
                     }

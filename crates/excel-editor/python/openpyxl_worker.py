@@ -30,6 +30,9 @@ SUPPORTED_OPERATIONS = {
     "set_row_height",
     "rename_sheet",
     "create_sheet",
+    "create_sheet_at",
+    "set_freeze_panes",
+    "set_auto_filter",
     "delete_sheet",
     "set_cell_fill_color",
     "copy_range",
@@ -445,6 +448,12 @@ def _apply_operation(workbook: Any, cached_workbook: Any, operation: Dict[str, A
         workbook[payload["old_name"]].title = payload["new_name"]
     elif kind == "create_sheet":
         workbook.create_sheet(payload["name"])
+    elif kind == "create_sheet_at":
+        workbook.create_sheet(payload["name"], payload["index"])
+    elif kind == "set_freeze_panes":
+        workbook[payload["sheet"]].freeze_panes = payload.get("cell")
+    elif kind == "set_auto_filter":
+        workbook[payload["sheet"]].auto_filter.ref = payload.get("range")
     elif kind == "delete_sheet":
         if len(workbook.worksheets) <= 1:
             raise WorkerError("invalid_operation", "cannot delete the only worksheet")
@@ -640,6 +649,18 @@ def _verify_plan(workbook: Any, operations: List[Dict[str, Any]]) -> None:
         elif kind == "create_sheet":
             if payload["name"] not in workbook.sheetnames:
                 raise WorkerError("output_verification_failed", "worksheet creation readback mismatch")
+        elif kind == "create_sheet_at":
+            if payload["name"] not in workbook.sheetnames or workbook.sheetnames.index(payload["name"]) != payload["index"]:
+                raise WorkerError("output_verification_failed", "worksheet insertion order readback mismatch")
+        elif kind == "set_freeze_panes":
+            actual = workbook[payload["sheet"]].freeze_panes
+            actual = None if actual is None else str(actual)
+            if actual != payload.get("cell"):
+                raise WorkerError("output_verification_failed", "freeze panes readback mismatch")
+        elif kind == "set_auto_filter":
+            actual = workbook[payload["sheet"]].auto_filter.ref
+            if actual != payload.get("range"):
+                raise WorkerError("output_verification_failed", "AutoFilter readback mismatch")
         elif kind == "delete_sheet":
             if payload["name"] in workbook.sheetnames:
                 raise WorkerError("output_verification_failed", "worksheet deletion readback mismatch")

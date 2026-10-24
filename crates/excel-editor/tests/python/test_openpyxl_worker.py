@@ -118,6 +118,9 @@ class OpenpyxlWorkerTests(unittest.TestCase):
                       materialize_blank_cells=True, hide_zero=False),
             operation("rename_sheet", old_name="Notes", new_name="Information"),
             operation("create_sheet", name="Generated"),
+            operation("create_sheet_at", name="History", index=0),
+            operation("set_freeze_panes", sheet="History", cell="A2"),
+            operation("set_auto_filter", sheet="History", range="A1:M2"),
             operation("delete_sheet", name="DeleteMe"),
         ]
         plan = self.base_plan(output, operations)
@@ -130,7 +133,9 @@ class OpenpyxlWorkerTests(unittest.TestCase):
         self.assertEqual(digest(self.import_source), import_hash)
 
         saved = openpyxl.load_workbook(output, data_only=False)
-        self.assertEqual(saved.sheetnames, ["Data", "Information", "Generated"])
+        self.assertEqual(saved.sheetnames, ["History", "Data", "Information", "Generated"])
+        self.assertEqual(saved["History"].freeze_panes, "A2")
+        self.assertEqual(saved["History"].auto_filter.ref, "A1:M2")
         sheet = saved["Data"]
         self.assertEqual(sheet["A1"].value, 12.75)
         self.assertEqual(sheet["B3"].value, "=A1*2")
