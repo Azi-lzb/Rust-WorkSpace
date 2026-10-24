@@ -21,7 +21,7 @@ sha2.workspace = true
 zip.workspace = true
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { workspace = true, features = ["Win32_UI_Controls_Dialogs"] }
+windows-sys = { workspace = true, features = ["Win32_System_Com", "Win32_System_Ole", "Win32_UI_Controls_Dialogs", "Win32_UI_Shell", "Win32_UI_Shell_Common"] }
 
 [dev-dependencies]
 rust_xlsxwriter.workspace = true

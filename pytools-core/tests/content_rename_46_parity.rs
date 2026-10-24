@@ -1,4 +1,4 @@
-use pytools_core::file_sort_prefix::run_content_prefix_rename_46_xlsx_candidate;
+use pytools_core::file_sort_prefix::run_content_prefix_rename_xlsx_candidate;
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -132,7 +132,7 @@ fn run_case(case: &Value, expected_final_entries: &Value, root: &Path) -> Value 
         .filter_map(|path| fs::read(path).ok().map(|bytes| (path.clone(), bytes)))
         .collect::<BTreeMap<_, _>>();
 
-    let result = run_content_prefix_rename_46_xlsx_candidate(&config, &files).unwrap();
+    let result = run_content_prefix_rename_xlsx_candidate(&config, &files).unwrap();
     let stats = json!({
         "ok": result.ok,
         "skip": result.skip,

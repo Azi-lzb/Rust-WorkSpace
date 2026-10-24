@@ -30,7 +30,7 @@ pub struct LocalFilenameMapRunReport {
 /// The configuration is read through the shared Calamine reader. The function
 /// accepts regular files of any extension, does not open or rewrite them, and
 /// reserves rename targets without replacing existing files.
-pub fn run_local_filename_map_48_candidate(
+pub fn run_local_filename_map_candidate(
     config_path: impl AsRef<Path>,
     files: &[PathBuf],
 ) -> Result<LocalFilenameMapRunReport> {
@@ -243,4 +243,13 @@ mod tests {
         assert_eq!(apply_mapping("file.aa.", &mappings), "file.bb.");
         assert_eq!(apply_mapping(".hidden_aa", &mappings), ".hidden_bb");
     }
+}
+
+/// Compatibility alias for the original Python 4-8 operation identifier.
+#[deprecated(note = "use `run_local_filename_map_candidate`")]
+pub fn run_local_filename_map_48_candidate(
+    config_path: impl AsRef<Path>,
+    files: &[PathBuf],
+) -> Result<LocalFilenameMapRunReport> {
+    run_local_filename_map_candidate(config_path, files)
 }

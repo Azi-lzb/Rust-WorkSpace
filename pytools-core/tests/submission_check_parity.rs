@@ -1,0 +1,337 @@
+use anyhow::{Context, Result};
+use serde_json::{json, Value};
+use std::{
+    collections::BTreeMap,
+    fs::{self, File},
+    io::Read,
+    path::{Path, PathBuf},
+    process::Command,
+    sync::atomic::{AtomicU64, Ordering},
+    time::{SystemTime, UNIX_EPOCH},
+};
+use zip::ZipArchive;
+
+static NEXT_TEST_DIRECTORY_ID: AtomicU64 = AtomicU64::new(0);
+
+struct TestDirectory(PathBuf);
+
+impl TestDirectory {
+    fn new() -> Result<Self> {
+        let nonce = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
+        let serial = NEXT_TEST_DIRECTORY_ID.fetch_add(1, Ordering::Relaxed);
+        let path = std::env::temp_dir().join(format!(
+            "pytools-submission-check-{}-{nonce}-{serial}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&path)?;
+        Ok(Self(path))
+    }
+}
+
+impl Drop for TestDirectory {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
+#[test]
+fn submission_check_cli_matches_python_workbook_and_statistics() -> Result<()> {
+    let test_directory = TestDirectory::new()?;
+    let root = &test_directory.0;
+    let config = create_config(&root)?;
+    let sources = root.join("sources");
+    fs::create_dir_all(&sources)?;
+    let files = [
+        sources.join("2026_Area_Bank_base.txt"),
+        sources.join("2026_Area_Bank_multi.txt"),
+        sources.join("misc_submission.txt"),
+    ];
+    for (index, path) in files.iter().enumerate() {
+        fs::write(path, format!("synthetic payload {index}"))?;
+    }
+    let original_config = fs::read(&config)?;
+    let original_files = files
+        .iter()
+        .map(|path| fs::read(path).map(|bytes| (path.clone(), bytes)))
+        .collect::<std::io::Result<Vec<_>>>()?;
+
+    let output = Command::new(env!("CARGO_BIN_EXE_pytools"))
+        .arg("submission-check")
+        .arg("--config")
+        .arg(&config)
+        .arg("--output-dir")
+        .arg(root.join("output"))
+        .args(&files)
+        .output()
+        .context("run real submission-check CLI")?;
+    assert!(
+        output.status.success(),
+        "submission-check failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: Value = serde_json::from_slice(&output.stdout)?;
+    let expected: Value = serde_json::from_str(include_str!(
+        "../probe/reports/submission_check_python_baseline.json"
+    ))?;
+    for field in [
+        "rules",
+        "files",
+        "submitted",
+        "missing",
+        "unmatched",
+        "multi",
+    ] {
+        assert_eq!(
+            report[field], expected["statistics"][field],
+            "statistic {field}"
+        );
+    }
+    let report_path = PathBuf::from(report["output"].as_str().context("report path missing")?);
+    assert!(report_path.is_file());
+
+    let actual = excel_reader::read_workbook(&report_path)?;
+    let expected_sheets = expected["output_workbook"]["sheets"]
+        .as_array()
+        .context("baseline sheets must be an array")?;
+    assert_eq!(
+        actual
+            .sheets
+            .iter()
+            .map(|sheet| sheet.name.as_str())
+            .collect::<Vec<_>>(),
+        expected_sheets
+            .iter()
+            .map(|sheet| sheet["name"]
+                .as_str()
+                .context("sheet name must be a string"))
+            .collect::<Result<Vec<_>>>()?
+    );
+    for (sheet_index, (actual_sheet, expected_sheet)) in
+        actual.sheets.iter().zip(expected_sheets).enumerate()
+    {
+        assert!(
+            actual_sheet.formulas.is_empty(),
+            "unexpected formulas in {}",
+            actual_sheet.name
+        );
+        assert!(
+            actual_sheet.merges.is_empty(),
+            "unexpected merged cells in {}",
+            actual_sheet.name
+        );
+        assert!(
+            actual_sheet.comments.is_empty(),
+            "unexpected comments in {}",
+            actual_sheet.name
+        );
+        assert!(actual_sheet.conditional_formatting.is_empty());
+        assert!(actual_sheet.data_validations.is_empty());
+        let actual_cells = actual_sheet
+            .values
+            .iter()
+            .filter_map(|(address, value)| {
+                normalize_cell(value, &root).map(|normalized| (address.clone(), normalized))
+            })
+            .collect::<BTreeMap<_, _>>();
+        let expected_cells =
+            serde_json::from_value::<BTreeMap<String, Value>>(expected_sheet["cells"].clone())?;
+        assert_eq!(
+            actual_cells, expected_cells,
+            "worksheet {} cells",
+            actual_sheet.name
+        );
+
+        let (max_row, max_column) = actual_sheet
+            .values
+            .keys()
+            .filter_map(|address| parse_cell_address(address))
+            .fold((0usize, 0usize), |(max_row, max_column), (row, column)| {
+                (max_row.max(row), max_column.max(column))
+            });
+        assert_eq!(
+            max_row,
+            expected_sheet["max_row"].as_u64().unwrap() as usize
+        );
+        assert_eq!(
+            max_column,
+            expected_sheet["max_column"].as_u64().unwrap() as usize
+        );
+        let expected_bold =
+            serde_json::from_value::<Vec<bool>>(expected_sheet["header_bold"].clone())?;
+        assert_eq!(
+            header_bold_flags(&report_path, sheet_index, expected_bold.len())?,
+            expected_bold
+        );
+    }
+
+    assert_eq!(fs::read(&config)?, original_config);
+    for (path, bytes) in original_files {
+        assert_eq!(fs::read(&path)?, bytes, "input changed: {}", path.display());
+    }
+    Ok(())
+}
+
+fn create_config(root: &Path) -> Result<PathBuf> {
+    let config = root.join("config.xlsx");
+    let mut workbook = rust_xlsxwriter::Workbook::new();
+    let sheet = workbook.add_worksheet();
+    sheet.set_name("提交检查配置")?;
+    for (column, header) in [
+        "是否启用",
+        "日期关键词",
+        "县区关键词",
+        "机构关键词",
+        "备用关键词",
+        "备注",
+    ]
+    .iter()
+    .enumerate()
+    {
+        sheet.write_string(0, column as u16, *header)?;
+    }
+    let rules = [
+        ["是", "2026", "Area", "Bank", "", "base rule"],
+        ["是", "2026", "Area", "Bank", "multi", "second rule"],
+        ["是", "2026", "Missing", "Bank", "", "missing rule"],
+        ["否", "disabled", "Area", "Bank", "", "ignored rule"],
+    ];
+    for (row, values) in rules.iter().enumerate() {
+        for (column, value) in values.iter().enumerate() {
+            sheet.write_string((row + 1) as u32, column as u16, *value)?;
+        }
+    }
+    workbook.save(&config)?;
+    Ok(config)
+}
+
+fn normalize_cell(value: &Value, root: &Path) -> Option<Value> {
+    match value["type"].as_str()? {
+        "empty" => None,
+        "string" => {
+            let text = value["value"].as_str()?;
+            if text.is_empty() {
+                return None;
+            }
+            Some(json!({
+                "type": "string",
+                "value": text.replace(root.to_string_lossy().as_ref(), "<ROOT>"),
+            }))
+        }
+        "integer" => Some(json!({ "type": "number", "value": value["value"] })),
+        "number" => {
+            let number = value["value"].as_f64()?;
+            let normalized = if number.is_finite() && number.fract() == 0.0 {
+                json!(number as i64)
+            } else {
+                json!(number)
+            };
+            Some(json!({ "type": "number", "value": normalized }))
+        }
+        "boolean" => Some(json!({ "type": "boolean", "value": value["value"] })),
+        kind => Some(json!({ "type": kind, "value": value["value"] })),
+    }
+}
+
+fn parse_cell_address(address: &str) -> Option<(usize, usize)> {
+    let split = address.find(|character: char| character.is_ascii_digit())?;
+    let (letters, digits) = address.split_at(split);
+    if letters.is_empty() || digits.is_empty() {
+        return None;
+    }
+    let column = letters.chars().try_fold(0usize, |value, character| {
+        let digit = character.to_ascii_uppercase().to_digit(36)? as usize - 9;
+        value.checked_mul(26)?.checked_add(digit)
+    })?;
+    let row = digits.parse::<usize>().ok()?;
+    Some((row, column))
+}
+
+fn header_bold_flags(path: &Path, sheet_index: usize, columns: usize) -> Result<Vec<bool>> {
+    let file = File::open(path)?;
+    let mut archive = ZipArchive::new(file)?;
+    let styles_xml = read_zip_entry(&mut archive, "xl/styles.xml")?;
+    let styles = roxmltree::Document::parse(&styles_xml)?;
+    let fonts = styles
+        .root_element()
+        .descendants()
+        .find(|node| node.tag_name().name() == "fonts")
+        .context("styles.xml has no fonts")?;
+    let font_bold = fonts
+        .children()
+        .filter(|node| node.is_element() && node.tag_name().name() == "font")
+        .map(|font| {
+            font.children().any(|node| {
+                node.is_element()
+                    && node.tag_name().name() == "b"
+                    && node.attribute("val") != Some("0")
+            })
+        })
+        .collect::<Vec<_>>();
+    let cell_xfs = styles
+        .root_element()
+        .descendants()
+        .find(|node| node.tag_name().name() == "cellXfs")
+        .context("styles.xml has no cellXfs")?;
+    let style_bold = cell_xfs
+        .children()
+        .filter(|node| node.is_element() && node.tag_name().name() == "xf")
+        .map(|xf| {
+            xf.attribute("fontId")
+                .and_then(|value| value.parse::<usize>().ok())
+                .and_then(|font_id| font_bold.get(font_id).copied())
+                .unwrap_or(false)
+        })
+        .collect::<Vec<_>>();
+    let sheet_xml = read_zip_entry(
+        &mut archive,
+        &format!("xl/worksheets/sheet{}.xml", sheet_index + 1),
+    )?;
+    let sheet = roxmltree::Document::parse(&sheet_xml)?;
+    let mut header_styles = BTreeMap::new();
+    for cell in sheet
+        .root_element()
+        .descendants()
+        .filter(|node| node.tag_name().name() == "c")
+    {
+        let Some(address) = cell.attribute("r") else {
+            continue;
+        };
+        if parse_cell_address(address).is_some_and(|(row, _)| row == 1) {
+            let style = cell
+                .attribute("s")
+                .and_then(|value| value.parse::<usize>().ok())
+                .unwrap_or(0);
+            header_styles.insert(
+                address.to_owned(),
+                style_bold.get(style).copied().unwrap_or(false),
+            );
+        }
+    }
+    (1..=columns)
+        .map(|column| {
+            header_styles
+                .get(&format!("{}1", column_letters(column)))
+                .copied()
+                .context("header cell missing from worksheet XML")
+        })
+        .collect()
+}
+
+fn read_zip_entry(archive: &mut ZipArchive<File>, name: &str) -> Result<String> {
+    let mut entry = archive
+        .by_name(name)
+        .with_context(|| format!("missing {name}"))?;
+    let mut xml = String::new();
+    entry.read_to_string(&mut xml)?;
+    Ok(xml)
+}
+
+fn column_letters(mut column: usize) -> String {
+    let mut letters = Vec::new();
+    while column > 0 {
+        let remainder = (column - 1) % 26;
+        letters.push((b'A' + remainder as u8) as char);
+        column = (column - 1) / 26;
+    }
+    letters.into_iter().rev().collect()
+}

@@ -8,7 +8,7 @@ use pytools_core::batch_ops::{
     build_quarterly_rural_loan_plan, build_remove_foreign_plan, build_rural_loan_plan,
     build_village_split_plan,
 };
-use pytools_core::batch_rename::run_batch_rename_33;
+use pytools_core::batch_rename::run_batch_rename as run_batch_rename_business;
 use pytools_core::config::{load_extract_tasks, load_global, GlobalConfig};
 use pytools_core::config_admin::{build_config_repair_plan, initialize_new_config, view_config};
 use pytools_core::conversion::{
@@ -25,10 +25,11 @@ use pytools_core::file_commit::{
     sha256_file,
 };
 use pytools_core::file_sort_prefix::{
-    run_content_prefix_rename_46_xlsx_candidate, run_content_prefix_unrename_47_xlsx_candidate,
-    run_file_sort_prefix_49, run_remove_file_sort_prefix_410,
+    run_content_prefix_rename_xlsx_candidate, run_content_prefix_unrename_xlsx_candidate,
+    run_file_sort_prefix as run_file_sort_prefix_business,
+    run_remove_file_sort_prefix as run_remove_file_sort_prefix_business,
 };
-use pytools_core::local_filename_map::run_local_filename_map_48_candidate;
+use pytools_core::local_filename_map::run_local_filename_map_candidate;
 use pytools_core::print_ops::{
     build_comment_print_plan, build_config_print_plans, precheck_print_tasks,
 };
@@ -121,8 +122,8 @@ fn run() -> Result<()> {
         "region-sum-check" => run_region_sum(arguments),
         "file-sort-prefix" => run_file_sort_prefix(arguments),
         "remove-file-sort-prefix" => run_remove_file_sort_prefix(arguments),
-        "rename-by-content" => run_content_prefix_rename_46(arguments),
-        "unrename-by-content" => run_content_prefix_unrename_47(arguments),
+        "rename-by-content" => run_content_prefix_rename_cli(arguments),
+        "unrename-by-content" => run_content_prefix_unrename_cli(arguments),
         "rename-local-map" => run_local_filename_map(arguments),
         "rename-batch" => run_batch_rename(arguments),
         _ => {
@@ -200,6 +201,7 @@ where
         writeln!(output, "  1  时序工具（已接入 1、3、4、5）")?;
         writeln!(output, "  2  去重工具（检查与生成计划）")?;
         writeln!(output, "  3  打印工具（生成页面设置计划）")?;
+        writeln!(output, "  4  转换与文件命名工具")?;
         writeln!(output, "  6  汇总工具")?;
         writeln!(output, "  0  退出")?;
         writeln!(output, "==============================")?;
@@ -215,6 +217,13 @@ where
             "3" => {
                 run_interactive_print_menu(input, output, config_path, global, allow_native_dialog)?
             }
+            "4" => run_interactive_convert_menu(
+                input,
+                output,
+                config_path,
+                global,
+                allow_native_dialog,
+            )?,
             "6" => {
                 run_interactive_summary_menu(input, output, global, log_view, allow_native_dialog)?
             }
@@ -222,7 +231,7 @@ where
                 writeln!(output, "再见。")?;
                 return Ok(());
             }
-            _ => writeln!(output, "仅接受 1、2、3、6 或 0")?,
+            _ => writeln!(output, "仅接受 1、2、3、4、6 或 0")?,
         }
     }
 }
@@ -445,6 +454,18 @@ fn unique_menu_output_dir(output_root: &Path, action: &str) -> PathBuf {
     candidate
 }
 
+fn unique_menu_action_dir(output_root: &Path, action: &str) -> PathBuf {
+    let timestamp = Local::now().format("%Y%m%d_%H%M%S_%f");
+    let stem = format!("pytools-{action}-{timestamp}");
+    let mut candidate = output_root.join(&stem);
+    let mut suffix = 2;
+    while candidate.exists() {
+        candidate = output_root.join(format!("{stem}-{suffix}"));
+        suffix += 1;
+    }
+    candidate
+}
+
 fn run_interactive_print_menu<R, W>(
     input: &mut R,
     output: &mut W,
@@ -526,6 +547,188 @@ where
             "0" => return Ok(()),
             _ => writeln!(output, "仅接受 1、2、3、4 或 0")?,
         }
+    }
+}
+
+fn run_interactive_convert_menu<R, W>(
+    input: &mut R,
+    output: &mut W,
+    config_path: &Path,
+    global: &GlobalConfig,
+    allow_native_dialog: bool,
+) -> Result<()>
+where
+    R: BufRead,
+    W: Write,
+{
+    loop {
+        writeln!(output, "------ 转换工具 ------")?;
+        writeln!(output, "  1  批量重命名文件")?;
+        writeln!(output, "  2  批量 Excel 格式转换（按配置，调用已选引擎）")?;
+        writeln!(output, "  3  批量 Word 格式转换（按配置，调用已选引擎）")?;
+        writeln!(output, "  4  批量修改 Sheet 名（生成计划）")?;
+        writeln!(output, "  5  根据文件内容添加前缀")?;
+        writeln!(output, "  6  根据文件内容取消前缀")?;
+        writeln!(output, "  7  按局部映射重命名文件")?;
+        writeln!(output, "  8  提交缺失检查")?;
+        writeln!(output, "  9  添加文件排序前缀")?;
+        writeln!(output, " 10  取消文件排序前缀")?;
+        writeln!(output, "  0  返回")?;
+        writeln!(output, "----------------------")?;
+        let Some(choice) = read_menu_choice(input, output, "子菜单选择> ")? else {
+            return Ok(());
+        };
+        let operation = match choice.as_str() {
+            "1" => Some(("批量重命名文件", NativeFileFilter::AllFiles)),
+            "2" => Some(("批量转换 Excel 文件", NativeFileFilter::ExcelConversion)),
+            "3" => Some(("批量转换 Word 文件", NativeFileFilter::WordDocuments)),
+            "4" => Some(("批量修改 Sheet 名", NativeFileFilter::XlsxOnly)),
+            "5" | "6" => Some(("按工作簿内容重命名文件", NativeFileFilter::XlsxOrXlsm)),
+            "7" => Some(("按局部映射重命名文件", NativeFileFilter::AllFiles)),
+            "8" => Some(("检查提交文件", NativeFileFilter::AllFiles)),
+            "9" => Some(("添加文件排序前缀", NativeFileFilter::AllFiles)),
+            "10" => Some(("取消文件排序前缀", NativeFileFilter::AllFiles)),
+            "0" => return Ok(()),
+            _ => {
+                writeln!(output, "仅接受 1 至 10 或 0")?;
+                continue;
+            }
+        };
+        let (title, filter) = operation.expect("validated conversion menu choice");
+        let Some(paths) =
+            choose_source_files_or_folders(title, filter, input, output, allow_native_dialog)?
+        else {
+            writeln!(output, "[已取消]")?;
+            return Ok(());
+        };
+        if paths.is_empty() {
+            writeln!(output, "[提示] 所选范围内没有符合格式的文件。")?;
+            return Ok(());
+        }
+
+        let mut arguments = config_cli_arguments(config_path);
+        match choice.as_str() {
+            "1" => {
+                arguments.push("--log-dir".to_owned());
+                arguments.push(global.log_dir.to_string_lossy().into_owned());
+                arguments.extend(
+                    paths
+                        .into_iter()
+                        .map(|path| path.to_string_lossy().into_owned()),
+                );
+                run_batch_rename(arguments)?;
+            }
+            "2" => {
+                arguments.extend(
+                    paths
+                        .into_iter()
+                        .map(|path| path.to_string_lossy().into_owned()),
+                );
+                run_convert_batch_cli(arguments, true)?;
+            }
+            "3" => {
+                arguments.extend(
+                    paths
+                        .into_iter()
+                        .map(|path| path.to_string_lossy().into_owned()),
+                );
+                run_convert_batch_cli(arguments, false)?;
+            }
+            "4" => {
+                let plan_dir = unique_menu_action_dir(&global.output_dir, "sheet-rename");
+                fs::create_dir_all(&plan_dir)?;
+                let mut planned = 0usize;
+                let mut skipped = 0usize;
+                for (index, path) in paths.into_iter().enumerate() {
+                    if !path
+                        .extension()
+                        .and_then(|extension| extension.to_str())
+                        .is_some_and(|extension| extension.eq_ignore_ascii_case("xlsx"))
+                    {
+                        writeln!(
+                            output,
+                            "[跳过] {}：Sheet 改名候选当前只支持 .xlsx",
+                            path.display()
+                        )?;
+                        skipped += 1;
+                        continue;
+                    }
+                    let candidate =
+                        unique_workbook_candidate(&path, &global.output_dir, "sheet-rename");
+                    let plan_path = plan_dir.join(format!(
+                        "{index:04}-{}.plan.json",
+                        path.file_stem().unwrap_or_default().to_string_lossy()
+                    ));
+                    let mut arguments = config_cli_arguments(config_path);
+                    arguments.extend([
+                        "--input".to_owned(),
+                        path.to_string_lossy().into_owned(),
+                        "--output".to_owned(),
+                        candidate.to_string_lossy().into_owned(),
+                        "--plan-output".to_owned(),
+                        plan_path.to_string_lossy().into_owned(),
+                    ]);
+                    run_rename_sheets_plan(arguments)?;
+                    planned += 1;
+                }
+                writeln!(
+                    output,
+                    "[完成] Sheet 改名计划={planned}，跳过={skipped}；未执行工作簿修改。"
+                )?;
+            }
+            "5" => {
+                arguments.extend(
+                    paths
+                        .into_iter()
+                        .map(|path| path.to_string_lossy().into_owned()),
+                );
+                run_content_prefix_rename_cli(arguments)?;
+            }
+            "6" => {
+                arguments.extend(
+                    paths
+                        .into_iter()
+                        .map(|path| path.to_string_lossy().into_owned()),
+                );
+                run_content_prefix_unrename_cli(arguments)?;
+            }
+            "7" => {
+                arguments.extend(
+                    paths
+                        .into_iter()
+                        .map(|path| path.to_string_lossy().into_owned()),
+                );
+                run_local_filename_map(arguments)?;
+            }
+            "8" => {
+                arguments.push("--output-dir".to_owned());
+                arguments.push(global.output_dir.to_string_lossy().into_owned());
+                arguments.extend(
+                    paths
+                        .into_iter()
+                        .map(|path| path.to_string_lossy().into_owned()),
+                );
+                run_submission_check_cli(arguments)?;
+            }
+            "9" | "10" => {
+                arguments.push("--output-dir".to_owned());
+                arguments.push(global.output_dir.to_string_lossy().into_owned());
+                arguments.push("--log-dir".to_owned());
+                arguments.push(global.log_dir.to_string_lossy().into_owned());
+                arguments.extend(
+                    paths
+                        .into_iter()
+                        .map(|path| path.to_string_lossy().into_owned()),
+                );
+                if choice == "9" {
+                    run_file_sort_prefix(arguments)?;
+                } else {
+                    run_remove_file_sort_prefix(arguments)?;
+                }
+            }
+            _ => unreachable!("conversion menu operation was validated"),
+        }
+        return Ok(());
     }
 }
 
@@ -647,9 +850,83 @@ where
     R: BufRead,
     W: Write,
 {
+    choose_input_paths(
+        title,
+        allow_multiple,
+        NativeFileFilter::ExcelWorkbooks,
+        input,
+        output,
+        allow_native_dialog,
+    )
+}
+
+#[derive(Clone, Copy)]
+enum NativeFileFilter {
+    ExcelWorkbooks,
+    ExcelConversion,
+    XlsxOrXlsm,
+    XlsxOnly,
+    WordDocuments,
+    AllFiles,
+}
+
+impl NativeFileFilter {
+    fn dialog_filter(self) -> &'static str {
+        match self {
+            Self::ExcelWorkbooks => {
+                "Excel files (*.xlsx;*.xlsm;*.xls)\0*.xlsx;*.xlsm;*.xls\0All files (*.*)\0*.*\0\0"
+            }
+            Self::ExcelConversion => {
+                "Excel files (*.csv;*.et;*.xls;*.xlsx;*.xlsm;*.xlsb)\0*.csv;*.et;*.xls;*.xlsx;*.xlsm;*.xlsb\0All files (*.*)\0*.*\0\0"
+            }
+            Self::XlsxOrXlsm => {
+                "Excel files (*.xlsx;*.xlsm)\0*.xlsx;*.xlsm\0All files (*.*)\0*.*\0\0"
+            }
+            Self::XlsxOnly => "Excel files (*.xlsx)\0*.xlsx\0All files (*.*)\0*.*\0\0",
+            Self::WordDocuments => {
+                "Word files (*.doc;*.docx)\0*.doc;*.docx\0All files (*.*)\0*.*\0\0"
+            }
+            Self::AllFiles => "All files (*.*)\0*.*\0\0",
+        }
+    }
+
+    fn accepts_folder_file(self, path: &Path) -> bool {
+        let extension = path
+            .extension()
+            .and_then(|value| value.to_str())
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        match self {
+            Self::ExcelWorkbooks => matches!(extension.as_str(), "xlsx" | "xlsm" | "xls"),
+            Self::ExcelConversion => {
+                matches!(
+                    extension.as_str(),
+                    "csv" | "et" | "xls" | "xlsx" | "xlsm" | "xlsb"
+                )
+            }
+            Self::XlsxOrXlsm => matches!(extension.as_str(), "xlsx" | "xlsm"),
+            Self::XlsxOnly => extension == "xlsx",
+            Self::WordDocuments => matches!(extension.as_str(), "doc" | "docx"),
+            Self::AllFiles => true,
+        }
+    }
+}
+
+fn choose_input_paths<R, W>(
+    title: &str,
+    allow_multiple: bool,
+    filter: NativeFileFilter,
+    input: &mut R,
+    output: &mut W,
+    allow_native_dialog: bool,
+) -> Result<Option<Vec<PathBuf>>>
+where
+    R: BufRead,
+    W: Write,
+{
     writeln!(output, "→ 正在打开文件选择窗口：{title}")?;
     if allow_native_dialog {
-        if let Some(paths) = native_file_dialog(title, allow_multiple) {
+        if let Some(paths) = native_file_dialog(title, allow_multiple, filter) {
             if !paths.is_empty() {
                 print_selected_paths(output, &paths)?;
                 return Ok(Some(paths));
@@ -666,6 +943,133 @@ where
     };
     print_selected_paths(output, &paths)?;
     Ok(Some(paths))
+}
+
+fn choose_source_files_or_folders<R, W>(
+    title: &str,
+    filter: NativeFileFilter,
+    input: &mut R,
+    output: &mut W,
+    allow_native_dialog: bool,
+) -> Result<Option<Vec<PathBuf>>>
+where
+    R: BufRead,
+    W: Write,
+{
+    writeln!(output, "→ {title}")?;
+    writeln!(output, "  1  选择文件（可多选）")?;
+    writeln!(output, "  2  选择文件夹（仅当前层）")?;
+    writeln!(output, "  3  选择文件夹（递归子目录）")?;
+    writeln!(output, "  0  取消")?;
+    let Some(mode) = read_menu_choice(input, output, "选择方式> ")? else {
+        return Ok(None);
+    };
+    if mode == "0" {
+        return Ok(None);
+    }
+    if mode == "1" {
+        return choose_input_paths(title, true, filter, input, output, allow_native_dialog);
+    }
+    anyhow::ensure!(matches!(mode.as_str(), "2" | "3"), "仅接受 1、2、3 或 0");
+
+    let native_folder = allow_native_dialog
+        .then(|| native_folder_dialog(title))
+        .flatten();
+    let mut folders = native_folder.into_iter().collect::<Vec<_>>();
+    if folders.is_empty() {
+        writeln!(
+            output,
+            "→ 可手动输入文件夹路径（多个路径用分号分隔），或输入 0 取消："
+        )?;
+        let Some(raw) = read_menu_choice(input, output, "文件夹路径> ")? else {
+            return Ok(None);
+        };
+        let Some(paths) = parse_manual_path_list(&raw) else {
+            return Ok(None);
+        };
+        folders.extend(paths);
+    } else {
+        print_selected_paths(output, &folders)?;
+        writeln!(output, "→ 可补充其它文件夹路径（分号分隔，留空继续）：")?;
+        if let Some(raw) = read_menu_choice(input, output, "补充路径> ")? {
+            if let Some(paths) = parse_manual_path_list(&raw) {
+                folders.extend(paths);
+            }
+        }
+    }
+    let paths = collect_menu_source_files(&folders, mode == "3", filter)?;
+    writeln!(
+        output,
+        "→ 已选 {} 个文件夹，{}共识别文件 {} 个",
+        folders.len(),
+        if mode == "3" { "递归" } else { "当前层" },
+        paths.len()
+    )?;
+    print_selected_paths(output, &paths)?;
+    Ok(Some(paths))
+}
+
+fn collect_menu_source_files(
+    folders: &[PathBuf],
+    recursive: bool,
+    filter: NativeFileFilter,
+) -> Result<Vec<PathBuf>> {
+    let mut files = Vec::new();
+    for folder in folders {
+        anyhow::ensure!(
+            folder.is_dir(),
+            "selected folder does not exist or is not a directory: {}",
+            folder.display()
+        );
+        collect_menu_source_files_from_folder(folder, folder, recursive, filter, &mut files)?;
+    }
+    let mut seen = std::collections::BTreeSet::new();
+    files.retain(|path| {
+        let identity = fs::canonicalize(path)
+            .unwrap_or_else(|_| path.to_path_buf())
+            .to_string_lossy()
+            .to_lowercase();
+        seen.insert(identity)
+    });
+    Ok(files)
+}
+
+fn collect_menu_source_files_from_folder(
+    root: &Path,
+    folder: &Path,
+    recursive: bool,
+    filter: NativeFileFilter,
+    files: &mut Vec<PathBuf>,
+) -> Result<()> {
+    let mut entries = fs::read_dir(folder)
+        .with_context(|| format!("list selected folder {}", folder.display()))?
+        .map(|entry| entry.map(|entry| entry.path()))
+        .collect::<std::io::Result<Vec<_>>>()?;
+    entries.sort_by_key(|path| {
+        path.strip_prefix(root)
+            .unwrap_or(path)
+            .to_string_lossy()
+            .to_lowercase()
+    });
+    for path in entries {
+        let metadata = fs::symlink_metadata(&path)
+            .with_context(|| format!("inspect selected path {}", path.display()))?;
+        if metadata.file_type().is_symlink() {
+            continue;
+        }
+        if metadata.is_file() {
+            if !path
+                .file_name()
+                .is_some_and(|name| name.to_string_lossy().starts_with("~$"))
+                && filter.accepts_folder_file(&path)
+            {
+                files.push(path);
+            }
+        } else if recursive && metadata.is_dir() {
+            collect_menu_source_files_from_folder(root, &path, true, filter, files)?;
+        }
+    }
+    Ok(())
 }
 
 fn parse_manual_path_list(raw: &str) -> Option<Vec<PathBuf>> {
@@ -694,17 +1098,21 @@ fn print_selected_paths<W: Write>(output: &mut W, paths: &[PathBuf]) -> Result<(
 }
 
 #[cfg(windows)]
-fn native_file_dialog(title: &str, allow_multiple: bool) -> Option<Vec<PathBuf>> {
+fn native_file_dialog(
+    title: &str,
+    allow_multiple: bool,
+    file_filter: NativeFileFilter,
+) -> Option<Vec<PathBuf>> {
     use std::os::windows::ffi::OsStringExt;
     use windows_sys::Win32::UI::Controls::Dialogs::{
         GetOpenFileNameW, OFN_ALLOWMULTISELECT, OFN_EXPLORER, OFN_FILEMUSTEXIST, OFN_HIDEREADONLY,
         OFN_NOCHANGEDIR, OFN_PATHMUSTEXIST, OPENFILENAMEW,
     };
 
-    let mut filter =
-        "Excel files (*.xlsx;*.xlsm;*.xls)\0*.xlsx;*.xlsm;*.xls\0All files (*.*)\0*.*\0\0"
-            .encode_utf16()
-            .collect::<Vec<_>>();
+    let mut filter = file_filter
+        .dialog_filter()
+        .encode_utf16()
+        .collect::<Vec<_>>();
     let mut title = title
         .encode_utf16()
         .chain(std::iter::once(0))
@@ -752,7 +1160,64 @@ fn native_file_dialog(title: &str, allow_multiple: bool) -> Option<Vec<PathBuf>>
 }
 
 #[cfg(not(windows))]
-fn native_file_dialog(_title: &str, _allow_multiple: bool) -> Option<Vec<PathBuf>> {
+fn native_file_dialog(
+    _title: &str,
+    _allow_multiple: bool,
+    _file_filter: NativeFileFilter,
+) -> Option<Vec<PathBuf>> {
+    None
+}
+
+#[cfg(windows)]
+fn native_folder_dialog(title: &str) -> Option<PathBuf> {
+    use std::os::windows::ffi::OsStringExt;
+    use windows_sys::Win32::System::Com::CoTaskMemFree;
+    use windows_sys::Win32::System::Ole::{OleInitialize, OleUninitialize};
+    use windows_sys::Win32::UI::Shell::{
+        SHBrowseForFolderW, SHGetPathFromIDListW, BIF_EDITBOX, BIF_NEWDIALOGSTYLE,
+        BIF_RETURNONLYFSDIRS, BROWSEINFOW,
+    };
+
+    let mut display_name = vec![0u16; 260];
+    let title = title
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect::<Vec<_>>();
+    let mut dialog = BROWSEINFOW::default();
+    dialog.pszDisplayName = display_name.as_mut_ptr();
+    dialog.lpszTitle = title.as_ptr();
+    dialog.ulFlags = BIF_RETURNONLYFSDIRS | BIF_NEWDIALOGSTYLE | BIF_EDITBOX;
+
+    // SHBrowseForFolderW's new-style dialog requires COM on an STA thread.
+    // S_FALSE also means initialization succeeded and must be balanced.
+    if unsafe { OleInitialize(std::ptr::null()) } < 0 {
+        return None;
+    }
+    let item = unsafe { SHBrowseForFolderW(&dialog) };
+    let selected = if item.is_null() {
+        None
+    } else {
+        let mut path = vec![0u16; 32_768];
+        let resolved = unsafe { SHGetPathFromIDListW(item, path.as_mut_ptr()) } != 0;
+        unsafe { CoTaskMemFree(item.cast()) };
+        if !resolved {
+            None
+        } else {
+            let length = path
+                .iter()
+                .position(|unit| *unit == 0)
+                .unwrap_or(path.len());
+            Some(PathBuf::from(std::ffi::OsString::from_wide(
+                &path[..length],
+            )))
+        }
+    };
+    unsafe { OleUninitialize() };
+    selected
+}
+
+#[cfg(not(windows))]
+fn native_folder_dialog(_title: &str) -> Option<PathBuf> {
     None
 }
 
@@ -2504,7 +2969,7 @@ fn run_local_filename_map(arguments: Vec<String>) -> Result<()> {
         bail!("provide at least one file path");
     }
 
-    let result = run_local_filename_map_48_candidate(&config_path, &files)?;
+    let result = run_local_filename_map_candidate(&config_path, &files)?;
     println!("{}", serde_json::to_string_pretty(&result)?);
     Ok(())
 }
@@ -2538,7 +3003,7 @@ fn run_batch_rename(arguments: Vec<String>) -> Result<()> {
     let config_path = config_path.context("--config is required")?;
     let log_dir = log_dir.unwrap_or_else(|| PathBuf::from("logs"));
     let (log_path, mut log_file) = open_batch_rename_log(&log_dir)?;
-    let result = run_batch_rename_33(&config_path, &paths)?;
+    let result = run_batch_rename_business(&config_path, &paths)?;
     let log_warning = write_batch_rename_log(&mut log_file, &result.rows).err();
     let mut output = serde_json::to_value(result)?;
     if let Some(object) = output.as_object_mut() {
@@ -2614,20 +3079,20 @@ fn write_batch_rename_log(
     Ok(())
 }
 
-fn run_content_prefix_rename_46(arguments: Vec<String>) -> Result<()> {
+fn run_content_prefix_rename_cli(arguments: Vec<String>) -> Result<()> {
     let Some((config_path, files)) = parse_config_and_files(arguments)? else {
         return Ok(());
     };
-    let result = run_content_prefix_rename_46_xlsx_candidate(&config_path, &files)?;
+    let result = run_content_prefix_rename_xlsx_candidate(&config_path, &files)?;
     println!("{}", serde_json::to_string_pretty(&result)?);
     Ok(())
 }
 
-fn run_content_prefix_unrename_47(arguments: Vec<String>) -> Result<()> {
+fn run_content_prefix_unrename_cli(arguments: Vec<String>) -> Result<()> {
     let Some((config_path, files)) = parse_config_and_files(arguments)? else {
         return Ok(());
     };
-    let result = run_content_prefix_unrename_47_xlsx_candidate(&config_path, &files)?;
+    let result = run_content_prefix_unrename_xlsx_candidate(&config_path, &files)?;
     println!("{}", serde_json::to_string_pretty(&result)?);
     Ok(())
 }
@@ -2699,7 +3164,7 @@ fn run_file_sort_prefix(arguments: Vec<String>) -> Result<()> {
     let log_dir = log_dir.unwrap_or_else(|| PathBuf::from("logs"));
     let (log_path, mut log_file) = open_file_sort_log(&log_dir)?;
 
-    let result = run_file_sort_prefix_49(&config_path, &files, &output_dir)?;
+    let result = run_file_sort_prefix_business(&config_path, &files, &output_dir)?;
     let log_warning = write_file_sort_log(&mut log_file, &result.rows).err();
     let mut output = serde_json::to_value(result)?;
     output["log_path"] = serde_json::json!(log_path);
@@ -2796,7 +3261,7 @@ fn run_remove_file_sort_prefix(arguments: Vec<String>) -> Result<()> {
     let log_dir = log_dir.unwrap_or_else(|| PathBuf::from("logs"));
     let (log_path, mut log_file) = open_file_sort_removal_log(&log_dir)?;
 
-    let result = run_remove_file_sort_prefix_410(&config_path, &files, &output_dir)?;
+    let result = run_remove_file_sort_prefix_business(&config_path, &files, &output_dir)?;
     let log_warning = write_file_sort_removal_log(&mut log_file, &result.rows).err();
     let mut output = serde_json::to_value(result)?;
     output["log_path"] = serde_json::json!(log_path);
@@ -2993,7 +3458,7 @@ fn print_usage() {
     eprintln!(
         "Usage:\n\
          pytools [menu] [--config <config.xlsx>] [--log-view user|developer|off]\n\
-         no command opens the migrated menu; available categories: 1 (timeline 1/3/4/5), 2 (dedup 1-6), 3 (print 1-4), and 6 (summary 1/2)\n\
+         no command opens the migrated menu; available categories: 1 (timeline 1/3/4/5), 2 (dedup 1-6), 3 (print 1-4), 4 (conversion and file naming 1-10), and 6 (summary 1/2)\n\
          timeline-precheck --config <workbook.xlsx>\n\
          timeline-compare --config <workbook.xlsx> --template <workbook.xlsx> <source.xlsx>...\n\
          wide-summary --config <workbook.xlsx> <source.xlsx>...\n\

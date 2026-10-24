@@ -1,4 +1,4 @@
-use pytools_core::file_sort_prefix::run_remove_file_sort_prefix_410;
+use pytools_core::file_sort_prefix::run_remove_file_sort_prefix;
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -169,7 +169,7 @@ fn operation_410_matches_python_prefix_removal_and_report_baseline() {
         .filter_map(|path| fs::read(path).ok().map(|bytes| (path.clone(), bytes)))
         .collect::<BTreeMap<_, _>>();
 
-    let result = run_remove_file_sort_prefix_410(&config, &files, &output_dir).unwrap();
+    let result = run_remove_file_sort_prefix(&config, &files, &output_dir).unwrap();
     assert_eq!(
         result.rules,
         expected["stats"]["rules"].as_u64().unwrap() as usize
@@ -437,7 +437,7 @@ fn operation_410_empty_input_matches_python_blank_report_sheet() {
     let output_dir = root.join("output");
     write_config(&config, &cases, true);
 
-    let result = run_remove_file_sort_prefix_410(&config, &[], &output_dir).unwrap();
+    let result = run_remove_file_sort_prefix(&config, &[], &output_dir).unwrap();
     assert_eq!(result.rules, expected["empty_input"]["stats"]["rules"]);
     assert_eq!(result.files, 0);
     assert_eq!(result.renamed, 0);
@@ -461,7 +461,7 @@ fn operation_410_requires_at_least_one_valid_sort_rule() {
     let root = temporary_directory("sort-prefix-remove-no-rules");
     let config = root.join("config.xlsx");
     write_config(&config, &cases, false);
-    let error = run_remove_file_sort_prefix_410(&config, &[], root.join("output")).unwrap_err();
+    let error = run_remove_file_sort_prefix(&config, &[], root.join("output")).unwrap_err();
     assert!(format!("{error:#}").contains("文件排序配置 没有启用且有效的排序规则。"));
     fs::remove_dir_all(root).unwrap();
 }

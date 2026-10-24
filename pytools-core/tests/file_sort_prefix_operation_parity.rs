@@ -1,4 +1,4 @@
-use pytools_core::file_sort_prefix::run_file_sort_prefix_49;
+use pytools_core::file_sort_prefix::run_file_sort_prefix;
 use serde_json::{json, Value};
 use std::collections::HashSet;
 use std::fs;
@@ -107,7 +107,7 @@ fn operation_49_matches_python_rename_and_report_baseline() {
 
     let config =
         Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/file_sort_prefix_config.xlsx");
-    let result = run_file_sort_prefix_49(&config, &files, &output_dir).unwrap();
+    let result = run_file_sort_prefix(&config, &files, &output_dir).unwrap();
     let expected_stats = &baseline["stats"];
     assert_eq!(
         result.rules,
@@ -357,8 +357,8 @@ fn output_directory_failure_leaves_source_files_untouched() {
     let config =
         Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/file_sort_prefix_config.xlsx");
 
-    let error = run_file_sort_prefix_49(&config, std::slice::from_ref(&source), &output_blocker)
-        .unwrap_err();
+    let error =
+        run_file_sort_prefix(&config, std::slice::from_ref(&source), &output_blocker).unwrap_err();
     assert!(error.to_string().contains("create output directory"));
     assert_eq!(fs::read(&source).unwrap(), b"must remain");
     fs::remove_dir_all(root).unwrap();

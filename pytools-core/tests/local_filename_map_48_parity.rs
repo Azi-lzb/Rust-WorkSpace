@@ -1,4 +1,4 @@
-use pytools_core::local_filename_map::run_local_filename_map_48_candidate;
+use pytools_core::local_filename_map::run_local_filename_map_candidate;
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -117,7 +117,7 @@ fn operation_48_matches_python_order_collision_and_skip_behavior() {
         .filter_map(|path| fs::read(path).ok().map(|bytes| (path.clone(), bytes)))
         .collect::<BTreeMap<_, _>>();
 
-    let result = run_local_filename_map_48_candidate(&config, &files).unwrap();
+    let result = run_local_filename_map_candidate(&config, &files).unwrap();
     let final_entries = fs::read_dir(&input_dir)
         .unwrap()
         .filter_map(Result::ok)
@@ -263,7 +263,7 @@ fn operation_48_rejects_an_empty_mapping() {
     sheet.write_string(0, 12, "原文件名片段").unwrap();
     sheet.write_string(0, 13, "新文件名片段").unwrap();
     workbook.save(&config).unwrap();
-    let error = run_local_filename_map_48_candidate(&config, &[]).unwrap_err();
+    let error = run_local_filename_map_candidate(&config, &[]).unwrap_err();
     assert!(error.to_string().contains("缺少 M/N 列"));
     fs::remove_dir_all(root).unwrap();
 }

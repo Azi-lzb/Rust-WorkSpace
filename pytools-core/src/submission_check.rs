@@ -3,7 +3,7 @@
 use anyhow::{Context, Result};
 use chrono::Local;
 use excel_reader::{read_workbook, SheetDump};
-use excel_writer::Workbook;
+use excel_writer::{Format, Workbook};
 use serde::Serialize;
 use std::{
     collections::HashMap,
@@ -46,7 +46,7 @@ pub fn run_submission_check(
         hits.insert(file.clone(), Vec::new());
     }
     let mut rows = Vec::new();
-    for rule in &rules {
+    for (rule_index, rule) in rules.iter().enumerate() {
         let matched = files
             .iter()
             .filter(|path| {
@@ -60,7 +60,7 @@ pub fn run_submission_check(
             })
             .collect::<Vec<_>>();
         for file in &matched {
-            hits.get_mut(*file).expect("known file").push(rule.row);
+            hits.get_mut(*file).expect("known file").push(rule_index);
         }
         rows.push(vec![
             rule.enabled.clone(),
@@ -117,7 +117,13 @@ pub fn run_submission_check(
                 path.display().to_string(),
                 matched
                     .iter()
-                    .map(|row| format!("第{row}行"))
+                    .map(|rule_index| {
+                        let rule = &rules[*rule_index];
+                        format!(
+                            "第{}行({}|{}|{}|{})",
+                            rule.row, rule.date, rule.area, rule.institution, rule.extra
+                        )
+                    })
                     .collect::<Vec<_>>()
                     .join("；"),
             ])
@@ -141,6 +147,7 @@ pub fn run_submission_check(
             "配置行",
         ],
         &rows,
+        &[5, 8],
     )?;
     write_table(
         &mut workbook,
@@ -157,18 +164,21 @@ pub fn run_submission_check(
             "配置行",
         ],
         &missing_rules,
+        &[5, 8],
     )?;
     write_table(
         &mut workbook,
         "未识别文件",
         &["文件名", "源文件路径", "备注"],
         &unmatched,
+        &[],
     )?;
     write_table(
         &mut workbook,
         "多重命中文件",
         &["文件名", "源文件路径", "命中配置"],
         &multi,
+        &[],
     )?;
     workbook
         .save(&output)
@@ -289,15 +299,24 @@ fn write_table(
     name: &str,
     headers: &[&str],
     rows: &[Vec<String>],
+    numeric_columns: &[usize],
 ) -> Result<()> {
     let sheet = workbook.add_worksheet();
     sheet.set_name(name)?;
+    let header_format = Format::new().set_bold();
     for (col, header) in headers.iter().enumerate() {
-        sheet.write_string(0, col as u16, *header)?;
+        sheet.write_string_with_format(0, col as u16, *header, &header_format)?;
     }
     for (row, values) in rows.iter().enumerate() {
         for (col, value) in values.iter().enumerate() {
-            sheet.write_string((row + 1) as u32, col as u16, value)?;
+            if numeric_columns.contains(&col) {
+                let number = value.parse::<f64>().with_context(|| {
+                    format!("submission report column {} must be numeric", col + 1)
+                })?;
+                sheet.write_number((row + 1) as u32, col as u16, number)?;
+            } else {
+                sheet.write_string((row + 1) as u32, col as u16, value)?;
+            }
         }
     }
     Ok(())

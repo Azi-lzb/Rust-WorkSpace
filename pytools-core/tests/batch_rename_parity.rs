@@ -1,4 +1,4 @@
-use pytools_core::batch_rename::run_batch_rename_33;
+use pytools_core::batch_rename::run_batch_rename;
 use serde_json::Value;
 use std::{
     fs,
@@ -98,7 +98,7 @@ fn top_level_names(root: &std::path::Path, config: &std::path::Path) -> Vec<Stri
 fn rust_operation_matches_python_baseline_and_keeps_contents_and_collisions() {
     let (root, config_path, paths, expected_entries) = setup("api");
     let original_config = fs::read(&config_path).unwrap();
-    let result = run_batch_rename_33(&config_path, &paths).unwrap();
+    let result = run_batch_rename(&config_path, &paths).unwrap();
     let baseline: Value = serde_json::from_str(include_str!(
         "../probe/reports/batch_rename_python_baseline.json"
     ))
@@ -194,7 +194,7 @@ fn missing_rename_sheet_is_rejected_before_touching_inputs() {
     let input = root.0.join("建行.xlsx");
     fs::write(&input, b"unchanged").unwrap();
 
-    let error = run_batch_rename_33(&config_path, &[input.clone()]).unwrap_err();
+    let error = run_batch_rename(&config_path, &[input.clone()]).unwrap_err();
     assert!(error.to_string().contains("重命名配置"));
     assert_eq!(fs::read(input).unwrap(), b"unchanged");
 }

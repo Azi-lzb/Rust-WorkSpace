@@ -142,12 +142,12 @@ struct ContentRenameConfig {
 /// moves reserve their destination with a hard link before removing the source, so a
 /// concurrently-created target is never overwritten. If report generation fails,
 /// completed moves are rolled back from their recorded source/target pairs.
-pub fn run_file_sort_prefix_49(
+pub fn run_file_sort_prefix(
     config_path: impl AsRef<Path>,
     files: &[PathBuf],
     output_dir: impl AsRef<Path>,
 ) -> Result<FileSortPrefixRunReport> {
-    run_file_sort_prefix_49_with_report_writer(
+    run_file_sort_prefix_with_report_writer(
         config_path.as_ref(),
         files,
         output_dir.as_ref(),
@@ -163,12 +163,12 @@ pub fn run_file_sort_prefix_49(
 /// as a non-match, matching the source operation's behavior. File moves never
 /// replace an existing target; completed moves are rolled back if report creation
 /// fails.
-pub fn run_remove_file_sort_prefix_410(
+pub fn run_remove_file_sort_prefix(
     config_path: impl AsRef<Path>,
     files: &[PathBuf],
     output_dir: impl AsRef<Path>,
 ) -> Result<FileSortPrefixRemovalRunReport> {
-    run_remove_file_sort_prefix_410_with_report_writer(
+    run_remove_file_sort_prefix_with_report_writer(
         config_path.as_ref(),
         files,
         output_dir.as_ref(),
@@ -181,7 +181,7 @@ pub fn run_remove_file_sort_prefix_410(
 /// This candidate intentionally omits the source COM paths for XLS/XLT and limits
 /// content-cell reads to formats with synthetic parity evidence. It reads the
 /// configured values, prefixes the filename, and never saves or rewrites a workbook.
-pub fn run_content_prefix_rename_46_xlsx_candidate(
+pub fn run_content_prefix_rename_xlsx_candidate(
     config_path: impl AsRef<Path>,
     files: &[PathBuf],
 ) -> Result<ContentPrefixRenameRunReport> {
@@ -291,7 +291,7 @@ pub fn run_content_prefix_rename_46_xlsx_candidate(
 /// source COM paths for XLS/XLT and the remaining accepted extensions have
 /// format-specific parity evidence. It renames files only; workbook bytes are not
 /// modified. Existing targets are reserved without replacement.
-pub fn run_content_prefix_unrename_47_xlsx_candidate(
+pub fn run_content_prefix_unrename_xlsx_candidate(
     config_path: impl AsRef<Path>,
     files: &[PathBuf],
 ) -> Result<ContentPrefixUnrenameRunReport> {
@@ -403,7 +403,7 @@ pub fn run_content_prefix_unrename_47_xlsx_candidate(
     })
 }
 
-fn run_remove_file_sort_prefix_410_with_report_writer<F>(
+fn run_remove_file_sort_prefix_with_report_writer<F>(
     config_path: &Path,
     files: &[PathBuf],
     output_dir: &Path,
@@ -775,7 +775,7 @@ fn remove_content_prefix_keep_sort_prefix(
     remove_content_prefix(file_name, prefix_items)
 }
 
-fn run_file_sort_prefix_49_with_report_writer<F>(
+fn run_file_sort_prefix_with_report_writer<F>(
     config_path: &Path,
     files: &[PathBuf],
     output_dir: &Path,
@@ -1225,7 +1225,7 @@ mod tests {
         let config = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("tests/fixtures/file_sort_prefix_config.xlsx");
 
-        let error = run_file_sort_prefix_49_with_report_writer(
+        let error = run_file_sort_prefix_with_report_writer(
             &config,
             std::slice::from_ref(&source),
             &output,
@@ -1247,7 +1247,7 @@ mod tests {
         let config = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("tests/fixtures/file_sort_prefix_config.xlsx");
 
-        let error = run_remove_file_sort_prefix_410_with_report_writer(
+        let error = run_remove_file_sort_prefix_with_report_writer(
             &config,
             std::slice::from_ref(&source),
             &output,
@@ -1507,4 +1507,42 @@ fn decimal_digit_value(character: char) -> Option<u8> {
 
 fn is_python_whitespace(character: char) -> bool {
     character.is_whitespace() || matches!(character, '\u{001c}'..='\u{001f}')
+}
+
+/// Compatibility alias for the original Python 4-6 operation identifier.
+#[deprecated(note = "use `run_content_prefix_rename_xlsx_candidate`")]
+pub fn run_content_prefix_rename_46_xlsx_candidate(
+    config_path: impl AsRef<Path>,
+    files: &[PathBuf],
+) -> Result<ContentPrefixRenameRunReport> {
+    run_content_prefix_rename_xlsx_candidate(config_path, files)
+}
+
+/// Compatibility alias for the original Python 4-7 operation identifier.
+#[deprecated(note = "use `run_content_prefix_unrename_xlsx_candidate`")]
+pub fn run_content_prefix_unrename_47_xlsx_candidate(
+    config_path: impl AsRef<Path>,
+    files: &[PathBuf],
+) -> Result<ContentPrefixUnrenameRunReport> {
+    run_content_prefix_unrename_xlsx_candidate(config_path, files)
+}
+
+/// Compatibility alias for the original Python 4-9 operation identifier.
+#[deprecated(note = "use `run_file_sort_prefix`")]
+pub fn run_file_sort_prefix_49(
+    config_path: impl AsRef<Path>,
+    files: &[PathBuf],
+    output_dir: impl AsRef<Path>,
+) -> Result<FileSortPrefixRunReport> {
+    run_file_sort_prefix(config_path, files, output_dir)
+}
+
+/// Compatibility alias for the original Python 4-10 operation identifier.
+#[deprecated(note = "use `run_remove_file_sort_prefix`")]
+pub fn run_remove_file_sort_prefix_410(
+    config_path: impl AsRef<Path>,
+    files: &[PathBuf],
+    output_dir: impl AsRef<Path>,
+) -> Result<FileSortPrefixRemovalRunReport> {
+    run_remove_file_sort_prefix(config_path, files, output_dir)
 }

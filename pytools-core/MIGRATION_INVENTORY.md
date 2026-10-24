@@ -490,3 +490,19 @@ Windows 原生测试：`cargo test --offline --locked -p pytools-core --lib comm
 增量主菜单类别 3 已接入 3-1 按批注保留格式、3-2 按批注快速复制、3-3 按配置准备打印文件和 3-4 配置预校验。评论标记的两种计划分别映射保留批注/样式和快速模式；配置输出保持 plan-only，未生成候选文件，也不渲染或导出 PDF。Windows 原生 Rust 菜单集成测试 1/1 验证四个入口、两个打印区域、模式属性、目标未创建和配置预校验；底层 PyCode/Rust 合成对拍见 probe/reports/print_comment_plan_parity_20261023.json、print_comment_execution_parity_20261023.json、print_precheck_parity_20261023.json 和 print_config_execution_parity_20261023.json。
 
 真实业务模板、生产 capability、结构化用户/开发者/off 日志、麒麟/UOS、glibc 2.28 和 deb 仍未验证；页面设置工作流不包含打印渲染。
+
+### 2026-10-24 PT-4 转换与文件操作交互菜单及提交检查对拍补充
+
+PyTools 主菜单类别 4 已通过真实 `menu` 交互入口接入 4-1 至 4-10 十个文件操作：批量重命名、Excel/Word 转换、Sheet 改名计划、内容前缀添加/取消、局部文件名映射、提交检查、排序前缀添加/取消。Windows 实现了按业务格式筛选的文件对话框、当前层/递归目录选择及路径手工输入；4-4 仍只生成 `ExcelEditPlan`，不执行未获 capability 验收的工作簿修改。
+
+新增 `tests/conversion_menu_cli.rs` 直接启动 Rust `pytools menu`，合成验证十个分支均接通；同格式复制样本验证输出位置和源文件内容，`.xls/.doc` 样本在显式测试缺失 sidecar 时报告“该功能需要外部引擎”、不生成输出且不改源文件。该项不是实际格式转换或 sidecar 保真验收。
+
+`submission_check.rs` 对只读 PyCode `run_submission_check_48` 建立了合成基线及真实 Rust CLI 对拍，报告四张表的顺序、单元格值/类型、维度、表头加粗和统计均一致（3 条启用规则、3 个文件、提交 2、缺失规则 1、未识别文件 1、多重命中 1）。对拍发现并修正了多重命中描述缺少关键词，以及命中次数/配置行被写为文本的问题。报告与基线位于 `probe/reports/submission_check_python_baseline.json`，基线生成器位于 `probe/submission_check_baseline.py`；输入、配置和路径均为合成内容。
+
+本轮将 3-3/4-6 至 4-10 的 Rust API 改为语义名称，CLI 和 Rust 测试使用新名称；原数字名称保留为弃用兼容别名，未更改 CLI 命令、交互菜单序号或 Excel 配置字段。相关 Python/Rust 函数级对拍继续保留其历史操作号，便于定位基线。
+
+Windows 原生验证：`cargo fmt --manifest-path pytools-core/Cargo.toml -- --check`、`cargo check --offline --locked -p pytools-core --bin pytools` 通过；12 个关联集成测试目标 28/28 通过，`cargo test --offline --locked -p pytools-core --lib conversion::tests` 4/4 通过。未运行 PyTools 全量测试或 Linux/目标系统验证。
+
+最后补入 Windows 目录弹窗的 OLE STA 初始化后，原生 `cargo check` 和格式检查再次通过；真实菜单与提交检查 CLI 测试在 F 盘独立验证目标中 2/2 通过。默认 MSVC 调试链接曾因 PDB `LNK1318 LIMIT` 失败，独立无调试符号验证成功；之前 28/28 的完整关联回归发生在此次弹窗初始化之前。
+
+真实业务文件、用户实际原生文件/目录对话框操作、有效 sidecar 对 `.xls/.et/.doc` 的转换结果、隔离运行打包、麒麟/UOS、glibc 2.28 与 deb 均未验收。此更新证明菜单路由及合成对拍，不将转换/文件操作整组标为已验收。

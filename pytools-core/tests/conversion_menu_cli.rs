@@ -1,0 +1,429 @@
+use anyhow::{Context, Result};
+use serde::Deserialize;
+use serde_json::Value;
+use std::{
+    fs,
+    io::Write,
+    path::{Path, PathBuf},
+    process::{Command, Output, Stdio},
+    sync::atomic::{AtomicU64, Ordering},
+    time::{SystemTime, UNIX_EPOCH},
+};
+
+static NEXT_TEST_DIRECTORY_ID: AtomicU64 = AtomicU64::new(0);
+
+struct TestDirectory(PathBuf);
+
+impl TestDirectory {
+    fn new() -> Result<Self> {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .context("system clock before Unix epoch")?
+            .as_nanos();
+        let serial = NEXT_TEST_DIRECTORY_ID.fetch_add(1, Ordering::Relaxed);
+        let path = std::env::temp_dir().join(format!(
+            "pytools-conversion-menu-{}-{nonce}-{serial}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&path)?;
+        Ok(Self(path))
+    }
+
+    fn path(&self) -> &Path {
+        &self.0
+    }
+}
+
+impl Drop for TestDirectory {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
+#[test]
+fn interactive_conversion_menu_routes_all_ten_file_workflows() -> Result<()> {
+    let root = TestDirectory::new()?;
+    let config = create_config(root.path())?;
+    let sources = root.path().join("sources");
+    fs::create_dir_all(&sources)?;
+
+    let rename_folder = sources.join("rename-folder");
+    fs::create_dir_all(&rename_folder)?;
+    let rename_source = rename_folder.join("Bank-report.txt");
+    fs::write(&rename_source, b"rename payload")?;
+    let renamed = rename_folder.join("2026-10-24 B01 Example Bank Monthly.txt");
+    let rename = run_action(&config, 1, 3, &rename_folder)?;
+    assert!(
+        rename.status.success(),
+        "rename failed: {}",
+        stderr(&rename)
+    );
+    assert!(renamed.is_file(), "folder input must expand to its files");
+    assert_eq!(fs::read(&renamed)?, b"rename payload");
+
+    let excel_source = sources.join("excel-copy.xlsx");
+    create_source_workbook(&excel_source, "OldSheet")?;
+    let excel_conversion = run_action(&config, 2, 1, &excel_source)?;
+    assert!(
+        excel_conversion.status.success(),
+        "Excel conversion route failed: {}",
+        stderr(&excel_conversion)
+    );
+    let excel_copy = sources.join("xlsx").join("excel-copy.xlsx");
+    assert_eq!(fs::read(&excel_copy)?, fs::read(&excel_source)?);
+
+    let word_source = sources.join("word-copy.docx");
+    fs::write(&word_source, b"synthetic same-format copy route")?;
+    let word_conversion = run_action(&config, 3, 1, &word_source)?;
+    assert!(
+        word_conversion.status.success(),
+        "Word conversion route failed: {}",
+        stderr(&word_conversion)
+    );
+    assert_eq!(
+        fs::read(sources.join("docx").join("word-copy.docx"))?,
+        fs::read(&word_source)?
+    );
+
+    let missing_sidecar = root.path().join("missing-lo-convert.exe");
+    let legacy_excel_source = sources.join("needs-sidecar.xls");
+    fs::write(&legacy_excel_source, b"synthetic xls payload")?;
+    let excel_before = fs::read(&legacy_excel_source)?;
+    let excel_sidecar_failure =
+        run_action_with_sidecar(&config, 2, 1, &legacy_excel_source, &missing_sidecar)?;
+    assert!(!excel_sidecar_failure.status.success());
+    let excel_failure_report = output_json(&excel_sidecar_failure)?;
+    assert_eq!(excel_failure_report["failed"], 1);
+    assert_eq!(excel_failure_report["items"][0]["status"], "failed");
+    assert!(excel_failure_report["items"][0]["detail"]
+        .as_str()
+        .unwrap_or_default()
+        .contains("该功能需要外部引擎"));
+    assert_eq!(fs::read(&legacy_excel_source)?, excel_before);
+    assert!(excel_failure_report["items"][0]["output"].is_null());
+
+    let legacy_word_source = sources.join("needs-sidecar.doc");
+    fs::write(&legacy_word_source, b"synthetic doc payload")?;
+    let word_before = fs::read(&legacy_word_source)?;
+    let word_sidecar_failure =
+        run_action_with_sidecar(&config, 3, 1, &legacy_word_source, &missing_sidecar)?;
+    assert!(!word_sidecar_failure.status.success());
+    let word_failure_report = output_json(&word_sidecar_failure)?;
+    assert_eq!(word_failure_report["failed"], 1);
+    assert!(word_failure_report["items"][0]["detail"]
+        .as_str()
+        .unwrap_or_default()
+        .contains("该功能需要外部引擎"));
+    assert_eq!(fs::read(&legacy_word_source)?, word_before);
+    assert!(word_failure_report["items"][0]["output"].is_null());
+
+    let sheet_source = sources.join("sheet-rename.xlsx");
+    create_source_workbook(&sheet_source, "OldSheet")?;
+    let sheet_rename = run_action(&config, 4, 1, &sheet_source)?;
+    assert!(
+        sheet_rename.status.success(),
+        "sheet rename planning failed: {}",
+        stderr(&sheet_rename)
+    );
+    let sheet_report = output_json(&sheet_rename)?;
+    assert_eq!(sheet_report["renamed"], 1);
+    assert_eq!(sheet_report["execution"], "plan_only");
+    assert!(!PathBuf::from(
+        sheet_report["output"]
+            .as_str()
+            .context("sheet candidate output missing")?
+    )
+    .exists());
+    let plan_files = find_files_with_extension(&root.path().join("output"), "json")?;
+    assert_eq!(plan_files.len(), 1);
+    let plan: Value = serde_json::from_slice(&fs::read(&plan_files[0])?)?;
+    assert_eq!(plan["operations"][0]["operation"], "rename_sheet");
+
+    let content_source = sources.join("add-content.xlsx");
+    create_source_workbook(&content_source, "Plain")?;
+    let content_before = fs::read(&content_source)?;
+    let add_content = run_action(&config, 5, 1, &content_source)?;
+    assert!(
+        add_content.status.success(),
+        "content prefix route failed: {}",
+        stderr(&add_content)
+    );
+    assert!(!content_source.exists());
+    assert_eq!(
+        fs::read(sources.join("Bank_add-content.xlsx"))?,
+        content_before
+    );
+
+    let content_prefixed_source = sources.join("Bank_remove-content.xlsx");
+    create_source_workbook(&content_prefixed_source, "Plain")?;
+    let remove_content = run_action(&config, 6, 1, &content_prefixed_source)?;
+    assert!(
+        remove_content.status.success(),
+        "content prefix removal route failed: {}",
+        stderr(&remove_content)
+    );
+    assert!(sources.join("remove-content.xlsx").is_file());
+
+    let local_folder = sources.join("local-map-folder");
+    fs::create_dir_all(&local_folder)?;
+    let local_source = local_folder.join("before-local.txt");
+    fs::write(&local_source, b"local map payload")?;
+    let local_map = run_action(&config, 7, 2, &local_folder)?;
+    assert!(
+        local_map.status.success(),
+        "local map failed: {}",
+        stderr(&local_map)
+    );
+    assert_eq!(
+        fs::read(local_folder.join("after-local.txt"))?,
+        b"local map payload"
+    );
+
+    let submission_dir = sources.join("submission-files");
+    fs::create_dir_all(&submission_dir)?;
+    for (name, bytes) in [
+        ("2026_Area_Bank_base.txt", b"base".as_slice()),
+        ("2026_Area_Bank_multi.txt", b"multi".as_slice()),
+        ("misc_submission.txt", b"unmatched".as_slice()),
+    ] {
+        fs::write(submission_dir.join(name), bytes)?;
+    }
+    let submission = run_action(&config, 8, 2, &submission_dir)?;
+    assert!(
+        submission.status.success(),
+        "submission check failed: {}",
+        stderr(&submission)
+    );
+    let submission_report = output_json(&submission)?;
+    assert_eq!(submission_report["files"], 3);
+    assert_eq!(submission_report["submitted"], 2);
+    assert_eq!(submission_report["missing"], 1);
+    assert_eq!(submission_report["unmatched"], 1);
+    assert_eq!(submission_report["multi"], 1);
+    assert!(PathBuf::from(
+        submission_report["output"]
+            .as_str()
+            .context("submission report path missing")?
+    )
+    .is_file());
+
+    let sort_source = sources.join("sort-payload.txt");
+    fs::write(&sort_source, b"sort")?;
+    let sort = run_action(&config, 9, 1, &sort_source)?;
+    assert!(
+        sort.status.success(),
+        "sort prefix failed: {}",
+        stderr(&sort)
+    );
+    assert!(sources.join("1_sort-payload.txt").is_file());
+
+    let remove_sort_source = sources.join("1_remove-sort.txt");
+    fs::write(&remove_sort_source, b"remove sort")?;
+    let remove_sort = run_action(&config, 10, 1, &remove_sort_source)?;
+    assert!(
+        remove_sort.status.success(),
+        "remove sort prefix failed: {}",
+        stderr(&remove_sort)
+    );
+    assert!(sources.join("remove-sort.txt").is_file());
+
+    Ok(())
+}
+
+fn create_config(root: &Path) -> Result<PathBuf> {
+    let config = root.join("config.xlsx");
+    let output_dir = root.join("output");
+    let log_dir = root.join("logs");
+    fs::create_dir_all(&output_dir)?;
+    fs::create_dir_all(&log_dir)?;
+    let mut workbook = rust_xlsxwriter::Workbook::new();
+    {
+        let global = workbook.add_worksheet();
+        global.set_name("全局配置")?;
+        for (row, (key, value)) in [
+            ("输入目录", root.to_string_lossy().into_owned()),
+            ("输出目录", output_dir.to_string_lossy().into_owned()),
+            ("日志目录", log_dir.to_string_lossy().into_owned()),
+            ("excel目的格式", "xlsx".to_owned()),
+            ("word目的格式", "docx".to_owned()),
+        ]
+        .iter()
+        .enumerate()
+        {
+            global.write_string(row as u32, 0, *key)?;
+            global.write_string(row as u32, 1, value)?;
+        }
+    }
+    {
+        let rename = workbook.add_worksheet();
+        rename.set_name("重命名配置")?;
+        for (column, header) in [
+            (0, "简称"),
+            (1, "全称"),
+            (3, "代码"),
+            (4, "全称(代码映射)"),
+            (6, "键"),
+            (7, "值"),
+            (9, "原表名"),
+            (10, "新表名"),
+            (12, "原文件名片段"),
+            (13, "新文件名片段"),
+            (14, "内容重命名启用"),
+            (15, "内容重命名取值规则"),
+            (16, "备注"),
+        ] {
+            rename.write_string(0, column, header)?;
+        }
+        for (column, value) in [
+            (0, "Bank"),
+            (1, "Example Bank"),
+            (3, "B01"),
+            (4, "Example Bank"),
+            (6, "数据日期"),
+            (7, "2026-10-24"),
+            (9, "OldSheet"),
+            (10, "NewSheet"),
+            (12, "before"),
+            (13, "after"),
+            (14, "是"),
+            (15, "Data@A1"),
+        ] {
+            rename.write_string(1, column, value)?;
+        }
+        rename.write_string(2, 6, "报表名称")?;
+        rename.write_string(2, 7, "Monthly")?;
+    }
+    {
+        let submission = workbook.add_worksheet();
+        submission.set_name("提交检查配置")?;
+        for (column, header) in [
+            "是否启用",
+            "日期关键词",
+            "县区关键词",
+            "机构关键词",
+            "备用关键词",
+            "备注",
+        ]
+        .iter()
+        .enumerate()
+        {
+            submission.write_string(0, column as u16, *header)?;
+        }
+        let rules = [
+            ["是", "2026", "Area", "Bank", "", "base rule"],
+            ["是", "2026", "Area", "Bank", "multi", "second rule"],
+            ["是", "2026", "Missing", "Bank", "", "missing rule"],
+            ["否", "disabled", "Area", "Bank", "", "ignored rule"],
+        ];
+        for (row, values) in rules.iter().enumerate() {
+            for (column, value) in values.iter().enumerate() {
+                submission.write_string((row + 1) as u32, column as u16, *value)?;
+            }
+        }
+    }
+    {
+        let sort = workbook.add_worksheet();
+        sort.set_name("文件排序配置")?;
+        for (column, header) in ["是否启用", "排序前缀", "匹配关键词", "备注"]
+            .iter()
+            .enumerate()
+        {
+            sort.write_string(0, column as u16, *header)?;
+        }
+        for (column, value) in ["是", "1", "sort", "synthetic"].iter().enumerate() {
+            sort.write_string(1, column as u16, *value)?;
+        }
+    }
+    workbook.save(&config)?;
+    Ok(config)
+}
+
+fn create_source_workbook(path: &Path, second_sheet: &str) -> Result<()> {
+    let mut workbook = rust_xlsxwriter::Workbook::new();
+    let data = workbook.add_worksheet();
+    data.set_name("Data")?;
+    data.write_string(0, 0, "Bank")?;
+    workbook.add_worksheet().set_name(second_sheet)?;
+    workbook.save(path)?;
+    Ok(())
+}
+
+fn run_action(config: &Path, action: u8, mode: u8, selected: &Path) -> Result<Output> {
+    let input = format!("4\n{action}\n{mode}\n{}\n0\n", selected.display());
+    run_menu(config, &input)
+}
+
+fn run_action_with_sidecar(
+    config: &Path,
+    action: u8,
+    mode: u8,
+    selected: &Path,
+    sidecar: &Path,
+) -> Result<Output> {
+    let input = format!("4\n{action}\n{mode}\n{}\n0\n", selected.display());
+    let mut child = menu_command(config);
+    child.env("PYTOOLS_LO_CONVERT", sidecar);
+    finish_menu(child, &input)
+}
+
+fn run_menu(config: &Path, input: &str) -> Result<Output> {
+    finish_menu(menu_command(config), input)
+}
+
+fn menu_command(config: &Path) -> Command {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_pytools"));
+    child
+        .arg("menu")
+        .arg("--config")
+        .arg(config)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    child
+}
+
+fn finish_menu(mut child: Command, input: &str) -> Result<Output> {
+    let mut child = child.spawn().context("start interactive pytools menu")?;
+    child
+        .stdin
+        .take()
+        .context("interactive stdin missing")?
+        .write_all(input.as_bytes())
+        .context("send interactive menu selections")?;
+    child
+        .wait_with_output()
+        .context("wait for interactive menu")
+}
+
+fn output_json(output: &Output) -> Result<Value> {
+    let start = output
+        .stdout
+        .iter()
+        .enumerate()
+        .filter(|(_, byte)| matches!(byte, b'{' | b'['))
+        .map(|(index, _)| index)
+        .min()
+        .context("CLI JSON output missing")?;
+    let mut deserializer = serde_json::Deserializer::from_slice(&output.stdout[start..]);
+    Value::deserialize(&mut deserializer).context("decode CLI JSON output")
+}
+
+fn find_files_with_extension(root: &Path, extension: &str) -> Result<Vec<PathBuf>> {
+    let mut files = Vec::new();
+    let mut pending = vec![root.to_path_buf()];
+    while let Some(directory) = pending.pop() {
+        for entry in fs::read_dir(directory)? {
+            let path = entry?.path();
+            if path.is_dir() {
+                pending.push(path);
+            } else if path.extension().and_then(|value| value.to_str()) == Some(extension) {
+                files.push(path);
+            }
+        }
+    }
+    Ok(files)
+}
+
+fn stderr(output: &Output) -> String {
+    String::from_utf8_lossy(&output.stderr).into_owned()
+}

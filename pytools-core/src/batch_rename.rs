@@ -38,7 +38,7 @@ struct RenameMaps {
 /// because the source operation accepts both files and folders. Existing names
 /// are never intentionally selected as destinations: collisions receive `_1`,
 /// `_2`, ... before the original extension.
-pub fn run_batch_rename_33(
+pub fn run_batch_rename(
     config_path: impl AsRef<Path>,
     paths: &[PathBuf],
 ) -> Result<BatchRenameResult> {
@@ -348,4 +348,13 @@ mod tests {
             assert_eq!(parse_cell_address(&address), Some((column, 12)));
         }
     }
+}
+
+/// Compatibility alias for the original Python 3-3 operation identifier.
+#[deprecated(note = "use `run_batch_rename`")]
+pub fn run_batch_rename_33(
+    config_path: impl AsRef<Path>,
+    paths: &[PathBuf],
+) -> Result<BatchRenameResult> {
+    run_batch_rename(config_path, paths)
 }
