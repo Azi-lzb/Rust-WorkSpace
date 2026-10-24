@@ -547,7 +547,8 @@ struct CanonicalXmlElement {
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 struct WorkbookPreservationSnapshot {
-    defined_names: Vec<CanonicalXmlElement>,
+    sheet_order: Vec<String>,
+    defined_names: Vec<CanonicalDefinedName>,
     dimensions: Vec<(
         String,
         Vec<CanonicalXmlElement>,
@@ -560,6 +561,16 @@ struct WorkbookPreservationSnapshot {
     relationships: Vec<(String, Vec<CanonicalXmlElement>)>,
     freeze_panes: Vec<(String, Option<CanonicalXmlElement>)>,
     auto_filters: Vec<(String, Option<CanonicalXmlElement>)>,
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct CanonicalDefinedName {
+    /// The owning worksheet for a local name, resolved from localSheetId.
+    /// `None` denotes a workbook-scoped name.
+    scope: Option<String>,
+    /// The full definedName XML except for localSheetId, which is an order
+    /// dependent index rather than a worksheet identity.
+    element: CanonicalXmlElement,
 }
 
 fn validate_preserved_ooxml_metadata(
@@ -600,10 +611,7 @@ fn validate_preserved_ooxml_metadata(
         .preserve
         .contains(&PreservationRequirement::DefinedNames)
     {
-        anyhow::ensure!(
-            source.defined_names == output.defined_names,
-            "openpyxl changed workbook defined names"
-        );
+        validate_preserved_defined_names(&source, &output, plan)?;
     }
     if plan
         .preserve
@@ -832,16 +840,16 @@ fn workbook_preservation_snapshot(path: &Path) -> Result<WorkbookPreservationSna
     }
 
     let mut snapshot = WorkbookPreservationSnapshot::default();
+    snapshot.sheet_order = sheet_parts
+        .iter()
+        .map(|(sheet_name, _)| sheet_name.clone())
+        .collect();
     if let Some(defined_names) = workbook_document.descendants().find(|node| {
         node.is_element()
             && node.tag_name().namespace() == Some(MAIN_NS)
             && node.tag_name().name() == "definedNames"
     }) {
-        snapshot.defined_names = defined_names
-            .children()
-            .filter(|node| node.is_element())
-            .map(canonical_xml_element)
-            .collect();
+        snapshot.defined_names = canonical_defined_names(defined_names, &snapshot.sheet_order)?;
     }
 
     for (sheet_name, part_name) in sheet_parts {
@@ -1039,6 +1047,197 @@ fn canonical_xml_element(node: roxmltree::Node<'_, '_>) -> CanonicalXmlElement {
         text: (!text.trim().is_empty()).then_some(text),
         children,
     }
+}
+
+fn canonical_defined_names(
+    node: roxmltree::Node<'_, '_>,
+    sheet_order: &[String],
+) -> Result<Vec<CanonicalDefinedName>> {
+    let mut names = Vec::new();
+    for defined_name in node.children().filter(|child| child.is_element()) {
+        let scope = defined_name
+            .attribute("localSheetId")
+            .map(|value| {
+                let index = value.parse::<usize>().with_context(|| {
+                    format!("definedName localSheetId {value:?} is not a valid index")
+                })?;
+                sheet_order.get(index).cloned().with_context(|| {
+                    format!(
+                        "definedName localSheetId {index} is outside the {}-sheet workbook",
+                        sheet_order.len()
+                    )
+                })
+            })
+            .transpose()?;
+        let mut element = canonical_xml_element(defined_name);
+        element
+            .attributes
+            .retain(|(namespace, name, _)| !(namespace.is_empty() && name == "localSheetId"));
+        names.push(CanonicalDefinedName { scope, element });
+    }
+    names.sort();
+    Ok(names)
+}
+
+fn validate_preserved_defined_names(
+    source: &WorkbookPreservationSnapshot,
+    output: &WorkbookPreservationSnapshot,
+    plan: &ExcelEditPlan,
+) -> Result<()> {
+    let (retained_sheets, deleted_sheets) =
+        planned_sheet_provenance(&source.sheet_order, &plan.operations)?;
+    let overridden_print_areas: BTreeSet<String> = plan
+        .operations
+        .iter()
+        .filter_map(|operation| match operation {
+            EditOperation::SetPageSettings { sheet, settings } if settings.print_area.is_some() => {
+                Some(final_sheet_name(plan, sheet))
+            }
+            _ => None,
+        })
+        .collect();
+
+    let mut expected = Vec::with_capacity(source.defined_names.len());
+    for defined_name in &source.defined_names {
+        let Some(source_scope) = &defined_name.scope else {
+            expected.push(defined_name.clone());
+            continue;
+        };
+        if let Some(final_scope) = retained_sheets.get(source_scope) {
+            if overridden_print_areas.contains(final_scope)
+                && is_print_area_name(&defined_name.element)
+            {
+                // The requested print area is checked independently against
+                // the resulting workbook, while all other names stay strict.
+                continue;
+            }
+            expected.push(CanonicalDefinedName {
+                scope: Some(final_scope.clone()),
+                element: defined_name.element.clone(),
+            });
+            continue;
+        }
+        if let Some(deleted_as) = deleted_sheets.get(source_scope) {
+            let may_drop = plan
+                .drop_allowed
+                .get(deleted_as)
+                .is_some_and(|allowed| allowed.contains(&PreservationRequirement::DefinedNames));
+            anyhow::ensure!(
+                may_drop,
+                "openpyxl would remove defined names scoped to deleted worksheet {source_scope:?} without an explicit DefinedNames drop allowance"
+            );
+            continue;
+        }
+        anyhow::bail!(
+            "source definedName scope {source_scope:?} is not present in the planned worksheet identities"
+        );
+    }
+
+    let mut actual: Vec<_> = output
+        .defined_names
+        .iter()
+        .filter(|defined_name| {
+            !defined_name.scope.as_ref().is_some_and(|scope| {
+                overridden_print_areas.contains(scope) && is_print_area_name(&defined_name.element)
+            })
+        })
+        .cloned()
+        .collect();
+    expected.sort();
+    actual.sort();
+    let mut unmatched_output = actual;
+    let mut missing_count = 0;
+    for expected_name in &expected {
+        if let Some(index) = unmatched_output
+            .iter()
+            .position(|output_name| output_name == expected_name)
+        {
+            unmatched_output.remove(index);
+        } else {
+            missing_count += 1;
+        }
+    }
+    let unexpected_count = unmatched_output.len();
+    anyhow::ensure!(
+        missing_count == 0 && unexpected_count == 0,
+        "openpyxl changed workbook defined names after worksheet-scope normalization; missing={missing_count}, added_or_changed={unexpected_count}"
+    );
+    Ok(())
+}
+
+fn is_print_area_name(element: &CanonicalXmlElement) -> bool {
+    element.attributes.iter().any(|(namespace, name, value)| {
+        namespace.is_empty() && name == "name" && value.eq_ignore_ascii_case("_xlnm.Print_Area")
+    })
+}
+
+fn planned_sheet_provenance(
+    source_sheet_order: &[String],
+    operations: &[EditOperation],
+) -> Result<(BTreeMap<String, String>, BTreeMap<String, String>)> {
+    #[derive(Clone)]
+    struct PlannedSheet {
+        name: String,
+        source_name: Option<String>,
+    }
+
+    let mut sheets: Vec<_> = source_sheet_order
+        .iter()
+        .map(|name| PlannedSheet {
+            name: name.clone(),
+            source_name: Some(name.clone()),
+        })
+        .collect();
+    let mut deleted = BTreeMap::new();
+    for operation in operations {
+        match operation {
+            EditOperation::RenameSheet { old_name, new_name } => {
+                let sheet = sheets
+                    .iter_mut()
+                    .find(|sheet| sheet.name == *old_name)
+                    .with_context(|| format!("worksheet {old_name:?} is missing in edit plan"))?;
+                sheet.name.clone_from(new_name);
+            }
+            EditOperation::CreateSheet { name } => sheets.push(PlannedSheet {
+                name: name.clone(),
+                source_name: None,
+            }),
+            EditOperation::CreateSheetAt { name, index } => {
+                anyhow::ensure!(
+                    *index <= sheets.len(),
+                    "worksheet insertion index {index} exceeds planned sheet count {}",
+                    sheets.len()
+                );
+                sheets.insert(
+                    *index,
+                    PlannedSheet {
+                        name: name.clone(),
+                        source_name: None,
+                    },
+                );
+            }
+            EditOperation::DeleteSheet { name } => {
+                let index = sheets
+                    .iter()
+                    .position(|sheet| sheet.name == *name)
+                    .with_context(|| format!("worksheet {name:?} is missing in edit plan"))?;
+                let removed = sheets.remove(index);
+                if let Some(source_name) = removed.source_name {
+                    deleted.insert(source_name, name.clone());
+                }
+            }
+            _ => {}
+        }
+    }
+    let retained = sheets
+        .into_iter()
+        .filter_map(|sheet| {
+            sheet
+                .source_name
+                .map(|source_name| (source_name, sheet.name))
+        })
+        .collect();
+    Ok((retained, deleted))
 }
 
 fn resolve_opc_target(base: &str, target: &str) -> Result<String> {
@@ -2984,6 +3183,240 @@ fn read_diagnostic(path: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn defined_name(scope: Option<&str>, name: &str, text: &str) -> CanonicalDefinedName {
+        CanonicalDefinedName {
+            scope: scope.map(str::to_owned),
+            element: CanonicalXmlElement {
+                name: format!("{SPREADSHEET_MAIN_NS}:definedName"),
+                attributes: vec![(String::new(), "name".to_owned(), name.to_owned())],
+                text: Some(text.to_owned()),
+                children: Vec::new(),
+            },
+        }
+    }
+
+    fn defined_names_from_xml(
+        xml: &str,
+        sheet_order: &[String],
+    ) -> Result<Vec<CanonicalDefinedName>> {
+        let document = roxmltree::Document::parse(xml)?;
+        canonical_defined_names(document.root_element(), sheet_order)
+    }
+
+    fn defined_name_plan(
+        operations: Vec<EditOperation>,
+        drop_allowed: BTreeMap<String, BTreeSet<PreservationRequirement>>,
+    ) -> ExcelEditPlan {
+        ExcelEditPlan {
+            request_id: "defined-name-validation".to_owned(),
+            input: PathBuf::from("input.xlsx"),
+            output: PathBuf::from("output.xlsx"),
+            format: WorkbookFormat::Xlsx,
+            workbook: crate::WorkbookProfile {
+                format: WorkbookFormat::Xlsx,
+                inventory_complete: true,
+                features_present: BTreeSet::new(),
+            },
+            operations,
+            preserve: [PreservationRequirement::DefinedNames]
+                .into_iter()
+                .collect(),
+            drop_allowed,
+        }
+    }
+
+    #[test]
+    fn defined_names_follow_sheet_scope_when_sheet_order_changes() -> Result<()> {
+        let source_order = vec!["Before".to_owned(), "Managed".to_owned(), "Tail".to_owned()];
+        let output_order = vec!["Before".to_owned(), "Tail".to_owned(), "Managed".to_owned()];
+        let source_names = defined_names_from_xml(
+            &format!(
+                r#"<definedNames xmlns="{SPREADSHEET_MAIN_NS}">
+                    <definedName name="GlobalRange">'Tail'!$A$1</definedName>
+                    <definedName name="ManagedPrintArea" localSheetId="1">'Managed'!$A$1:$B$2</definedName>
+                    <definedName name="TailLocal" localSheetId="2">'Tail'!$C$3</definedName>
+                </definedNames>"#
+            ),
+            &source_order,
+        )?;
+        let output_names = defined_names_from_xml(
+            &format!(
+                r#"<definedNames xmlns="{SPREADSHEET_MAIN_NS}">
+                    <definedName name="GlobalRange">'Tail'!$A$1</definedName>
+                    <definedName name="TailLocal" localSheetId="1">'Tail'!$C$3</definedName>
+                </definedNames>"#
+            ),
+            &output_order,
+        )?;
+        let source = WorkbookPreservationSnapshot {
+            sheet_order: source_order,
+            defined_names: source_names,
+            ..WorkbookPreservationSnapshot::default()
+        };
+        let output = WorkbookPreservationSnapshot {
+            sheet_order: output_order,
+            defined_names: output_names,
+            ..WorkbookPreservationSnapshot::default()
+        };
+        let plan = defined_name_plan(
+            vec![
+                EditOperation::DeleteSheet {
+                    name: "Managed".to_owned(),
+                },
+                EditOperation::CreateSheetAt {
+                    name: "Managed".to_owned(),
+                    index: 2,
+                },
+            ],
+            [(
+                "Managed".to_owned(),
+                [PreservationRequirement::DefinedNames].into(),
+            )]
+            .into_iter()
+            .collect(),
+        );
+
+        validate_preserved_defined_names(&source, &output, &plan)
+    }
+
+    #[test]
+    fn defined_name_drop_allowance_does_not_waive_other_names() {
+        let source = WorkbookPreservationSnapshot {
+            sheet_order: vec!["Managed".to_owned(), "Other".to_owned()],
+            defined_names: vec![
+                defined_name(Some("Managed"), "ManagedLocal", "'Managed'!$A$1"),
+                defined_name(Some("Other"), "OtherLocal", "'Other'!$B$2"),
+                defined_name(None, "GlobalRange", "'Other'!$C$3"),
+            ],
+            ..WorkbookPreservationSnapshot::default()
+        };
+        let output = WorkbookPreservationSnapshot {
+            sheet_order: vec!["Other".to_owned(), "Managed".to_owned()],
+            defined_names: vec![
+                defined_name(Some("Other"), "OtherLocal", "'Other'!$B$9"),
+                defined_name(None, "GlobalRange", "'Other'!$C$3"),
+            ],
+            ..WorkbookPreservationSnapshot::default()
+        };
+        let plan = defined_name_plan(
+            vec![
+                EditOperation::DeleteSheet {
+                    name: "Managed".to_owned(),
+                },
+                EditOperation::CreateSheetAt {
+                    name: "Managed".to_owned(),
+                    index: 1,
+                },
+            ],
+            [(
+                "Managed".to_owned(),
+                [PreservationRequirement::DefinedNames].into(),
+            )]
+            .into_iter()
+            .collect(),
+        );
+
+        assert!(validate_preserved_defined_names(&source, &output, &plan).is_err());
+    }
+
+    #[test]
+    fn defined_names_on_deleted_sheet_require_an_explicit_scoped_allowance() {
+        let source = WorkbookPreservationSnapshot {
+            sheet_order: vec!["Managed".to_owned(), "Other".to_owned()],
+            defined_names: vec![defined_name(
+                Some("Managed"),
+                "ManagedLocal",
+                "'Managed'!$A$1",
+            )],
+            ..WorkbookPreservationSnapshot::default()
+        };
+        let output = WorkbookPreservationSnapshot {
+            sheet_order: vec!["Other".to_owned(), "Managed".to_owned()],
+            ..WorkbookPreservationSnapshot::default()
+        };
+        let plan = defined_name_plan(
+            vec![
+                EditOperation::DeleteSheet {
+                    name: "Managed".to_owned(),
+                },
+                EditOperation::CreateSheetAt {
+                    name: "Managed".to_owned(),
+                    index: 1,
+                },
+            ],
+            BTreeMap::new(),
+        );
+
+        assert!(validate_preserved_defined_names(&source, &output, &plan).is_err());
+    }
+
+    #[test]
+    fn defined_name_reassigned_to_a_different_sheet_scope_is_rejected() {
+        let source = WorkbookPreservationSnapshot {
+            sheet_order: vec!["Before".to_owned(), "Managed".to_owned(), "Tail".to_owned()],
+            defined_names: vec![defined_name(Some("Tail"), "TailLocal", "'Tail'!$A$1")],
+            ..WorkbookPreservationSnapshot::default()
+        };
+        let output = WorkbookPreservationSnapshot {
+            sheet_order: vec!["Before".to_owned(), "Managed".to_owned(), "Tail".to_owned()],
+            defined_names: vec![defined_name(Some("Managed"), "TailLocal", "'Tail'!$A$1")],
+            ..WorkbookPreservationSnapshot::default()
+        };
+        let plan = defined_name_plan(
+            vec![
+                EditOperation::DeleteSheet {
+                    name: "Managed".to_owned(),
+                },
+                EditOperation::CreateSheetAt {
+                    name: "Managed".to_owned(),
+                    index: 1,
+                },
+            ],
+            [(
+                "Managed".to_owned(),
+                [PreservationRequirement::DefinedNames].into(),
+            )]
+            .into_iter()
+            .collect(),
+        );
+
+        assert!(validate_preserved_defined_names(&source, &output, &plan).is_err());
+    }
+
+    #[test]
+    fn explicitly_requested_print_area_is_checked_by_its_operation_readback() -> Result<()> {
+        let source = WorkbookPreservationSnapshot {
+            sheet_order: vec!["Report".to_owned()],
+            defined_names: vec![defined_name(
+                Some("Report"),
+                "_xlnm.Print_Area",
+                "'Report'!$A$1:$B$2",
+            )],
+            ..WorkbookPreservationSnapshot::default()
+        };
+        let output = WorkbookPreservationSnapshot {
+            sheet_order: vec!["Report".to_owned()],
+            defined_names: vec![defined_name(
+                Some("Report"),
+                "_xlnm.Print_Area",
+                "'Report'!$C$3:$D$4",
+            )],
+            ..WorkbookPreservationSnapshot::default()
+        };
+        let plan = defined_name_plan(
+            vec![EditOperation::SetPageSettings {
+                sheet: "Report".to_owned(),
+                settings: crate::PageSettings {
+                    print_area: Some("C3:D4".to_owned()),
+                    ..crate::PageSettings::default()
+                },
+            }],
+            BTreeMap::new(),
+        );
+
+        validate_preserved_defined_names(&source, &output, &plan)
+    }
 
     #[test]
     fn implicit_xf_zero_properties_are_visible_to_umya_expected_style_reader() -> Result<()> {

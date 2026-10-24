@@ -1,0 +1,21 @@
+日期：2026-10-25
+
+变更范围
+- crates/excel-editor/src/openpyxl_backend.rs：将 localSheetId 解析为实际 worksheet scope；对删除后重建工作表按计划中的原始 worksheet identity 判断局部名称归属；只在对应删除操作显式允许 `DefinedNames` 丢弃时接受该受管工作表的局部名称移除。其余工作表名称、全局名称、名称属性及公式文本仍需一致。显式设置的打印区域由现有操作读回校验验证。
+- crates/excel-editor/src/openpyxl_backend.rs：增加 localSheetId 重排、受限局部名称删除、未授权丢失、跨 scope 错绑、保留名称内容变化和打印区域显式更新的定向测试。
+
+目的
+- 避免把 localSheetId 的顺序重映射误判为名称损坏；同时防止受管工作表的局部名称丢弃许可扩散到其他工作表或全局名称。localSheetId 越界、定义内容变化和名称 scope 错绑仍拒绝。
+
+测试
+- `cargo test -q -p excel-editor defined`：4 项定向测试通过。
+- `cargo test -q -p excel-editor explicitly_requested_print_area_is_checked_by_its_operation_readback`：1 项定向测试通过。
+- `git diff --check`：通过。
+- 另以本机 openpyxl 3.1.5 做了小型临时工作簿核对：删除前置工作表会重排幸存 localSheetId；删除工作表会移除该表的局部名称。该临时样本未进入仓库。
+
+未执行项与已知限制
+- Audit 的真实 S1 候选目录已由 Audit 测试清理，现有报告没有逐条 definedName 差异；遵照 Agent 请求，本次没有重跑或保留真实业务候选。上述测试为合成 OOXML 元数据测试，不等于 Audit S1 对拍通过。
+- 校验比较幸存名称的 XML 属性与公式文本，不执行 Excel 公式求值；Audit S1 的真实样本复验和任何名称依赖的业务语义仍需由 Audit Agent 单独验收。相关 capability 保持 Unverified，未改生产路由。
+
+回滚
+- 可单独 revert 本记录对应的共享提交；回滚后恢复对 DefinedNames 的原始 XML 逐项比较，合法 localSheetId 重映射仍会被拒绝。
