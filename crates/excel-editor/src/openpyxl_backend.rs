@@ -14,7 +14,7 @@ use serde::Deserialize;
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs::{self, File, OpenOptions},
-    io::Read,
+    io::{Read, Write},
     path::{Path, PathBuf},
     process::{Command, Stdio},
     sync::atomic::{AtomicU64, Ordering},
@@ -24,6 +24,7 @@ use std::{
 
 static SCRATCH_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(120);
+const SPREADSHEET_MAIN_NS: &str = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
 
 #[derive(Clone, Debug)]
 pub struct OpenpyxlWorkerConfig {
@@ -1660,6 +1661,7 @@ fn expected_import_styles(
     plan: &ExcelEditPlan,
 ) -> Result<BTreeMap<(String, String), umya_spreadsheet::Style>> {
     let mut styles = BTreeMap::new();
+    let mut normalized_import_sources: BTreeMap<PathBuf, ScratchFile> = BTreeMap::new();
     for operation in &plan.operations {
         let EditOperation::ImportRange {
             source_workbook: import_path,
@@ -1676,7 +1678,16 @@ fn expected_import_styles(
         if *style_mode == RangeStyleMode::None {
             continue;
         }
-        let imported = crate::open_xlsx(import_path)
+        if !normalized_import_sources.contains_key(import_path) {
+            let normalized = ScratchFile::create(&std::env::temp_dir(), "style-source-xlsx")?;
+            materialize_implicit_style_zero(import_path, normalized.path())?;
+            normalized_import_sources.insert(import_path.clone(), normalized);
+        }
+        let normalized_path = normalized_import_sources
+            .get(import_path)
+            .context("normalized ImportRange style source missing")?
+            .path();
+        let imported = crate::open_xlsx(normalized_path)
             .with_context(|| format!("open ImportRange styles from {}", import_path.display()))?;
         let (min_row, min_col, max_row, max_col) = parse_range(source_range)?;
         let (target_row, target_col) = parse_cell(target_start)?;
@@ -1697,6 +1708,99 @@ fn expected_import_styles(
         }
     }
     Ok(styles)
+}
+
+/// Umya applies a cell style only when a worksheet cell has an explicit `s`
+/// attribute. OOXML defines an omitted `s` as style index 0, which can itself
+/// contain non-default properties. Materialize that implicit index only in a
+/// temporary readback copy so expected ImportRange styles include XF0.
+fn materialize_implicit_style_zero(source: &Path, output: &Path) -> Result<()> {
+    let mut input = zip::ZipArchive::new(File::open(source)?)?;
+    let mut writer = zip::ZipWriter::new(File::create(output)?);
+    for index in 0..input.len() {
+        let mut entry = input.by_index(index)?;
+        let name = entry.name().to_owned();
+        let is_directory = entry.is_dir();
+        let compression = entry.compression();
+        let options = zip::write::SimpleFileOptions::default().compression_method(compression);
+
+        if is_directory {
+            writer.add_directory(name, options)?;
+            continue;
+        }
+
+        writer.start_file(name.clone(), options)?;
+        if name.starts_with("xl/worksheets/") && name.ends_with(".xml") {
+            let mut xml = Vec::new();
+            entry.read_to_end(&mut xml)?;
+            let xml = std::str::from_utf8(&xml)
+                .with_context(|| format!("worksheet part {name} is not UTF-8"))?;
+            let normalized = materialize_implicit_style_zero_cells(xml)?;
+            writer.write_all(normalized.as_bytes())?;
+        } else {
+            std::io::copy(&mut entry, &mut writer)?;
+        }
+    }
+    writer.finish()?;
+    Ok(())
+}
+
+fn materialize_implicit_style_zero_cells(xml: &str) -> Result<String> {
+    let document = roxmltree::Document::parse(xml)?;
+    let root = document.root_element();
+    if root.tag_name().namespace() != Some(SPREADSHEET_MAIN_NS)
+        || root.tag_name().name() != "worksheet"
+    {
+        return Ok(xml.to_owned());
+    }
+
+    let mut insertions = Vec::new();
+    let bytes = xml.as_bytes();
+    for cell in document.descendants().filter(|node| {
+        node.is_element()
+            && node.tag_name().namespace() == Some(SPREADSHEET_MAIN_NS)
+            && node.tag_name().name() == "c"
+            && node.attribute("s").is_none()
+    }) {
+        let start = cell.range().start;
+        let opening = &bytes[start..];
+        let tag_length =
+            xml_start_tag_length(opening).context("find worksheet cell start-tag boundary")?;
+        let tag_end = start + tag_length;
+        let mut insertion = tag_end - 1; // Before the closing '>'.
+        let mut previous = insertion;
+        while previous > start && bytes[previous - 1].is_ascii_whitespace() {
+            previous -= 1;
+        }
+        if previous > start && bytes[previous - 1] == b'/' {
+            insertion = previous - 1; // Preserve the `/>` delimiter.
+        }
+        insertions.push(insertion);
+    }
+
+    if insertions.is_empty() {
+        return Ok(xml.to_owned());
+    }
+    insertions.sort_unstable_by(|left, right| right.cmp(left));
+    let mut patched = bytes.to_vec();
+    for insertion in insertions {
+        patched.splice(insertion..insertion, b" s=\"0\"".iter().copied());
+    }
+    String::from_utf8(patched).context("patched worksheet XML is not UTF-8")
+}
+
+fn xml_start_tag_length(bytes: &[u8]) -> Option<usize> {
+    let mut quote = None;
+    for (index, byte) in bytes.iter().copied().enumerate() {
+        match quote {
+            Some(delimiter) if byte == delimiter => quote = None,
+            Some(_) => {}
+            None if byte == b'\'' || byte == b'"' => quote = Some(byte),
+            None if byte == b'>' => return Some(index + 1),
+            None => {}
+        }
+    }
+    None
 }
 
 fn validate_copy_style_results(
@@ -2560,6 +2664,125 @@ fn read_diagnostic(path: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn implicit_xf_zero_properties_are_visible_to_umya_expected_style_reader() -> Result<()> {
+        let source = ScratchFile::create(&std::env::temp_dir(), "implicit-xf0-source")?;
+        let mut workbook = rust_xlsxwriter::Workbook::new();
+        workbook.add_worksheet().write_string(4, 10, "value")?;
+        workbook.save(source.path())?;
+
+        let styled_source =
+            ScratchFile::create(&std::env::temp_dir(), "implicit-xf0-styled-source")?;
+        rewrite_test_zip_part(
+            source.path(),
+            styled_source.path(),
+            "xl/styles.xml",
+            |xml| add_vertical_center_to_xf_zero(xml),
+        )?;
+
+        let source_umya = crate::open_xlsx(styled_source.path())?;
+        let source_style = style_at(&source_umya, "Sheet1", "K5")?;
+        assert!(source_style.alignment().is_none());
+
+        let explicit_style_zero =
+            ScratchFile::create(&std::env::temp_dir(), "explicit-xf0-reader-copy")?;
+        materialize_implicit_style_zero(styled_source.path(), explicit_style_zero.path())?;
+        let normalized_umya = crate::open_xlsx(explicit_style_zero.path())?;
+        let normalized_style = style_at(&normalized_umya, "Sheet1", "K5")?;
+        assert_eq!(
+            normalized_style.alignment().unwrap().vertical(),
+            &umya_spreadsheet::VerticalAlignmentValues::Center
+        );
+        Ok(())
+    }
+
+    fn add_vertical_center_to_xf_zero(styles_xml: &str) -> Result<String> {
+        let document = roxmltree::Document::parse(styles_xml)?;
+        let cell_xfs = document
+            .descendants()
+            .find(|node| {
+                node.is_element()
+                    && node.tag_name().namespace() == Some(SPREADSHEET_MAIN_NS)
+                    && node.tag_name().name() == "cellXfs"
+            })
+            .context("test workbook has no cellXfs")?;
+        let xf = cell_xfs
+            .children()
+            .find(|node| {
+                node.is_element()
+                    && node.tag_name().namespace() == Some(SPREADSHEET_MAIN_NS)
+                    && node.tag_name().name() == "xf"
+            })
+            .context("test workbook has no default cellXf")?;
+        let range = xf.range();
+        let bytes = styles_xml.as_bytes();
+        let start_tag_length = xml_start_tag_length(&bytes[range.start..])
+            .context("find test cellXf start-tag boundary")?;
+        let start_tag_end = range.start + start_tag_length;
+        let start_tag = &styles_xml[range.start..start_tag_end];
+        if start_tag.ends_with("/>") {
+            let mut replacement = start_tag[..start_tag.len() - 2].to_owned();
+            replacement.push('>');
+            replacement.push_str("<alignment vertical=\"center\"/></xf>");
+            let mut output = String::with_capacity(styles_xml.len() + 42);
+            output.push_str(&styles_xml[..range.start]);
+            output.push_str(&replacement);
+            output.push_str(&styles_xml[range.end..]);
+            Ok(output)
+        } else {
+            let mut output = String::with_capacity(styles_xml.len() + 32);
+            output.push_str(&styles_xml[..start_tag_end]);
+            output.push_str("<alignment vertical=\"center\"/>");
+            output.push_str(&styles_xml[start_tag_end..]);
+            Ok(output)
+        }
+    }
+
+    fn rewrite_test_zip_part<F>(
+        source: &Path,
+        output: &Path,
+        part_name: &str,
+        rewrite: F,
+    ) -> Result<()>
+    where
+        F: FnOnce(&str) -> Result<String>,
+    {
+        let mut archive = zip::ZipArchive::new(File::open(source)?)?;
+        let mut writer = zip::ZipWriter::new(File::create(output)?);
+        let mut rewrite = Some(rewrite);
+        for index in 0..archive.len() {
+            let mut entry = archive.by_index(index)?;
+            let name = entry.name().to_owned();
+            let is_directory = entry.is_dir();
+            let options =
+                zip::write::SimpleFileOptions::default().compression_method(entry.compression());
+            if is_directory {
+                writer.add_directory(name, options)?;
+                continue;
+            }
+            if name == part_name {
+                let mut bytes = Vec::new();
+                entry.read_to_end(&mut bytes)?;
+                let xml = std::str::from_utf8(&bytes)?;
+                writer.start_file(name, options)?;
+                writer.write_all(
+                    rewrite
+                        .take()
+                        .context("test ZIP part rewrite was already consumed")?(
+                        xml
+                    )?
+                    .as_bytes(),
+                )?;
+            } else {
+                writer.start_file(name, options)?;
+                std::io::copy(&mut entry, &mut writer)?;
+            }
+        }
+        anyhow::ensure!(rewrite.is_none(), "test ZIP part {part_name} missing");
+        writer.finish()?;
+        Ok(())
+    }
 
     #[test]
     fn merged_style_readback_treats_only_non_anchor_cells_as_normalized() {

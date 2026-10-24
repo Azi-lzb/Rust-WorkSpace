@@ -37,6 +37,14 @@ Audit Agent 复验确认 probe 将实际 `unmodified merged-cell border readback
 - Windows 之外的平台及 deb 交付未验证。
 - 此校验器使用 umya 可见的源工作簿合并范围；对结构损坏仍依赖现有合并范围保留验证。
 
+## ImportRange XF0 读取修正（后续补充）
+
+- Audit 的最终七样本复验暴露 `expected_import_styles` 源端读取差异：源单元格省略 `s`、按 OOXML 隐式使用 cellXfs[0]；该 XF0 在真实样本中包含 `vertical="center"`，而 Umya 只在 `s` 属性显式存在时为 cell 应用样式，导致 expected 丢失真实对齐属性。
+- 共享校验器现仅在临时只读副本的 namespace-aware worksheet XML 中为缺少 `s` 的单元格显式写 `s="0"`，再用 Umya读取 expected 样式。原始模板不修改，非默认对齐值仍参与判等；没有忽略 imported style mismatch。
+- 合成 XLSX 回归测试确认：隐式 XF0 的垂直居中从原 Umya 读取缺失，在临时 `s="0"` 读回副本中正确可见。Audit 真实样本复验尚未执行。
+- 最终提交后应由 Audit 按 ID-free 样式组件语义复验；不同 workbook-local style_id 不作为样式损坏依据。
+- 定向测试：`cargo test -p excel-editor implicit_xf_zero_properties_are_visible_to_umya_expected_style_reader` 通过，1 项通过；格式检查和 workspace 全测未执行。
+
 ## 删除、回滚与版本
 
 - 无删除项。可通过普通 `git revert <commit>` 回滚本次共享校验器修正和测试。
