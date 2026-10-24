@@ -1,7 +1,7 @@
 时间：2026-10-24 18:43:17 Asia/Shanghai
 执行者：Codex main
 修改前 commit：9d25edc1c081c89c8a9eca04392fa0c56b7e632e
-修改后 commit：待提交
+修改后代码 commit：4e903dd7cc1b3b3baac3e6fbecf966f1a922a673
 WIP 情况：修改前 main 工作区干净；本次只处理共享 Umya 行插入缺陷。
 
 目的：修正 Umya 3.1.1 工作簿级插行会移动所有工作表的问题，使批量行插入只移动 EditPlan 指定工作表，并在无法安全处理公式结构时于写入前拒绝。
