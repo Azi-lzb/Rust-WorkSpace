@@ -1,0 +1,66 @@
+{
+  "schema_version": 1,
+  "suite": "audit.s1_history_workbook_edit_candidate",
+  "status": "candidate_rejected_after_write",
+  "candidate_only": true,
+  "production_capability": "unverified",
+  "sample_scope": {
+    "period": "2026-07-31",
+    "workbook_count": 1,
+    "format": "xlsx",
+    "worksheet_count": 2,
+    "managed_history_sheet_present": true,
+    "inventory_complete": true,
+    "features_present": [
+      "defined_names",
+      "relationships",
+      "freeze_panes",
+      "auto_filter"
+    ],
+    "operation_kinds": [
+      "delete_sheet",
+      "create_sheet_at",
+      "set_cell_value",
+      "set_freeze_panes",
+      "set_auto_filter",
+      "set_column_width"
+    ],
+    "preserve": [
+      "cell_values_and_types",
+      "formula_text",
+      "comments_and_positions",
+      "styles",
+      "merged_ranges",
+      "conditional_formatting",
+      "data_validations",
+      "defined_names",
+      "row_and_column_dimensions",
+      "page_settings",
+      "header_footer_text",
+      "relationships",
+      "sheet_identity_and_order",
+      "freeze_panes",
+      "auto_filter"
+    ]
+  },
+  "engine": {
+    "name": "openpyxl_worker",
+    "platform": "windows-x86_64-pc-windows-msvc",
+    "python": "3.12.10 isolated venv with -I",
+    "openpyxl": "3.1.5",
+    "et_xmlfile": "2.0.0"
+  },
+  "result": {
+    "backend_apply": "failed_after_candidate_save",
+    "error_code": "output_verification_failed",
+    "error": "worksheet deletion readback mismatch",
+    "candidate_output_existed_before_temp_cleanup": true,
+    "rust_output_validator": "not_run_after_worker_failure",
+    "source_input_unchanged": true,
+    "temporary_input_copy_unchanged": true,
+    "temporary_candidate_removed_after_test": true,
+    "formula_recalculation": "not_performed",
+    "production_route_changed": false
+  },
+  "diagnosis": "The batch deletes and recreates the managed worksheet with the same name. The worker checks each DeleteSheet operation against the final worksheet list and rejects the valid recreated sheet."
+}

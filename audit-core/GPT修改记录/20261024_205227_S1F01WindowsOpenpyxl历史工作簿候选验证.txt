@@ -1,0 +1,40 @@
+时间：2026-10-24 20:52（Asia/Shanghai）
+执行者：Codex Audit migration agent
+分支：audit-dev
+修改前 commit：5bd9751
+修改后 commit：待本地提交
+WIP：保留既存未跟踪 `audit-core/examples/`；没有纳入或覆盖。未修改 `DEVELOPMENT_GOAL.md`、源 Python 项目、真实业务工作簿、`pytools-core/**`、共享 crates、根 Cargo 配置或 `Cargo.lock`。
+
+## 目的
+
+继续验证 S1-F01 既有历史工作簿更新的 ExcelModifier 候选，在 Windows 原生 Rust 环境使用隔离 openpyxl 测试 venv 执行真实配置簿副本。候选始终为 Unverified，不接生产路由。
+
+## 修改文件
+
+- `audit-core/src/s1_history.rs`：增加显式忽略的 Windows openpyxl 真实候选探针；使用绝对 worker/runtime 路径，输出脱敏的 profile、操作类型、候选状态和输入安全状态。
+- `audit-core/probe/reports/s1_history_workbook_openpyxl_candidate_windows_20261024.json`：记录本轮脱敏候选结果，不含文件路径、文件名、工作簿值或哈希。
+- `audit-core/MIGRATION_INVENTORY.md`：补充 Windows 隔离 worker 实际失败位置；历史写回仍未验收。
+- 本记录。
+
+## 候选行为与结果
+
+- 使用 Windows `x86_64-pc-windows-msvc` Rust 二进制；独立 venv 版本为 Python 3.12.10、openpyxl 3.1.5、et-xmlfile 2.0.0，并以 `-I` 启动 worker。
+- 真实配置簿副本为 XLSX，OOXML inventory 完整，2 张表，含受管历史页；实际对象包含 DefinedNames、Relationships、FreezePanes、AutoFilter。
+- Audit 计划执行 DeleteSheet 与同名 CreateSheetAt，再写 13 列行数据、冻结首行、自动筛选和列宽；其他工作表按计划要求保留。
+- worker 执行并留下临时候选后，在自己的输出校验阶段报 `output_verification_failed: worksheet deletion readback mismatch`。`DeleteSheet` 校验要求最终工作簿不存在该名称，因此与本批随后同名重建冲突。
+- 原始样本和临时输入副本均字节未变。临时候选未通过 worker 校验，因此未运行 Rust 输出验证，也未做 Python/Rust 文件对拍；测试清理了临时目录。不得使用或交付该候选输出。
+- 已通过跨会话将最小操作批次、错误位置和建议的 net-final-state 校验发给 main 协调；本轮未修改共享 worker。
+
+## 测试证据
+
+- Windows 原生 `cargo test --offline --locked -p audit-core --lib s1_history::tests::history_workbook_edit_plan -j 1 --quiet`：2/2 通过。
+- Windows 原生 `cargo test --offline --locked -p audit-core --lib s1_history::tests::real_s1_history_workbook_openpyxl_candidate_only -j 1 -- --ignored --exact --nocapture`：探针测试本身通过；业务候选被 worker 写后校验拒绝，能力仍 Unverified。
+- venv `python -I` 版本核验：Python 3.12.10、openpyxl 3.1.5、et-xmlfile 2.0.0，确认为隔离 venv。
+- `rustfmt --edition 2024 --check audit-core/src/s1_history.rs` 与 `git diff --check`：通过。
+- 未执行公式重算、Linux worker、最终 deb runtime 或目标系统验收。
+
+## 未完成项、已知问题与回滚
+
+- 现有历史页写回仍没有通过的 ExcelModifier capability，也没有 CLI/GUI 写回入口；该计划构造不等于业务迁移完成。
+- 共享 worker 需要按操作批次验证最终工作表集合，或将同名删除后重建视为合法替换；普通仅删除仍须保持缺席校验。修复由 main 协调并安全同步后，再复验候选、Rust 读回、Python 基线输出和未修改工作表保留。
+- 回滚本次本地提交时可使用普通 `git revert <commit>`；无源数据恢复项，不升级 `audit-core` 版本。

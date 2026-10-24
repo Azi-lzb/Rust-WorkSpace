@@ -1188,8 +1188,8 @@ fn days_in_month(year: i32, month: u32) -> Option<u32> {
 mod tests {
     use super::*;
     use excel_editor::{
-        BackendCapability, CapabilityStatus, EditBackend, EngineId, OpenpyxlXlsxValidator,
-        OutputValidator, UmyaXlsxBackend,
+        BackendCapability, CapabilityStatus, EditBackend, EngineId, OpenpyxlWorkerConfig,
+        OpenpyxlXlsxBackend, OpenpyxlXlsxValidator, OutputValidator, UmyaXlsxBackend,
     };
     use serde_json::json;
 
@@ -1426,6 +1426,96 @@ mod tests {
         }
         assert_eq!(fs::read(&input).unwrap(), input_bytes);
         assert_eq!(fs::read(&source).unwrap(), source_bytes);
+        fs::remove_dir_all(directory).expect("remove temporary real-sample candidate directory");
+    }
+
+    #[test]
+    #[ignore = "set AUDIT_S1_HISTORY_REAL_WORKBOOK and AUDIT_S1_HISTORY_OPENPYXL_PYTHON; candidate only"]
+    fn real_s1_history_workbook_openpyxl_candidate_only() {
+        let source = std::env::var_os("AUDIT_S1_HISTORY_REAL_WORKBOOK")
+            .map(std::path::PathBuf::from)
+            .expect("AUDIT_S1_HISTORY_REAL_WORKBOOK must identify an authorized XLSX sample");
+        let python = std::env::var_os("AUDIT_S1_HISTORY_OPENPYXL_PYTHON")
+            .map(std::path::PathBuf::from)
+            .expect("AUDIT_S1_HISTORY_OPENPYXL_PYTHON must identify an isolated test runtime");
+        assert!(
+            source.is_file(),
+            "real S1 history workbook sample is missing"
+        );
+        assert!(
+            python.is_file(),
+            "isolated openpyxl test runtime is missing"
+        );
+
+        let source_bytes = fs::read(&source).expect("read source sample for immutability check");
+        let (directory, input) = history_fixture_path("real_openpyxl_candidate");
+        fs::copy(&source, &input).expect("copy real sample into the temporary candidate directory");
+        let input_bytes = fs::read(&input).expect("read temporary candidate input");
+        let output = directory.join("candidate-output.xlsx");
+        let mut candidate_issue = issue("CANDIDATE-ONLY", "2026-10", true);
+        candidate_issue.source_file = "candidate-source.xlsx".to_owned();
+        candidate_issue.target_value = json!(0);
+        let result = build_s1_history_workbook_edit_plan(&input, &output, &[candidate_issue])
+            .expect("build real-sample history edit plan");
+        let plan = &result.edit_plan;
+        println!(
+            "candidate_profile format={:?} inventory_complete={} features={:?} history_sheet_present={} operations={:?} preserve={:?}",
+            plan.workbook.format,
+            plan.workbook.inventory_complete,
+            plan.workbook.features_present,
+            result.replaces_existing_history_sheet,
+            plan.operations
+                .iter()
+                .map(EditOperation::kind)
+                .collect::<Vec<_>>(),
+            plan.preserve
+        );
+        let worker_script = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("audit-core has a workspace parent")
+            .join("crates/excel-editor/python/openpyxl_worker.py");
+        let worker_config = OpenpyxlWorkerConfig::new(python, worker_script)
+            .expect("construct isolated Windows openpyxl worker config");
+        let capability = BackendCapability {
+            engine: EngineId::OpenpyxlWorker,
+            status: CapabilityStatus::Unverified,
+            format: plan.format,
+            operations: plan.operations.iter().map(EditOperation::kind).collect(),
+            supported_features: plan.workbook.features_present.clone(),
+            preserved: plan.preserve.clone(),
+            platform: std::env::consts::OS.to_owned(),
+            evidence: None,
+        };
+        let backend = OpenpyxlXlsxBackend::new(capability, worker_config)
+            .expect("construct unverified openpyxl candidate");
+
+        match backend.apply(plan) {
+            Ok(()) => match OpenpyxlXlsxValidator.validate(plan, &output) {
+                Ok(()) => println!(
+                    "candidate_validation=passed engine=openpyxl_worker platform={} production_capability=unverified",
+                    std::env::consts::OS
+                ),
+                Err(error) => println!(
+                    "candidate_validation=rejected engine=openpyxl_worker platform={} production_capability=unverified reason={error:#}",
+                    std::env::consts::OS
+                ),
+            },
+            Err(error) => println!(
+                "candidate_apply=rejected engine=openpyxl_worker platform={} kind={:?} production_capability=unverified reason={}",
+                std::env::consts::OS,
+                error.kind,
+                error.message
+            ),
+        }
+        let output_exists = output.exists();
+        let input_unchanged = fs::read(&input).unwrap() == input_bytes;
+        let source_unchanged = fs::read(&source).unwrap() == source_bytes;
+        println!(
+            "candidate_output_exists={} input_unchanged={} source_unchanged={}",
+            output_exists, input_unchanged, source_unchanged
+        );
+        assert!(input_unchanged);
+        assert!(source_unchanged);
         fs::remove_dir_all(directory).expect("remove temporary real-sample candidate directory");
     }
 
