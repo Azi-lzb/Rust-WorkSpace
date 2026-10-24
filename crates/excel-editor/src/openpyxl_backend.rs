@@ -1661,7 +1661,8 @@ fn expected_import_styles(
     plan: &ExcelEditPlan,
 ) -> Result<BTreeMap<(String, String), umya_spreadsheet::Style>> {
     let mut styles = BTreeMap::new();
-    let mut normalized_import_sources: BTreeMap<PathBuf, ScratchFile> = BTreeMap::new();
+    let mut normalized_import_sources: BTreeMap<PathBuf, NormalizedImportStyleSource> =
+        BTreeMap::new();
     for operation in &plan.operations {
         let EditOperation::ImportRange {
             source_workbook: import_path,
@@ -1680,13 +1681,19 @@ fn expected_import_styles(
         }
         if !normalized_import_sources.contains_key(import_path) {
             let normalized = ScratchFile::create(&std::env::temp_dir(), "style-source-xlsx")?;
-            materialize_implicit_style_zero(import_path, normalized.path())?;
-            normalized_import_sources.insert(import_path.clone(), normalized);
+            let probe_cells = materialize_implicit_style_zero(import_path, normalized.path())?;
+            normalized_import_sources.insert(
+                import_path.clone(),
+                NormalizedImportStyleSource {
+                    file: normalized,
+                    probe_cells,
+                },
+            );
         }
-        let normalized_path = normalized_import_sources
+        let normalized_source = normalized_import_sources
             .get(import_path)
-            .context("normalized ImportRange style source missing")?
-            .path();
+            .context("normalized ImportRange style source missing")?;
+        let normalized_path = normalized_source.file.path();
         let imported = crate::open_xlsx(normalized_path)
             .with_context(|| format!("open ImportRange styles from {}", import_path.display()))?;
         let (min_row, min_col, max_row, max_col) = parse_range(source_range)?;
@@ -1699,7 +1706,24 @@ fn expected_import_styles(
                     column_letters(target_col + column - min_col),
                     target_row + row - min_row
                 );
-                let style = style_at(&imported, source_sheet, &source_cell)?;
+                let worksheet = imported.sheet_by_name(source_sheet).with_context(|| {
+                    format!("ImportRange source sheet {source_sheet:?} missing")
+                })?;
+                let style = if worksheet.cell(source_cell.as_str()).is_none() {
+                    let (probe, inherited_dimensions) = normalized_source
+                        .probe_cells
+                        .get(source_sheet)
+                        .with_context(|| {
+                            format!("XF0 probe for source sheet {source_sheet:?} missing")
+                        })?;
+                    anyhow::ensure!(
+                        !inherited_dimensions,
+                        "cannot determine inherited row/column style for absent ImportRange source cell {source_sheet}!{source_cell}"
+                    );
+                    style_at(&imported, source_sheet, probe)?
+                } else {
+                    style_at(&imported, source_sheet, &source_cell)?
+                };
                 styles.insert(
                     (target_sheet.clone(), target_cell),
                     project_import_style(&style, *style_mode),
@@ -1714,9 +1738,19 @@ fn expected_import_styles(
 /// attribute. OOXML defines an omitted `s` as style index 0, which can itself
 /// contain non-default properties. Materialize that implicit index only in a
 /// temporary readback copy so expected ImportRange styles include XF0.
-fn materialize_implicit_style_zero(source: &Path, output: &Path) -> Result<()> {
+struct NormalizedImportStyleSource {
+    file: ScratchFile,
+    probe_cells: BTreeMap<String, (String, bool)>,
+}
+
+fn materialize_implicit_style_zero(
+    source: &Path,
+    output: &Path,
+) -> Result<BTreeMap<String, (String, bool)>> {
+    let worksheet_parts = worksheet_parts_by_name(source)?;
     let mut input = zip::ZipArchive::new(File::open(source)?)?;
     let mut writer = zip::ZipWriter::new(File::create(output)?);
+    let mut probe_cells = BTreeMap::new();
     for index in 0..input.len() {
         let mut entry = input.by_index(index)?;
         let name = entry.name().to_owned();
@@ -1730,19 +1764,129 @@ fn materialize_implicit_style_zero(source: &Path, output: &Path) -> Result<()> {
         }
 
         writer.start_file(name.clone(), options)?;
-        if name.starts_with("xl/worksheets/") && name.ends_with(".xml") {
+        if worksheet_parts.values().any(|part| part == &name) {
             let mut xml = Vec::new();
             entry.read_to_end(&mut xml)?;
             let xml = std::str::from_utf8(&xml)
                 .with_context(|| format!("worksheet part {name} is not UTF-8"))?;
             let normalized = materialize_implicit_style_zero_cells(xml)?;
+            let (normalized, probe, inherited_dimensions) = append_xf_zero_probe(&normalized)?;
+            let sheet_name = worksheet_parts
+                .iter()
+                .find_map(|(sheet, part)| (part == &name).then_some(sheet.clone()))
+                .context("worksheet part has no workbook sheet identity")?;
+            probe_cells.insert(sheet_name, (probe, inherited_dimensions));
             writer.write_all(normalized.as_bytes())?;
         } else {
             std::io::copy(&mut entry, &mut writer)?;
         }
     }
     writer.finish()?;
-    Ok(())
+    Ok(probe_cells)
+}
+
+fn worksheet_parts_by_name(source: &Path) -> Result<BTreeMap<String, String>> {
+    const DOCUMENT_REL_NS: &str =
+        "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+    const PACKAGE_REL_NS: &str = "http://schemas.openxmlformats.org/package/2006/relationships";
+    let mut archive = zip::ZipArchive::new(File::open(source)?)?;
+    let workbook_xml = read_zip_part(&mut archive, "xl/workbook.xml")?;
+    let relationships_xml = read_zip_part(&mut archive, "xl/_rels/workbook.xml.rels")?;
+    let workbook = roxmltree::Document::parse(&workbook_xml)?;
+    let relationships = roxmltree::Document::parse(&relationships_xml)?;
+    let targets = relationships
+        .root_element()
+        .children()
+        .filter(|node| node.is_element() && node.tag_name().namespace() == Some(PACKAGE_REL_NS))
+        .filter_map(|node| {
+            Some((
+                node.attribute("Id")?.to_owned(),
+                (
+                    node.attribute("Target")?.to_owned(),
+                    node.attribute("TargetMode").unwrap_or_default().to_owned(),
+                ),
+            ))
+        })
+        .collect::<BTreeMap<_, _>>();
+    let mut parts = BTreeMap::new();
+    for sheet in workbook.descendants().filter(|node| {
+        node.is_element()
+            && node.tag_name().namespace() == Some(SPREADSHEET_MAIN_NS)
+            && node.tag_name().name() == "sheet"
+    }) {
+        let name = sheet.attribute("name").context("sheet name missing")?;
+        let id = sheet
+            .attributes()
+            .find(|attribute| {
+                attribute.name() == "id" && attribute.namespace() == Some(DOCUMENT_REL_NS)
+            })
+            .map(|attribute| attribute.value())
+            .context("sheet relationship id missing")?;
+        let (target, mode) = targets.get(id).context("sheet relationship missing")?;
+        anyhow::ensure!(
+            mode.is_empty(),
+            "external worksheet relationship is unsupported"
+        );
+        parts.insert(name.to_owned(), resolve_opc_target("xl", target)?);
+    }
+    Ok(parts)
+}
+
+fn append_xf_zero_probe(xml: &str) -> Result<(String, String, bool)> {
+    let document = roxmltree::Document::parse(xml)?;
+    let sheet_data = document
+        .descendants()
+        .find(|node| {
+            node.is_element()
+                && node.tag_name().namespace() == Some(SPREADSHEET_MAIN_NS)
+                && node.tag_name().name() == "sheetData"
+        })
+        .context("worksheet has no sheetData")?;
+    let rows = sheet_data
+        .children()
+        .filter(|node| {
+            node.is_element()
+                && node.tag_name().namespace() == Some(SPREADSHEET_MAIN_NS)
+                && node.tag_name().name() == "row"
+        })
+        .collect::<Vec<_>>();
+    let used = rows
+        .iter()
+        .filter_map(|row| row.attribute("r")?.parse::<u32>().ok())
+        .collect::<BTreeSet<_>>();
+    let probe_row = (1..=1_048_576)
+        .rev()
+        .find(|row| !used.contains(row))
+        .context("worksheet has no free row for temporary XF0 probe")?;
+    let probe = format!("A{probe_row}");
+    let inherited_dimensions = document.descendants().any(|node| {
+        node.is_element()
+            && node.tag_name().namespace() == Some(SPREADSHEET_MAIN_NS)
+            && ((node.tag_name().name() == "row"
+                && node.attribute("s").is_some()
+                && node.attribute("customFormat") == Some("1"))
+                || (node.tag_name().name() == "col" && node.attribute("style").is_some()))
+    });
+    let insertion = if let Some(row) = rows.iter().find(|row| {
+        row.attribute("r")
+            .and_then(|value| value.parse::<u32>().ok())
+            .is_some_and(|number| number > probe_row)
+    }) {
+        row.range().start
+    } else {
+        let range = sheet_data.range();
+        let fragment = &xml[range.start..range.end];
+        range.start
+            + fragment
+                .rfind("</")
+                .context("sheetData is not an explicit XML element")?
+    };
+    let injected = format!(
+        "<row xmlns=\"{SPREADSHEET_MAIN_NS}\" r=\"{probe_row}\"><c r=\"{probe}\" s=\"0\"/></row>"
+    );
+    let mut normalized = xml.to_owned();
+    normalized.insert_str(insertion, &injected);
+    Ok((normalized, probe, inherited_dimensions))
 }
 
 fn materialize_implicit_style_zero_cells(xml: &str) -> Result<String> {
@@ -2687,11 +2831,19 @@ mod tests {
 
         let explicit_style_zero =
             ScratchFile::create(&std::env::temp_dir(), "explicit-xf0-reader-copy")?;
-        materialize_implicit_style_zero(styled_source.path(), explicit_style_zero.path())?;
+        let probes =
+            materialize_implicit_style_zero(styled_source.path(), explicit_style_zero.path())?;
         let normalized_umya = crate::open_xlsx(explicit_style_zero.path())?;
         let normalized_style = style_at(&normalized_umya, "Sheet1", "K5")?;
         assert_eq!(
             normalized_style.alignment().unwrap().vertical(),
+            &umya_spreadsheet::VerticalAlignmentValues::Center
+        );
+        let (probe, inherited_dimensions) = probes.get("Sheet1").unwrap();
+        assert!(!inherited_dimensions);
+        let absent_cell_style = style_at(&normalized_umya, "Sheet1", probe)?;
+        assert_eq!(
+            absent_cell_style.alignment().unwrap().vertical(),
             &umya_spreadsheet::VerticalAlignmentValues::Center
         );
         Ok(())
