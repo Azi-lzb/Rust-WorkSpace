@@ -143,14 +143,14 @@
           "columns": 260
         }
       ],
-      "python_elapsed_ms": 3642,
-      "rust_cli_wall_elapsed_ms": 1783,
+      "python_elapsed_ms": 4189,
+      "rust_cli_wall_elapsed_ms": 1789,
       "rust_execution": {
         "ooxml_error_cells_patched": 0,
-        "read_elapsed_ms": 1245,
+        "read_elapsed_ms": 1255,
         "reader_engine": "calamine",
-        "total_elapsed_ms": 1721,
-        "write_elapsed_ms": 473,
+        "total_elapsed_ms": 1739,
+        "write_elapsed_ms": 481,
         "writer_engine": "rust_xlsxwriter"
       },
       "progress_log": {
@@ -172,12 +172,12 @@
           "rust_xlsxwriter"
         ],
         "completed_stage_elapsed_ms": {
-          "extent_scan": 45,
-          "value_read": 166,
-          "row_write": 30,
-          "output_save": 354,
-          "output_workbook": 473,
-          "run": 1721
+          "extent_scan": 44,
+          "value_read": 159,
+          "row_write": 29,
+          "output_save": 359,
+          "output_workbook": 481,
+          "run": 1739
         },
         "skipped_input_names": [],
         "input_filter_events_have_no_engine": true
@@ -204,14 +204,14 @@
           "columns": 213
         }
       ],
-      "python_elapsed_ms": 10659,
-      "rust_cli_wall_elapsed_ms": 12184,
+      "python_elapsed_ms": 10783,
+      "rust_cli_wall_elapsed_ms": 12199,
       "rust_execution": {
         "ooxml_error_cells_patched": 1212,
-        "read_elapsed_ms": 5914,
+        "read_elapsed_ms": 5993,
         "reader_engine": "calamine",
-        "total_elapsed_ms": 12133,
-        "write_elapsed_ms": 6216,
+        "total_elapsed_ms": 12149,
+        "write_elapsed_ms": 6154,
         "writer_engine": "rust_xlsxwriter"
       },
       "progress_log": {
@@ -235,13 +235,13 @@
           "rust_xlsxwriter"
         ],
         "completed_stage_elapsed_ms": {
-          "extent_scan": 1485,
-          "value_read": 4429,
-          "row_write": 318,
-          "output_save": 587,
-          "ooxml_error_patch": 5278,
-          "output_workbook": 6216,
-          "run": 12133
+          "extent_scan": 1540,
+          "value_read": 4453,
+          "row_write": 323,
+          "output_save": 585,
+          "ooxml_error_patch": 5212,
+          "output_workbook": 6154,
+          "run": 12149
         },
         "skipped_input_names": [],
         "input_filter_events_have_no_engine": true
@@ -271,14 +271,14 @@
           "columns": 17
         }
       ],
-      "python_elapsed_ms": 2722,
-      "rust_cli_wall_elapsed_ms": 5216,
+      "python_elapsed_ms": 3698,
+      "rust_cli_wall_elapsed_ms": 5261,
       "rust_execution": {
         "ooxml_error_cells_patched": 0,
-        "read_elapsed_ms": 3773,
+        "read_elapsed_ms": 3792,
         "reader_engine": "calamine",
-        "total_elapsed_ms": 5158,
-        "write_elapsed_ms": 1382,
+        "total_elapsed_ms": 5204,
+        "write_elapsed_ms": 1409,
         "writer_engine": "rust_xlsxwriter"
       },
       "progress_log": {
@@ -300,12 +300,12 @@
           "rust_xlsxwriter"
         ],
         "completed_stage_elapsed_ms": {
-          "extent_scan": 447,
-          "value_read": 1742,
-          "row_write": 71,
-          "output_save": 1118,
-          "output_workbook": 1382,
-          "run": 5158
+          "extent_scan": 456,
+          "value_read": 1745,
+          "row_write": 79,
+          "output_save": 1130,
+          "output_workbook": 1409,
+          "run": 5204
         },
         "skipped_input_names": [],
         "input_filter_events_have_no_engine": true
@@ -335,14 +335,14 @@
           "columns": 22
         }
       ],
-      "python_elapsed_ms": 155214,
-      "rust_cli_wall_elapsed_ms": 260276,
+      "python_elapsed_ms": 141679,
+      "rust_cli_wall_elapsed_ms": 244280,
       "rust_execution": {
         "ooxml_error_cells_patched": 0,
-        "read_elapsed_ms": 198731,
+        "read_elapsed_ms": 190254,
         "reader_engine": "calamine",
-        "total_elapsed_ms": 259263,
-        "write_elapsed_ms": 60529,
+        "total_elapsed_ms": 243612,
+        "write_elapsed_ms": 53355,
         "writer_engine": "rust_xlsxwriter"
       },
       "progress_log": {
@@ -364,12 +364,12 @@
           "rust_xlsxwriter"
         ],
         "completed_stage_elapsed_ms": {
-          "extent_scan": 5301,
-          "value_read": 22201,
-          "row_write": 2443,
-          "output_save": 44805,
-          "output_workbook": 60529,
-          "run": 259263
+          "extent_scan": 5322,
+          "value_read": 19601,
+          "row_write": 2289,
+          "output_save": 40668,
+          "output_workbook": 53355,
+          "run": 243612
         },
         "skipped_input_names": [],
         "input_filter_events_have_no_engine": true
@@ -401,12 +401,12 @@
           "rust_xlsxwriter"
         ],
         "completed_stage_elapsed_ms": {
-          "extent_scan": 45,
-          "value_read": 166,
-          "row_write": 30,
-          "output_save": 354,
-          "output_workbook": 473,
-          "run": 1721
+          "extent_scan": 44,
+          "value_read": 159,
+          "row_write": 29,
+          "output_save": 359,
+          "output_workbook": 481,
+          "run": 1739
         },
         "skipped_input_names": [],
         "input_filter_events_have_no_engine": true
@@ -432,13 +432,13 @@
           "rust_xlsxwriter"
         ],
         "completed_stage_elapsed_ms": {
-          "extent_scan": 1485,
-          "value_read": 4429,
-          "row_write": 318,
-          "output_save": 587,
-          "ooxml_error_patch": 5278,
-          "output_workbook": 6216,
-          "run": 12133
+          "extent_scan": 1540,
+          "value_read": 4453,
+          "row_write": 323,
+          "output_save": 585,
+          "ooxml_error_patch": 5212,
+          "output_workbook": 6154,
+          "run": 12149
         },
         "skipped_input_names": [],
         "input_filter_events_have_no_engine": true
@@ -462,12 +462,12 @@
           "rust_xlsxwriter"
         ],
         "completed_stage_elapsed_ms": {
-          "extent_scan": 447,
-          "value_read": 1742,
-          "row_write": 71,
-          "output_save": 1118,
-          "output_workbook": 1382,
-          "run": 5158
+          "extent_scan": 456,
+          "value_read": 1745,
+          "row_write": 79,
+          "output_save": 1130,
+          "output_workbook": 1409,
+          "run": 5204
         },
         "skipped_input_names": [],
         "input_filter_events_have_no_engine": true
@@ -491,12 +491,12 @@
           "rust_xlsxwriter"
         ],
         "completed_stage_elapsed_ms": {
-          "extent_scan": 5301,
-          "value_read": 22201,
-          "row_write": 2443,
-          "output_save": 44805,
-          "output_workbook": 60529,
-          "run": 259263
+          "extent_scan": 5322,
+          "value_read": 19601,
+          "row_write": 2289,
+          "output_save": 40668,
+          "output_workbook": 53355,
+          "run": 243612
         },
         "skipped_input_names": [],
         "input_filter_events_have_no_engine": true
@@ -530,18 +530,18 @@
     "freeze_panes_and_header_bold": "exact",
     "formula_merge_name_and_page_properties": "exact"
   },
-  "python_elapsed_ms": 172237,
-  "rust_cli_wall_elapsed_ms": 279459,
+  "python_elapsed_ms": 160349,
+  "rust_cli_wall_elapsed_ms": 263529,
   "execution_environment": {
     "python_sys_platform": "win32",
-    "rust_cli_host": "Windows host",
-    "rust_cli_executable": "configured Windows GNU executable",
+    "rust_cli_host": "Windows 11 x64, native MSVC target",
+    "rust_cli_executable": "native cargo build: x86_64-pc-windows-msvc, rustc 1.99.1",
     "rust_cli_wall_includes_cargo_run": false
   },
   "timing_note": "Single execution per batch for diagnostics; not a performance comparison.",
   "limitations": [
     "Original-project XLSX assets only; no production default or broad format acceptance inferred.",
-    "VBA-bearing XLSM, XLS/XLSB, Windows-native Cargo build and target Linux/deb remain unvalidated.",
+    "VBA-bearing XLSM, XLS/XLSB and target Linux/deb remain unvalidated.",
     "Report contains no source cell values or output workbook; both outputs were temporary."
   ]
 }

@@ -294,6 +294,20 @@ def compare_vba_enabled_xlsm_sample(output: Path) -> dict[str, object]:
     }
 
 
+def _real_sample_limitations(rust_cli_executable: str) -> list[str]:
+    limitations = [
+        "Original-project XLSX assets only; no production default or broad format acceptance inferred.",
+        "VBA-bearing XLSM, XLS/XLSB and target Linux/deb remain unvalidated.",
+        "Report contains no source cell values or output workbook; both outputs were temporary.",
+    ]
+    if not (
+        sys.platform == "win32"
+        and "windows-msvc" in rust_cli_executable.lower()
+    ):
+        limitations.insert(1, "Windows-native Cargo build remains unvalidated.")
+    return limitations
+
+
 def compare_real_used_range_sample() -> dict[str, object]:
     sample_batches = [
         [
@@ -429,6 +443,8 @@ def compare_real_used_range_sample() -> dict[str, object]:
         rust_cli_wall_elapsed_ms = sum(
             batch["rust_cli_wall_elapsed_ms"] for batch in batch_reports
         )
+        rust_cli_host, rust_cli_executable = rust_cli_runtime_metadata()
+        limitations = _real_sample_limitations(rust_cli_executable)
         report = {
             "schema_version": 1,
             "suite": "pytools.summary_used_range_real_sample_parity",
@@ -499,18 +515,14 @@ def compare_real_used_range_sample() -> dict[str, object]:
             "rust_cli_wall_elapsed_ms": rust_cli_wall_elapsed_ms,
             "execution_environment": {
                 "python_sys_platform": sys.platform,
-                "rust_cli_host": rust_cli_runtime_metadata()[0],
-                "rust_cli_executable": rust_cli_runtime_metadata()[1],
+                "rust_cli_host": rust_cli_host,
+                "rust_cli_executable": rust_cli_executable,
                 "rust_cli_wall_includes_cargo_run": not bool(
                     os.environ.get("PYTOOLS_RUST_CLI")
                 ),
             },
             "timing_note": "Single execution per batch for diagnostics; not a performance comparison.",
-            "limitations": [
-                "Original-project XLSX assets only; no production default or broad format acceptance inferred.",
-                "VBA-bearing XLSM, XLS/XLSB, Windows-native Cargo build and target Linux/deb remain unvalidated.",
-                "Report contains no source cell values or output workbook; both outputs were temporary.",
-            ],
+            "limitations": limitations,
         }
         report_path = (
             Path(__file__).resolve().parent

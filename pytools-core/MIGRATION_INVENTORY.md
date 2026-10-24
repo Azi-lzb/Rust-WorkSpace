@@ -664,6 +664,12 @@ Windows 原生验证：`cargo fmt --manifest-path pytools-core/Cargo.toml -- --c
 
 完整组合 `compare_summary_tools.py` 未能完成，因为当前 PyTools Python venv 缺少 NoComPyTools 对拍所需的 `python_calamine`；本次已隔离运行 PyCode/Rust PT-6-1 主样本对拍，不安装依赖、不修改源项目。此结果补充 Windows 上运行现有 Rust CLI 的阶段证据，不代表 Windows 原生 Cargo 构建、原 PyTools 业务 VBA XLSM、麒麟 V10/UOS V20、glibc 2.28、deb 或离线交付验收；PT-6-1 整体仍未完成最终验收。
 
+### 2026-10-25 PT-6-1 Windows 原生 MSVC 真实样本复验
+
+使用 Windows 原生 `x86_64-pc-windows-msvc`（Cargo/rustc 1.99.1）构建当前分支 `pytools` CLI；`summary_menu_cli` 与 `summary_comments_cli` 回归 7/7 通过。以该 MSVC 二进制直接运行现有 `compare_real_used_range_sample()`：原 PyTools 只读 `xlsx/` 目录 13 份真实 XLSX，按四批共 96 个工作表、203,580 行与 PyCode 对拍；值/类型、非空单元格样式、工作表名称与维度、冻结窗格/表头粗体、公式/合并/定义名称/页面属性均精确一致，输入前后指纹相同，输出仅写入临时目录。机器报告仍为 `probe/reports/summary_used_range_real_parity_20261025.json`，现标出 Windows MSVC 执行环境。
+
+本轮没有修改 PT-6-1 业务逻辑或默认引擎；这补齐的是 Windows 原生 Cargo 阶段验证，不覆盖 VBA-bearing 原业务 XLSM、NoComPyTools 独有格式、麒麟 V10/UOS V20、glibc 2.28 或离线 deb，PT-6-1 整体仍为未完成最终验收。完整 NoCom 对拍仍因 Python venv 缺少 `python_calamine` 未执行。
+
 ### 2026-10-25 PT-7-6 显式追加既有输出簿
 
 新增 pytools extract-sheets --append-existing，映射原 PyCode run_extract_sheets(..., append_existing=True) 的显式追加参数。对已存在的目标，仅支持 XLSX；读取并验证目标 workbook inventory，保存目标 SHA-256 快照，要求匹配的 --capabilities 与 --platform。Rust 先以 rust_xlsxwriter 生成待追加工作表，再经 ExcelModifier 按 CreateSheet + ImportRange 对既有簿执行整批修改；Calamine 校验新表，最终仅在目标快照未变化时安全替换。缺少/不匹配 capability、目标 inventory 不完整或输出冲突时失败关闭，目标不被覆盖。目标路径尚不存在时，沿用新建输出行为。

@@ -1,0 +1,26 @@
+时间：2026-10-25 05:56（Asia/Shanghai）
+执行者：Codex，pytools-dev 专属 Agent
+修改前 commit：20c329d
+修改后 commit：见本记录所在提交。
+WIP：开始前 pytools-dev 工作区干净；本轮生成的机器报告、记录和清单更新均为本任务内容。无用户未提交修改。
+
+目的：在 main 配置完成 Windows 原生 Rust 工具链后，以 `x86_64-pc-windows-msvc` 二进制补充 PT-6-1 真实 PyTools XLSX 样本对拍证据，并使探针的“未验证项”按实际执行目标正确生成。
+
+修改文件：
+- `pytools-core/probe/compare_summary_tools.py`：按实际 CLI 标签区分 Windows MSVC Cargo 构建是否已验证，避免继续报告为未验证。
+- `pytools-core/probe/reports/summary_used_range_real_parity_20261025.json`：记录本轮 MSVC CLI 对拍环境与四批结果；不含单元格内容，输出工作簿仅在临时目录。
+- `pytools-core/MIGRATION_INVENTORY.md`：补记本轮 PT-6-1 阶段验证及仍未完成的验收范围。
+
+验证：
+- `cargo build --offline --locked -p pytools-core --bin pytools`：通过；Cargo/rustc 1.99.1，目标 `x86_64-pc-windows-msvc`。
+- `cargo test --offline --locked -p pytools-core --test summary_menu_cli --test summary_comments_cli -j 1`：7/7 通过，其中菜单测试 3/3、批注汇总 CLI 测试 4/4。
+- `compare_real_used_range_sample()` 使用上述 MSVC CLI 与原 PyTools 只读样本运行：13 份 XLSX、96 个工作表、203,580 行、四批；值/类型、填充单元格样式、sheet/维度、冻结窗格/表头粗体、公式/合并/名称/页面属性精确一致。输入前后指纹相同，输出只在临时目录。
+- 探针元数据条件检查：MSVC 标签会移除“Windows-native Cargo 未验证”，GNU 标签仍保留该限制；机器报告与 MSVC 标签一致。
+- 本轮外层结果打印器误按返回值包含 `batches` 字段读取并报 `KeyError`；该对拍函数已完整写出报告并正常返回摘要。已直接核验 JSON 报告 `status=passed_real_sample_cli_parity`、四批及全部汇总字段，该异常不是 Python/Rust 对拍失败。
+
+未执行/仍未验收：原项目业务 VBA-bearing XLSM、NoComPyTools 扩展格式（完整组合还需要缺失的 `python_calamine`）、麒麟 V10/UOS V20、glibc 2.28、deb/离线交付。未作性能结论；报告中的单次耗时只作阶段诊断，峰值内存未测量。PT-6-1 整体仍未完成最终验收。
+
+已知问题：Rust 编译仍有共享 `excel-editor` 弃用 API 警告及 PyTools 两处既有 unused-import 警告；本轮未改共享 crate。
+
+删除清单：无。回滚：恢复上述三个受版本控制文件到本轮前内容并移除本记录；未修改业务实现或默认路由。
+【组件版本】不升级。
