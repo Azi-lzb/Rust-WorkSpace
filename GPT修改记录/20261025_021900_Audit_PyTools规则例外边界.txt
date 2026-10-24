@@ -1,0 +1,22 @@
+时间：2026-10-25 02:19（Asia/Shanghai）
+执行者：Codex main
+修改前 commit：788c6f426ddb5f1d9a41c03ad0be1f8e7231bee8
+工作区状态：main 干净且与 origin/main 同步；Audit 活动分支已同步到 3d380c4。PyTools 工作树有两处未提交业务修改，未触碰。
+
+目的：完成冲突复核时发现的剩余绝对措辞修正，确保 Audit/PyTools 子树文档允许根规范限定的生产兼容 worker，并将公式计算从 sidecar 强制路径改为独立 ExcelCalculator。
+
+修改文件：
+- audit-core/rules/02_核心架构与跨平台.md：Python 生产例外限于隔离 openpyxl 修改和未来 Windows COM 修改/计算 worker；业务核心、读取、新建、规则计算仍由 Rust 负责。
+- audit-core/rules/04_模板工作流与数据边界.md：公式计算统一引用独立 ExcelCalculator，按通过验收的引擎和适合该后端的通信方式调用。
+- pytools-core/README.md：将“Python/openpyxl 永不作为生产依赖”改为明确列出隔离、能力门控的窄 worker 例外，排除 Python 业务逻辑和 Linux COM 依赖。
+- 本记录。
+
+验证：执行 `git diff --check`；未运行构建、测试或业务对拍。未修改代码、依赖、默认路由、JSON IPC 协议或两个产品的业务迁移状态。
+
+未验证/未执行：未实现或验收 openpyxl、pywin32、Excel/WPS COM 或 ExcelCalculator 新能力；目标平台打包未验证。未修改活动 `/goal`。
+
+Audit ImportRange 请求：本轮只接收并汇总静态 OOXML 诊断；未实现共享引擎。已确认 4 个公式范围、55 个批注操作；7 个目标簿都有 comments/VML parts，目标单元格已有 49/55 批注（另 6 条需新增），目标与模板样式表不等价且非前缀。后续候选必须做样式索引映射、保留/新增批注及 VML 锚点验证；Audit Agent 已获知本轮不开发引擎，继续其独立 S1-F02 迁移。
+
+组件版本：不升级（纯文档/治理修改）。
+删除清单：无。
+回滚：可单独反向修订三份文档；不涉及业务代码回滚。
