@@ -6,19 +6,22 @@
 
 ## 1. 项目目标与已确认边界
 
-本 workspace 将 Open-Data-Audit 与 py_statistics_tools 逐步迁移为 Rust 主导、Go 条件性备选。Rust 负责业务核心、读取、规则计算、新建工作簿及 ExcelEditPlan/ExcelModifier 调度；既有工作簿修改可按能力使用经验证的 OOXML Patch、umya-spreadsheet、Go Excelize worker，或本规范限定的隔离 openpyxl worker。Python 旧项目继续作为行为对拍基线；openpyxl worker 是唯一生产 Python 例外，只做既有 XLSX 文件修改，不承接业务逻辑。
+本 workspace 将 Open-Data-Audit 与 py_statistics_tools 逐步迁移为 Rust 主导、Go 条件性备选。Rust 负责业务核心、读取、规则计算、新建工作簿及 ExcelEditPlan/ExcelModifier 调度；既有工作簿修改可按能力使用经验证的 OOXML Patch、umya-spreadsheet、Go Excelize worker、隔离 openpyxl worker，或未来 Windows-only 的 Microsoft Excel/WPS COM worker。Python 旧项目继续作为行为对拍基线；生产 Python 仅可用于隔离的 XLSX 修改或经验证的 Windows COM 修改/计算 worker，不承接业务逻辑。公式计算另属独立 ExcelCalculator，不属于 Reader、Writer 或 Modifier。
 
-目标交付为麒麟 V10 x86_64 和统信 UOS V20 x86_64 离线 deb，兼容 glibc 2.28。不得要求用户预装 Python、Go、Office、WPS、LibreOffice 或 JVM。启用 openpyxl 引擎时可在 deb 内置隔离 Python runtime 与依赖，不得使用系统 Python、用户 PATH 或联网 pip。ABI 和打包约束见根 AGENTS.md。
+目标交付为麒麟 V10 x86_64 和统信 UOS V20 x86_64 离线 deb，兼容 glibc 2.28；核心路径不得要求用户预装 Python、Go、Office、WPS、LibreOffice 或 JVM。启用 openpyxl 引擎时可在 deb 内置隔离 Python runtime 与依赖，不得使用系统 Python、用户 PATH 或联网 pip。可选 LibreOffice 计算能力须明确独立运行时来源；Windows COM 不进入 Linux deb 或其必要依赖。ABI 和打包约束见根 AGENTS.md。
 
 ### 1.1 主路径和旁路
 
-- 主路径不依赖 Office、WPS、LibreOffice、COM 或 UNO。
-- 仅公式重算、同类别格式转换允许通过 sidecar/lo-convert 显式调用外部引擎。
-- 公式重算默认关闭。主路径只保留公式文本，不承诺本轮结果。用户显式要求本轮结果时，sidecar 必须重算并验证缓存刷新；未安装时报告“该功能需要外部引擎”。不得用旧缓存、零值或静态重建冒充重算。
+- 核心主路径不依赖 Office、WPS、LibreOffice、COM 或 UNO。
+- 公式计算、同类别格式转换及未来 Windows COM 修改只能作为独立、显式选择的可选能力；其不可用不影响读取、新建和其他业务路径。
+- 公式计算通过独立 ExcelCalculator 提供，默认关闭。用户可显式请求普通重算或完整重算；必须验证公式语义、结果和依赖关系，并检查引擎保存造成的公式、样式或结构变化。不得用旧缓存、零值或静态重建冒充重算；未安装/不可用时报告“该功能需要外部引擎”。
 - 同类转换由用户明确触发，可选择经对拍的保真转换，或经说明损失范围的 Rust/Go 转换。已确认方向包括 Excel .et/.xls → .xlsx、Word .doc → .docx；.xls 可作为改工作表名等操作前的显式转换。具体方向/引擎未登记通过前仍属未验证；结果必须验证 sheet、数据和契约要求保留的对象。
 - PDF、纸张渲染、打印机输出和跨类别转换不在当前迁移范围。打印只写页面设置。
-- sidecar 是独立进程，主程序不静态链接、不 import sidecar crate，启动时不检查 LO/COM。只有显式触发旁路时才检查依赖；旁路缺失/失败不能阻塞纯 Rust 主路径，未验证输出不得报告成功。
-- 除公式重算和同类格式转换外，不得引入 LO/COM/UNO 依赖。旧 COM 工作流不能整体搬入 sidecar。
+- sidecar/worker 是独立进程，主程序启动时不检查外部引擎。用户显式触发时才检查依赖；缺失/失败不能阻塞纯 Rust 主路径，未验证输出不得报告成功。
+- 未来 ExcelModifier 可选接入 Microsoft Excel COM、WPS 表格 COM 两个独立 Windows 后端：优先使用 pywin32 / `win32com.client` 与工作簿级 JSON IPC，Excel 使用 `Excel.Application`，WPS 优先验证 `KET.Application`。二者使用独立 EngineId 和 capability 证据，按真实 COM 激活及具体操作验收；不能仅凭软件已安装判定可用。显式选择不可用后端须报错，不静默切换。COM 不提供 Reader/Writer，也不进入 Linux 依赖；不使用 Rust COM、PyO3 或 FFI。只有端到端测量证实 IPC 为瓶颈后才评估替代通信方式。
+- LibreOffice Calc 可作为未来独立 ExcelCalculator 后端（Windows/Linux）；Microsoft Excel COM、WPS COM 计算候选仅限 Windows，WPS 单独验收。ExcelCalculator 不纳入 ExcelModifier；LibreOffice 暂不纳入修改后端。计算适配器可使用适合引擎的通信接口，不强制 JSON IPC。
+- PDF、纸张渲染、打印机输出和跨类别转换不在当前迁移范围。打印只写页面设置。旧 COM 业务工作流不得整体搬入 sidecar/worker 以规避 Rust 迁移。
+- 可选 LibreOffice 计算能力不得假设 Linux 目标机预装；发布前须说明独立离线组件/安装包或受支持外部安装等运行时来源，并完成目标平台验证。
 
 ### 1.2 已确认模板与打印范围
 
@@ -46,6 +49,7 @@ py_statistics_tools 工作表提取以普通无批注版为迁移基线，带批
 - 一个文件的一批修改原则上由一个覆盖整批操作和保留项的已验收引擎完成，避免反复打开/保存。
 - sidecar 独立构建和显式子进程调用；业务 crate 不静态依赖或导入 sidecar。
 - 两个产品分别维护业务 fixtures、probe 配置、报告和 deb，不混用，也不单独发布共享 .so。
+- 当前 Workspace 是临时联合迁移环境，不提前拆仓库；Audit、PyTools 业务边界保持独立。完成真实验收后，公共 crates 可拆成独立 Excel-Core Cargo/Git 仓库，两个产品分别成为独立仓库并通过 Cargo 依赖公共能力；各项目必须可独立离线构建。
 
 ## 3. 每项 Excel 功能的操作契约
 
@@ -61,8 +65,8 @@ py_statistics_tools 工作表提取以普通无批注版为迁移基线，带批
 | data_owner | rust、python_legacy、none；迁移期用来记录数据与业务计算所在侧，并测量跨语言传输成本。最终生产业务计算不依赖 Python；仅 ExcelModifier 的可选 openpyxl worker 可在隔离进程运行。 |
 | value_view / formula_mode | stored 默认；displayed 需静态显示格式能力验收。公式模式为 cached、text、text_and_cache、recalculate；旧缓存不等于本轮重算。 |
 | preserve / drop_allowed | 明确要保留和明确允许丢弃的对象；默认不丢弃未授权对象。 |
-| allow_conversion / external_apps | 默认 false；只允许显式同类转换或公式重算走旁路。 |
-| reference_app / engine_mode | none、Excel、WPS、LibreOffice；auto 或指定已登记通过后端。手动失败不得静默换引擎。 |
+| allow_conversion / external_apps | 默认 false；格式转换、公式计算、Windows COM 修改分别显式授权，不因某项开启而自动启用其他外部能力。 |
+| reference_app / engine_mode | none、Microsoft Excel、WPS、LibreOffice；Excel/WPS 作为独立参考结果，不假设一致。Windows COM 脚本可为读取/新建测试生成参考数据或文件，但不进入 Reader/Writer 生产路由。仅提供已实现、环境可用且 capability 已登记通过的选项；用户手动选择失败时不得静默换引擎。 |
 | workload_limits | 记录覆盖的文件/sheet/行列/对象数量、耗时和内存；没有用户阈值先测，不编造硬限制。 |
 
 修改已有工作簿时，按实际文件检查：值/类型、公式与缓存、共享/数组公式、合并、样式、行列尺寸/隐藏、工作表名称/顺序/可见性、批注及外观、定义名称、打印设置、超链接、验证、条件格式、表格、图表/图片/形状、外链、VBA/签名、关系和未知扩展。任务不涉及可标“不适用”；没有检查必须标“未验证”，不可假设对象不存在。输入文件变化后，旧清点和能力匹配失效。
@@ -91,20 +95,23 @@ py_statistics_tools 工作表提取以普通无批注版为迁移基线，带批
 
 ### 4.3 修改已有工作簿
 
-业务层生成 ExcelEditPlan，由 ExcelModifier 按“操作子类 + 格式 + 对象特征 + 保留项 + 平台/版本”选已验收引擎。
+业务层生成 ExcelEditPlan，由 ExcelModifier 按“操作子类 + 格式 + 对象特征 + 保留项 + 平台/版本”选已验收引擎。未来 COM 后端仅修改既有工作簿；不得为统一形式而引入通用 ExcelWritePlan 或完整工作簿对象模型。
 
 - **Rust OOXML Patch**：适合明确部件、明确位置、依赖关系可证明的窄修改；仅对已验收白名单执行，无法证明安全时拒绝。
 - **Rust umya-spreadsheet**：复杂 XLSX 对象修改候选。批注、样式、合并、尺寸、公式、页面设置及未知部件须按真实模板分别验收；能打开/保存不等于保真。
 - **Go Excelize worker**：条件性候选。仅当 umya/定点补丁对真实模板有大面积失败或维护成本过高，且 Excelize 对同一整批操作验证适用时才评估。Rust 以一个批量 IPC 请求传文件路径和完整计划，不逐单元格跨进程。若采用，随包交付，CGO_ENABLED=0。
 - **隔离 openpyxl worker**：可选第四修改引擎。Rust 按每本 workbook 提交一份结构化 ExcelEditPlan，由内部绝对路径启动隔离 runtime 中的 Python/openpyxl。worker 仅执行 XLSX 修改操作，不做读取业务、统计、规则计算、公式重算或新建报表。对非空公式缓存、未知/未验收 package part、超出 capability 的格式/对象或操作批次，必须在写入前拒绝。openpyxl 会重写 XLSX package，必须验证未修改区域及计划要求保留的对象；行插入/删除当前 unsupported。运行时缺失可作为写入前不可用处理，只有存在另一条已验证路由才允许重新从原始输入执行。崩溃、超时、写入后失败或验证不一致不得自动切换。
-- 四个修改引擎不预设全局优先级，也不要求全部启用。先完成第 10 节操作清单和能力矩阵，再验证有实际价值的操作。引擎注册和合成测试不等于业务能力通过。
+- **未来 Microsoft Excel/WPS COM worker**：仅为可选 Windows 修改候选，分别以 Excel `Excel.Application`、WPS `KET.Application`（需验证）激活；优先通过隔离 Python runtime 中的 pywin32 / `win32com.client` 接收一份工作簿级 ExcelEditPlan 和 JSON IPC，不依赖系统 Python/PATH。每种应用、版本、操作组合、对象、保留契约分别验收。不是 Reader/Writer，不作为当前实现或默认；Windows 产品若交付该 worker，须单独验证 runtime 与 pywin32 依赖。
+- 修改引擎不预设全局优先级，也不要求全部启用。先完成第 10 节操作清单和能力矩阵，再验证有实际价值的操作。引擎注册和合成测试不等于业务能力通过。
 - umya 已覆盖且未证明 Go 有保真、性能或维护收益时，不引入 Go。
 
-### 4.4 计算与禁止项
+### 4.4 业务计算、公式计算与禁止项
 
 规则、期间、校验、统计、去重、映射和审核结果由 Rust 业务逻辑计算；财务数值、Decimal、舍入、日期、空值、错误和文本前导零策略须明确并对拍。业务计算、公式文本、旧缓存读取、Excel 公式重算是不同能力，不能互相冒充。
 
-openpyxl 仅可通过隔离 worker 用于已验收的既有 XLSX 修改；不得用于生产读取、新建写入、业务规则、统计或公式计算。worker 不依赖系统 Python/PATH，按工作簿批量处理，不逐格启动；对拍/测试 Python 仍可在 tests/compare 使用。禁止 python-calamine、PyO3、pandas、xlrd、pyxlsb 进入生产。不得无证据重写已验收模块；不得以完整 OOXML writer 为默认目标；不得无测量串联 Rust 读取→中间文件→Go 修改→Go 写回。
+openpyxl 仅可通过隔离 worker 用于已验收的既有 XLSX 修改；未来 pywin32 / `win32com.client` 仅可通过独立 Windows worker 用于已验收的 COM 修改或公式计算。它们不得用于生产读取、新建写入、业务规则、统计或通用业务逻辑。worker 不依赖系统 Python/PATH，修改按工作簿批量处理，不逐格启动；对拍/测试 Python 仍可在 tests/compare 使用。禁止 python-calamine、PyO3、pandas、xlrd、pyxlsb 进入生产。不得无证据重写已验收模块；不得以完整 OOXML writer 为默认目标；不得无测量串联 Rust 读取→中间文件→Go 修改→Go 写回。
+
+`ExcelCalculator` 是与 ExcelModifier 分离的未来能力，候选为 LibreOffice Calc、Microsoft Excel COM 和 WPS COM；默认关闭，计算模式区分普通重算与完整重算。LibreOffice 的基础公式计算已有用户实测反馈，但覆盖率、与 Excel 的公式语义一致性、保存保真和 Linux 离线运行时仍未验收。不得宣称计算结果完全等价。显式选择不可用或未经该功能验收的引擎时返回明确错误；界面仅列出已实现、可用且有匹配能力证据的选项。
 
 ## 5. 操作编号和目标方向
 
@@ -117,11 +124,11 @@ openpyxl 仅可通过隔离 worker 用于已验收的既有 XLSX 修改；不得
 | R02/R03 | 坐标、合并；公式/缓存、批注、样式、名称、打印元数据 | Calamine 已验收字段；OOXML 专属元数据使用对象/契约已验收的专用 reader，不作为普通值读取 fallback。 |
 | R04/R05 | 显示文本或高级格式元数据 | 仅使用对应已验收静态解释器/reader；否则报告未验证或不支持。 |
 | W01 | 新建 XLSX | Rust 持有结果、从零生成纯数据 XLSX 时优先评估 rust_xlsxwriter；对应输出契约通过且峰值内存满足预先定义的功能预算后，才可用于该功能。其他 writer 需有专用契约、OOXML 对象要求或同契约实测的资源收益。 |
-| W02 | 修改已有文件的值、公式、样式、批注、打印属性 | ExcelEditPlan + ExcelModifier；候选引擎按整批保留契约选择。 |
+| W02 | 修改已有文件的值、公式、样式、批注、打印属性 | ExcelEditPlan + ExcelModifier；现有已验证引擎按整批保留契约选择；未来 Microsoft Excel/WPS COM 仅为 Windows 独立候选。 |
 | W03/W04 | 追加；插删行列、移动区域、sheet 改名/重排/删除 | 修改操作；检查其他 sheet、公式、名称、表格、打印区域和外链依赖。重建 sheet 不算保真追加。 |
 | W05–W07 | 跨簿按值提取、复制指定样式、整表保真复制 | 每项定义 preserve；按值复制不能称为格式/整表复制。 |
 | P01/P02 | 写打印页面设置；PDF/渲染 | P01 只写页面设置；P02 当前不支持。 |
-| Q01/Q02 | 读旧公式缓存；按本轮输入重算 | Q01 标记“文件已保存结果”；Q02 默认关闭，仅显式 sidecar 重算并验缓存。 |
+| Q01/Q02 | 读旧公式缓存；按本轮输入普通/完整重算 | Q01 标记“文件已保存结果”；Q02 由独立 ExcelCalculator 默认关闭，显式选择已验收计算后端并验证缓存、公式、依赖和保存保真。 |
 | C01/C02 | 按值重建为 xlsx；同类格式转换 | C01 必须明示丢弃范围；C02 显式转换并校验。 |
 | D01 | Word 同类格式转换 | 仅已登记方向、显式 sidecar 或验收通过的 Rust/Go 转换器；PDF/跨类不支持。 |
 | T01/T02 | CSV 读写、分组/连接/透视 | Rust CSV 与业务计算；生成 XLSX 另执行 W01。 |
@@ -145,7 +152,9 @@ openpyxl 仅可通过隔离 worker 用于已验收的既有 XLSX 修改；不得
 | probe | 读取/JSON 导出和部分比较 | 修改计划与全引擎路由探针未形成。 |
 | Excelize worker | 当前没有 Go module/worker/IPC | 当前 unsupported（未实现）；达到 §4.3 门槛后再立项。 |
 | openpyxl worker | `crates/excel-editor/python/openpyxl_worker.py` + Rust `OpenpyxlXlsxBackend`；pytools capability dispatcher 已注册；支持有限 XLSX EditPlan 批处理 | 已实现并通过合成 worker/进程集成测试；Rust 独立读回覆盖已测样本的样式语义、显式行高列宽、填充色、页面设置和 OOXML Print_Area。真实项目模板、操作级 capability、Windows 原生 Rust、glibc 2.28 隔离 runtime、deb 打包和目标机均未验证。无生产 capability JSON、无默认路由；不支持行插删与 ImportRange 尺寸复制，非空公式缓存/未知 parts 写前拒绝。 |
-| sidecar/lo-convert | 独立 binary 骨架，功能未接通 | 重算和格式转换均未验收，不能宣称可用。 |
+| sidecar/lo-convert | 同类格式转换已接入；`recalculate` 命令已实现，含缓存清理/完整计算标记、输出校验和 Ubuntu/WSL2 LibreOffice 合成 `SUM` 测试 | 仅候选实现；真实业务公式、Excel/WPS 一致性、复杂依赖、Windows COM、超时、目标 Linux/glibc 2.28 和离线运行时来源均未验收；不能宣称通用公式能力或生产默认。基础 LibreOffice 测试另有用户报告，范围待明确。 |
+| Excel COM / WPS COM worker | 当前未实现；现有 ExcelModifier 无对应已验收后端 | 尚未实现。未来分别登记 Windows-only Microsoft Excel 与 WPS capability；不得展示为可用选项或用于 Linux 依赖。 |
+| ExcelCalculator | 尚未形成统一公共计算接口 | 未来独立能力；LibreOffice Calc、Excel COM、WPS COM 为候选，按后端/公式/平台验收，不改变当前读写修改默认。 |
 
 细节和报告见根目录 EXCEL_ENGINE_ARCHITECTURE.md、PYTHON_EXCEL_OPERATION_INVENTORY.md 及各自 probe/reports。报告数字只适用于其中样本和断言。已经通过的窄范围实现继续保留，不因本规则接入而重构。
 
@@ -254,7 +263,7 @@ OOXML 是补丁/缺失元数据层，不是主力完整读写库。必须使用 
 
 ## 10. 操作盘点与迁移阶段门
 
-先完成清单和能力矩阵，不要求立即实现全部四个修改引擎。现有根目录 PYTHON_EXCEL_OPERATION_INVENTORY.md 是静态入口清单，EXCEL_ENGINE_ARCHITECTURE.md 记录 Rust 现状、操作族候选映射和 §4.2 初始能力矩阵。二者都说明调用链/模板验收未完成，不能冒充最终对拍。
+先完成清单和能力矩阵，不要求立即实现所有当前及未来的修改引擎。现有根目录 PYTHON_EXCEL_OPERATION_INVENTORY.md 是静态入口清单，EXCEL_ENGINE_ARCHITECTURE.md 记录 Rust 现状、操作族候选映射和 §4.2 初始能力矩阵。二者都说明调用链/模板验收未完成，不能冒充最终对拍。
 
 每个 Python openpyxl、Direct OOXML、Python-calamine 和 COM 操作要补齐：
 

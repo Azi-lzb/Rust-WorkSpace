@@ -1,0 +1,21 @@
+日期：2026-10-24
+
+变更：
+- DEVELOPMENT_GOAL.md：保持 calamine 读取与 rust_xlsxwriter 新建路线；新增未来 Windows Excel/WPS COM 修改候选及独立 ExcelCalculator（LibreOffice Calc、Excel COM、WPS COM）；说明普通/完整重算、显式选择和能力展示门槛；补全 Excel-Core、Audit、PyTools 三个最终独立仓库及归档 Rust-WorkSpace 的目标。
+- AGENTS.md、rules/13_Rust_Excel读写修改与引擎路由规范.md：将旧“COM 只用于重算/转换”边界收窄为 Windows capability-gated ExcelModifier COM 修改、独立 ExcelCalculator 和显式格式转换；说明 pywin32 / win32com.client、Excel.Application、WPS KET.Application、JSON IPC、不可用时显式报错、Linux 无 COM 依赖及 LibreOffice Linux 运行时来源门槛。
+- audit-core/AGENTS.md、audit-core/rules/03_Excel与OOXML边界.md、audit-core/rules/13_表格读写技术选型与主动优化.md、pytools-core/AGENTS.md、pytools-core/MIGRATION_PLAN.md：最小修订直接冲突的子项目规则；保留旧整套 COM 业务工作流和 PDF 排除范围，以及工作表提取普通无批注版基线。
+- EXCEL_ENGINE_ARCHITECTURE.md、README.md：修正与新增能力范围及当前 sidecar 重算实现状态冲突的描述。
+
+目的：记录用户确认的未来 COM 修改与公式计算方向，同时维持 Rust Reader/Writer 默认、Audit/PyTools 业务迁移顺序、现有已验收路由和最终 Linux 核心路径独立运行。
+
+验证：仅执行文档差异、规则冲突关键词和 `git diff --check` 检查；未运行业务测试或构建。本次没有修改业务代码、依赖、JSON IPC 协议或默认路由。
+
+未验证/未执行：
+- 未实现 Office COM Worker 或 ExcelCalculator；未安装 pywin32 / LibreOffice；未改变用户默认设置。
+- LibreOffice 基础公式计算为用户报告的实测；全公式覆盖、与 Excel/WPS 的语义一致性、保存保真、Windows COM 兼容、Linux 离线运行时及 glibc 2.28 部署仍未验收。
+- 未修改或重启 Audit/PyTools 的长期 /goal；已检查到的两个 Goal 均引用各自工作树中的 DEVELOPMENT_GOAL.md 和最新共享规则，没有与本次边界冲突的明确条款。
+- Audit S1 ImportRange 公共能力请求保持单独开放；本次未改实现、未更改其状态或迁移优先级。
+
+已知风险：开发 Agent 当前部分 Codex 会话位于 detached Worktree。规则提交不会自动出现在这些独立 checkout；应在其安全同步节点读取最新主分支规则。正式 audit-dev/pytools-dev 工作树同步前继续检查干净状态、远端提交和补丁冲突。
+
+回滚：本次仅修改上述 Markdown 和本记录；如用户撤回规则，可单独反向修订这些文档。本次未修改任何业务源代码或源 Python 项目。
