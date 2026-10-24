@@ -383,3 +383,9 @@ glibc 2.28 release CLI 对同一最大真实工作簿的 user、developer、off 
 将此前完成 debug CLI 对拍的 51 份 XLSX 再由 `x86_64-unknown-linux-gnu.2.28` release 二进制直接处理，并调用只读 PyCode 基线按原 17 批、每批 3 份逐批比较。51/51 份、1,016,511 行的值/行、类型、样式、工作表维度、冻结窗格、表头、合并、公式、定义名称、打印区、页面设置、页边距和居中属性完整投影一致；17/17 批通过，无失败组。开发者事件历史匹配，51 份源文件大小和修改时间均未变化。
 
 机器报告 `probe/reports/summary_used_range_backup_assets_20261024.json` 的 `platform_validation.linux_glibc_2_28_release` 记录目标二进制及汇总结果。此项扩大 glibc release 的 PyTools 真实样本覆盖，不等于麒麟 V10/UOS V20 实机或 deb 验收；PT-6-1 最终验收仍未完成。
+
+### 2026-10-24 PT-6-1 glibc 2.28 release 原始主样本对拍
+
+使用已验证的 `x86_64-unknown-linux-gnu.2.28` release `pytools` 直接执行原 PyTools `xlsx/` 中 13 份主样本，沿用 PyCode/Rust 真实样本比较器按 4 批运行。96 张工作表、203,580 行在 4/4 批完整投影一致，覆盖值/类型、样式、工作表名称与维度、冻结窗格、表头、公式、合并、定义名称及页面属性；developer 事件数量为 26/14/27/63，均与保存历史匹配。实际引擎为 Calamine、`excel-reader::read_xlsx_worksheet_extents`、OOXML Patch 和 rust_xlsxwriter；13 份源文件的前后指纹一致。
+
+机器结果见 `probe/reports/summary_used_range_real_parity_20261024.json` 的 `additional_project_assets_20261024.platform_validation.linux_glibc_2_28_release_primary_samples`。此项验证的是 WSL glibc 2.28 ABI release 阶段，不代表麒麟/UOS 实机或 deb 验收；PT-6-1 最终验收仍未完成。
