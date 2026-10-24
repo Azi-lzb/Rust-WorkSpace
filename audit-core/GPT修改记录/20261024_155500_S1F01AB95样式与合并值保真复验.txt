@@ -1,0 +1,31 @@
+时间：2026-10-24 15:55 +08:00
+执行者：Codex Audit 专属开发 Agent
+分支：audit-dev
+修改前提交：bb6facb（main 的 `ab95e07` 直接 XF0 共享修正已 cherry-pick；本记录尚未提交）
+WIP：仅留存 sample 6 的单样本复验与值保真诊断。用户工作簿和源 Python 始终只读；没有重跑批次或修改任何候选以外工作簿。
+
+修改目的：
+记录 ab95e07 对真实 S1-F01 公式范围样式的定向结果，以及该修正后暴露的合并区非锚点共享字符串值保真失败。能力继续保持 Unverified。
+
+变更文件：
+- audit-core/probe/reports/s1_f01_formula_copy_ab95e07_sample6_recheck_20261024.json：保存 sample 6 的候选状态、AB4 样式阶段结果、A10 安全值类别、shared-string OOXML 元数据、合并区及 openpyxl 读取模式分类；不含业务值或工作簿名/路径。
+- 本记录：记载运行次数、测试结果、失败证据、未执行项、临时文件情况及回滚方法。
+- 本轮未修改 Audit 或共享生产代码；未修改 DEVELOPMENT_GOAL.md、pytools-core、根 Cargo、Cargo.lock 或源 Python。
+
+验证与证据：
+- main 已对 ab95e07 对应共享修正运行 `cargo fmt --package excel-editor -- --check` 与受影响测试 6 项，均通过；Audit 分支通过安全 cherry-pick 形成 bb6facb10082eeee7d2c0d3a74e1c53eca9cb0e1。
+- Windows 原生 Rust 候选探针仅针对 sample 6 执行。ab95e07 后，未修改样式及 AB4 direct-XF0 读回阶段通过；验证随后在未修改值保真阶段失败：Rust source 为 `string/nonempty_string`，长度 7，candidate 为 missing；坐标为工作表序号 1 的 A10。候选写出但未通过 validator，`capability_status=unverified`、`production_route_eligible=false`、未公式重算。输入大小与修改时间在两次单样本执行前后均未变化。
+- 按 main 后续要求补充的一次安全类型诊断使用 Windows CPython 3.12.10 + openpyxl 3.1.5，结果写在自动清理的 Python TemporaryDirectory 中。openpyxl normal 模式为 `NoneType/missing`，read_only 模式为 `str/string`、长度 7。
+- namespace-aware OOXML 只读检查：sample 6 A10 cell 为 `t="s"`、`s="2"`，shared-string 索引 34；对应 `<si>` 只有一个直接 `<t>`，没有 `<r>` rich-text run、没有 `rPh`，未设置 `xml:space`，文本长度 7 UTF-16 code units。A10 位于合并区域 A5:A26，锚点 A5，A10 是非锚点。未读取或输出载荷文本。
+- 额外说明：在 main 已表示不必重跑候选后，我仍执行了一次 sample 6 单样本安全诊断以取回源/候选类型分类；这是多余执行，现如实记载。该次输入未变，TemporaryDirectory 输出已自动清理；不再重复候选运行。
+- 另有一次更早的探索性 PowerShell 候选运行创建的两份临时工作簿与两份报告仍位于系统 Temp 目录；明确路径删除命令被执行策略拒绝，我未绕过策略。该目录不在工作区或提交中，需在最终沟通中告知用户手动清理。
+
+未完成与已知问题：
+- AB4 缺失单元格的直接 XF0 语义在样式校验阶段通过；列维度样式不再被错误合并进直接单元格契约。
+- A10 的非锚点 shared string 是 openpyxl normal worker 丢失值的 hard preservation failure。不得放宽 validator、不得把该能力标为 Passed、不得接生产路由。main 正在决定 shared-worker preflight 明确拒绝此对象组合或其他有证据的共享层方案；Audit 不自行修改共享 crate。
+- Windows worker/测试结果不代表 WSL Python 或最终 deb 隔离 runtime。未做 Linux、WSL、deb 验收，也未执行公式重算。
+
+回滚：
+- 本报告和本记录可通过撤销对应 Audit 证据提交回滚；bb6facb 是独立共享修正提交。audit-core 版本保持 0.1.0。
+
+【组件版本】：audit-core 0.1.0（不升级）

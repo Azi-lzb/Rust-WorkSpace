@@ -1,0 +1,88 @@
+{
+  "schema_version": 1,
+  "suite": "audit.s1_formula_copy.ab95e07_sample6_targeted_real_sample_recheck",
+  "created_at": "2026-10-24T15:50:21+08:00",
+  "shared_fix_commit": "ab95e07b2db06de315e10203ac2f1f906f8582c9",
+  "sample_index": 6,
+  "runtime": {
+    "rust": "Windows native Cargo/rustc",
+    "python": "Windows CPython 3.12.10 + openpyxl 3.1.5 (isolated worker test)",
+    "wsl_python_used": false,
+    "deb_runtime_tested": false
+  },
+  "engine": "openpyxl-worker candidate with Rust S1 template plan and Rust readback validator",
+  "formula_recalculation_performed": false,
+  "mapping_config": "built-in defaults",
+  "result": {
+    "runner_exit_code": 0,
+    "status": "written_unverified_candidate",
+    "output_readback_failed": true,
+    "readback_failure_category": "unmodified_cell_value_changed",
+    "readback_diagnostic": {
+      "kind": "unmodified_cell_value_changed",
+      "diagnostic_status": "readback_values_available",
+      "sheet_ordinal": 1,
+      "cell": "A10"
+    },
+    "apply_failure_category": null,
+    "output_created": true,
+    "capability_status": "unverified",
+    "production_route_eligible": false,
+    "formula_recalculation_performed": false,
+    "input_unchanged_by_size_and_mtime": true,
+    "safe_value_preservation_diagnostic": {
+      "source": {
+        "present": true,
+        "json_type": "string",
+        "value_class": "nonempty_string",
+        "empty_string": false,
+        "string_length_chars": 7,
+        "whitespace_only": false
+      },
+      "output": {
+        "present": false,
+        "json_type": "missing",
+        "value_class": "missing"
+      },
+      "source_ooxml": {
+        "t": "s",
+        "s": "2",
+        "shared_string_index": 34,
+        "shared_string_payload_utf16_length": 7
+      },
+      "source_value_class": "nonempty_string",
+      "output_value_class": "missing",
+      "source_string_length_chars": 7,
+      "openpyxl_read_modes": {
+        "normal": {
+          "python_type": "NoneType",
+          "value_class": "missing"
+        },
+        "read_only": {
+          "value_class": "string",
+          "python_type": "str",
+          "string_length_chars": 7
+        }
+      },
+      "source_shared_string_item": {
+        "direct_children": [
+          "t"
+        ],
+        "rich_text_run_count": 0,
+        "rPh_count": 0,
+        "xml_space_present": false,
+        "payload_utf16_length": 7
+      },
+      "merge_membership": {
+        "merged": true,
+        "range": "A5:A26",
+        "anchor": "A5",
+        "is_anchor": false
+      }
+    }
+  },
+  "audit_cherry_pick_commit": "bb6facb10082eeee7d2c0d3a74e1c53eca9cb0e1",
+  "candidate_run_count_for_sample": 2,
+  "extra_targeted_diagnostic_run_after_initial_result": true,
+  "temp_output_handling": "The additional diagnostic output used Python TemporaryDirectory and was auto-cleaned; an earlier exploratory PowerShell temp output set remains outside the workspace because its deletion command was rejected by execution policy."
+}
