@@ -672,7 +672,7 @@ fn interactive_menu_routes_area_extraction_matches_python_and_records_engines() 
         .map(|path| (path.clone(), fs::read(path).unwrap()))
         .collect::<Vec<_>>();
     let input = format!(
-        "7\n6\n{}\n",
+        "7\n6\nn\n{}\n",
         sources
             .iter()
             .map(|path| path.to_string_lossy())
@@ -882,7 +882,7 @@ fn interactive_menu_routes_full_sheet_import_against_python_helper_baseline() ->
     let capability = write_full_sheet_test_capability(&root, &source, PLATFORM)?;
     let output = run_menu_with_capability(
         &config,
-        &format!("7\n6\n{}\n", source.display()),
+        &format!("7\n6\nn\n{}\n", source.display()),
         "developer",
         &capability,
         PLATFORM,
@@ -1192,6 +1192,97 @@ fn interactive_menu_stops_when_extract_tasks_are_missing_or_full_sheet_capabilit
 }
 
 #[test]
+fn interactive_menu_appends_only_after_confirmation_and_with_matching_capability(
+) -> anyhow::Result<()> {
+    const PLATFORM: &str = "synthetic-pt-7-6-append-menu";
+    let root = temporary_directory("sheet-extract-append-menu");
+    let source = root.join("menu-source.xlsx");
+    write_append_source(&source, "新增工作表")?;
+    let output_dir = root.join("app/output");
+    fs::create_dir_all(&output_dir)?;
+    let output_path = output_dir.join("合并结果.xlsx");
+    write_existing_full_sheet_output(&output_path)?;
+    let original_output = fs::read(&output_path)?;
+    let original_source = fs::read(&source)?;
+
+    let task = ExtractTask {
+        row_no: 2,
+        workbook_keywords: "menu-source".to_owned(),
+        sheet_keywords: String::new(),
+        exclude_keywords: String::new(),
+        area_spec: "A1:B1".to_owned(),
+        stitch_mode: String::new(),
+        output_folder: String::new(),
+        output_name: "合并结果.xlsx".to_owned(),
+        remark: String::new(),
+    };
+    let config = create_menu_config(&root, &[task]);
+
+    let refused = run_menu(&config, "7\n6\nyes\n");
+    assert!(
+        refused.status.success(),
+        "menu should report the missing capability without launching extraction: {}",
+        String::from_utf8_lossy(&refused.stderr)
+    );
+    let refused_stdout = String::from_utf8_lossy(&refused.stdout);
+    assert!(refused_stdout.contains("追加到已存在的输出工作簿需要 --capabilities 与 --platform"));
+    assert!(!refused_stdout.contains("文件路径>"));
+    assert_eq!(fs::read(&output_path)?, original_output);
+
+    let capability = write_append_test_capability(&root, &output_path, &source, PLATFORM)?;
+    let appended = run_menu_with_capability(
+        &config,
+        &format!("7\n6\nyes\n{}\n", source.display()),
+        "developer",
+        &capability,
+        PLATFORM,
+    );
+    assert!(
+        appended.status.success(),
+        "menu append failed: {}",
+        String::from_utf8_lossy(&appended.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&appended.stdout);
+    let stderr = String::from_utf8_lossy(&appended.stderr);
+    assert!(stdout.contains("[追加模式]"));
+    assert!(stdout.contains("\"output_files\": 1"));
+    assert!(stderr.contains("\"phase\":\"excel_modifier\""));
+    assert!(stderr.contains("\"actual_engine\":\"umya_spreadsheet\""));
+
+    let result = read_workbook(&output_path)?;
+    assert_eq!(
+        result
+            .sheets
+            .iter()
+            .map(|sheet| sheet.name.as_str())
+            .collect::<Vec<_>>(),
+        ["第一张表", "新增工作表"]
+    );
+    assert_eq!(result.sheets[0].values["A1"]["value"], "保留值");
+    assert!(result.sheets[0].formulas["B1"].contains("1+1"));
+    assert_eq!(result.sheets[0].merges, ["A2:B2"]);
+    assert!(result.sheets[0].comments["A1"].contains("保留批注"));
+    assert_eq!(result.sheets[1].values["A1"]["value"], "R1C1");
+    assert_eq!(result.sheets[1].values["B1"]["value"], "R1C2");
+    assert_eq!(fs::read(&source)?, original_source);
+
+    let history_path = fs::read_dir(root.join("app/logs"))?
+        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+        .find(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with("PT-7-6_"))
+        })
+        .context("PT-7-6 append run history was not written")?;
+    let history = fs::read_to_string(history_path)?;
+    assert!(history.contains("umya_spreadsheet"));
+    assert!(!history.contains("R1C1"));
+
+    fs::remove_dir_all(root)?;
+    Ok(())
+}
+
+#[test]
 fn interactive_menu_supports_user_and_off_log_views() {
     let cases = cases();
     let tasks = load_tasks(&cases);
@@ -1201,7 +1292,7 @@ fn interactive_menu_supports_user_and_off_log_views() {
     let user_config = create_menu_config(&user_root, &tasks);
     let user_output = run_menu_with_view(
         &user_config,
-        &format!("7\n6\n{}\n", input_path.display()),
+        &format!("7\n6\nn\n{}\n", input_path.display()),
         "user",
     );
     assert!(user_output.status.success());
@@ -1217,7 +1308,7 @@ fn interactive_menu_supports_user_and_off_log_views() {
     let off_config = create_menu_config(&off_root, &tasks);
     let off_output = run_menu_with_view(
         &off_config,
-        &format!("7\n6\n{}\n", input_path.display()),
+        &format!("7\n6\nn\n{}\n", input_path.display()),
         "off",
     );
     assert!(off_output.status.success());

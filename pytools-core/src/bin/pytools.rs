@@ -2456,6 +2456,25 @@ where
                     )?;
                     return Ok(());
                 }
+                let Some(append_choice) = read_menu_choice(
+                    input,
+                    output,
+                    "若任务配置的输出工作簿已存在，是否追加新工作表？输入 y/yes/是 确认，其他输入保持新建输出模式> ",
+                )? else {
+                    writeln!(output, "[已取消] 未选择工作表提取输出模式。")?;
+                    return Ok(());
+                };
+                let append_existing = matches!(
+                    append_choice.trim().to_ascii_lowercase().as_str(),
+                    "y" | "yes" | "是"
+                );
+                if append_existing && (capabilities.is_none() || platform.is_none()) {
+                    writeln!(
+                        output,
+                        "[已中止] 追加到已存在的输出工作簿需要 --capabilities 与 --platform；未选择文件、未生成或修改输出。"
+                    )?;
+                    return Ok(());
+                }
                 let Some(selected) = choose_workbooks(
                     "选择要提取工作表数据的源文件（可多选）",
                     true,
@@ -2495,6 +2514,13 @@ where
                     "--log-view".to_owned(),
                     log_view.to_owned(),
                 ]);
+                if append_existing {
+                    arguments.push("--append-existing".to_owned());
+                    writeln!(
+                        output,
+                        "[追加模式] 已明确选择向配置指定的已有输出工作簿追加工作表。"
+                    )?;
+                }
                 if let (Some(capabilities), Some(platform)) = (capabilities, platform) {
                     arguments.extend([
                         "--capabilities".to_owned(),
