@@ -1,0 +1,49 @@
+# S1-F01 OpenPyXL worker 真实公式复制候选验证
+
+- 日期：2026-10-24 12:16（Asia/Shanghai）
+- 修改前 commit：`c7c8554e0167217b99c1d583e8850b6ceb2011ed`
+- 修改后 commit：本记录随本轮提交，提交号由 Git 历史追溯。
+- WIP：开始时在 `audit-dev` worktree，分支与 `origin/audit-dev` 同步；保留上一轮尚未提交的 S1 direct-backend 候选测试文件，不覆盖或回滚。未发现 `audit-core/GPT修改记录/WIP.md`。`DEVELOPMENT_GOAL.md`、源 Python 项目、真实工作簿、`pytools-core/**`、公共 crates、根 Cargo 文件和 `Cargo.lock` 均未修改。
+
+## 目的
+
+使用用户提供的 2026-07-31 Audit 样本目录，评估已有隔离 openpyxl worker 是否能安全承接 S1-F01 的公式区域复制候选。候选仅直接调用 `Unverified` 后端并写临时目录，不进入生产路由；worker 运行时是 main 提供的 WSL 测试隔离环境，不作为产品运行时或能力验收证据。
+
+## 修改文件
+
+- `audit-core/tests/s1_formula_copy_candidate.rs`：允许手动候选测试在 Umya 与 openpyxl worker 间选择；可切换完整 S1 操作批次或仅 `ImportRange×4` 的诊断批次；细化写入前拒绝分类，并对成功候选调用 Rust OpenPyXL 输出验证。测试继续标记 ignored，且报告固定 `production_route_eligible=false`。
+- `audit-core/tests/compare/compare_s1_formula_copy_candidate.py`：添加候选后端、诊断范围和测试 runtime 参数；比较报告增加后端/操作范围；Python 基线无效样式索引单独报告，不计入 Rust 候选差异。
+- `audit-core/probe/reports/s1_formula_copy_candidate_openpyxl_real_batch.json`：记录完整操作批次与七个真实候选的脱敏结果，不含路径、哈希、单元格值或公式文本。
+- `audit-core/MIGRATION_INVENTORY.md`：补记 worker 候选阻断，S1-F01 保持未验证。
+- 本记录。
+
+## 样本与结果
+
+- 按源项目默认映射解析同一模板：4 个公式复制范围、8 个结构区域、1,072 个公式单元格。该真实输入批次发现 68 本工作簿，17 本通过 Python 表结构预检，按既有顺序选取前 7 本。
+- 完整 S1 计划在首个真实样本上于写入前拒绝：隔离 worker 的操作 allowlist 不包含 `SetWorkbookCalculationProperties`。未生成输出，输入未变。
+- 为独立诊断 `ImportRange`，另运行省略计算属性操作的四范围计划。七本均未生成输出且输入/模板未变。共享模板有 752 个非空公式缓存；七个目标均无非空公式缓存。首个真实候选的 Rust 错误分类为 `formula_cache_not_preserved`；worker 在导入阶段也拒绝共享模板里的非空公式缓存，因此没有可进行对象级对拍的候选输出。
+- 合成诊断样本的 `ImportRange×4` 候选成功写出；16 个复制区单元格及 3 个未修改区单元格均无对象差异，唯一差异是诊断时故意省略计算属性所产生的 1 项计算标志差异。合成结果不外推到真实模板。
+- openpyxl worker 的完整 S1 操作仍不能执行；真实模板公式缓存限制也未解除。没有登记或变更生产能力、引擎路由、公式重算默认或 CLI/GUI 生产行为。
+
+## 验证
+
+- WSL Ubuntu：`cargo test -p audit-core --test s1_formula_copy_candidate --locked` 通过编译（0 passed、0 failed、1 ignored）；手动对拍通过比较器显式执行 ignored 候选测试。
+- 合成 full-S1 候选：`unsupported_before_write / complete_operation_batch_unsupported`；输入未变。
+- 合成 range-only 候选：Rust worker 写入和 validator 均完成；复制区/未修改区对象差异 0，唯一差异为省略计算属性后的标志差异。
+- 真实 full-S1 首样本：写入前因完整操作批次不受支持而拒绝，输入未变。
+- 真实 range-only 七样本：候选运行器 7/7 退出码为 0，7/7 未生成输出、输入未变；首样本确认写入前错误为 `formula_cache_not_preserved`。证据见 `audit-core/probe/reports/s1_formula_copy_candidate_openpyxl_real_batch.json`。
+- `cargo fmt --package audit-core -- --check`：通过。
+- Windows Python 3.12：比较器 AST 语法检查通过；报告 JSON、七样本计数、输入安全状态及路径/哈希脱敏检查通过。
+- `git diff --check`：通过。
+
+## 未执行项与协调需求
+
+- 不能据此把 openpyxl worker 登记为 S1 生产后端；没有真实模板输出可供对象级对拍。S1-F01 仍未验收。
+- 需要 main 协调公共 worker 能力：支持与 S1 同批的计算属性操作；评估将公式缓存保护限定在输出目标工作簿，而不是拒绝仅作为 `ImportRange` 来源且其缓存不会被复制的模板。共享改动完成后，应使用真实模板重新跑完整计划及七样本保留对拍，再考虑生产接线。
+- 未执行公式重算、Windows 原生 Rust/Excel/WPS、麒麟 V10/UOS V20、目标 glibc、deb 或离线交付验收。Windows 原生 Rust 工具链不可用，本轮因该技术原因使用 WSL 编译/测试。
+
+## 回滚与版本
+
+- 无文件删除；候选工作簿和逐样本中间报告使用系统临时目录，运行结束后自动清理。源数据始终只读。
+- 本轮 Audit 测试、比较器、脱敏报告和迁移记录可由单个普通 `git revert <本轮提交>` 回滚，不改写历史、不回滚 main 协调提交。
+- 不升级 `audit-core` 组件版本。

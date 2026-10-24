@@ -651,10 +651,30 @@ def package_difference_counts(left_path: Path, right_path: Path):
         }
 
 
-def invoke_candidate(workspace: Path, paths: dict[str, Path], distribution: str):
+def invoke_candidate(
+    workspace: Path,
+    paths: dict[str, Path],
+    distribution: str,
+    engine: str,
+    openpyxl_python: str | None,
+    include_calculation_properties: bool,
+):
+    environment_values = {
+        key: wsl_path(value) if os.name == "nt" else str(value)
+        for key, value in paths.items()
+    }
+    environment_values["AUDIT_S1_COPY_CANDIDATE_ENGINE"] = engine
+    environment_values["AUDIT_S1_COPY_CANDIDATE_CALC_PROPERTIES"] = (
+        "1" if include_calculation_properties else "0"
+    )
+    if engine == "openpyxl-worker":
+        if not openpyxl_python:
+            raise ValueError("openpyxl-worker requires --openpyxl-python-wsl")
+        environment_values["RUST_WORKSPACE_OPENPYXL_PYTHON"] = openpyxl_python
+
     if os.name == "nt":
         assignments = " ".join(
-            f"{key}={shlex.quote(wsl_path(value))}" for key, value in paths.items()
+            f"{key}={shlex.quote(value)}" for key, value in environment_values.items()
         )
         command = (
             f"cd {shlex.quote(wsl_path(workspace))} && {assignments} "
@@ -670,7 +690,7 @@ def invoke_candidate(workspace: Path, paths: dict[str, Path], distribution: str)
         )
     else:
         environment = os.environ.copy()
-        environment.update({key: str(value) for key, value in paths.items()})
+        environment.update(environment_values)
         completed = subprocess.run(
             ["cargo", "test", "-p", "audit-core", "--test", "s1_formula_copy_candidate", "--locked", "--", "--ignored", "--nocapture"],
             cwd=workspace,
@@ -692,6 +712,22 @@ def main() -> int:
     parser.add_argument("--mapping-config", type=Path)
     parser.add_argument("--workspace", type=Path, default=ROOT)
     parser.add_argument("--wsl-distribution", default="Ubuntu")
+    parser.add_argument(
+        "--engine",
+        choices=("umya", "openpyxl-worker"),
+        default="umya",
+        help="Direct Unverified candidate backend; this never changes production routing",
+    )
+    parser.add_argument(
+        "--openpyxl-python-wsl",
+        help="Test-only isolated Python executable path visible inside WSL",
+    )
+    parser.add_argument(
+        "--scope",
+        choices=("full-s1", "range-import-only"),
+        default="full-s1",
+        help="Use range-import-only solely to diagnose ImportRange independently of calc flags",
+    )
     parser.add_argument("--report", type=Path, required=True)
     parser.add_argument(
         "--sidecar-path",
@@ -760,7 +796,14 @@ def main() -> int:
         }
         if mapping_path is not None:
             candidate_paths["AUDIT_S1_COPY_CANDIDATE_MAPPING"] = mapping_path
-        rust_exit = invoke_candidate(workspace, candidate_paths, args.wsl_distribution)
+        rust_exit = invoke_candidate(
+            workspace,
+            candidate_paths,
+            args.wsl_distribution,
+            args.engine,
+            args.openpyxl_python_wsl,
+            args.scope == "full-s1",
+        )
         rust_elapsed_ms = round((time.perf_counter() - rust_started) * 1000)
         output_created = rust_output.is_file()
         candidate = json.loads(rust_report_path.read_text(encoding="utf-8")) if rust_report_path.exists() else {
@@ -802,8 +845,8 @@ def main() -> int:
                     "mismatch_count": 1,
                 }
 
-        readback_failed = False
-        readback_failure_category = None
+        readback_failed = bool(candidate.get("output_readback_failed", False))
+        readback_failure_category = candidate.get("output_readback_failure_category")
         if rust_output.exists():
             python_calc = calculation_flags(python_output)
             python_cache_count = formula_cache_count(python_output)
@@ -897,11 +940,13 @@ def main() -> int:
             + calc_mismatch
             + int(readback_failed)
         )
-        invalid_style_reference_count = (
-            python_style_references["invalid_cell_style_reference_count"]
-            + rust_style_references["invalid_cell_style_reference_count"]
-        )
-        mismatches += invalid_style_reference_count + recalculation["mismatch_count"]
+        python_invalid_style_reference_count = python_style_references[
+            "invalid_cell_style_reference_count"
+        ]
+        rust_invalid_style_reference_count = rust_style_references[
+            "invalid_cell_style_reference_count"
+        ]
+        mismatches += rust_invalid_style_reference_count + recalculation["mismatch_count"]
         scope_stats = range_stats(template_path, ranges)
         if rust_exit != 0 or not output_created:
             candidate_status = "candidate_unavailable"
@@ -914,10 +959,12 @@ def main() -> int:
         else:
             candidate_status = "candidate_match_unverified"
         report = {
-            "schema_version": 2,
+            "schema_version": 3,
             "suite": "audit.s1_formula_copy_candidate",
             "status": candidate_status,
             "sample_kind": sample_kind,
+            "candidate_engine": args.engine,
+            "candidate_operation_scope": args.scope,
             "python": {"baseline": "base_audit.native.openpyxl_workbook.copy_formula_ranges_from_template", "elapsed_ms": python_elapsed_ms},
             "rust_candidate": {
                 **candidate,
@@ -948,7 +995,8 @@ def main() -> int:
                 "python_style_references": python_style_references,
                 "rust_style_references": rust_style_references,
                 "python_baseline_invalid_style_component_references": python_style_references["invalid_style_component_reference_counts"],
-                "invalid_style_reference_count": invalid_style_reference_count,
+                "invalid_style_reference_count": rust_invalid_style_reference_count,
+                "python_baseline_invalid_style_reference_count": python_invalid_style_reference_count,
                 "output_readback_failed": readback_failed,
                 "mismatch_count": mismatches,
             },
@@ -959,7 +1007,11 @@ def main() -> int:
                 "capability_status": "unverified",
                 "production_route_eligible": False,
                 "target_linux_validation": "not performed",
-                "scope": "four cross-workbook ImportRange operations plus calculation flags; direct candidate only",
+                "scope": (
+                    "four cross-workbook ImportRange operations plus calculation flags; direct candidate only"
+                    if args.scope == "full-s1"
+                    else "four cross-workbook ImportRange operations only; calculation flags intentionally omitted for diagnostics"
+                ),
                 "copied_range_styles_compared_to": "source template",
                 "other_cell_styles_and_values_compared_to": "original target workbook",
                 "outside_formula_caches_compared_to": "original target workbook where formula text matches",

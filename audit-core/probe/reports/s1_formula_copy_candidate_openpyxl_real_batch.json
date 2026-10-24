@@ -1,0 +1,341 @@
+{
+  "schema_version": 1,
+  "suite": "audit.s1_formula_copy_candidate_openpyxl_real_batch",
+  "status": "candidate_rejected_before_write",
+  "sample_scope": {
+    "source_workbooks_discovered": 68,
+    "python_structure_preflight_accepted": 17,
+    "candidate_pairs_selected": 7,
+    "template_formula_cells": 1072,
+    "template_copy_ranges": 4,
+    "template_structure_regions": 8,
+    "mapping": "source_project_default",
+    "formula_recalculation": "not_requested",
+    "candidate_operation_scope": "four cross-workbook ImportRange operations only; calculation-property operation omitted for this diagnostic",
+    "template_formula_cache_cells": 752,
+    "candidate_target_formula_cache_cells": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "complete_s1_operation_batch_probe": {
+    "sample_count": 1,
+    "candidate_status": "candidate_backend_rejected_or_failed",
+    "failure_kind": "unsupported_before_write",
+    "failure_category": "complete_operation_batch_unsupported",
+    "output_created": false,
+    "input_workbooks_unchanged": true,
+    "limitation": "openpyxl worker does not support the complete batch because SetWorkbookCalculationProperties is outside its registered operation set",
+    "failure_category_confirmation": "confirmed on the first real candidate; the worker operation allowlist lacks SetWorkbookCalculationProperties"
+  },
+  "candidate": [
+    {
+      "sample_ordinal": 1,
+      "status": "candidate_rejected_before_write",
+      "execution_and_input_safety": {
+        "candidate_backend_status": "candidate_backend_rejected_or_failed",
+        "candidate_test_exit_code": 0,
+        "target_inventory_complete": true,
+        "output_created": false,
+        "output_readback_failed": true,
+        "input_workbooks_unchanged": true,
+        "calculation_properties_operation_present": false,
+        "elapsed_ms_including_test_harness": 7226,
+        "failure_kind": "unsupported_before_write",
+        "failure_category": "formula_cache_not_preserved",
+        "failure_category_evidence": "confirmed on ordinal 1; ordinals 2–7 use the same source template with 752 cached formula results and each attempt produced no output",
+        "output_validation": "not_reached_candidate_not_written"
+      },
+      "object_level_comparison": {
+        "status": "not_performed_candidate_output_not_created",
+        "range_cells": null,
+        "outside_cells": null,
+        "mismatch_count": null
+      },
+      "style_integrity": {
+        "python_baseline_invalid_style_references": 0,
+        "rust_candidate_invalid_style_references": null,
+        "python_baseline_invalid_style_components": {
+          "font": 1012,
+          "fill": 0,
+          "border": 0,
+          "custom_number_format": 0
+        },
+        "rust_candidate_style_validation": "not_applicable_candidate_output_not_created"
+      },
+      "timing": {
+        "python_elapsed_ms": 960,
+        "rust_elapsed_ms_including_test_harness": 7226
+      }
+    },
+    {
+      "sample_ordinal": 2,
+      "status": "candidate_rejected_before_write",
+      "execution_and_input_safety": {
+        "candidate_backend_status": "candidate_backend_rejected_or_failed",
+        "candidate_test_exit_code": 0,
+        "target_inventory_complete": true,
+        "output_created": false,
+        "output_readback_failed": true,
+        "input_workbooks_unchanged": true,
+        "calculation_properties_operation_present": false,
+        "elapsed_ms_including_test_harness": 7045,
+        "failure_kind": "unsupported_before_write",
+        "failure_category": "formula_cache_not_preserved",
+        "failure_category_evidence": "confirmed on ordinal 1; ordinals 2–7 use the same source template with 752 cached formula results and each attempt produced no output",
+        "output_validation": "not_reached_candidate_not_written"
+      },
+      "object_level_comparison": {
+        "status": "not_performed_candidate_output_not_created",
+        "range_cells": null,
+        "outside_cells": null,
+        "mismatch_count": null
+      },
+      "style_integrity": {
+        "python_baseline_invalid_style_references": 0,
+        "rust_candidate_invalid_style_references": null,
+        "python_baseline_invalid_style_components": {
+          "font": 1011,
+          "fill": 0,
+          "border": 0,
+          "custom_number_format": 0
+        },
+        "rust_candidate_style_validation": "not_applicable_candidate_output_not_created"
+      },
+      "timing": {
+        "python_elapsed_ms": 1047,
+        "rust_elapsed_ms_including_test_harness": 7045
+      }
+    },
+    {
+      "sample_ordinal": 3,
+      "status": "candidate_rejected_before_write",
+      "execution_and_input_safety": {
+        "candidate_backend_status": "candidate_backend_rejected_or_failed",
+        "candidate_test_exit_code": 0,
+        "target_inventory_complete": true,
+        "output_created": false,
+        "output_readback_failed": true,
+        "input_workbooks_unchanged": true,
+        "calculation_properties_operation_present": false,
+        "elapsed_ms_including_test_harness": 7193,
+        "failure_kind": "unsupported_before_write",
+        "failure_category": "formula_cache_not_preserved",
+        "failure_category_evidence": "confirmed on ordinal 1; ordinals 2–7 use the same source template with 752 cached formula results and each attempt produced no output",
+        "output_validation": "not_reached_candidate_not_written"
+      },
+      "object_level_comparison": {
+        "status": "not_performed_candidate_output_not_created",
+        "range_cells": null,
+        "outside_cells": null,
+        "mismatch_count": null
+      },
+      "style_integrity": {
+        "python_baseline_invalid_style_references": 0,
+        "rust_candidate_invalid_style_references": null,
+        "python_baseline_invalid_style_components": {
+          "font": 1011,
+          "fill": 0,
+          "border": 0,
+          "custom_number_format": 0
+        },
+        "rust_candidate_style_validation": "not_applicable_candidate_output_not_created"
+      },
+      "timing": {
+        "python_elapsed_ms": 1002,
+        "rust_elapsed_ms_including_test_harness": 7193
+      }
+    },
+    {
+      "sample_ordinal": 4,
+      "status": "candidate_rejected_before_write",
+      "execution_and_input_safety": {
+        "candidate_backend_status": "candidate_backend_rejected_or_failed",
+        "candidate_test_exit_code": 0,
+        "target_inventory_complete": true,
+        "output_created": false,
+        "output_readback_failed": true,
+        "input_workbooks_unchanged": true,
+        "calculation_properties_operation_present": false,
+        "elapsed_ms_including_test_harness": 6678,
+        "failure_kind": "unsupported_before_write",
+        "failure_category": "formula_cache_not_preserved",
+        "failure_category_evidence": "confirmed on ordinal 1; ordinals 2–7 use the same source template with 752 cached formula results and each attempt produced no output",
+        "output_validation": "not_reached_candidate_not_written"
+      },
+      "object_level_comparison": {
+        "status": "not_performed_candidate_output_not_created",
+        "range_cells": null,
+        "outside_cells": null,
+        "mismatch_count": null
+      },
+      "style_integrity": {
+        "python_baseline_invalid_style_references": 0,
+        "rust_candidate_invalid_style_references": null,
+        "python_baseline_invalid_style_components": {
+          "font": 1011,
+          "fill": 0,
+          "border": 0,
+          "custom_number_format": 0
+        },
+        "rust_candidate_style_validation": "not_applicable_candidate_output_not_created"
+      },
+      "timing": {
+        "python_elapsed_ms": 934,
+        "rust_elapsed_ms_including_test_harness": 6678
+      }
+    },
+    {
+      "sample_ordinal": 5,
+      "status": "candidate_rejected_before_write",
+      "execution_and_input_safety": {
+        "candidate_backend_status": "candidate_backend_rejected_or_failed",
+        "candidate_test_exit_code": 0,
+        "target_inventory_complete": true,
+        "output_created": false,
+        "output_readback_failed": true,
+        "input_workbooks_unchanged": true,
+        "calculation_properties_operation_present": false,
+        "elapsed_ms_including_test_harness": 6796,
+        "failure_kind": "unsupported_before_write",
+        "failure_category": "formula_cache_not_preserved",
+        "failure_category_evidence": "confirmed on ordinal 1; ordinals 2–7 use the same source template with 752 cached formula results and each attempt produced no output",
+        "output_validation": "not_reached_candidate_not_written"
+      },
+      "object_level_comparison": {
+        "status": "not_performed_candidate_output_not_created",
+        "range_cells": null,
+        "outside_cells": null,
+        "mismatch_count": null
+      },
+      "style_integrity": {
+        "python_baseline_invalid_style_references": 0,
+        "rust_candidate_invalid_style_references": null,
+        "python_baseline_invalid_style_components": {
+          "font": 1011,
+          "fill": 0,
+          "border": 0,
+          "custom_number_format": 0
+        },
+        "rust_candidate_style_validation": "not_applicable_candidate_output_not_created"
+      },
+      "timing": {
+        "python_elapsed_ms": 971,
+        "rust_elapsed_ms_including_test_harness": 6796
+      }
+    },
+    {
+      "sample_ordinal": 6,
+      "status": "candidate_rejected_before_write",
+      "execution_and_input_safety": {
+        "candidate_backend_status": "candidate_backend_rejected_or_failed",
+        "candidate_test_exit_code": 0,
+        "target_inventory_complete": true,
+        "output_created": false,
+        "output_readback_failed": true,
+        "input_workbooks_unchanged": true,
+        "calculation_properties_operation_present": false,
+        "elapsed_ms_including_test_harness": 6711,
+        "failure_kind": "unsupported_before_write",
+        "failure_category": "formula_cache_not_preserved",
+        "failure_category_evidence": "confirmed on ordinal 1; ordinals 2–7 use the same source template with 752 cached formula results and each attempt produced no output",
+        "output_validation": "not_reached_candidate_not_written"
+      },
+      "object_level_comparison": {
+        "status": "not_performed_candidate_output_not_created",
+        "range_cells": null,
+        "outside_cells": null,
+        "mismatch_count": null
+      },
+      "style_integrity": {
+        "python_baseline_invalid_style_references": 0,
+        "rust_candidate_invalid_style_references": null,
+        "python_baseline_invalid_style_components": {
+          "font": 1011,
+          "fill": 0,
+          "border": 0,
+          "custom_number_format": 0
+        },
+        "rust_candidate_style_validation": "not_applicable_candidate_output_not_created"
+      },
+      "timing": {
+        "python_elapsed_ms": 966,
+        "rust_elapsed_ms_including_test_harness": 6711
+      }
+    },
+    {
+      "sample_ordinal": 7,
+      "status": "candidate_rejected_before_write",
+      "execution_and_input_safety": {
+        "candidate_backend_status": "candidate_backend_rejected_or_failed",
+        "candidate_test_exit_code": 0,
+        "target_inventory_complete": true,
+        "output_created": false,
+        "output_readback_failed": true,
+        "input_workbooks_unchanged": true,
+        "calculation_properties_operation_present": false,
+        "elapsed_ms_including_test_harness": 6643,
+        "failure_kind": "unsupported_before_write",
+        "failure_category": "formula_cache_not_preserved",
+        "failure_category_evidence": "confirmed on ordinal 1; ordinals 2–7 use the same source template with 752 cached formula results and each attempt produced no output",
+        "output_validation": "not_reached_candidate_not_written"
+      },
+      "object_level_comparison": {
+        "status": "not_performed_candidate_output_not_created",
+        "range_cells": null,
+        "outside_cells": null,
+        "mismatch_count": null
+      },
+      "style_integrity": {
+        "python_baseline_invalid_style_references": 0,
+        "rust_candidate_invalid_style_references": null,
+        "python_baseline_invalid_style_components": {
+          "font": 1011,
+          "fill": 0,
+          "border": 0,
+          "custom_number_format": 0
+        },
+        "rust_candidate_style_validation": "not_applicable_candidate_output_not_created"
+      },
+      "timing": {
+        "python_elapsed_ms": 931,
+        "rust_elapsed_ms_including_test_harness": 6643
+      }
+    }
+  ],
+  "conclusion": {
+    "capability_status": "unverified",
+    "production_route_eligible": false,
+    "diagnostic_scope_complete_s1": false,
+    "formula_recalculation_performed": false,
+    "target_linux_validation": "not performed",
+    "raw_values_paths_or_hashes_persisted": false,
+    "candidate_execution_and_input_safety": "all seven real candidates were rejected before output; all source and template workbooks remained unchanged",
+    "candidate_semantic_comparison": "not performed because the isolated worker rejected the shared template's nonempty formula caches before writing",
+    "complete_s1_batch": "not supported: SetWorkbookCalculationProperties is absent from the worker operation allowlist"
+  },
+  "range_import_only_probe": {
+    "candidate_pairs_attempted": 7,
+    "outputs_created": 0,
+    "inputs_unchanged": 7,
+    "failure_kind": "unsupported_before_write",
+    "failure_category": "formula_cache_not_preserved",
+    "failure_category_confirmed_on_sample_ordinal": 1,
+    "shared_template_formula_cache_cells": 752,
+    "selected_target_formula_cache_cells": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "reason": "the isolated worker refuses ImportRange when the shared source template contains any nonempty formula cache; no output was written"
+  }
+}
