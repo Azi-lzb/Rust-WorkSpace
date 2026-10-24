@@ -1458,6 +1458,19 @@ fn validate_unmodified_styles(
                 .cell(address.as_str())
                 .map(|cell| cell.style().clone())
                 .unwrap_or_default();
+            // openpyxl normalizes non-anchor cells in merged ranges when it
+            // loads/saves a workbook. Validate only border sides on the
+            // merged range perimeter here; non-border style comes from the
+            // anchor, which is checked independently above.
+            if let Some(equal) =
+                merged_member_effective_borders_equal(source_sheet, output_sheet, &address)
+            {
+                anyhow::ensure!(
+                    equal,
+                    "Rust unmodified merged-cell border readback mismatch at {output_name}!{address}"
+                );
+                continue;
+            }
             anyhow::ensure!(
                 styles_semantically_equal(&actual, source_cell.style()),
                 "Rust unmodified-style readback mismatch at {output_name}!{address}"
@@ -1465,6 +1478,61 @@ fn validate_unmodified_styles(
         }
     }
     Ok(())
+}
+
+fn merged_member_effective_borders_equal(
+    source_sheet: &umya_spreadsheet::Worksheet,
+    output_sheet: &umya_spreadsheet::Worksheet,
+    address: &str,
+) -> Option<bool> {
+    let Ok((row, column)) = parse_cell(address) else {
+        return None;
+    };
+    let merged = source_sheet.merge_cells().iter().find_map(|merged| {
+        let Ok((start_row, start_column, end_row, end_column)) = parse_range(&merged.range())
+        else {
+            return None;
+        };
+        (row >= start_row
+            && row <= end_row
+            && column >= start_column
+            && column <= end_column
+            && (row != start_row || column != start_column))
+            .then_some((start_row, start_column, end_row, end_column))
+    })?;
+
+    let anchor_address = format!("{}{}", column_letters(merged.1), merged.0);
+    let bottom_right_address = format!("{}{}", column_letters(merged.3), merged.2);
+    let source_anchor = source_sheet
+        .cell(anchor_address.as_str())
+        .map(|cell| cell.style().clone())
+        .unwrap_or_default();
+    let output_anchor = output_sheet
+        .cell(anchor_address.as_str())
+        .map(|cell| cell.style().clone())
+        .unwrap_or_default();
+    let source_bottom_right = source_sheet
+        .cell(bottom_right_address.as_str())
+        .map(|cell| cell.style().clone())
+        .unwrap_or_default();
+    let output_bottom_right = output_sheet
+        .cell(bottom_right_address.as_str())
+        .map(|cell| cell.style().clone())
+        .unwrap_or_default();
+    let source_anchor = source_anchor.borders().cloned().unwrap_or_default();
+    let output_anchor = output_anchor.borders().cloned().unwrap_or_default();
+    let source_bottom_right = source_bottom_right.borders().cloned().unwrap_or_default();
+    let output_bottom_right = output_bottom_right.borders().cloned().unwrap_or_default();
+
+    // openpyxl builds merged-cell border semantics from the top-left anchor,
+    // then adds the bottom/right edges from the bottom-right cell. It does not
+    // preserve each interior MergedCell's independent raw border record.
+    Some(
+        (row != merged.0 || source_anchor.top() == output_anchor.top())
+            && (column != merged.1 || source_anchor.left() == output_anchor.left())
+            && (row != merged.2 || source_bottom_right.bottom() == output_bottom_right.bottom())
+            && (column != merged.3 || source_bottom_right.right() == output_bottom_right.right()),
+    )
 }
 
 fn final_sheet_name(plan: &ExcelEditPlan, source_name: &str) -> String {
@@ -2477,6 +2545,74 @@ fn read_diagnostic(path: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn merged_style_readback_treats_only_non_anchor_cells_as_normalized() {
+        let mut source = umya_spreadsheet::new_file();
+        let source_sheet = source.sheet_by_name_mut("Sheet1").unwrap();
+        source_sheet.add_merge_cells("A1:I1");
+        source_sheet
+            .cell_mut("A1")
+            .style_mut()
+            .borders_mut()
+            .top_mut()
+            .set_style(umya_spreadsheet::BorderStyleValues::Thin);
+        source_sheet
+            .cell_mut("I1")
+            .style_mut()
+            .borders_mut()
+            .right_mut()
+            .set_style(umya_spreadsheet::BorderStyleValues::Thin);
+        source_sheet
+            .cell_mut("G1")
+            .style_mut()
+            .borders_mut()
+            .bottom_mut()
+            .set_style(umya_spreadsheet::BorderStyleValues::Double);
+
+        let mut output = umya_spreadsheet::new_file();
+        let output_sheet = output.sheet_by_name_mut("Sheet1").unwrap();
+        output_sheet.add_merge_cells("A1:I1");
+        output_sheet
+            .cell_mut("A1")
+            .style_mut()
+            .borders_mut()
+            .top_mut()
+            .set_style(umya_spreadsheet::BorderStyleValues::Thin);
+        output_sheet
+            .cell_mut("I1")
+            .style_mut()
+            .borders_mut()
+            .right_mut()
+            .set_style(umya_spreadsheet::BorderStyleValues::Thin);
+
+        // G1 inherits top/bottom from the anchor. Its own raw bottom border
+        // differs, but that interior record is normalized by openpyxl.
+        assert_eq!(
+            merged_member_effective_borders_equal(source_sheet, output_sheet, "G1"),
+            Some(true)
+        );
+        // The anchor remains under the full style comparison.
+        assert_eq!(
+            merged_member_effective_borders_equal(source_sheet, output_sheet, "A1"),
+            None
+        );
+        // The right edge must still match the bottom-right cell's border.
+        output_sheet
+            .cell_mut("I1")
+            .style_mut()
+            .borders_mut()
+            .right_mut()
+            .set_style(umya_spreadsheet::BorderStyleValues::Double);
+        assert_eq!(
+            merged_member_effective_borders_equal(source_sheet, output_sheet, "I1"),
+            Some(false)
+        );
+        assert_eq!(
+            merged_member_effective_borders_equal(source_sheet, output_sheet, "J1"),
+            None
+        );
+    }
 
     #[test]
     fn packaged_runtime_uses_an_absolute_internal_path_and_never_path_lookup() {

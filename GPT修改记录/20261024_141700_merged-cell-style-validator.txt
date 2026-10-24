@@ -1,0 +1,43 @@
+时间：2026-10-24 14:17 Asia/Shanghai
+执行者：main Agent
+分支：main
+修改前 commit：fb940ef257eb59b22c0920456c8533db47277717
+修改后 commit：待提交
+WIP 情况：修改前工作区干净；当前仅有本记录和共享样式校验器改动。
+
+## 目的
+
+修正 openpyxl worker 结果的共享 Rust 样式读回校验：openpyxl 会规范化合并区域非锚点单元格；对其原始样式逐格完整判等会把有效的合并单元格样式表示变化误报为损坏。
+
+## 修改文件
+
+- `crates/excel-editor/src/openpyxl_backend.rs`
+- `GPT修改记录/20261024_141700_merged-cell-style-validator.txt`
+
+## 变化
+
+- 对非锚点合并单元格，按 openpyxl 的有效边框来源校验：top/left 来自左上锚点，bottom/right 来自右下单元格；锚点仍按完整样式校验。
+- 合并区域结构继续由独立的保留项校验检查。
+- 增加最小单元测试，覆盖横向合并区内非锚点的 raw 边框差异、锚点、右边界和区域外单元格。
+- Audit Agent 已独立确认其七个真实样本首个失败坐标均为相同模式的合并区域非锚点单元格，且 Python 有效样式签名一致；本次未重跑其真实样本。
+
+## 测试
+
+- `cargo fmt --package excel-editor -- --check`：通过。
+- `cargo test -p excel-editor merged_style_readback_treats_only_non_anchor_cells_as_normalized`：通过，1 项通过。
+
+## 复验反馈后的实现细化
+
+Audit Agent 使用首版修正复验 sample-0 后发现 G1（合并区 A1:I1 的非锚点）仍有 raw perimeter 样式差异，但 Python 有效样式签名相同。为避免把 raw cell 边框误作有效边框，校验已细化为读取源/输出合并区锚点与右下单元格的边框属性，再按单元格所在外围比较。该细化覆盖在前述同一测试中，测试通过；真实样本尚未由 Audit 使用最终修正版复验。
+
+## 未执行项与已知问题
+
+- 尚未在 Audit 七个真实工作簿上使用新校验器复验；应由 Audit Agent 在安全同步后按其既定流程验证。
+- 未运行完整 workspace 测试；未更改生产路由、能力登记、业务逻辑、依赖或配置。
+- Windows 之外的平台及 deb 交付未验证。
+- 此校验器使用 umya 可见的源工作簿合并范围；对结构损坏仍依赖现有合并范围保留验证。
+
+## 删除、回滚与版本
+
+- 无删除项。可通过普通 `git revert <commit>` 回滚本次共享校验器修正和测试。
+- 【组件版本】不升级。

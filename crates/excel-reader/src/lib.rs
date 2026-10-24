@@ -101,6 +101,14 @@ pub struct SheetDump {
     pub data_validations_status: String,
 }
 
+/// A traditional OOXML cell comment with its author resolved from the
+/// worksheet's comments part. Calamine does not expose this metadata.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct WorkbookComment {
+    pub text: String,
+    pub author: Option<String>,
+}
+
 #[derive(Debug, Serialize)]
 pub struct WorkbookDump {
     pub schema_version: u32,
@@ -151,6 +159,7 @@ pub struct WorksheetExtent {
 #[derive(Default)]
 struct OoxmlSheetMetadata {
     comments: BTreeMap<String, String>,
+    comment_records: BTreeMap<String, WorkbookComment>,
     conditional_formatting: Vec<Value>,
     data_validations: Vec<Value>,
 }
@@ -747,6 +756,31 @@ pub fn read_workbook(path: impl AsRef<Path>) -> Result<WorkbookDump> {
         elapsed_ms: started.elapsed().as_millis(),
         sheets,
     })
+}
+
+/// Read traditional cell comments and author names from an OOXML workbook.
+///
+/// The map is keyed by worksheet name and then absolute A1 coordinate. This is
+/// a metadata-only supplement; cell values continue to be read through
+/// [`read_workbook`] and Calamine.
+pub fn read_ooxml_comments(
+    path: impl AsRef<Path>,
+) -> Result<BTreeMap<String, BTreeMap<String, WorkbookComment>>> {
+    let path = path.as_ref();
+    let extension = path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    ensure!(
+        matches!(extension.as_str(), "xlsx" | "xlsm" | "xlam"),
+        "OOXML comment reader only supports .xlsx, .xlsm, and .xlam files"
+    );
+    let metadata = extract_ooxml_metadata(path)?;
+    Ok(metadata
+        .into_iter()
+        .map(|(sheet, metadata)| (sheet, metadata.comment_records))
+        .collect())
 }
 
 /// Read a workbook while treating OOXML error tokens unsupported by Calamine
@@ -1500,32 +1534,54 @@ fn extract_ooxml_metadata(path: &Path) -> Result<BTreeMap<String, OoxmlSheetMeta
             }
         }
         let mut comments = BTreeMap::new();
+        let mut comment_records = BTreeMap::new();
         for part in comment_parts {
             let xml = zip_read(&mut zip, &part)?;
             let doc = Document::parse(&xml)?;
-            for comment in doc
+            let authors = doc
                 .descendants()
-                .filter(|n| n.is_element() && n.tag_name().name() == "comment")
-            {
+                .filter(|node| {
+                    node.is_element()
+                        && node.tag_name().namespace() == Some(SPREADSHEET_MAIN_NS)
+                        && node.tag_name().name() == "author"
+                        && node.parent().is_some_and(|parent| {
+                            parent.tag_name().namespace() == Some(SPREADSHEET_MAIN_NS)
+                                && parent.tag_name().name() == "authors"
+                        })
+                })
+                .map(|author| author.text().unwrap_or_default().to_owned())
+                .collect::<Vec<_>>();
+            for comment in doc.descendants().filter(|node| {
+                node.is_element()
+                    && node.tag_name().namespace() == Some(SPREADSHEET_MAIN_NS)
+                    && node.tag_name().name() == "comment"
+            }) {
                 let Some(reference) = comment.attribute("ref") else {
                     continue;
                 };
                 let mut text = String::new();
-                for t in comment
-                    .descendants()
-                    .filter(|n| n.is_element() && n.tag_name().name() == "t")
-                {
+                for t in comment.descendants().filter(|node| {
+                    node.is_element()
+                        && node.tag_name().namespace() == Some(SPREADSHEET_MAIN_NS)
+                        && node.tag_name().name() == "t"
+                }) {
                     if let Some(s) = t.text() {
                         text.push_str(s);
                     }
                 }
-                comments.insert(reference.to_owned(), text);
+                let author = comment
+                    .attribute("authorId")
+                    .and_then(|index| index.parse::<usize>().ok())
+                    .and_then(|index| authors.get(index).cloned());
+                comments.insert(reference.to_owned(), text.clone());
+                comment_records.insert(reference.to_owned(), WorkbookComment { text, author });
             }
         }
         result.insert(
             sheet_name.to_owned(),
             OoxmlSheetMetadata {
                 comments,
+                comment_records,
                 conditional_formatting,
                 data_validations,
             },
@@ -1567,6 +1623,51 @@ mod tests {
             ("custom/books/_rels/main.xml.rels", workbook_relationships),
             ("custom/worksheets/fx.xml", worksheet),
             ("custom/charts/chart1.xml", "<chart/>".to_owned()),
+        ];
+        let mut archive = ZipWriter::new(fs::File::create(&path)?);
+        for (name, data) in entries {
+            archive.start_file(name, SimpleFileOptions::default())?;
+            archive.write_all(data.as_bytes())?;
+        }
+        archive.finish()?;
+        Ok(path)
+    }
+
+    fn comment_records_fixture() -> Result<PathBuf> {
+        let path = std::env::temp_dir().join(format!(
+            "excel-reader-comment-records-{}-{}.xlsx",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_nanos()
+        ));
+        let package_relationships = format!(
+            r#"<Relationships xmlns="{PACKAGE_REL_NS}"><Relationship Id="rId0" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>"#
+        );
+        let workbook = format!(
+            r#"<s:workbook xmlns:s="{SPREADSHEET_MAIN_NS}" xmlns:r="{OFFICE_REL_NS}"><s:sheets><s:sheet name="Data" sheetId="1" r:id="rId1"/></s:sheets></s:workbook>"#
+        );
+        let workbook_relationships = format!(
+            r#"<Relationships xmlns="{PACKAGE_REL_NS}"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>"#
+        );
+        let worksheet =
+            format!(r#"<s:worksheet xmlns:s="{SPREADSHEET_MAIN_NS}"><s:sheetData/></s:worksheet>"#);
+        let worksheet_relationships = format!(
+            r#"<Relationships xmlns="{PACKAGE_REL_NS}"><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments" Target="../comments/comments1.xml"/></Relationships>"#
+        );
+        let comments = format!(
+            r#"<x:comments xmlns:x="{SPREADSHEET_MAIN_NS}"><x:authors><x:author>Data Team</x:author><x:author></x:author></x:authors><x:commentList><x:comment ref="A1" authorId="0"><x:text><x:r><x:t>First </x:t></x:r><x:r><x:t>note</x:t></x:r></x:text></x:comment><x:comment ref="B2" authorId="1"><x:text><x:t>Empty author</x:t></x:text></x:comment><x:comment ref="C3" authorId="9"><x:text><x:t>Unknown author</x:t></x:text></x:comment></x:commentList></x:comments>"#
+        );
+        let entries = [
+            ("_rels/.rels", package_relationships),
+            ("xl/workbook.xml", workbook),
+            ("xl/_rels/workbook.xml.rels", workbook_relationships),
+            ("xl/worksheets/sheet1.xml", worksheet),
+            (
+                "xl/worksheets/_rels/sheet1.xml.rels",
+                worksheet_relationships,
+            ),
+            ("xl/comments/comments1.xml", comments),
         ];
         let mut archive = ZipWriter::new(fs::File::create(&path)?);
         for (name, data) in entries {
@@ -1864,6 +1965,44 @@ mod tests {
             value["content"][0]["content"][0]["content"][0]["text"],
             "A1>0"
         );
+    }
+
+    #[test]
+    fn ooxml_comment_reader_returns_text_and_resolved_authors() -> Result<()> {
+        let fixture = comment_records_fixture()?;
+        let comments = read_ooxml_comments(&fixture)?;
+        fs::remove_file(fixture)?;
+
+        let sheet = comments.get("Data").context("worksheet comments missing")?;
+        assert_eq!(
+            sheet.get("A1"),
+            Some(&WorkbookComment {
+                text: "First note".to_owned(),
+                author: Some("Data Team".to_owned()),
+            })
+        );
+        assert_eq!(
+            sheet.get("B2"),
+            Some(&WorkbookComment {
+                text: "Empty author".to_owned(),
+                author: Some(String::new()),
+            })
+        );
+        assert_eq!(
+            sheet.get("C3"),
+            Some(&WorkbookComment {
+                text: "Unknown author".to_owned(),
+                author: None,
+            })
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn ooxml_comment_reader_rejects_non_ooxml_formats() {
+        let error = read_ooxml_comments("not-a-workbook.xls")
+            .expect_err("the comment supplement does not read BIFF8 workbooks");
+        assert!(error.to_string().contains("only supports"));
     }
 
     #[test]
