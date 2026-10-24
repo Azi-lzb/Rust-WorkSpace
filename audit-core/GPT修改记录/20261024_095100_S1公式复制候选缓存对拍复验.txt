@@ -1,0 +1,44 @@
+# S1 公式复制候选缓存对拍复验
+
+- 时间：2026-10-24 09:51（Asia/Shanghai）
+- 执行者：Codex audit-dev Agent
+- 分支：audit-dev
+- 修改前 commit：fcc9ba3（共享 reader 修复已由 main 协调同步）
+- 修改后 commit：待提交
+- WIP：沿用 `20261024_092840_S1公式缓存候选对拍与sidecar实测.txt` 中的比较器改动；未修改 `DEVELOPMENT_GOAL.md`、源 Python 项目、业务配置或真实工作簿。
+
+## 目的与范围
+
+复验 S1 四个模板公式范围的 Umya ImportRange 候选，经 Rust sidecar/LibreOffice 显式重算后，与 Python 源实现/LibreOffice 的公式文本及缓存结果对拍。仅使用临时合成工作簿；不接生产路由，不登记 Passed capability。
+
+## 修改文件
+
+- `audit-core/tests/compare/compare_s1_formula_copy_candidate.py`：保留本轮此前新增的显式 sidecar 对拍、公式/缓存逐格比较与合成期望结果断言。
+- `audit-core/probe/reports/s1_formula_copy_candidate_synthetic.json`：更新为共享公式映射修复后的合成复验结果；只包含计数和状态，不含路径或单元格原始值。
+- 本修改记录。
+
+## 测试与证据
+
+- `cargo build -p lo-convert --locked`（WSL Ubuntu）：通过。
+- `PYTHONPATH=<源项目 site-packages> python3 audit-core/tests/compare/compare_s1_formula_copy_candidate.py --source-root <只读源目录> --workspace <audit-dev> --report audit-core/probe/reports/s1_formula_copy_candidate_synthetic.json --sidecar-path target/debug/lo-convert`：`candidate_match_unverified`，Rust 候选测试退出码 0；4 个复制范围共 16 格，范围与范围外差异均为 0，输入未改动。
+- 同一对拍中 Python 基线与 Rust sidecar 均由 LibreOffice 重算：双方公式数 4，公式集合差异 0、公式文本差异 0、缓存值差异 0；4 个合成预期结果断言均通过。
+- `cargo test -p excel-reader --locked --test formula_range_empty_cells`：1 passed。
+- `cargo test -p audit-core --locked --test s1_audit_directory_cli`：3 passed，包含条件格式与公式 Issue 合并、分类、结果工作簿及用户/开发者日志入口。
+- `git diff --check`：通过。
+- 已有真实报告 `s1_issue_chain_real.json` 记录公式 146 条、条件格式 2 条、合并 148 条，Python/Rust mismatch 0 且输入未改动；该真实报告不是本轮重跑。
+
+## 未执行项、已知问题与风险
+
+- 合成候选的 Python/Rust OOXML 包仍观测到 5 个部件名差异和 11 个共同部件字节差异；当前报告只对本次选定字段做比较，不能据此认定完整文件保真。
+- 尚无可确认的真实 S1 模板与公式复制前审核副本配对；真实公式复制/重算业务对拍未执行。
+- 候选仍为 `Unverified`、`production_route_eligible=false`；未连接生产 GUI/CLI 路由。
+- 麒麟 V10、UOS V20 与目标 Linux 离线交付验证未执行。
+
+## 删除与回滚
+
+- 删除项：无。
+- 回滚：仅回退本记录及合成比较器/报告提交；保留 main 协调的共享 reader 修复 `fcc9ba3`，不要连带回滚。
+
+## 组件版本
+
+不升级。

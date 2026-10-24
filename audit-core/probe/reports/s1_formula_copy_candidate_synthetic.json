@@ -5,12 +5,12 @@
   "sample_kind": "synthetic",
   "python": {
     "baseline": "base_audit.native.openpyxl_workbook.copy_formula_ranges_from_template",
-    "elapsed_ms": 28
+    "elapsed_ms": 12
   },
   "rust_candidate": {
     "calculation_properties_operation_present": true,
     "capability_status": "unverified",
-    "elapsed_ms": 409,
+    "elapsed_ms": 173,
     "engine": "umya-spreadsheet",
     "formula_recalculation_performed": false,
     "operation_count": 5,
@@ -20,7 +20,7 @@
     "range_resolution": "rust_s1_template_rule_plan",
     "status": "written_unverified_candidate",
     "target_inventory_complete": true,
-    "elapsed_ms_including_test_harness": 23152,
+    "elapsed_ms_including_test_harness": 50383,
     "candidate_test_exit_code": 0,
     "formula_cache_nonempty_count": 0,
     "output_readback_failed": false,
@@ -96,9 +96,28 @@
     "output_readback_failed": false,
     "mismatch_count": 0
   },
+  "recalculation": {
+    "status": "matched",
+    "python_engine": "/usr/bin/soffice",
+    "sidecar_engine": "LibreOffice",
+    "formula_count_python": 4,
+    "formula_count_sidecar": 4,
+    "python_cached_values_nonempty": 4,
+    "sidecar_cached_values_nonempty": 4,
+    "formula_set_difference_count": 0,
+    "formula_text_mismatch_count": 0,
+    "cache_value_mismatch_count": 0,
+    "expected_cache_cells": 4,
+    "python_expected_cache_mismatch_count": 0,
+    "sidecar_expected_cache_mismatch_count": 0,
+    "expected_cache_mismatch_count": 0,
+    "numeric_relative_tolerance": 1e-15,
+    "elapsed_ms": 4955,
+    "mismatch_count": 0
+  },
   "verification": {
     "input_workbooks_unchanged": true,
-    "formula_recalculation_performed": false,
+    "formula_recalculation_performed": true,
     "capability_status": "unverified",
     "production_route_eligible": false,
     "target_linux_validation": "not performed",

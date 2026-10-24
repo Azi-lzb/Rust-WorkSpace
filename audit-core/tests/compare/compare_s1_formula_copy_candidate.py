@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import shlex
 import shutil
@@ -347,6 +348,166 @@ def formula_cache_count(path: Path) -> int:
     return count
 
 
+def formula_cache_snapshot(path: Path):
+    formula_book = load_workbook(path, data_only=False, read_only=True, keep_links=False)
+    cached_book = load_workbook(path, data_only=True, read_only=True, keep_links=False)
+    values = {}
+    try:
+        for formula_sheet in formula_book.worksheets:
+            cached_sheet = cached_book[formula_sheet.title]
+            for row in formula_sheet.iter_rows():
+                for cell in row:
+                    if cell.data_type == "f":
+                        values[(formula_sheet.title, cell.coordinate)] = (
+                            cell.value,
+                            cached_sheet[cell.coordinate].value,
+                        )
+    finally:
+        formula_book.close()
+        cached_book.close()
+    return values
+
+
+def cached_value_equal(left, right) -> bool:
+    if isinstance(left, bool) or isinstance(right, bool):
+        return type(left) is type(right) and left == right
+    if isinstance(left, (int, float)) and isinstance(right, (int, float)):
+        return math.isclose(float(left), float(right), rel_tol=1e-15, abs_tol=0.0)
+    return type(left) is type(right) and left == right
+
+
+def recalculate_and_compare(
+    sidecar_path: Path,
+    python_output: Path,
+    rust_output: Path,
+    directory: Path,
+    expected_cache_values: dict[tuple[str, str], object] | None = None,
+):
+    started = time.perf_counter()
+    python_recalculated = directory / "python_recalculated.xlsx"
+    rust_recalculated = directory / "rust_recalculated.xlsx"
+    shutil.copy2(python_output, python_recalculated)
+
+    from base_audit.engines.libreoffice import LibreOfficeCalculator
+    calculator = LibreOfficeCalculator()
+
+    try:
+        python_result = calculator.recalculate_many(
+            (python_recalculated,),
+            batch_size=8,
+        )
+    except Exception as error:
+        raise CandidateReadbackError(f"python_recalculation_{type(error).__name__}") from None
+
+    try:
+        sidecar_result = subprocess.run(
+            [
+                str(sidecar_path),
+                "recalculate",
+                "--input",
+                str(rust_output),
+                "--output",
+                str(rust_recalculated),
+                "--engine",
+                "lo",
+            ],
+            timeout=calculator.timeout_seconds,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        raise CandidateReadbackError("sidecar_timeout") from None
+    except OSError as error:
+        raise CandidateReadbackError(f"sidecar_start_{type(error).__name__}") from None
+    if sidecar_result.returncode != 0:
+        raise CandidateReadbackError(f"sidecar_exit_{sidecar_result.returncode}")
+
+    try:
+        sidecar_report = json.loads(sidecar_result.stdout)
+    except (json.JSONDecodeError, TypeError):
+        raise CandidateReadbackError("sidecar_invalid_json") from None
+    if not isinstance(sidecar_report, dict):
+        raise CandidateReadbackError("sidecar_invalid_response")
+    validation = sidecar_report.get("validation", {})
+    if not isinstance(validation, dict):
+        raise CandidateReadbackError("sidecar_invalid_validation")
+    formula_count = validation.get("formula_count")
+    formula_cache_cells = validation.get("formula_cache_cells")
+    if (
+        sidecar_report.get("status") != "recalculated"
+        or not isinstance(sidecar_report.get("engine"), str)
+        or "LibreOffice" not in sidecar_report["engine"]
+        or validation.get("formula_text_preserved") is not True
+        or validation.get("cache_nodes_complete") is not True
+        or not isinstance(formula_count, int)
+        or isinstance(formula_count, bool)
+        or formula_count <= 0
+        or formula_cache_cells != formula_count
+        or not rust_recalculated.is_file()
+        or rust_recalculated.stat().st_size == 0
+    ):
+        raise CandidateReadbackError("sidecar_validation_failed")
+
+    python_values = formula_cache_snapshot(python_recalculated)
+    rust_values = formula_cache_snapshot(rust_recalculated)
+    python_keys = set(python_values)
+    rust_keys = set(rust_values)
+    formula_set_difference_count = len(python_keys ^ rust_keys)
+    formula_text_mismatch_count = 0
+    cache_value_mismatch_count = 0
+    for key in python_keys & rust_keys:
+        python_formula, python_cache = python_values[key]
+        rust_formula, rust_cache = rust_values[key]
+        formula_text_mismatch_count += int(python_formula != rust_formula)
+        cache_value_mismatch_count += int(not cached_value_equal(python_cache, rust_cache))
+
+    python_expected_cache_mismatch_count = 0
+    sidecar_expected_cache_mismatch_count = 0
+    if expected_cache_values is not None:
+        python_expected_cache_mismatch_count = sum(
+            key not in python_values
+            or not cached_value_equal(python_values[key][1], expected_value)
+            for key, expected_value in expected_cache_values.items()
+        )
+        sidecar_expected_cache_mismatch_count = sum(
+            key not in rust_values
+            or not cached_value_equal(rust_values[key][1], expected_value)
+            for key, expected_value in expected_cache_values.items()
+        )
+    expected_cache_mismatch_count = (
+        python_expected_cache_mismatch_count + sidecar_expected_cache_mismatch_count
+    )
+
+    mismatch_count = (
+        formula_set_difference_count
+        + formula_text_mismatch_count
+        + cache_value_mismatch_count
+        + expected_cache_mismatch_count
+    )
+    return {
+        "status": "matched" if mismatch_count == 0 else "mismatch",
+        "python_engine": python_result.engine_display,
+        "sidecar_engine": sidecar_report["engine"],
+        "formula_count_python": len(python_keys),
+        "formula_count_sidecar": len(rust_keys),
+        "python_cached_values_nonempty": sum(value is not None for _, value in python_values.values()),
+        "sidecar_cached_values_nonempty": sum(value is not None for _, value in rust_values.values()),
+        "formula_set_difference_count": formula_set_difference_count,
+        "formula_text_mismatch_count": formula_text_mismatch_count,
+        "cache_value_mismatch_count": cache_value_mismatch_count,
+        "expected_cache_cells": len(expected_cache_values or {}),
+        "python_expected_cache_mismatch_count": python_expected_cache_mismatch_count,
+        "sidecar_expected_cache_mismatch_count": sidecar_expected_cache_mismatch_count,
+        "expected_cache_mismatch_count": expected_cache_mismatch_count,
+        "numeric_relative_tolerance": 1e-15,
+        "elapsed_ms": round((time.perf_counter() - started) * 1000),
+        "mismatch_count": mismatch_count,
+    }
+
+
 def range_stats(template_path: Path, ranges):
     workbook = load_workbook(template_path, data_only=False, read_only=False)
     formulas = 0
@@ -452,11 +613,19 @@ def main() -> int:
     parser.add_argument("--workspace", type=Path, default=ROOT)
     parser.add_argument("--wsl-distribution", default="Ubuntu")
     parser.add_argument("--report", type=Path, required=True)
+    parser.add_argument(
+        "--sidecar-path",
+        type=Path,
+        help="Explicit lo-convert binary; when supplied, compare Python and sidecar LibreOffice formula caches",
+    )
     args = parser.parse_args()
     if bool(args.template_workbook) != bool(args.audit_workbook):
         parser.error("provide both real workbook inputs or neither")
 
     source_root = args.source_root.resolve(strict=True)
+    sidecar_path = args.sidecar_path.resolve(strict=True) if args.sidecar_path else None
+    if sidecar_path is not None and not sidecar_path.is_file():
+        parser.error("--sidecar-path must point to the lo-convert executable")
     sys.path.insert(0, str(source_root / "core" / "src"))
     workspace = args.workspace.resolve(strict=True)
     report_path = args.report.resolve()
@@ -517,6 +686,40 @@ def main() -> int:
             "status": "candidate_invocation_failed",
             "production_route_eligible": False,
         }
+
+        recalculation = {"status": "not_requested", "mismatch_count": 0}
+        if sidecar_path is not None:
+            expected_cache_values = (
+                {
+                    ("审核表", "A1"): 3,
+                    ("审核表", "D1"): 7,
+                    ("审核表", "G1"): 11,
+                    ("审核表", "J1"): 15,
+                }
+                if sample_kind == "synthetic"
+                else None
+            )
+            if rust_output.exists():
+                try:
+                    recalculation = recalculate_and_compare(
+                        sidecar_path,
+                        python_output,
+                        rust_output,
+                        directory,
+                        expected_cache_values,
+                    )
+                except CandidateReadbackError as error:
+                    recalculation = {
+                        "status": "failed",
+                        "error_category": str(error),
+                        "mismatch_count": 1,
+                    }
+            else:
+                recalculation = {
+                    "status": "failed",
+                    "error_category": "rust_output_missing",
+                    "mismatch_count": 1,
+                }
 
         readback_failed = False
         readback_failure_category = None
@@ -606,7 +809,7 @@ def main() -> int:
             python_style_references["invalid_cell_style_reference_count"]
             + rust_style_references["invalid_cell_style_reference_count"]
         )
-        mismatches += invalid_style_reference_count
+        mismatches += invalid_style_reference_count + recalculation["mismatch_count"]
         scope_stats = range_stats(template_path, ranges)
         report = {
             "schema_version": 1,
@@ -640,9 +843,10 @@ def main() -> int:
                 "output_readback_failed": readback_failed,
                 "mismatch_count": mismatches,
             },
+            "recalculation": recalculation,
             "verification": {
                 "input_workbooks_unchanged": inputs_unchanged,
-                "formula_recalculation_performed": False,
+                "formula_recalculation_performed": recalculation["status"] in ("matched", "mismatch"),
                 "capability_status": "unverified",
                 "production_route_eligible": False,
                 "target_linux_validation": "not performed",
@@ -652,7 +856,16 @@ def main() -> int:
 
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    print(json.dumps({"status": report["status"], "mismatch_count": mismatches, "sample_kind": sample_kind}))
+    print(
+        json.dumps(
+            {
+                "status": report["status"],
+                "mismatch_count": mismatches,
+                "sample_kind": sample_kind,
+                "recalculation_status": recalculation["status"],
+            }
+        )
+    )
     return 0 if inputs_unchanged else 1
 
 

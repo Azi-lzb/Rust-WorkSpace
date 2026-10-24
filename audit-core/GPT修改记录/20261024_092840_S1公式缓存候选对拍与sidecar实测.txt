@@ -1,0 +1,43 @@
+# S1 公式复制候选缓存对拍与 sidecar 实测
+
+- 时间：2026-10-24 09:28（Asia/Shanghai）
+- 执行者：Codex audit-dev Agent
+- 分支：audit-dev
+- 修改前 commit：ed29df1
+- 修改后 commit：未提交；真实 sidecar 缓存对拍未通过，保留 WIP
+- WIP：开始时公式复制比较脚本已有未提交的 sidecar 对拍扩展；本轮沿用并补齐超时与响应结构检查。`DEVELOPMENT_GOAL.md` 未修改。
+
+## 目的与范围
+
+为 S1 跨工作簿 `ImportRange×4` 候选增加显式 sidecar 重算后的公式文本/缓存值对拍；数值容差遵守 workspace 规则的 `1e-15`。这是 Audit 测试辅助，不接生产路由、不修改 Audit 业务输出，也不登记 Passed capability。
+
+## 修改文件
+
+- `audit-core/tests/compare/compare_s1_formula_copy_candidate.py`：增加可选 `--sidecar-path`、Python/sidecar 重算输出缓存快照、公式集合/文本/缓存值逐格比较；增加 300 秒超时和 sidecar JSON 响应防御性检查。
+- `audit-core/probe/reports/s1_formula_copy_candidate_synthetic.json`：记录本轮合成运行中 sidecar 调用失败；不含路径、公式值或业务数据。
+- 本修改记录。
+
+## 测试与证据
+
+- WSL Ubuntu：`cargo build -p lo-convert --locked` 通过。
+- Python AST 解析、`git diff --check` 通过。
+- 合成候选默认模式通过：状态 `candidate_match_unverified`，0 差异；Rust 手动候选测试退出码 0。Rust 模板计划解析 4 个范围、16 个格、4 个公式、5 条批注；复制范围、未修改区域、元数据和计算标志差异均为 0；输入未改动。该结果不包含公式重算。
+- Python 源实现缓存快照比较器合成检查通过：两个含同一公式的工作簿由源项目 `LibreOfficeCalculator.recalculate_many` 重算后，比较器读到 1 个公式及 2 个非空缓存值；`1e-15` 容差边界检查通过。
+- 源项目 `LibreOfficeCalculator.recalculate_many` 对同一逻辑样本（A1=2、B1=3、C1=`SUM(A1:B1)`，并设置 `fullCalcOnLoad`/`forceFullCalc`）读回缓存值 5。
+- Audit 分支现有 sidecar 合成重算运行以 `sidecar_exit_2` 失败，报告 `recalculation.status=failed`、1 个失败差异；因此未把该候选标为缓存对拍通过。额外隔离确认：LibreOffice 私有 profile 参数使用普通路径时进程失败，使用 `file://` URI 时能够生成文件。main 正协调共享 sidecar；其后续测试又观察到 URI 修正后的输出缓存仍为 0，尚未同步到 Audit 分支复测。
+
+## 未执行项与已知问题
+
+- 真实 S1 模板与其对应审核副本尚无可确认配对，真实范围、缓存和 Issue 结果对拍未执行。
+- sidecar 正常重算并读回正确数值尚未通过；缓存节点齐全不能作为计算正确的证据。候选保持 Unverified，不接 S1 Issue 提取链。
+- Windows 原生 Rust 工具链不可用，本轮 Rust/LO 验证在 WSL Ubuntu 完成；麒麟 V10、UOS V20 未执行。
+- Audit 生产 CLI 仍消费既有公式审核副本 manifest；本轮没有将公式复制/重算改接生产路径。
+
+## 删除与回滚
+
+- 删除项：无。
+- 回滚：回滚本轮 Audit 测试辅助与合成报告改动；不回滚 main 协调的共享 reader/editor/sidecar 提交或既有 S1 生产链。原 Python 源目录仅只读调用。
+
+## 组件版本
+
+不升级。
