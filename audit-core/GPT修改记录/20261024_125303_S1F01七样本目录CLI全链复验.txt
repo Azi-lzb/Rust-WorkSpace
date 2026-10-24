@@ -1,0 +1,37 @@
+# S1-F01 既有公式副本七样本目录 CLI 全链复验
+
+- 日期：2026-10-24 12:53:03 +08:00
+- 修改前 commit：f0887ec（audit-dev 与 origin/audit-dev 同步，工作区干净）
+- 修改后 commit：本记录随本轮提交，提交号由 Git 历史追溯。
+- WIP：无未提交 Audit 修改；DEVELOPMENT_GOAL.md、源 Python 项目、真实工作簿、pytools-core、公共 crates 和 Cargo.lock 均未修改。
+
+## 目的与修改文件
+
+对用户提供的同批 7 本单位贷款工作簿，使用原 Python 已保存的公式审核副本运行 Audit Rust S1 目录审核入口，验证公式结果读取、条件格式计算、Issue 合流、Rust 结果工作簿及 Python/Rust 对拍。该复验不执行 Rust 公式复制，也不代替其保真验收。
+
+- 新增 `audit-core/probe/reports/s1_audit_directory_existing_formula_copies_real_batch.json`。
+- 更新 `audit-core/MIGRATION_INVENTORY.md` 的 S1-F01 实样本证据。
+- 本记录。
+
+报告只保存样本序号、Issue/结果行计数、差异数、耗时和引擎；不保存路径、机构名、工作簿数据、公式文本或哈希。
+
+## 实际 Rust 业务与结果
+
+- 入口：`open-data-audit s1-audit-directory`；7 个实际源 XLSX，使用 1 个既有 S1 模板、源项目默认映射和 7 个 Python 公式结果审核副本。
+- 逐本 Python/Rust 对拍：317 条公式 Issue、5 条条件格式 Issue、322 条合并 Issue；7/7 当前 Issue 字段及逐本结果工作簿对拍差异 0，逐本结果累计 322 行、322 个超链接；7/7 源/副本/模板输入不变。
+- 另运行完整 7 本目录批处理：CLI `completed`，结构预检 7/7 匹配，生成 322 条 Issue 的 Rust 结果工作簿。只计数读回为 1 张表、322 行、322 个超链接、13 列。
+- Developer-view 有 33 个进度事件，记录发现、模板/映射读取、结构预检、条件格式、公式结果、合流和结果写出。真实引擎包括 Calamine、namespace-aware OOXML adapter、Rust S1 Issue/history 编排、rust_xlsxwriter 0.101.0。单本 CLI 观察时间 2,989–15,928 ms；完整批处理各阶段耗时见机器报告。
+- 公式值只读既有缓存，未执行公式重算；未提供历史工作簿，未覆盖历史分类或重复运行。
+- 公式复制操作本身未在本轮执行；S1-F01 仍未验收，OpenPyXL worker 目标缓存保护与生产能力状态保持 Unverified。
+
+## 验证与限制
+
+- `compare_s1_audit_directory.py` 对 7 个真实源/审核副本分别运行，7/7 status=passed、总 mismatch=0。
+- WSL2 Ubuntu 中对完整 7 项 manifest 运行一次真实 `s1-audit-directory` CLI；输出工作簿读回计数与逐本结果累计一致。
+- 真实样本输出仅在系统临时目录；检查只输出汇总，不保存内容。
+- 本机 Windows Rust MSVC linker/SDK 尚未就绪；未验证 Windows 原生构建、麒麟/UOS、deb 或离线交付。
+
+## 回滚与版本
+
+- 无文件删除；本轮 Audit 报告、清单和记录可由一个普通 `git revert <本轮提交>` 回滚。
+- 不升级组件版本；未改动 main 分支。

@@ -1,0 +1,37 @@
+# S1-F01 Windows 原生真实样本链复验
+
+- 日期：2026-10-24 13:04:26 +08:00
+- 修改前 commit：f0887ec（audit-dev 与 origin/audit-dev 同步）；本轮 WIP 包含先前的机器报告、S1 清单和 WSL 复验记录，已逐项保留并复核。
+- 修改后 commit：本记录随本轮提交，提交号由 Git 历史追溯。
+- 【组件版本】：不升级。
+- WIP：DEVELOPMENT_GOAL.md、源 Python 项目、真实业务工作簿、pytools-core、公共 crates、Cargo.lock 均未改动。真实 CLI 原始输出、比较器临时文件和结果工作簿写入系统临时目录。
+
+## 目的与修改文件
+
+在 Windows MSVC Rust 环境中继续验证同一真实 S1 批次的 Rust 业务入口，并以原 Python 服务逐本对拍。输入使用 Python 已保存的公式结果审核副本；本次未执行公式复制或公式重算。
+
+- 更新 audit-core/probe/reports/s1_audit_directory_existing_formula_copies_real_batch.json：修正先前汇总中的字段差异和累计行/链接计数；追加 Windows 原生逐本对拍及完整批处理证据。
+- 更新 audit-core/MIGRATION_INVENTORY.md 的 S1-F01 记录。
+- 新增本记录。
+
+报告只保存样本序号、计数、耗时和引擎，不保存源路径、机构名、单元格值、公式文本、哈希或 CLI 原始输出。
+
+## Rust 入口和实际结果
+
+- 原生构建：Windows x86_64-pc-windows-msvc，cargo build -p audit-core --bin open-data-audit 成功；Cargo.lock 未变化。
+- 入口：open-data-audit s1-audit-directory，同批 7 本源文件，显式选择既有 S1 模板、源项目默认映射，并通过 manifest 关联 Python 已保存的公式结果副本。
+- Windows 原生 Python/Rust 逐本比较器：7/7 passed；当前 Issue 字段差异 0、总 mismatch 0、Rust 结果工作簿差异 0。合计公式 Issue 317、条件格式 Issue 5、合并 Issue 322；输出 322 行和 322 个超链接；7/7 输入保持未变。
+- 完整 Windows 原生目录 CLI：状态 completed，识别期间 2026-07，发现/选择 7/7，结构预检匹配 7/7，共 322 条 Issue，完整耗时 3,106 ms。Developer-view 记录 33 个进度事件；各阶段耗时及实际引擎保存在机器报告。结果 writer 为 rust_xlsxwriter 0.101.0。
+- 测试专用 OpenPyXL 3.1.5 只计数读回：1 张表、322 行、322 个超链接、13 列。七次逐本原生 CLI 耗时为 1,461–2,819 ms，均值 1,679 ms；仅代表本批 Windows 样本。
+
+## 验证边界
+
+- 原 WSL 逐本比较器原始 JSON 均为空字段差异明细且总 mismatch 0。修正后的机器报告将逐本字段差异计数记为 0，累计结果行/链接均为 322。
+- 公式结果取自已保存缓存；未重算。公式复制未在本轮执行，worker 目标缓存保护及生产能力仍 Unverified。未提供历史工作簿，不覆盖历史分类、历史写回或重复运行。
+- 未验证麒麟/UOS、glibc 2.28 deb 或离线交付。
+- 构建有既有 umya-spreadsheet 弃用 API 警告；不影响本次成功链接和 CLI 运行，未改公共 crate。
+
+## 回滚与版本
+
+- 无文件删除；本轮 Audit 报告、清单和记录可通过 git revert <本轮提交> 回滚。
+- 未修改 main 分支。
