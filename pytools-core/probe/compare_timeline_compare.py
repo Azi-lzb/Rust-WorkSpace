@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
-import shlex
+import os
 import subprocess
 import sys
 import tempfile
@@ -14,21 +14,7 @@ from openpyxl import Workbook, load_workbook
 
 sys.dont_write_bytecode = True
 WORKSPACE = Path(__file__).resolve().parents[2]
-PYTOOLS_SOURCE = Path(r"C:\Users\AZI\Desktop\VibeCode\4.pytools-main")
-
-
-def to_wsl_path(path: Path) -> str:
-    drive = path.drive.rstrip(":").lower()
-    if not drive:
-        raise ValueError(f"expected absolute Windows path: {path}")
-    return f"/mnt/{drive}/{path.as_posix()[2:].lstrip('/')}"
-
-
-def from_wsl_path(value: str) -> Path:
-    value = value.replace("\\", "/")
-    if not value.startswith("/mnt/"):
-        raise ValueError(f"expected path under WSL mounted drive: {value}")
-    return Path(f"{value[5].upper()}:\\{value[7:].replace('/', chr(92))}")
+PYTOOLS_SOURCE = Path(os.environ.get("PYTOOLS_SOURCE_ROOT", WORKSPACE.parent / "4.pytools-main"))
 
 
 def make_book(path: Path, changed: bool = False, sheet_title: str = "Report Data") -> None:
@@ -61,9 +47,9 @@ def make_config(
     global_sheet.title = "全局配置"
     global_sheet.append(["配置项", "值"])
     for key, value in (
-        ("输入目录", to_wsl_path(inputs)),
-        ("输出目录", to_wsl_path(output)),
-        ("日志目录", to_wsl_path(output / "logs")),
+        ("输入目录", str(inputs)),
+        ("输出目录", str(output)),
+        ("日志目录", str(output / "logs")),
         ("错误策略", "continue"),
         ("源文件扩展名", ".xlsx"),
         ("时序规则命中策略", "all_match"),
@@ -101,19 +87,32 @@ def python_baseline(template: Path, sources: list[Path], config: Path, output: P
 
 
 def run_rust(template: Path, sources: list[Path], config: Path) -> Path:
-    command = (
-        f"cd {shlex.quote(to_wsl_path(WORKSPACE))} && cargo run --quiet -p pytools-core --bin pytools -- "
-        f"timeline-compare --config {shlex.quote(to_wsl_path(config))} "
-        f"--template {shlex.quote(to_wsl_path(template))} "
-        + " ".join(shlex.quote(to_wsl_path(path)) for path in sources)
+    executable = "pytools.exe" if sys.platform == "win32" else "pytools"
+    binary = WORKSPACE / "target" / "debug" / executable
+    if not binary.is_file():
+        raise FileNotFoundError(f"build the native debug CLI first: {binary}")
+    command = [
+        str(binary),
+        "timeline-compare",
+        "--config",
+        str(config),
+        "--template",
+        str(template),
+        *(str(path) for path in sources),
+    ]
+    completed = subprocess.run(
+        command,
+        check=True,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
     )
-    completed = subprocess.run(["wsl", "-e", "sh", "-lc", command], check=True, capture_output=True)
-    stdout = completed.stdout.decode("utf-8-sig", errors="replace").replace("\x00", "")
-    stderr = completed.stderr.decode("utf-8-sig", errors="replace").replace("\x00", "")
+    stdout = completed.stdout
+    stderr = completed.stderr
     for line in reversed(stdout.splitlines()):
         try:
             payload = json.loads(line)
-            return from_wsl_path(payload["output"])
+            return Path(payload["output"])
         except (json.JSONDecodeError, KeyError):
             continue
     raise RuntimeError(f"Rust CLI did not return an output path: {stdout}\n{stderr}")
@@ -167,12 +166,41 @@ def _projection_without_styles(projection: dict[str, object]) -> dict[str, objec
     return {**projection, "sheets": sheets}
 
 
+def _effective_excel_style(style: dict[str, object]) -> dict[str, object]:
+    """Normalize equivalent implicit and explicit XLSX defaults for display parity."""
+    normalized = dict(style)
+    font = list(style["font"])
+    if font[0] is None:
+        font[0] = "Calibri"
+    if font[1] is None:
+        font[1] = 11.0
+    font_color = font[5]
+    if font_color is None or (font_color[0] == "theme" and font_color[3] == 1):
+        font[5] = "default_text_color"
+    normalized["font"] = font
+    normalized["border"] = [
+        [
+            side[0],
+            "automatic_border_color"
+            if side[1] is None or (side[1][0] == "auto" and side[1][5] is True)
+            else side[1],
+        ]
+        for side in style["border"]
+    ]
+    return normalized
+
+
 def _style_mismatch_cells(expected: dict[str, object], actual: dict[str, object]) -> list[str]:
     mismatches = []
     for expected_sheet, actual_sheet in zip(expected["sheets"], actual["sheets"]):
         for row_index, (expected_row, actual_row) in enumerate(zip(expected_sheet["rows"], actual_sheet["rows"])):
             for column_index, (expected_cell, actual_cell) in enumerate(zip(expected_row, actual_row)):
-                if expected_cell is not None and actual_cell is not None and expected_cell[2] != actual_cell[2]:
+                if (
+                    expected_cell is not None
+                    and actual_cell is not None
+                    and _effective_excel_style(expected_cell[2])
+                    != _effective_excel_style(actual_cell[2])
+                ):
                     column = chr(ord("A") + column_index)
                     mismatches.append(f"{expected_sheet['title']}!{column}{row_index + 1}")
     return mismatches
@@ -308,15 +336,33 @@ def main() -> int:
                 )
             )
         style_mismatches = _style_mismatch_cells(expected_projection, actual_projection)
-        if any(not address.endswith("1") for address in style_mismatches):
-            raise AssertionError(f"unexpected non-header style differences: {style_mismatches}")
+        if style_mismatches:
+            raise AssertionError(f"style differences: {style_mismatches}")
+        header_cells = [
+            cell
+            for sheet in actual_projection["sheets"]
+            for cell in (sheet["rows"][0] if sheet["rows"] else [])
+            if cell is not None
+        ]
+        if len(header_cells) != 17:
+            raise AssertionError(f"expected 17 header cells, found {len(header_cells)}")
+        for cell in header_cells:
+            style = cell[2]
+            if (
+                style["font"][2] is not True
+                or style["alignment"][:2] != ["center", "top"]
+                or any(side[0] != "thin" for side in style["border"])
+            ):
+                raise AssertionError(f"unexpected header style at {cell[0]!r}: {style!r}")
         report = {
             "schema_version": 1,
             "suite": "pytools.timeline.header_path_compare_keyword_parity",
             "date": "2026-10-24",
-            "status": "passed_synthetic_semantics_with_known_style_gap",
+            "status": "passed_synthetic_semantics_and_header_style",
             "entry": "timeline-compare CLI -> run_header_path_compare",
             "baseline": "PyCode/core/compare_393.py::run_compare",
+            "rust_cli": f"{sys.platform} native debug",
+            "style_comparison": "effective Excel style; implicit Calibri 11/theme text and omitted/automatic border colors are equivalent",
             "real_config_sample_availability": real_config_sample_availability(),
             "coverage": {
                 "case_insensitive_workbook_keyword": "passed",
@@ -325,13 +371,14 @@ def main() -> int:
                 "nonmatching_workbook_keyword": "passed",
                 "same_template_source_skipped": "passed",
                 "output_cells_values_types_and_structure": "exact",
-                "output_header_style": "known_difference",
+                "output_header_style": "exact",
             },
             "sheet_names": expected_projection["sheet_names"],
             "matched_sources": 3,
             "selected_sources_including_unmatched": 4,
+            "header_style_cells_checked": len(header_cells),
             "header_style_mismatch_cells": len(style_mismatches),
-            "style_gap": "Python pandas headers are bold, centered, top-aligned, and thin-bordered; Rust output headers are unformatted.",
+            "style_gap": None,
         }
         report_path = WORKSPACE / "pytools-core" / "probe" / "reports" / "timeline_compare_keyword_parity_20261024.json"
         report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + chr(10), encoding="utf-8")

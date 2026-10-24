@@ -18,7 +18,7 @@ use excel_editor::{
     RangeStyleMode, WorkbookFormat,
 };
 use excel_reader::{read_workbook, SheetDump};
-use excel_writer::Workbook;
+use excel_writer::{Format, FormatAlign, FormatBorder, Workbook};
 use serde::Serialize;
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap, HashSet},
@@ -2400,8 +2400,13 @@ fn write_string_table(
 ) -> Result<()> {
     let sheet = workbook.add_worksheet();
     sheet.set_name(name)?;
+    let header_format = Format::new()
+        .set_bold()
+        .set_border(FormatBorder::Thin)
+        .set_align(FormatAlign::Center)
+        .set_align(FormatAlign::Top);
     for (col, header) in headers.iter().enumerate() {
-        sheet.write_string(0, col as u16, *header)?;
+        sheet.write_string_with_format(0, col as u16, *header, &header_format)?;
     }
     for (row, values) in rows.iter().enumerate() {
         for (col, value) in values.iter().enumerate() {
@@ -2414,11 +2419,16 @@ fn write_string_table(
 fn write_compare_summary_table(workbook: &mut Workbook, rows: &[Vec<String>]) -> Result<()> {
     let sheet = workbook.add_worksheet();
     sheet.set_name("汇总")?;
+    let header_format = Format::new()
+        .set_bold()
+        .set_border(FormatBorder::Thin)
+        .set_align(FormatAlign::Center)
+        .set_align(FormatAlign::Top);
     for (column, header) in ["源文件", "状态", "按位置差异数", "按路径差异数", "备注"]
         .iter()
         .enumerate()
     {
-        sheet.write_string(0, column as u16, *header)?;
+        sheet.write_string_with_format(0, column as u16, *header, &header_format)?;
     }
     for (row_index, values) in rows.iter().enumerate() {
         for (column, value) in values.iter().enumerate() {

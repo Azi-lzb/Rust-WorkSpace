@@ -366,7 +366,7 @@ timeline_ops::keyword_match 改为复用共享 Python 语义匹配器，修复�
 
 真实配置的输入目录在当前开发机不存在；原项目 xlsx/ 中 70 份 XLSX 没有文件名和工作表同时命中时序规则，因此没有可运行的真实业务样本。本轮合成 CLI 对拍不构成 PT-1-1 完整验收。
 
-对拍另发现输出样式差异：Python/Pandas 两张结果表的 17 个标题单元格为粗体、水平居中、顶部对齐并带细边框；Rust 标题目前为默认样式。excel_writer 尚未导出 FormatBorder，按协作边界暂未修改共享 crate；需要 main 协调共享 writer API 后补齐样式并重新完成完整对拍。PT-1-1 仍未完成最终验收。
+输出样式差异已在 Rust `timeline-compare` 真实 CLI 中补齐：两张结果表的 17 个标题单元格现为粗体、水平居中、顶部对齐并带细边框。对拍通过 Windows 原生 CLI 与只读 PyCode 基线比较值/类型、工作表结构及有效 Excel 样式，17/17 个标题样式一致；样式比较将隐式默认 Calibri 11/主题文字色和省略/自动边框色视为等效，机器报告为 `probe/reports/timeline_compare_keyword_parity_20261024.json`。配置输入目录在当前开发机不存在，原项目 `xlsx/` 的 70 份 XLSX 无文件名和工作表同时命中时序规则，因此仍没有可运行的真实业务样本；PT-1-1 尚未完成真实业务验收。
 
 ### 2026-10-24 PT-6-1 剩余备份工作簿完整批次对拍
 

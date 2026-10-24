@@ -2,9 +2,11 @@
   "schema_version": 1,
   "suite": "pytools.timeline.header_path_compare_keyword_parity",
   "date": "2026-10-24",
-  "status": "passed_synthetic_semantics_with_known_style_gap",
+  "status": "passed_synthetic_semantics_and_header_style",
   "entry": "timeline-compare CLI -> run_header_path_compare",
   "baseline": "PyCode/core/compare_393.py::run_compare",
+  "rust_cli": "win32 native debug",
+  "style_comparison": "effective Excel style; implicit Calibri 11/theme text and omitted/automatic border colors are equivalent",
   "real_config_sample_availability": {
     "status": "real_config_loaded",
     "configured_input_dir_exists": false,
@@ -20,7 +22,7 @@
     "nonmatching_workbook_keyword": "passed",
     "same_template_source_skipped": "passed",
     "output_cells_values_types_and_structure": "exact",
-    "output_header_style": "known_difference"
+    "output_header_style": "exact"
   },
   "sheet_names": [
     "表头比对结果",
@@ -28,6 +30,7 @@
   ],
   "matched_sources": 3,
   "selected_sources_including_unmatched": 4,
-  "header_style_mismatch_cells": 17,
-  "style_gap": "Python pandas headers are bold, centered, top-aligned, and thin-bordered; Rust output headers are unformatted."
+  "header_style_cells_checked": 17,
+  "header_style_mismatch_cells": 0,
+  "style_gap": null
 }
