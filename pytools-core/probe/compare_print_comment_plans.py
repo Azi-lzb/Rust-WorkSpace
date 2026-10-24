@@ -12,6 +12,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from datetime import date
 from pathlib import Path
 
 from openpyxl import Workbook, load_workbook
@@ -24,6 +25,9 @@ WORKSPACE = Path(__file__).resolve().parents[2]
 PYTOOLS_SOURCE = Path(r"C:\Users\AZI\Desktop\VibeCode\4.pytools-main")
 EXPECTED_RANGES = ["B2:D4", "F2:G3"]
 PLATFORM = "synthetic-pt-3-1-3-2-comment-print-probe"
+REPORT_DATE = os.environ.get("PYTOOLS_REPORT_DATE", date.today().strftime("%Y%m%d"))
+if len(REPORT_DATE) != 8 or not REPORT_DATE.isdigit():
+    raise ValueError("PYTOOLS_REPORT_DATE must be an eight-digit YYYYMMDD value")
 
 
 def wsl_path(path: Path) -> str:
@@ -64,25 +68,34 @@ def rust_plan(
     hide_zero: bool,
     capability_path: Path | None = None,
 ) -> dict[str, object]:
-    workspace = wsl_path(WORKSPACE)
     arguments = [
         "print-comment-plan",
         "--input",
-        wsl_path(source),
+        str(source),
         "--output",
-        wsl_path(output),
+        str(output),
         "--drop-comments",
         "true" if drop_comments else "false",
         "--hide-zero",
         "true" if hide_zero else "false",
     ]
     if capability_path is not None:
-        arguments.extend(["--capabilities", wsl_path(capability_path), "--platform", PLATFORM])
-    command = (
-        f"cd {shlex.quote(workspace)} && cargo run --quiet -p pytools-core --bin pytools -- "
-        + " ".join(shlex.quote(argument) for argument in arguments)
-    )
-    result = subprocess.run(["wsl", "-e", "sh", "-lc", command], capture_output=True, check=False)
+        arguments.extend(["--capabilities", str(capability_path), "--platform", PLATFORM])
+    native_cli = os.environ.get("PYTOOLS_RUST_CLI")
+    if native_cli:
+        result = subprocess.run([native_cli, *arguments], capture_output=True, check=False)
+    else:
+        workspace = wsl_path(WORKSPACE)
+        wsl_arguments = arguments.copy()
+        wsl_arguments[2] = wsl_path(source)
+        wsl_arguments[4] = wsl_path(output)
+        if capability_path is not None:
+            wsl_arguments[-3] = wsl_path(capability_path)
+        command = (
+            f"cd {shlex.quote(workspace)} && cargo run --quiet -p pytools-core --bin pytools -- "
+            + " ".join(shlex.quote(argument) for argument in wsl_arguments)
+        )
+        result = subprocess.run(["wsl", "-e", "sh", "-lc", command], capture_output=True, check=False)
     stdout = result.stdout.decode("utf-8-sig", errors="replace").replace("\x00", "")
     if result.returncode != 0:
         raise RuntimeError(f"Rust print plan failed: {stdout}\n{result.stderr.decode('utf-8', errors='replace')}")
@@ -361,7 +374,7 @@ def main() -> int:
             "comparison": ["marked ranges and order", "output sheet names", "style/comment/merge/zero policies", "orientation, fit settings, paper size, print area and footer"],
             "limitations": ["Rust output was not applied: ImportRange and page-setting capabilities remain gated by registered ExcelModifier evidence.", "Synthetic XLSX only; no real print template or XSLM was used.", "This validates plan semantics, not backend output fidelity or print rendering.", "Windows release build, Kylin/UOS and deb were not validated."],
         }
-        report_path = WORKSPACE / "pytools-core" / "probe" / "reports" / "print_comment_plan_parity_20261023.json"
+        report_path = WORKSPACE / "pytools-core" / "probe" / "reports" / f"print_comment_plan_parity_{REPORT_DATE}.json"
         report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
         executions = {}
@@ -420,7 +433,7 @@ def main() -> int:
                 "No PDF rendering was performed; PDF export remains out of scope.",
             ],
         }
-        execution_report_path = WORKSPACE / "pytools-core" / "probe" / "reports" / "print_comment_execution_parity_20261023.json"
+        execution_report_path = WORKSPACE / "pytools-core" / "probe" / "reports" / f"print_comment_execution_parity_{REPORT_DATE}.json"
         execution_report_path.write_text(
             json.dumps(execution_report, ensure_ascii=False, indent=2) + "\n",
             encoding="utf-8",

@@ -290,9 +290,15 @@ where
             "2" => {
                 run_interactive_dedup_menu(input, output, config_path, global, allow_native_dialog)?
             }
-            "3" => {
-                run_interactive_print_menu(input, output, config_path, global, allow_native_dialog)?
-            }
+            "3" => run_interactive_print_menu(
+                input,
+                output,
+                config_path,
+                global,
+                allow_native_dialog,
+                capabilities,
+                platform,
+            )?,
             "4" => run_interactive_convert_menu(
                 input,
                 output,
@@ -1560,6 +1566,8 @@ fn run_interactive_print_menu<R, W>(
     config_path: &Path,
     global: &GlobalConfig,
     allow_native_dialog: bool,
+    capabilities: Option<&Path>,
+    platform: Option<&str>,
 ) -> Result<()>
 where
     R: BufRead,
@@ -1567,8 +1575,14 @@ where
 {
     loop {
         writeln!(output, "------ 打印工具 ------")?;
-        writeln!(output, "  1  按批注保留格式（生成计划）")?;
-        writeln!(output, "  2  按批注快速复制（生成计划）")?;
+        writeln!(
+            output,
+            "  1  按批注保留格式（默认计划；有执行能力时可确认）"
+        )?;
+        writeln!(
+            output,
+            "  2  按批注快速复制（默认计划；有执行能力时可确认）"
+        )?;
         writeln!(output, "  3  按配置准备打印文件（生成计划）")?;
         writeln!(output, "  4  按配置预校验")?;
         writeln!(output, "  0  返回")?;
@@ -1615,6 +1629,38 @@ where
                     "--plan-output".to_owned(),
                     plan_path.to_string_lossy().into_owned(),
                 ]);
+                let execute = if capabilities.is_some() && platform.is_some() {
+                    writeln!(
+                        output,
+                        "[确认] 将使用启动时提供的修改能力生成新的打印工作簿：{}；源工作簿保持不变。",
+                        output_path.display()
+                    )?;
+                    read_menu_choice(input, output, "输入 y/yes/是 执行；其他输入仅生成计划> ")?
+                        .is_some_and(|answer| {
+                            matches!(
+                                answer.trim().to_ascii_lowercase().as_str(),
+                                "y" | "yes" | "是"
+                            )
+                        })
+                } else {
+                    false
+                };
+                if execute {
+                    let (Some(capabilities), Some(platform)) = (capabilities, platform) else {
+                        unreachable!("comment print execution requires capability and platform")
+                    };
+                    arguments.extend([
+                        "--capabilities".to_owned(),
+                        capabilities.to_string_lossy().into_owned(),
+                        "--platform".to_owned(),
+                        platform.to_owned(),
+                    ]);
+                    run_print_comment_plan(arguments)?;
+                    return Ok(());
+                }
+                if capabilities.is_some() {
+                    writeln!(output, "[未执行] 保留源工作簿，仅生成打印计划。")?;
+                }
                 run_print_comment_plan(arguments)?;
                 return Ok(());
             }
