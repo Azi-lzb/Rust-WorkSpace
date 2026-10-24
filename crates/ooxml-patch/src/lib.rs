@@ -320,8 +320,8 @@ pub fn clear_formula_caches_for_recalculation(
     validate_header_package(source)
         .context("validate formula recalculation input package safety")?;
 
+    let worksheet_parts = sheet_parts(source)?;
     let mut input_zip = ZipArchive::new(fs::File::open(source)?)?;
-    let worksheet_parts = strict_sheet_parts_from_zip(&mut input_zip, source)?;
     let mut replacements = BTreeMap::new();
     let mut report = FormulaCachesClearedReport::default();
     for (_, worksheet_part) in worksheet_parts {
