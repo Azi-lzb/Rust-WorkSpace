@@ -1765,12 +1765,12 @@ fn write_wide_cell(
             sheet.write_boolean(row, column, *boolean)?;
         }
         Cell::DateTimeSerial(serial) => {
-            let format = wide_date_format(*serial);
+            let format = wide_date_format();
             sheet.write_number_with_format(row, column, *serial, &format)?;
         }
         Cell::DateTimeIso(text) => {
             if let Some(serial) = wide_datetime_serial(text) {
-                let format = wide_date_format(serial);
+                let format = wide_date_format();
                 sheet.write_number_with_format(row, column, serial, &format)?;
             } else {
                 sheet.write_string(row, column, text)?;
@@ -1788,16 +1788,11 @@ fn write_wide_cell(
     Ok(())
 }
 
-fn wide_date_format(serial: f64) -> excel_writer::Format {
-    excel_writer::Format::new().set_num_format(wide_date_format_code(serial))
-}
-
-fn wide_date_format_code(serial: f64) -> &'static str {
-    if serial.fract().abs() < f64::EPSILON {
-        "yyyy-mm-dd"
-    } else {
-        "yyyy-mm-dd hh:mm:ss"
-    }
+fn wide_date_format() -> excel_writer::Format {
+    // PyCode writes the summary through pandas `to_excel`, whose default datetime
+    // number format is `YYYY-MM-DD HH:MM:SS` for every datetime value, regardless
+    // of whether the value carries a time component.
+    excel_writer::Format::new().set_num_format("YYYY-MM-DD HH:MM:SS")
 }
 
 fn wide_datetime_serial(text: &str) -> Option<f64> {
@@ -2684,11 +2679,14 @@ fn wide_append_cell(value: Option<&WorkbookCell>, header: &str) -> Result<Append
     let Some(value) = value else {
         return Ok(AppendCell::Value(CellValue::Blank));
     };
-    let number_format = |serial: f64| {
+    let number_format = |header: &str| {
         if header == "数据日期" {
             "yyyy/m/d".to_owned()
         } else {
-            wide_date_format_code(serial).to_owned()
+            // PyCode writes summary and target rows through pandas `to_excel`,
+            // whose default datetime number format applies to every datetime
+            // value regardless of any time component.
+            "YYYY-MM-DD HH:MM:SS".to_owned()
         }
     };
     Ok(match value {
@@ -2699,14 +2697,14 @@ fn wide_append_cell(value: Option<&WorkbookCell>, header: &str) -> Result<Append
         Cell::Boolean(value) => AppendCell::Value(CellValue::Boolean(*value)),
         Cell::DateTimeSerial(serial) => AppendCell::DateTime {
             serial: serial.to_string(),
-            number_format: number_format(*serial),
+            number_format: number_format(header),
         },
         Cell::DateTimeIso(value) => {
             let serial = wide_datetime_serial(value)
                 .with_context(|| format!("unsupported date value {value:?}"))?;
             AppendCell::DateTime {
                 serial: serial.to_string(),
-                number_format: number_format(serial),
+                number_format: number_format(header),
             }
         }
         Cell::DurationIso(value) => {

@@ -776,3 +776,15 @@ Windows 原生 `cargo fmt --manifest-path pytools-core/Cargo.toml -- --check`、
 经全树扫描确认原只读树不存在真实业务含 VBA 的 XLSM 后，用户提供同产品族 VBA 工具仓库 https://github.com/Azi-lzb/VBA_Excel_Tools（克隆 HEAD `cea6dfa`）作为样本来源。其主簿 `VbaV2.4.2.xlsm` 为真实业务宏工作簿（14 张工作表、2,338,304 字节 VBA 工程、5 个批注部件均为配置字段说明而非区域标记，不构成 PT-6-2 模板）。以该簿为只读输入运行 PT-6-1 按使用区域汇总：只读 PyCode `run_summary_by_usedrange` 与 Windows 原生 MSVC `pytools summary-used-range`（HEAD `3e9bce0`）完整工作簿投影精确一致，输出 23,976 行（含标题，19 列）单表 `汇总`；两侧输出均为新建 XLSX 且不含 `xl/vbaProject.bin`；源簿前后 SHA-256 与大小/修改时间不变；开发者事件 15 条与保存运行历史一致，实际引擎 Calamine、`excel-reader::read_xlsx_worksheet_extents` 与 `rust_xlsxwriter`。机器报告：`probe/reports/summary_used_range_real_vba_xlsm_parity_20261025.json`。
 
 此项闭合 PT-6-1 自 2026-10-24 起登记的"真实业务含 VBA 的 XLSM"对拍缺口（原项目树经扫描确认不存在此类样本；该样本为同产品族 VBA 工具主簿，属真实业务宏工作簿）。不推断其他 XLSM、其他输入来源或生产默认；PT-6-1 整体仍未完成最终验收（麒麟 V10/UOS V20、glibc 2.28 实机、deb 与离线交付仍未验证）。另经核实：GitHub 上的 py_statistics_tools 为本地只读基线的发布副本，最新公开提交 2026-10-21，本地树更新至 2026-10-23，全部对拍基线继续取自本地只读树。
+
+### 2026-10-25 PT-1-3/1-4 与 PT-6-2 业务形态现实合成套件与宽表日期格式修复
+
+经用户指示"自行新建测试文件"，新增 `probe/compare_realistic_synthetic_suite.py` 构造贴近业务形态的合成样本做对拍，发现并修复一个真实格式语义缺口。
+
+**发现与修复**：宽表汇总源数据列含日期值时，PyCode 汇总簿数据单元格数字格式为 `YYYY-MM-DD HH:MM:SS`（其 `write_workbook`/`append_to_target` 均经 pandas `to_excel`，pandas 2.2.3 对 datetime 值默认该格式，不区分是否含时间成分），而 Rust 写 `yyyy-mm-dd`（整日）或 `yyyy-mm-dd hh:mm:ss`（含时间）。既有夹具数据列无日期，该路径从未被对拍覆盖。修复 `timeline_ops.rs`：`write_wide_cell` 的数据单元格与 `wide_append_cell` 的目标追加单元格（数据日期列保持 `yyyy/m/d` 不变）统一改用 `YYYY-MM-DD HH:MM:SS`，与 PyCode 的 pandas 写出语义一致；PT-6-2 批注汇总（openpyxl 直接写出，`yyyy-mm-dd h:mm:ss`）经本套件验证无需修改。
+
+**场景 1（PT-1-3/1-4 多规则宽表）**：同一份配置驱动两侧（Python 基线经 PyCode `load_global`/`load_timeline_rules`/`load_path_maps` 读取与 Rust CLI 相同的配置簿），两条规则分别命中 `Report` 与 `余额` 工作表关键字，覆盖合并二级表头、跳过关键字（小计/合计）、必含列头、set 区域（集团@B2）、数据行列边界；两个源工作簿各含命中页、未命中页与说明页。两种行头模式的汇总簿完整投影与有效样式精确一致（WideReport 39×11、WideBalance 37×7）。
+
+**场景 2（PT-6-2 多页签多区域模板）**：模板含两个规格页（余额表：两个行区域 + 两个 set 列 + 列区域；流水表：单行区域 + set 列）与一个无批注页，两个源工作簿各含同名数据页与未匹配页（两侧一致跳过）。PyCode 与 Rust 完整工作簿投影精确一致（206 行；余额表 85×8、流水表 123×8）。
+
+Windows 原生 `cargo test --offline --locked -p pytools-core` 全量通过（42 项结果 0 failed，含全部既有宽表/汇总/去重/追加回归）。机器报告：`probe/reports/realistic_synthetic_suite_parity_20261025.json`。该套件为按用户指示新建的业务形态合成样本，不构成真实样本验收；宽表真实输入与批注汇总真实模板仍缺，PT-1-3/1-4 与 PT-6-2 整体仍未验收。
