@@ -2150,6 +2150,7 @@ pub fn build_wide_target_append_plans(
                     name: name.clone(),
                     rows: state.rows.clone(),
                     style_header_row: true,
+                    header_bold: false,
                     data_date_column: state.headers.iter().position(|header| header == "数据日期"),
                 })
             })

@@ -11,6 +11,8 @@ from datetime import date, datetime
 from pathlib import Path
 
 from openpyxl import Workbook, load_workbook
+from openpyxl.comments import Comment
+from openpyxl.styles import PatternFill
 
 WORKSPACE = Path(__file__).resolve().parents[2]
 PYTOOLS_SOURCE = Path(r"C:\Users\AZI\Desktop\VibeCode\4.pytools-main")
@@ -113,6 +115,37 @@ def make_config(
         )
 
 
+def write_test_capability(plan_path: Path, capability_path: Path) -> str:
+    append_plan = json.loads(plan_path.read_text(encoding="utf-8"))
+    edit_plan = append_plan.get("edit_plan")
+    if not isinstance(edit_plan, dict):
+        raise AssertionError("PT-1-2 target plan did not contain an ExcelEditPlan")
+    platform = "synthetic-pt-1-2-umya-test"
+    capability = {
+        "engine": "umya_spreadsheet",
+        "status": "passed",
+        "format": edit_plan["format"],
+        "operations": sorted(
+            {operation["operation"] for operation in edit_plan["operations"]}
+        ),
+        "supported_features": sorted(edit_plan["workbook"]["features_present"]),
+        "preserved": sorted(edit_plan["preserve"]),
+        "platform": platform,
+        "evidence": {
+            "sample_id": "synthetic-pt-1-2-existing-target",
+            "report_path": "pytools-core/probe/compare_timeline_extract.py",
+            "adapter_version": "workspace-test-capability",
+            "engine_version": "umya-spreadsheet-3.1.1",
+            "platform": platform,
+        },
+    }
+    capability_path.write_text(
+        json.dumps(capability, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    return platform
+
+
 def normalize_value(value):
     if isinstance(value, (date, datetime)):
         return [type(value).__name__, value.isoformat()]
@@ -130,12 +163,20 @@ def workbook_projection(path: Path) -> dict:
                 if cell.value is None and not cell.has_style:
                     row_cells.append(None)
                 else:
+                    comment = cell.comment
                     row_cells.append(
                         {
                             "value": normalize_value(cell.value),
                             "type": cell.data_type,
                             "bold": cell.font.bold,
                             "number_format": cell.number_format,
+                            "fill": [
+                                cell.fill.fill_type,
+                                cell.fill.fgColor.type,
+                                cell.fill.fgColor.rgb,
+                                cell.fill.fgColor.indexed,
+                            ],
+                            "comment": [comment.text, comment.author] if comment else None,
                         }
                     )
             cells.append(row_cells)
@@ -145,6 +186,29 @@ def workbook_projection(path: Path) -> dict:
                 "state": sheet.sheet_state,
                 "dimension": sheet.calculate_dimension(),
                 "freeze_panes": str(sheet.freeze_panes) if sheet.freeze_panes else None,
+                "merged_ranges": sorted(str(item) for item in sheet.merged_cells.ranges),
+                "row_dimensions": {
+                    str(index): [dimension.height, dimension.hidden]
+                    for index, dimension in sheet.row_dimensions.items()
+                    if dimension.height is not None or dimension.hidden
+                },
+                "column_dimensions": {
+                    key: [dimension.width, dimension.hidden]
+                    for key, dimension in sheet.column_dimensions.items()
+                    if dimension.width != 13.0 or dimension.hidden
+                },
+                "page_setup": [
+                    sheet.page_setup.orientation,
+                    sheet.page_setup.fitToWidth,
+                    sheet.page_setup.fitToHeight,
+                    sheet.page_setup.scale,
+                    sheet.sheet_properties.pageSetUpPr.fitToPage
+                    if sheet.sheet_properties.pageSetUpPr
+                    else None,
+                    str(sheet.print_area) if sheet.print_area else None,
+                    sheet.oddHeader.center.text,
+                    sheet.oddFooter.center.text,
+                ],
                 "cells": cells,
             }
         )
@@ -230,6 +294,61 @@ def run() -> dict:
                 )
             )
 
+        python_user_global = load_global(config)
+        python_user_global.output_dir = root / "python-user-output"
+        python_user_path = run_timeline_slim(
+            load_timeline_rules(config),
+            load_path_maps(config),
+            python_user_global,
+            source_paths=[source_a],
+        )
+        if python_user_path is None:
+            raise AssertionError("PyCode did not produce output for user-view case")
+        user_run = subprocess.run(
+            [
+                str(rust_cli),
+                "timeline-extract",
+                "--config",
+                str(config),
+                "--output-dir",
+                str(root / "rust-user-output"),
+                "--log-dir",
+                str(logs),
+                "--log-view",
+                "user",
+                str(source_a),
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+        if user_run.returncode != 0:
+            raise AssertionError(
+                f"Rust user-view extraction failed: {user_run.stderr}\n{user_run.stdout}"
+            )
+        user_result = json.loads(user_run.stdout)
+        if workbook_projection(Path(user_result["path"])) != workbook_projection(
+            python_user_path
+        ):
+            raise AssertionError("user-view output differs from the PyCode workbook")
+        if "时序提取完成" not in user_run.stderr:
+            raise AssertionError("user view did not report the extraction completion step")
+        if any(
+            engine in (user_run.stdout + user_run.stderr)
+            for engine in ("calamine", "rust_xlsxwriter", "umya_spreadsheet")
+        ):
+            raise AssertionError("user view leaked an Excel engine name")
+        user_history = json.loads(
+            Path(user_result["run_log_path"]).read_text(encoding="utf-8")
+        )
+        if user_history["status"] != "succeeded" or not {
+            "calamine",
+            "rust_xlsxwriter",
+        }.issubset(set(user_history["actual_engines"])):
+            raise AssertionError("user-view history omitted actual engines or success status")
+
         event_lines = [
             line for line in rust_run.stderr.splitlines() if line.startswith("{")
         ]
@@ -276,11 +395,116 @@ def run() -> dict:
         if menu_result["failed_files"] != 1:
             raise AssertionError("menu path did not preserve continue-on-error behavior")
 
+        python_new_target = root / "python-new-target.xlsx"
+        python_new_config = root / "python-new-target-config" / "config.xlsx"
+        make_config(
+            python_new_config,
+            source_dir,
+            root / "python-new-target-output",
+            logs,
+            python_new_target,
+        )
+        python_new_global = load_global(python_new_config)
+        python_new_summary = run_timeline_slim(
+            load_timeline_rules(python_new_config),
+            load_path_maps(python_new_config),
+            python_new_global,
+            source_paths=[source_a, source_b],
+        )
+        if python_new_summary is None or not python_new_target.exists():
+            raise AssertionError("PyCode did not create the absent target workbook")
+
+        rust_new_target = root / "rust-new-target.xlsx"
+        rust_new_config = root / "rust-new-target-config" / "config.xlsx"
+        make_config(
+            rust_new_config,
+            source_dir,
+            root / "rust-new-target-output",
+            logs,
+            rust_new_target,
+        )
+        new_target_run = subprocess.run(
+            [
+                str(rust_cli),
+                "timeline-extract",
+                "--config",
+                str(rust_new_config),
+                "--output-dir",
+                str(root / "rust-new-target-output"),
+                "--log-view",
+                "off",
+                str(source_a),
+                str(source_b),
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+        if new_target_run.returncode != 0:
+            raise AssertionError(
+                f"Rust did not create the absent target workbook: {new_target_run.stderr}"
+            )
+        new_target_result = json.loads(new_target_run.stdout)
+        new_target_append = new_target_result["target_append_results"]
+        if (
+            len(new_target_append) != 1
+            or new_target_append[0]["status"] != "succeeded"
+            or new_target_append[0]["target_existed"]
+            or new_target_append[0]["engine"] != "rust_xlsxwriter"
+        ):
+            raise AssertionError(f"unexpected absent-target execution: {new_target_append}")
+        if workbook_projection(rust_new_target) != workbook_projection(python_new_target):
+            raise AssertionError("Rust absent-target output differs from PyCode")
+
         target_path = root / "existing-target.xlsx"
         target_workbook = Workbook()
         target_workbook.active.title = "保留工作表"
-        target_workbook.active["A1"] = "must remain unchanged"
+        preserved_sheet = target_workbook.active
+        preserved_sheet["A1"] = "must remain unchanged"
+        preserved_sheet["A1"].comment = Comment("retain this note", "PyTools test")
+        preserved_sheet["B1"].fill = PatternFill("solid", fgColor="FF00FF00")
+        preserved_sheet.merge_cells("C1:D1")
+        preserved_sheet["C1"] = "retained merge"
+        preserved_sheet["A3"] = "=1+1"
+        preserved_sheet.freeze_panes = "B2"
+        preserved_sheet.row_dimensions[2].height = 24
+        preserved_sheet.column_dimensions["B"].width = 30
+        preserved_sheet.page_setup.orientation = "landscape"
+        preserved_sheet.page_setup.fitToWidth = 1
+        preserved_sheet.sheet_properties.pageSetUpPr.fitToPage = True
+        preserved_sheet.oddFooter.center.text = "Page &P"
+        target_sheet = target_workbook.create_sheet("追加目标")
+        target_sheet.append(
+            ["数据日期", "源文件", "工作表名", "规则名称", "行头路径", "列头路径", "数值", "旧备注"]
+        )
+        target_sheet.append(
+            [
+                datetime(2026, 4, 30),
+                source_a.name,
+                "本外币",
+                "活期提取",
+                "活期存款_1",
+                "本月余额",
+                104,
+                "duplicate from previous run",
+            ]
+        )
+        target_sheet.append(
+            [
+                datetime(2025, 12, 31),
+                "history.xlsx",
+                "历史工作表",
+                "旧规则",
+                "历史路径",
+                "历史列",
+                7,
+                "retained history",
+            ]
+        )
         target_workbook.save(target_path)
+        target_seed = target_path.read_bytes()
         target_before = workbook_projection(target_path)
         target_config = root / "target-config" / "config.xlsx"
         make_config(target_config, source_dir, root / "target-output", logs, target_path)
@@ -308,6 +532,178 @@ def run() -> dict:
             raise AssertionError("configured target write was not surfaced as deferred")
         if workbook_projection(target_path) != target_before:
             raise AssertionError("deferred target write modified its target workbook")
+
+        plan_file = Path(deferred_result["target_append_results"][0]["plan_file"])
+        test_capability = root / "pt12-test-capability.json"
+        test_platform = write_test_capability(plan_file, test_capability)
+        python_target = root / "python-existing-target.xlsx"
+        python_target.write_bytes(target_seed)
+        python_target_config = root / "python-target-config" / "config.xlsx"
+        python_target_output = root / "python-target-output"
+        make_config(
+            python_target_config,
+            source_dir,
+            python_target_output,
+            logs,
+            python_target,
+        )
+        python_global = load_global(python_target_config)
+        python_rules = load_timeline_rules(python_target_config)
+        python_maps = load_path_maps(python_target_config)
+        python_target_summary = run_timeline_slim(
+            python_rules,
+            python_maps,
+            python_global,
+            source_paths=[source_a, source_b],
+        )
+        if python_target_summary is None or not python_target.exists():
+            raise AssertionError("PyCode did not append to the existing target workbook")
+
+        committed_run = subprocess.run(
+            [
+                str(rust_cli),
+                "menu",
+                "--config",
+                str(target_config),
+                "--capabilities",
+                str(test_capability),
+                "--platform",
+                test_platform,
+                "--log-view",
+                "developer",
+            ],
+            input=f"1\n2\n{source_a};{source_b}\ny\n0\n",
+            check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+        if committed_run.returncode != 0:
+            raise AssertionError(
+                f"Rust target append failed: {committed_run.stderr}\n{committed_run.stdout}"
+            )
+        result_field = committed_run.stdout.find('"target_append_results"')
+        marker = committed_run.stdout.rfind("{", 0, result_field)
+        if result_field < 0 or marker < 0:
+            raise AssertionError(
+                "PyTools menu did not report the PT-1-2 target result:\n"
+                + committed_run.stdout
+            )
+        committed_result, _ = json.JSONDecoder().raw_decode(
+            committed_run.stdout[marker:]
+        )
+        append_results = committed_result["target_append_results"]
+        if len(append_results) != 1 or append_results[0]["status"] != "succeeded":
+            raise AssertionError(f"unexpected PT-1-2 target execution: {append_results}")
+        if append_results[0]["engine"] != "umya_spreadsheet":
+            raise AssertionError(f"unexpected existing-target engine: {append_results[0]}")
+        if append_results[0]["appended_rows"] != 19:
+            raise AssertionError(f"unexpected existing-row de-duplication: {append_results[0]}")
+        if append_results[0]["duplicate_rows_filtered"] != 1:
+            raise AssertionError(f"existing duplicate was not filtered: {append_results[0]}")
+        rust_target_projection = workbook_projection(target_path)
+        python_target_projection = workbook_projection(python_target)
+        if rust_target_projection != python_target_projection:
+            raise AssertionError(
+                "Rust existing-target output differs from PyCode: "
+                + json.dumps(
+                    {"python": python_target_projection, "rust": rust_target_projection},
+                    ensure_ascii=False,
+                    default=str,
+                )
+            )
+        if target_path.read_bytes() == target_seed:
+            raise AssertionError("confirmed Rust target append did not update the target")
+        event_lines = [
+            line for line in committed_run.stderr.splitlines() if line.startswith("{")
+        ]
+        developer_events = [json.loads(line) for line in event_lines]
+        history_path = Path(committed_result["run_log_path"])
+        target_history = json.loads(history_path.read_text(encoding="utf-8"))
+        if target_history["events"] != developer_events:
+            raise AssertionError("menu target event stream differs from persisted history")
+        target_events = [
+            event
+            for event in developer_events
+            if event.get("phase") == "target_append_execute"
+        ]
+        if (
+            len(target_events) != 1
+            or target_events[0].get("actual_engine") != "umya_spreadsheet"
+            or not isinstance(target_events[0].get("stage_elapsed_ms"), int)
+        ):
+            raise AssertionError(f"unexpected target execution event: {target_events}")
+
+        mismatch_target = root / "mismatched-target.xlsx"
+        mismatch_workbook = Workbook()
+        mismatch_sheet = mismatch_workbook.active
+        mismatch_sheet.title = "追加目标"
+        mismatch_sheet.append(
+            ["源文件", "工作表名", "规则名称", "数据日期", "行头路径", "错误列头"]
+        )
+        mismatch_sheet.append(
+            ["must remain", "历史工作表", "旧规则", datetime(2025, 12, 31), "旧路径", "old"]
+        )
+        mismatch_workbook.save(mismatch_target)
+        mismatch_target_seed = mismatch_target.read_bytes()
+        mismatch_config = root / "mismatch-config" / "config.xlsx"
+        make_config(
+            mismatch_config,
+            source_dir,
+            root / "mismatch-output",
+            logs,
+            mismatch_target,
+        )
+        mismatch_python_global = load_global(mismatch_config)
+        mismatch_python_global.output_dir = root / "mismatch-python-output"
+        mismatch_python_path = run_timeline_slim(
+            load_timeline_rules(mismatch_config),
+            load_path_maps(mismatch_config),
+            mismatch_python_global,
+            source_paths=[source_a],
+        )
+        if mismatch_python_path is None:
+            raise AssertionError("PyCode did not produce output for header-mismatch case")
+        if mismatch_target.read_bytes() != mismatch_target_seed:
+            raise AssertionError("PyCode changed a target with a missing required header")
+
+        mismatch_run = subprocess.run(
+            [
+                str(rust_cli),
+                "timeline-extract",
+                "--config",
+                str(mismatch_config),
+                "--output-dir",
+                str(root / "mismatch-output"),
+                "--log-view",
+                "off",
+                str(source_a),
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+        if mismatch_run.returncode != 0:
+            raise AssertionError(
+                f"Rust header-mismatch target run failed: {mismatch_run.stderr}"
+            )
+        mismatch_result = json.loads(mismatch_run.stdout)
+        mismatch_targets = mismatch_result["target_append_results"]
+        if (
+            len(mismatch_targets) != 1
+            or mismatch_targets[0]["status"] != "skipped"
+            or not any("header_mismatch" in issue for issue in mismatch_targets[0]["issues"])
+        ):
+            raise AssertionError(f"unexpected header-mismatch result: {mismatch_targets}")
+        if workbook_projection(Path(mismatch_result["path"])) != workbook_projection(
+            mismatch_python_path
+        ):
+            raise AssertionError("Rust summary differs from PyCode on header-mismatch case")
+        if mismatch_target.read_bytes() != mismatch_target_seed:
+            raise AssertionError("Rust changed a target with a missing required header")
 
         fail_fast_output = root / "fail-fast-output"
         fail_fast_logs = root / "fail-fast-logs"
@@ -388,17 +784,29 @@ def run() -> dict:
                 "duplicate-rule global deduplication",
                 "row suffix and path mapping",
                 "developer event stream and persisted history",
+                "user view reports progress, hides engine names, and matches PyCode output",
                 "menu 1→2 manual multi-file selection and continue-on-error behavior",
-                "configured target append is surfaced as deferred and leaves the target untouched",
+                "absent target is created through rust_xlsxwriter and matches the PyCode workbook",
+                "existing target append is plan-only by default and leaves the target untouched",
+                "confirmed menu target commit preserves unrelated data and matches PyCode",
+                "header-mismatched existing target is skipped without changing the target; summary still matches PyCode",
+                "unmodified worksheet formula, comment, fill, merge, dimensions and page settings are retained",
+                "menu target execution event matches persisted developer history",
                 "fail_fast stops at the first failed workbook and does not create output",
             ],
             "rust_engines": history["actual_engines"],
+            "user_view": {
+                "full_workbook_projection_equal": True,
+                "progress_reported": "时序提取完成" in user_run.stderr,
+                "engine_names_hidden": True,
+                "actual_engines_in_history": user_history["actual_engines"],
+            },
             "elapsed_ms": history["total_elapsed_ms"],
             "deferred_target_write_rules": rust_result["configured_target_rules"],
             "differences": [],
             "notes": [
                 "Synthetic workbooks only; no source-project workbooks were modified.",
-                "Configured target append behavior remains outside the confirmed PT-1-2 target-write contract.",
+                "Existing-target edit uses a temporary synthetic test capability; no production capability was registered.",
             ],
         }
 

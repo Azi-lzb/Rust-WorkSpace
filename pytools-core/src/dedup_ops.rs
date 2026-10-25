@@ -84,6 +84,10 @@ pub struct NewAppendSheet {
     /// Match the legacy wide-summary DataFrame header style on row zero.
     #[serde(default)]
     pub style_header_row: bool,
+    /// Match pandas/openpyxl's default bold table header without adding the
+    /// wide-summary borders and alignment.
+    #[serde(default)]
+    pub header_bold: bool,
     /// Apply the legacy data-date number format to this zero-based column.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub data_date_column: Option<usize>,
@@ -755,6 +759,7 @@ pub fn write_append_workbook_payload(
         .set_border(excel_writer::FormatBorder::Thin)
         .set_align(excel_writer::FormatAlign::Center)
         .set_align(excel_writer::FormatAlign::Top);
+    let basic_header_format = excel_writer::Format::new().set_bold();
     let data_date_format = excel_writer::Format::new().set_num_format("yyyy/m/d");
     let mut workbook = excel_writer::Workbook::new();
     for planned_sheet in &workbook_plan.sheets {
@@ -809,6 +814,13 @@ pub fn write_append_workbook_payload(
                                 column_index,
                                 value,
                                 &header_format,
+                            )?;
+                        } else if planned_sheet.header_bold && row_index == 0 {
+                            worksheet.write_string_with_format(
+                                row_index,
+                                column_index,
+                                value,
+                                &basic_header_format,
                             )?;
                         } else if is_data_date {
                             worksheet.write_string_with_format(
@@ -1027,6 +1039,7 @@ fn get_or_add_new_sheet<'a>(
         name: name.to_owned(),
         rows: Vec::new(),
         style_header_row: false,
+        header_bold: false,
         data_date_column: None,
     });
     sheets.last_mut().expect("new sheet was just pushed")

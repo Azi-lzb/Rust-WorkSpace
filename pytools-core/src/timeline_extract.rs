@@ -2,17 +2,24 @@
 
 use crate::{
     config::{GlobalConfig, PathMapRule, TimelineRule},
+    dedup_ops::{AppendCell, AppendTargetPlan, NewAppendSheet, NewAppendWorkbook},
     rule_engine::{extract_cells_from_matrix, pick_rules_for_workbook, ExtractedCell},
     workbook_extract::{matrix_from_dump, WorkbookCell},
 };
 use anyhow::{anyhow, Context, Result};
 use chrono::{Local, NaiveDate, NaiveDateTime};
-use excel_reader::read_workbook;
+use excel_editor::{
+    inspect_xlsx_profile, CellValue, EditOperation, ExcelEditPlan, PreservationRequirement,
+    RangeStyleMode, WorkbookFormat,
+};
+use excel_reader::{
+    read_value_columns_with_iso_dates, read_workbook, CellValue as ReaderCellValue,
+};
 use excel_writer::{Format, Workbook, Worksheet};
 use rayon::prelude::*;
 use serde::Serialize;
 use std::{
-    collections::HashSet,
+    collections::{BTreeMap, BTreeSet, HashSet},
     fs::{self, OpenOptions},
     path::{Path, PathBuf},
     sync::mpsc,
@@ -74,9 +81,20 @@ pub struct TimelineExtractResult {
     pub configured_target_rules: usize,
     pub target_writes_deferred: bool,
     pub path: Option<PathBuf>,
+    #[serde(skip)]
+    pub target_append_plans: Vec<TimelineTargetAppendPlan>,
     pub read_elapsed_ms: u128,
     pub write_elapsed_ms: u128,
     pub total_elapsed_ms: u128,
+}
+
+#[derive(Clone, Debug)]
+pub struct TimelineTargetAppendPlan {
+    pub plan: AppendTargetPlan,
+    pub requested_rows: usize,
+    /// True when configured rows could not be safely applied in the current
+    /// run and need a later, explicitly authorized execution.
+    pub deferred: bool,
 }
 
 struct FileExtraction {
@@ -395,13 +413,43 @@ fn run_timeline_extract_inner(
                 && output_rule_names.contains(rule.name.as_str())
         })
         .count();
-    let target_writes_deferred = configured_target_rules > 0 && !cells.is_empty();
+    let target_append_plans = if cells.is_empty() {
+        Vec::new()
+    } else {
+        build_timeline_target_append_plans(
+            &cells,
+            rules,
+            &global.timeline_rule_match_mode,
+            &global.output_dir,
+            path.as_deref(),
+        )?
+    };
+    let target_writes_deferred = target_append_plans.iter().any(|plan| plan.deferred);
+    if !target_append_plans.is_empty() {
+        let requested_rows = target_append_plans
+            .iter()
+            .map(|plan| plan.requested_rows)
+            .sum::<usize>();
+        emitter.emit(
+            "target_append_plan",
+            "completed",
+            format!(
+                "已准备 {} 个目标簿追加计划，涉及 {} 行",
+                target_append_plans.len(),
+                requested_rows
+            ),
+            None,
+            None,
+            &["pytools-core", "excel-reader", "calamine", "excel-editor"],
+            Some("calamine"),
+            None,
+        );
+    }
     let partial = emitter.progress.failed_inputs > 0 || target_writes_deferred;
     let end_message = if target_writes_deferred {
         format!(
-            "时序提取生成 {} 行；{} 条目标写入规则尚待 PT-1-2 目标簿语义验收",
+            "时序提取生成 {} 行；配置的目标簿写入尚待安全提交",
             cells.len(),
-            configured_target_rules
         )
     } else if emitter.progress.failed_inputs > 0 {
         format!(
@@ -432,6 +480,7 @@ fn run_timeline_extract_inner(
         configured_target_rules,
         target_writes_deferred,
         path,
+        target_append_plans,
         read_elapsed_ms: read_elapsed.as_millis(),
         write_elapsed_ms: write_elapsed.as_millis(),
         total_elapsed_ms: started.elapsed().as_millis(),
@@ -503,6 +552,633 @@ fn extract_one_file(
         matched_rule_sheets,
         elapsed: started.elapsed(),
     })
+}
+
+struct TargetSheetRows<'a> {
+    name: String,
+    rows: Vec<&'a ExtractedCell<WorkbookCell>>,
+}
+
+struct TargetWorkbookRows<'a> {
+    path: PathBuf,
+    sheets: Vec<TargetSheetRows<'a>>,
+    requested_rows: usize,
+}
+
+fn build_timeline_target_append_plans(
+    rows: &[ExtractedCell<WorkbookCell>],
+    rules: &[TimelineRule],
+    rule_match_mode: &str,
+    output_dir: &Path,
+    summary_path: Option<&Path>,
+) -> Result<Vec<TimelineTargetAppendPlan>> {
+    let mut grouped = Vec::<TargetWorkbookRows<'_>>::new();
+    for row in rows {
+        for rule in pick_rules_for_workbook(rules, &row.source_file, rule_match_mode)
+            .into_iter()
+            .filter(|rule| rule.name == row.rule_name && rule.target_write_enabled)
+        {
+            let (Some(target), Some(target_sheet)) = (&rule.target_wb_path, &rule.target_sheet)
+            else {
+                continue;
+            };
+            if target_sheet.trim().is_empty() {
+                continue;
+            }
+            anyhow::ensure!(
+                target
+                    .extension()
+                    .is_some_and(|extension| extension.eq_ignore_ascii_case("xlsx")),
+                "PT-1-2 target append currently supports .xlsx targets only: {}",
+                target.display()
+            );
+            if summary_path.is_some_and(|summary| same_path_lexically(target, summary)) {
+                anyhow::bail!(
+                    "PT-1-2 target workbook cannot be the generated summary workbook: {}",
+                    target.display()
+                );
+            }
+
+            let workbook_index = grouped
+                .iter()
+                .position(|workbook| workbook.path == *target)
+                .unwrap_or_else(|| {
+                    grouped.push(TargetWorkbookRows {
+                        path: target.clone(),
+                        sheets: Vec::new(),
+                        requested_rows: 0,
+                    });
+                    grouped.len() - 1
+                });
+            let workbook = &mut grouped[workbook_index];
+            workbook.requested_rows += 1;
+            let sheet_index = workbook
+                .sheets
+                .iter()
+                .position(|sheet| sheet.name == *target_sheet)
+                .unwrap_or_else(|| {
+                    workbook.sheets.push(TargetSheetRows {
+                        name: target_sheet.clone(),
+                        rows: Vec::new(),
+                    });
+                    workbook.sheets.len() - 1
+                });
+            workbook.sheets[sheet_index].rows.push(row);
+        }
+    }
+
+    let mut plans = Vec::with_capacity(grouped.len());
+    for target_rows in grouped {
+        plans.push(build_timeline_target_append_plan(target_rows, output_dir)?);
+    }
+    Ok(plans)
+}
+
+fn build_timeline_target_append_plan(
+    target_rows: TargetWorkbookRows<'_>,
+    output_dir: &Path,
+) -> Result<TimelineTargetAppendPlan> {
+    let target = target_rows.path;
+    let candidate = timeline_target_candidate_path(&target, output_dir);
+    let metadata = fs::symlink_metadata(&target);
+    let target_existed = match metadata {
+        Ok(metadata) => {
+            anyhow::ensure!(
+                !metadata.file_type().is_symlink() && metadata.is_file(),
+                "PT-1-2 target must be a regular non-symlink file: {}",
+                target.display()
+            );
+            true
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+        Err(error) => {
+            return Err(error)
+                .with_context(|| format!("inspect PT-1-2 target {}", target.display()));
+        }
+    };
+    let target_sha256 = target_existed
+        .then(|| crate::file_commit::sha256_file(&target))
+        .transpose()?;
+    let mut plan = AppendTargetPlan {
+        target: target.clone(),
+        candidate: candidate.clone(),
+        target_existed,
+        target_sha256: target_sha256.clone(),
+        task_ok: 0,
+        task_skipped: 0,
+        appended_rows: 0,
+        duplicate_rows_filtered: 0,
+        merged_tasks: target_rows.sheets.len().saturating_sub(1),
+        issues: Vec::new(),
+        edit_plan: None,
+        new_workbook: None,
+        replacement_workbook: None,
+    };
+
+    let (target_dump, target_values) = if target_existed {
+        anyhow::ensure!(
+            !excel_reader::uses_1904_date_system(&target)?,
+            "PT-1-2 append to 1904-date-system targets is not validated; target left unchanged: {}",
+            target.display()
+        );
+        let dump = read_workbook(&target)
+            .with_context(|| format!("read PT-1-2 target workbook {}", target.display()))?;
+        let values = read_value_columns_with_iso_dates(&target, 16_384)
+            .with_context(|| format!("read PT-1-2 target values {}", target.display()))?;
+        (Some(dump), values)
+    } else {
+        (None, Vec::new())
+    };
+
+    let mut replacement_sheets = Vec::<NewAppendSheet>::new();
+    for target_sheet in &target_rows.sheets {
+        let existing = target_values
+            .iter()
+            .find(|sheet| sheet.name == target_sheet.name);
+        let existing_headers = existing.map(timeline_target_headers).unwrap_or_default();
+        if existing.is_some()
+            && OUTPUT_HEADERS[..6]
+                .iter()
+                .any(|required| !existing_headers.iter().any(|header| header == required))
+        {
+            plan.task_skipped += 1;
+            plan.issues.push(format!(
+                "target worksheet {:?}: header_mismatch; existing data was preserved",
+                target_sheet.name
+            ));
+            continue;
+        }
+
+        let mut output_rows = vec![OUTPUT_HEADERS
+            .iter()
+            .map(|header| AppendCell::Value(CellValue::Text((*header).to_owned())))
+            .collect::<Vec<_>>()];
+        let mut seen_keys = HashSet::<Vec<String>>::new();
+        if let Some(existing) = existing {
+            for row_index in 2..=existing.max_row {
+                let row = timeline_existing_target_row(existing, &existing_headers, row_index)?;
+                seen_keys.insert(timeline_target_key_from_values(&row));
+                output_rows.push(
+                    row.iter()
+                        .enumerate()
+                        .map(|(column, value)| timeline_append_cell(value.as_ref(), column))
+                        .collect::<Result<Vec<_>>>()?,
+                );
+            }
+        }
+
+        let mut batch_keys = HashSet::<Vec<String>>::new();
+        let mut appended_rows = 0usize;
+        for extracted in &target_sheet.rows {
+            let key = timeline_new_target_key(extracted);
+            if !batch_keys.insert(key.clone()) || seen_keys.contains(&key) {
+                plan.duplicate_rows_filtered += 1;
+                continue;
+            }
+            seen_keys.insert(key);
+            output_rows.push(timeline_new_target_row(extracted)?);
+            appended_rows += 1;
+        }
+        plan.task_ok += 1;
+        if appended_rows == 0 {
+            continue;
+        }
+        plan.appended_rows += appended_rows;
+        replacement_sheets.push(NewAppendSheet {
+            name: target_sheet.name.clone(),
+            rows: output_rows,
+            style_header_row: false,
+            header_bold: true,
+            data_date_column: Some(3),
+        });
+    }
+
+    if target_existed && !replacement_sheets.is_empty() {
+        let profile = inspect_xlsx_profile(&target)
+            .with_context(|| format!("inspect PT-1-2 target workbook {}", target.display()))?;
+        anyhow::ensure!(
+            profile.inventory_complete,
+            "PT-1-2 target OOXML inventory is incomplete; target left unchanged: {}",
+            target.display()
+        );
+        let dump = target_dump.as_ref().expect("existing target was read");
+        let staging_workbook = timeline_replacement_source_path(&candidate);
+        let mut operations = Vec::<EditOperation>::new();
+        let mut used_sheet_names = dump
+            .sheets
+            .iter()
+            .map(|sheet| sheet.name.to_lowercase())
+            .collect::<HashSet<_>>();
+        let mut append_index = dump.sheets.len();
+        for replacement in &replacement_sheets {
+            let range = timeline_target_sheet_range(replacement)?;
+            if let Some(index) = dump
+                .sheets
+                .iter()
+                .position(|sheet| sheet.name == replacement.name)
+            {
+                let temporary_name = timeline_temporary_sheet_name(&mut used_sheet_names)?;
+                operations.push(EditOperation::CreateSheetAt {
+                    name: temporary_name.clone(),
+                    index,
+                });
+                operations.push(timeline_import_target_sheet(
+                    &staging_workbook,
+                    &replacement.name,
+                    &range,
+                    &temporary_name,
+                ));
+                operations.push(EditOperation::DeleteSheet {
+                    name: replacement.name.clone(),
+                });
+                operations.push(EditOperation::RenameSheet {
+                    old_name: temporary_name,
+                    new_name: replacement.name.clone(),
+                });
+            } else {
+                operations.push(EditOperation::CreateSheetAt {
+                    name: replacement.name.clone(),
+                    index: append_index,
+                });
+                operations.push(timeline_import_target_sheet(
+                    &staging_workbook,
+                    &replacement.name,
+                    &range,
+                    &replacement.name,
+                ));
+                append_index += 1;
+            }
+        }
+        let preserve = BTreeSet::from([
+            PreservationRequirement::CellValuesAndTypes,
+            PreservationRequirement::FormulaText,
+            PreservationRequirement::CommentsAndPositions,
+            PreservationRequirement::Styles,
+            PreservationRequirement::MergedRanges,
+            PreservationRequirement::ConditionalFormatting,
+            PreservationRequirement::DataValidations,
+            PreservationRequirement::DefinedNames,
+            PreservationRequirement::RowAndColumnDimensions,
+            PreservationRequirement::PageSettings,
+            PreservationRequirement::HeaderFooterText,
+            PreservationRequirement::Relationships,
+            PreservationRequirement::SheetIdentityAndOrder,
+        ]);
+        let mut drop_allowed = BTreeMap::new();
+        for replacement in &replacement_sheets {
+            if let Some(old_sheet) = dump
+                .sheets
+                .iter()
+                .find(|sheet| sheet.name == replacement.name)
+            {
+                let mut allowed = BTreeSet::from([
+                    PreservationRequirement::FormulaText,
+                    PreservationRequirement::CommentsAndPositions,
+                    PreservationRequirement::Styles,
+                    PreservationRequirement::MergedRanges,
+                    PreservationRequirement::RowAndColumnDimensions,
+                    PreservationRequirement::PageSettings,
+                    PreservationRequirement::HeaderFooterText,
+                    PreservationRequirement::Relationships,
+                ]);
+                if !old_sheet.conditional_formatting.is_empty() {
+                    allowed.insert(PreservationRequirement::ConditionalFormatting);
+                }
+                if !old_sheet.data_validations.is_empty() {
+                    allowed.insert(PreservationRequirement::DataValidations);
+                }
+                drop_allowed.insert(replacement.name.clone(), allowed);
+            }
+        }
+        let edit_plan = ExcelEditPlan {
+            request_id: format!(
+                "pytools-pt-1-2-append-{}",
+                target.file_stem().unwrap_or_default().to_string_lossy()
+            ),
+            input: target.clone(),
+            output: candidate.clone(),
+            format: WorkbookFormat::Xlsx,
+            workbook: profile,
+            operations,
+            preserve,
+            drop_allowed,
+        };
+        edit_plan
+            .validate()
+            .context("validate PT-1-2 target append edit plan")?;
+        plan.edit_plan = Some(edit_plan);
+        plan.replacement_workbook = Some(NewAppendWorkbook {
+            sheets: replacement_sheets,
+        });
+    } else if !target_existed && !replacement_sheets.is_empty() {
+        plan.new_workbook = Some(NewAppendWorkbook {
+            sheets: replacement_sheets,
+        });
+    }
+
+    crate::file_commit::verify_planning_snapshot(&target, target_sha256.as_deref())
+        .with_context(|| format!("verify PT-1-2 target snapshot {}", target.display()))?;
+    let deferred = plan.appended_rows > 0;
+    Ok(TimelineTargetAppendPlan {
+        plan,
+        requested_rows: target_rows.requested_rows,
+        deferred,
+    })
+}
+
+fn timeline_target_headers(sheet: &excel_reader::SheetValues) -> Vec<String> {
+    (1..=sheet.max_column)
+        .map(|column| {
+            sheet
+                .values
+                .get(&crate::rule_engine::cell_address(1, column))
+                .map(timeline_reader_cell_text)
+                .unwrap_or_else(|| format!("Unnamed: {}", column - 1))
+        })
+        .collect()
+}
+
+fn timeline_existing_target_row(
+    sheet: &excel_reader::SheetValues,
+    headers: &[String],
+    row: usize,
+) -> Result<Vec<Option<WorkbookCell>>> {
+    OUTPUT_HEADERS
+        .iter()
+        .map(|header| {
+            let Some(column) = headers.iter().position(|existing| existing == header) else {
+                return Ok(None);
+            };
+            sheet
+                .values
+                .get(&crate::rule_engine::cell_address(row, column + 1))
+                .map(timeline_reader_cell)
+                .transpose()
+        })
+        .collect()
+}
+
+fn timeline_reader_cell(value: &ReaderCellValue) -> Result<WorkbookCell> {
+    Ok(match value {
+        ReaderCellValue::Empty => return Ok(WorkbookCell::Text(String::new())),
+        ReaderCellValue::Text(value) => WorkbookCell::Text(value.clone()),
+        ReaderCellValue::Number(value) => WorkbookCell::Number(*value),
+        ReaderCellValue::Integer(value) => WorkbookCell::Integer(*value),
+        ReaderCellValue::Boolean(value) => WorkbookCell::Boolean(*value),
+        ReaderCellValue::DateTimeSerial(value) => WorkbookCell::DateTimeSerial(*value),
+        ReaderCellValue::DateTimeIso(value) => WorkbookCell::DateTimeIso(value.clone()),
+        ReaderCellValue::DurationIso(value) => WorkbookCell::DurationIso(value.clone()),
+        ReaderCellValue::Error(value) => WorkbookCell::Error(value.clone()),
+    })
+}
+
+fn timeline_reader_cell_text(value: &ReaderCellValue) -> String {
+    match value {
+        ReaderCellValue::Empty => String::new(),
+        ReaderCellValue::Text(value)
+        | ReaderCellValue::DurationIso(value)
+        | ReaderCellValue::Error(value) => value.clone(),
+        ReaderCellValue::DateTimeIso(value) => crate::summary_ops::python_datetime_iso_text(value),
+        ReaderCellValue::DateTimeSerial(value) => {
+            crate::summary_ops::python_datetime_serial_text(*value)
+                .unwrap_or_else(|| crate::summary_ops::python_float_text(*value))
+        }
+        ReaderCellValue::Number(value) => crate::summary_ops::python_float_text(*value),
+        ReaderCellValue::Integer(value) => value.to_string(),
+        ReaderCellValue::Boolean(value) => if *value { "True" } else { "False" }.to_owned(),
+    }
+}
+
+fn timeline_target_key_from_values(row: &[Option<WorkbookCell>]) -> Vec<String> {
+    [0, 1, 3, 4, 5]
+        .into_iter()
+        .map(|index| {
+            row.get(index)
+                .and_then(Option::as_ref)
+                .map(timeline_existing_key_cell)
+                .unwrap_or_default()
+        })
+        .collect()
+}
+
+fn timeline_existing_key_cell(value: &WorkbookCell) -> String {
+    match value {
+        WorkbookCell::Text(value) | WorkbookCell::Error(value) => value.trim().to_owned(),
+        WorkbookCell::Integer(value) => value.to_string(),
+        WorkbookCell::Number(value) => timeline_python_real_text(*value),
+        WorkbookCell::Boolean(value) => if *value { "True" } else { "False" }.to_owned(),
+        WorkbookCell::DateTimeSerial(value) => {
+            crate::summary_ops::python_datetime_serial_text(*value)
+                .map(|value| timeline_datetime_dedup_key(&value))
+                .unwrap_or_else(|| crate::summary_ops::python_float_text(*value))
+        }
+        WorkbookCell::DateTimeIso(value) => {
+            timeline_datetime_dedup_key(&crate::summary_ops::python_datetime_iso_text(value))
+        }
+        WorkbookCell::DurationIso(value) => value.clone(),
+    }
+}
+
+fn timeline_datetime_dedup_key(value: &str) -> String {
+    NaiveDateTime::parse_from_str(value, "%Y-%m-%d %H:%M:%S%.f")
+        .or_else(|_| NaiveDateTime::parse_from_str(value, "%Y-%m-%dT%H:%M:%S%.f"))
+        .map(|datetime| {
+            if datetime.time() == chrono::NaiveTime::MIN {
+                datetime.format("%Y-%m-%d").to_string()
+            } else {
+                datetime.format("%Y-%m-%d %H:%M:%S").to_string()
+            }
+        })
+        .unwrap_or_else(|_| value.replace('T', " "))
+}
+
+fn timeline_python_real_text(value: f64) -> String {
+    if value.is_finite()
+        && value.fract() == 0.0
+        && value >= i64::MIN as f64
+        && value <= i64::MAX as f64
+    {
+        (value as i64).to_string()
+    } else {
+        format!("{value:.15}")
+            .trim_end_matches('0')
+            .trim_end_matches('.')
+            .to_owned()
+    }
+}
+
+fn timeline_new_target_key(cell: &ExtractedCell<WorkbookCell>) -> Vec<String> {
+    let normalized_date = NaiveDate::parse_from_str(&cell.data_date, "%Y-%m-%d")
+        .map(|date| date.format("%Y-%m-%d").to_string())
+        .unwrap_or_else(|_| cell.data_date.trim().to_owned());
+    vec![
+        cell.source_file.trim().to_owned(),
+        cell.sheet_name.trim().to_owned(),
+        normalized_date,
+        cell.row_path.trim().to_owned(),
+        cell.col_path.trim().to_owned(),
+    ]
+}
+
+fn timeline_new_target_row(cell: &ExtractedCell<WorkbookCell>) -> Result<Vec<AppendCell>> {
+    let mut output = vec![
+        AppendCell::Value(CellValue::Text(cell.source_file.clone())),
+        AppendCell::Value(CellValue::Text(cell.sheet_name.clone())),
+        AppendCell::Value(CellValue::Text(cell.rule_name.clone())),
+        timeline_date_append_cell(&cell.data_date),
+        AppendCell::Value(CellValue::Text(cell.row_path.clone())),
+        AppendCell::Value(CellValue::Text(cell.col_path.clone())),
+    ];
+    output.push(timeline_append_cell(Some(&cell.value), 6)?);
+    Ok(output)
+}
+
+fn timeline_date_append_cell(value: &str) -> AppendCell {
+    if value.is_empty() {
+        return AppendCell::Value(CellValue::Blank);
+    }
+    date_to_excel_serial(value)
+        .map(|serial| AppendCell::DateTime {
+            serial: serial.to_string(),
+            number_format: "yyyy/m/d".to_owned(),
+        })
+        .unwrap_or_else(|| AppendCell::Value(CellValue::Text(value.to_owned())))
+}
+
+fn timeline_append_cell(value: Option<&WorkbookCell>, column: usize) -> Result<AppendCell> {
+    let Some(value) = value else {
+        return Ok(AppendCell::Value(CellValue::Blank));
+    };
+    let number_format = if column == 3 {
+        "yyyy/m/d"
+    } else {
+        "YYYY-MM-DD HH:MM:SS"
+    };
+    Ok(match value {
+        WorkbookCell::Text(value) if value.is_empty() => AppendCell::Value(CellValue::Blank),
+        WorkbookCell::Text(value) | WorkbookCell::Error(value) => {
+            AppendCell::Value(CellValue::Text(value.clone()))
+        }
+        WorkbookCell::Integer(value) => AppendCell::Value(CellValue::Decimal(value.to_string())),
+        WorkbookCell::Number(value) => AppendCell::Value(CellValue::Decimal(value.to_string())),
+        WorkbookCell::Boolean(value) => AppendCell::Value(CellValue::Boolean(*value)),
+        WorkbookCell::DateTimeSerial(serial) => AppendCell::DateTime {
+            serial: serial.to_string(),
+            number_format: number_format.to_owned(),
+        },
+        WorkbookCell::DateTimeIso(value) => {
+            let serial = datetime_to_excel_serial(value)
+                .with_context(|| format!("unsupported PT-1-2 target date {value:?}"))?;
+            AppendCell::DateTime {
+                serial: serial.to_string(),
+                number_format: number_format.to_owned(),
+            }
+        }
+        WorkbookCell::DurationIso(value) => {
+            let serial = iso_duration_serial(value)
+                .with_context(|| format!("unsupported PT-1-2 target duration {value:?}"))?;
+            AppendCell::DateTime {
+                serial: serial.to_string(),
+                number_format: "[h]:mm:ss.000".to_owned(),
+            }
+        }
+    })
+}
+
+fn timeline_target_sheet_range(sheet: &NewAppendSheet) -> Result<String> {
+    anyhow::ensure!(
+        !sheet.rows.is_empty(),
+        "PT-1-2 replacement worksheet has no rows"
+    );
+    let columns = sheet.rows.iter().map(Vec::len).max().unwrap_or(0);
+    anyhow::ensure!(columns > 0, "PT-1-2 replacement worksheet has no columns");
+    anyhow::ensure!(
+        sheet.rows.iter().all(|row| row.len() == columns),
+        "PT-1-2 replacement worksheet rows must have a consistent column count"
+    );
+    Ok(format!(
+        "A1:{}",
+        crate::rule_engine::cell_address(sheet.rows.len(), columns)
+    ))
+}
+
+fn timeline_import_target_sheet(
+    source_workbook: &Path,
+    source_sheet: &str,
+    source_range: &str,
+    target_sheet: &str,
+) -> EditOperation {
+    EditOperation::ImportRange {
+        source_workbook: source_workbook.to_path_buf(),
+        source_sheet: source_sheet.to_owned(),
+        source_range: source_range.to_owned(),
+        target_sheet: target_sheet.to_owned(),
+        target_start: "A1".to_owned(),
+        copy_values: true,
+        copy_formulas: false,
+        style_mode: RangeStyleMode::Full,
+        copy_comments: false,
+        copy_merges: false,
+        copy_row_heights: false,
+        copy_column_widths: false,
+        copy_row_hidden: false,
+        copy_column_hidden: false,
+        copy_outline_levels: false,
+        copy_all_row_dimensions: false,
+        copy_all_column_dimensions: false,
+        materialize_blank_cells: true,
+        hide_zero: false,
+    }
+}
+
+fn timeline_temporary_sheet_name(used: &mut HashSet<String>) -> Result<String> {
+    for suffix in 1..=10_000usize {
+        let candidate = format!("__pt_replace_{suffix}");
+        if used.insert(candidate.to_lowercase()) {
+            return Ok(candidate);
+        }
+    }
+    anyhow::bail!("could not allocate a PT-1-2 temporary worksheet name")
+}
+
+fn timeline_target_candidate_path(target: &Path, output_dir: &Path) -> PathBuf {
+    let timestamp = Local::now().format("%Y%m%d_%H%M%S");
+    let stem = target.file_stem().unwrap_or_default().to_string_lossy();
+    for suffix in 0..10_000usize {
+        let tail = if suffix == 0 {
+            String::new()
+        } else {
+            format!("_{suffix}")
+        };
+        let candidate = output_dir.join(format!("{stem}_pt12_target_{timestamp}{tail}.xlsx"));
+        if !candidate.exists() {
+            return candidate;
+        }
+    }
+    output_dir.join(format!(
+        "{}_pt12_target_{}.xlsx",
+        stem,
+        chrono::Utc::now().timestamp_millis()
+    ))
+}
+
+fn timeline_replacement_source_path(candidate: &Path) -> PathBuf {
+    let stem = candidate.file_stem().unwrap_or_default().to_string_lossy();
+    candidate.with_file_name(format!(".{stem}.replacement-source.xlsx"))
+}
+
+fn same_path_lexically(left: &Path, right: &Path) -> bool {
+    let current = std::env::current_dir().ok();
+    let absolute = |path: &Path| {
+        if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            current
+                .as_ref()
+                .map_or_else(|| path.to_path_buf(), |base| base.join(path))
+        }
+    };
+    absolute(left) == absolute(right)
 }
 
 fn clear_non_anchor_merge_values(

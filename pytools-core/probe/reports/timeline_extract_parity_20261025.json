@@ -17,19 +17,47 @@
     "duplicate-rule global deduplication",
     "row suffix and path mapping",
     "developer event stream and persisted history",
+    "user view reports progress, hides engine names, and matches PyCode output",
     "menu 1→2 manual multi-file selection and continue-on-error behavior",
-    "configured target append is surfaced as deferred and leaves the target untouched",
+    "absent target is created through rust_xlsxwriter and matches the PyCode workbook",
+    "existing target append is plan-only by default and leaves the target untouched",
+    "confirmed menu target commit preserves unrelated data and matches PyCode",
+    "header-mismatched existing target is skipped without changing the target; summary still matches PyCode",
+    "unmodified worksheet formula, comment, fill, merge, dimensions and page settings are retained",
+    "menu target execution event matches persisted developer history",
     "fail_fast stops at the first failed workbook and does not create output"
   ],
   "rust_engines": [
     "calamine",
     "rust_xlsxwriter"
   ],
-  "elapsed_ms": 67,
+  "user_view": {
+    "full_workbook_projection_equal": true,
+    "progress_reported": true,
+    "engine_names_hidden": true,
+    "actual_engines_in_history": [
+      "calamine",
+      "rust_xlsxwriter"
+    ]
+  },
+  "elapsed_ms": 55,
   "deferred_target_write_rules": 0,
   "differences": [],
   "notes": [
     "Synthetic workbooks only; no source-project workbooks were modified.",
-    "Configured target append behavior remains outside the confirmed PT-1-2 target-write contract."
-  ]
+    "Existing-target edit uses a temporary synthetic test capability; no production capability was registered."
+  ],
+  "manual_native_dialog_case": {
+    "entry": "pytools menu -> 1 -> 2",
+    "selector": "Windows native Open dialog",
+    "sample": "one temporary synthetic XLSX",
+    "matched_rule_sheets": 4,
+    "extracted_rows": 20,
+    "output_rows": 10,
+    "full_workbook_projection_equal_to_pycode": true,
+    "actual_rust_engines": [
+      "calamine",
+      "rust_xlsxwriter"
+    ]
+  }
 }

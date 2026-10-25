@@ -696,13 +696,17 @@ Python 只读基线测试 test_extract_sheets_append_existing_output_keeps_previ
 
 本次使用的 Umya CreateSheet + ImportRange capability 仅由测试临时生成，未登记生产 Passed capability。Python 既有测试只覆盖区域追加；整表 Python helper 生成文件的样式重开问题仍按前节记录，本次不宣称整表输出文件级 Python 对拍通过。真实模板、未列举 OOXML 对象、非 XLSX、Windows 原生文件弹窗、目标 Linux/glibc 2.28 与 deb 未验证，PT-7-6 整体验收仍未完成。
 
-### 2026-10-25 PT-1-2 时序提取 Rust 主输出与入口对拍
+### 2026-10-25 PT-1-2 时序提取 Rust 主输出、目标追加与入口对拍
 
-新增 `timeline_extract` Rust 业务模块，按原 `run_timeline_slim` 复用现有规则引擎，读取配置规则与路径映射，执行行头后缀、跨规则去重、日期和值写出，并以 `rust_xlsxwriter` 生成七列 `时序提取结果`。新增 `timeline-extract` CLI 及真实菜单 `pytools menu → 1 → 2`，提供 user/developer/off 三种日志视图与 PT-1-2 运行历史。读取与写入阶段事件分别记录实际 Calamine 和 rust_xlsxwriter 引擎、处理计数与耗时。错误策略为 continue 时保留已成功输出并报告部分失败；配置了可选目标写入且有对应结果行时，结果明确标记该目标写入尚未执行。
+新增 `timeline_extract` Rust 业务模块，按原 `PyCode.core.timeline_396.run_timeline_slim` 复用现有规则引擎，读取配置规则与路径映射，执行行头后缀、跨规则去重、日期和值写出，并以 `rust_xlsxwriter` 生成七列 `时序提取结果`。新增 `timeline-extract` CLI 及真实菜单 `pytools menu → 1 → 2`，接入 user/developer/off 日志视图与 PT-1-2 运行历史。读取、写入和目标提交事件记录实际引擎、进度与阶段耗时。
 
-Windows 原生 Rust CLI 与只读 PyCode 基线的合成对拍通过：2 个有效 XLSX、4 个匹配工作表、20 行输出，并包含重复规则、行头后缀、路径映射、数值/文本/布尔/日期值和 1 个损坏输入；工作表名、全部单元格值/类型、表头粗体、数值格式、工作表尺寸及冻结窗格完整投影一致。真实菜单 1→2 分号路径回退的输出与 PyCode 相同；开发者事件流与持久化历史一致。continue 策略保留成功结果并记录损坏输入；fail_fast 策略在首个损坏输入停止且不生成输出。另以启用目标追加的合成配置验证 CLI 明确报告 deferred，既有目标工作簿保持不变。机器报告：`probe/reports/timeline_extract_parity_20261025.json`；可重跑入口：`probe/compare_timeline_extract.py`。
+目标写入按原 Python `append_to_target` 语义迁移：目标不存在时以 Rust writer 创建；已有目标默认只生成计划，不修改原文件；需显式 capability/platform 与提交确认后，经 ExcelEditPlan/ExcelModifier 执行 XLSX 修改。按既有目标列头检查、去重键 `[0,1,3,4,5]`、禁用扩列；表头不匹配时跳过并保留旧目标。现有目标测试使用临时合成 capability `umya_spreadsheet`，没有登记生产 Passed capability，也没有改变默认路由。
 
-PT-1-2 可选目标簿追加未纳入已确认的 D01 目标写入合同，本轮未执行该操作，不能据此声明完整迁移。证据仅覆盖合成 XLSX 与菜单手工路径回退；原项目真实工作簿、Windows 原生文件对话框、本轮目标簿追加语义、其他格式以及麒麟 V10/UOS V20、glibc 2.28 与 deb 离线验收仍未完成；PT-1-2 状态为未验证。
+Windows 原生构建与回归通过：`cargo fmt --manifest-path pytools-core/Cargo.toml -- --check`、`cargo build --offline --locked -p pytools-core --bin pytools -j 1`、`cargo test --offline --locked -p pytools-core --test timeline_menu_cli -j 1`（9/9）、`cargo test --offline --locked -p pytools-core --lib -j 1`（33/33）。只读 PyCode/Rust 合成对拍通过：2 个有效 XLSX、8 个规则命中工作表、20 条汇总输出；新目标与 PyCode 完整工作簿投影一致；已有目标保留 1 条重复并追加 19 条；表头不匹配时 PyCode 与 Rust 均不修改目标，汇总投影一致；损坏文件的 continue/fail_fast 行为一致。普通用户视图输出进度且在 stdout/stderr 隐藏引擎名，输出投影一致；持久化历史仍记录实际引擎。未修改源工作簿。
+
+Windows 原生菜单 `1→2` 另以系统 Open 对话框选取 1 个临时合成工作簿，命中 4 个工作表、提取 20 条记录、写出 10 行；与 PyCode 输出的完整工作簿投影一致。机器对拍报告：`probe/reports/timeline_extract_parity_20261025.json`；可重跑自动探针：`probe/compare_timeline_extract.py`。
+
+真实业务样本尚不可用：原 PyCode 默认配置的输入目录不存在，源项目树中的工作簿文件没有命中该配置的时序规则。现有证据仅为合成 XLSX；PT-1-2 仍未通过真实数据验收。D01 将 PT-1-2 排除在已确认目标写入合同之外，因此既有目标写入只作为 capability-gated 候选，不能作为生产能力或迁移完成依据。其他格式、麒麟 V10/UOS V20、glibc 2.28 与 deb 离线交付未验证；PT-1-2 整体状态仍为未验证。
 
 ### 2026-10-25 PT-1-3/PT-1-4 Windows 原生文件对话框实测
 

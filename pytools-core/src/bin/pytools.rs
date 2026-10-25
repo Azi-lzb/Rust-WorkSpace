@@ -1061,7 +1061,13 @@ where
                         .into_iter()
                         .map(|path| path.to_string_lossy().into_owned()),
                 );
-                run_timeline_extract_cli(arguments)?;
+                run_interactive_timeline_extract_menu(
+                    input,
+                    output,
+                    arguments,
+                    capabilities,
+                    platform,
+                )?;
                 return Ok(());
             }
             "3" | "4" => {
@@ -6541,7 +6547,41 @@ fn run_convert_file_cli(arguments: Vec<String>) -> Result<()> {
     Ok(())
 }
 
+fn run_interactive_timeline_extract_menu<R, W>(
+    input: &mut R,
+    output: &mut W,
+    mut arguments: Vec<String>,
+    capabilities: Option<&Path>,
+    platform: Option<&str>,
+) -> Result<()>
+where
+    R: BufRead,
+    W: Write,
+{
+    if let Some(capabilities) = capabilities {
+        arguments.push("--capabilities".to_owned());
+        arguments.push(capabilities.to_string_lossy().into_owned());
+    }
+    if let Some(platform) = platform {
+        arguments.push("--platform".to_owned());
+        arguments.push(platform.to_owned());
+    }
+    let report = run_timeline_extract_cli_report(arguments, Some((input, output)))?;
+    writeln!(output, "{}", serde_json::to_string_pretty(&report)?)?;
+    Ok(())
+}
+
 fn run_timeline_extract_cli(arguments: Vec<String>) -> Result<()> {
+    let report = run_timeline_extract_cli_report(arguments, None)?;
+    println!("{}", serde_json::to_string_pretty(&report)?);
+    Ok(())
+}
+
+fn run_timeline_extract_cli_report(
+    arguments: Vec<String>,
+    mut menu_io: Option<(&mut dyn BufRead, &mut dyn Write)>,
+) -> Result<serde_json::Value> {
+    let (commit_target, arguments) = extract_boolean_flag(arguments, "commit-target")?;
     let options = parse_cli_arguments(arguments)?;
     let config = required_path(&options, "config")?;
     anyhow::ensure!(
@@ -6556,6 +6596,12 @@ fn run_timeline_extract_cli(arguments: Vec<String>) -> Result<()> {
     anyhow::ensure!(
         matches!(log_view, "user" | "developer" | "off"),
         "--log-view must be user, developer, or off"
+    );
+    let capabilities = options.values.get("capabilities").map(PathBuf::from);
+    let platform = options.values.get("platform").cloned();
+    anyhow::ensure!(
+        capabilities.is_some() == platform.is_some(),
+        "--capabilities and --platform must be provided together"
     );
 
     let run_started = Instant::now();
@@ -6699,8 +6745,8 @@ fn run_timeline_extract_cli(arguments: Vec<String>) -> Result<()> {
         .map(PathBuf::from)
         .unwrap_or_else(|| global.output_dir.clone());
     let mut execution_global = global.clone();
-    execution_global.output_dir = output_dir;
-    let result = if log_view == "off" {
+    execution_global.output_dir = output_dir.clone();
+    let mut result = if log_view == "off" {
         run_timeline_extract(&options.positional, &rules, &path_maps, &execution_global)
     } else {
         run_timeline_extract_with_progress(
@@ -6724,7 +6770,7 @@ fn run_timeline_extract_cli(arguments: Vec<String>) -> Result<()> {
         let failure_progress = events
             .last()
             .map(|event| event.progress.clone())
-            .unwrap_or(progress);
+            .unwrap_or_else(|| progress.clone());
         emit_timeline_extract_cli_event(
             log_view,
             &mut events,
@@ -6746,20 +6792,257 @@ fn run_timeline_extract_cli(arguments: Vec<String>) -> Result<()> {
         );
     }
 
+    let mut target_execution_error = None;
+    let mut target_append_results = Vec::<serde_json::Value>::new();
+    if let Ok(extracted) = result.as_mut() {
+        let target_progress = events
+            .last()
+            .map(|event| event.progress.clone())
+            .unwrap_or_else(|| progress.clone());
+        let existing_ready = extracted
+            .target_append_plans
+            .iter()
+            .filter(|item| item.plan.target_existed && item.plan.appended_rows > 0)
+            .collect::<Vec<_>>();
+        let mut commit_existing = commit_target;
+
+        if commit_target && !existing_ready.is_empty() && capabilities.is_none() {
+            target_execution_error = Some(anyhow::anyhow!(
+                "--commit-target requires --capabilities and --platform for existing PT-1-2 target workbooks"
+            ));
+        }
+
+        if target_execution_error.is_none()
+            && !commit_existing
+            && !existing_ready.is_empty()
+            && capabilities.is_some()
+            && menu_io.is_some()
+        {
+            let (input, output) = menu_io.as_mut().expect("menu IO was checked");
+            writeln!(
+                output,
+                "PT-1-2 将更新以下已存在的目标簿（新增 {} 行）：",
+                existing_ready
+                    .iter()
+                    .map(|item| item.plan.appended_rows)
+                    .sum::<usize>()
+            )?;
+            for item in &existing_ready {
+                writeln!(
+                    output,
+                    "  {}（{} 行）",
+                    item.plan.target.display(),
+                    item.plan.appended_rows
+                )?;
+            }
+            writeln!(output, "输入 y/yes/是 确认执行，其他输入只保留计划。")?;
+            output.flush()?;
+            let mut choice = String::new();
+            let confirmed = input.read_line(&mut choice)? > 0
+                && matches!(
+                    choice.trim().to_ascii_lowercase().as_str(),
+                    "y" | "yes" | "是"
+                );
+            commit_existing = confirmed;
+        }
+
+        let mut any_deferred = false;
+        for (index, item) in extracted.target_append_plans.iter().enumerate() {
+            let plan = &item.plan;
+            let has_payload = if plan.target_existed {
+                plan.edit_plan.is_some() && plan.replacement_workbook.is_some()
+            } else {
+                plan.new_workbook.is_some()
+            };
+            if plan.appended_rows == 0 || !has_payload {
+                let status = if plan.task_skipped > 0 {
+                    "skipped"
+                } else {
+                    "no_new_rows"
+                };
+                target_append_results.push(serde_json::json!({
+                    "target": plan.target,
+                    "target_existed": plan.target_existed,
+                    "status": status,
+                    "requested_rows": item.requested_rows,
+                    "appended_rows": plan.appended_rows,
+                    "duplicate_rows_filtered": plan.duplicate_rows_filtered,
+                    "issues": plan.issues,
+                }));
+                continue;
+            }
+
+            let plan_path =
+                output_dir.join(format!("PT-1-2_{run_id}_target_{:03}.plan.json", index + 1));
+            if let Err(error) = write_json_report_create_new(&plan_path, plan) {
+                target_execution_error = Some(error.context("save PT-1-2 target append plan"));
+                any_deferred = true;
+                break;
+            }
+
+            let should_commit = !plan.target_existed || commit_existing;
+            if !should_commit {
+                any_deferred = true;
+                target_append_results.push(serde_json::json!({
+                    "target": plan.target,
+                    "target_existed": true,
+                    "status": "planned_only",
+                    "reason": "explicit_confirmation_or_capability_required",
+                    "plan_file": plan_path,
+                    "requested_rows": item.requested_rows,
+                    "appended_rows": plan.appended_rows,
+                    "duplicate_rows_filtered": plan.duplicate_rows_filtered,
+                    "issues": plan.issues,
+                }));
+                if log_view == "user" {
+                    eprintln!("目标簿计划已保存，未修改既有文件：{}", plan_path.display());
+                }
+                continue;
+            }
+
+            let mut execute_arguments = vec![
+                "--plan".to_owned(),
+                plan_path.to_string_lossy().into_owned(),
+                "--commit-target".to_owned(),
+            ];
+            if plan.target_existed {
+                let Some(capabilities) = capabilities.as_ref() else {
+                    target_execution_error = Some(anyhow::anyhow!(
+                        "existing PT-1-2 target requires --capabilities and --platform"
+                    ));
+                    any_deferred = true;
+                    break;
+                };
+                execute_arguments.push("--capabilities".to_owned());
+                execute_arguments.push(capabilities.to_string_lossy().into_owned());
+                execute_arguments.push("--platform".to_owned());
+                execute_arguments.push(
+                    platform
+                        .as_deref()
+                        .expect("capability/platform pair validated")
+                        .to_owned(),
+                );
+            }
+            let execution_started = Instant::now();
+            match run_dedup_append_execute_report(execute_arguments) {
+                Ok(execution) => {
+                    let elapsed_ms = execution_started.elapsed().as_millis();
+                    let engine = execution["engine"]
+                        .as_str()
+                        .or_else(|| execution["candidate_engine"].as_str())
+                        .map(str::to_owned);
+                    target_append_results.push(serde_json::json!({
+                        "target": plan.target,
+                        "target_existed": plan.target_existed,
+                        "status": "succeeded",
+                        "requested_rows": item.requested_rows,
+                        "appended_rows": plan.appended_rows,
+                        "duplicate_rows_filtered": plan.duplicate_rows_filtered,
+                        "elapsed_ms": elapsed_ms,
+                        "engine": engine,
+                        "target_commit": execution["target_commit"],
+                        "plan_file": plan_path,
+                        "issues": plan.issues,
+                    }));
+                    if log_view == "user" {
+                        eprintln!(
+                            "目标簿写入完成：{}，新增 {} 行，耗时 {} ms",
+                            plan.target.display(),
+                            plan.appended_rows,
+                            elapsed_ms
+                        );
+                    }
+                    if log_view != "off" {
+                        let event = TimelineExtractRunEvent {
+                            sequence: events.len() + 1,
+                            timestamp: Local::now().to_rfc3339(),
+                            feature_id: "PT-1-2",
+                            phase: "target_append_execute".to_owned(),
+                            status: "completed".to_owned(),
+                            user_message: format!(
+                                "目标簿写入完成：新增 {} 行，实际引擎 {}",
+                                plan.appended_rows,
+                                engine.as_deref().unwrap_or("unknown")
+                            ),
+                            progress: target_progress.clone(),
+                            input_index: None,
+                            stage_elapsed_ms: Some(elapsed_ms),
+                            total_elapsed_ms: run_started.elapsed().as_millis(),
+                            components: std::iter::once("Rust".to_owned())
+                                .chain(std::iter::once("pytools-core".to_owned()))
+                                .chain(engine.iter().cloned())
+                                .collect(),
+                            actual_engine: engine,
+                            error_type: None,
+                        };
+                        emit_timeline_extract_cli_event(log_view, &mut events, event);
+                    }
+                }
+                Err(error) => {
+                    let elapsed_ms = execution_started.elapsed().as_millis();
+                    any_deferred = true;
+                    target_append_results.push(serde_json::json!({
+                        "target": plan.target,
+                        "target_existed": plan.target_existed,
+                        "status": "failed",
+                        "requested_rows": item.requested_rows,
+                        "appended_rows": plan.appended_rows,
+                        "elapsed_ms": elapsed_ms,
+                        "error_type": "target_append_execute_error",
+                    }));
+                    if log_view != "off" {
+                        let event = TimelineExtractRunEvent {
+                            sequence: events.len() + 1,
+                            timestamp: Local::now().to_rfc3339(),
+                            feature_id: "PT-1-2",
+                            phase: "target_append_execute".to_owned(),
+                            status: "failed".to_owned(),
+                            user_message: "目标簿写入失败；已有目标保持原件，候选已验证后再提交"
+                                .to_owned(),
+                            progress: target_progress.clone(),
+                            input_index: None,
+                            stage_elapsed_ms: Some(elapsed_ms),
+                            total_elapsed_ms: run_started.elapsed().as_millis(),
+                            components: vec![
+                                "Rust".to_owned(),
+                                "pytools-core".to_owned(),
+                                "excel-editor".to_owned(),
+                            ],
+                            actual_engine: None,
+                            error_type: Some("target_append_execute_error".to_owned()),
+                        };
+                        emit_timeline_extract_cli_event(log_view, &mut events, event);
+                    }
+                    target_execution_error = Some(error.context("PT-1-2 target append failed"));
+                    break;
+                }
+            }
+        }
+        extracted.target_writes_deferred = any_deferred;
+    }
+
     let history_path = if log_view == "off" {
         None
     } else {
-        let status = match result.as_ref() {
-            Err(_) => "failed",
-            Ok(result) if result.failed_files > 0 || result.target_writes_deferred => "partial",
-            Ok(result) if result.path.is_none() => "skipped",
-            Ok(_) => "succeeded",
+        let status = if target_execution_error.is_some() {
+            "failed"
+        } else {
+            match result.as_ref() {
+                Err(_) => "failed",
+                Ok(result) if result.failed_files > 0 || result.target_writes_deferred => "partial",
+                Ok(result) if result.path.is_none() => "skipped",
+                Ok(_) => "succeeded",
+            }
         };
-        let error_type = events
-            .iter()
-            .rev()
-            .find_map(|event| event.error_type.as_deref())
-            .unwrap_or("");
+        let error_type = if target_execution_error.is_some() {
+            "target_append_execute_error"
+        } else {
+            events
+                .iter()
+                .rev()
+                .find_map(|event| event.error_type.as_deref())
+                .unwrap_or("")
+        };
         match write_timeline_extract_run_history(
             &log_dir,
             &run_id,
@@ -6778,9 +7061,14 @@ fn run_timeline_extract_cli(arguments: Vec<String>) -> Result<()> {
         }
     };
 
+    if let Some(error) = target_execution_error {
+        return Err(error);
+    }
+
     match result {
         Ok(result) => {
             let mut output = serde_json::to_value(result)?;
+            output["target_append_results"] = serde_json::Value::Array(target_append_results);
             if log_view != "off" {
                 output["run_id"] = serde_json::Value::String(run_id);
                 if let Some(path) = history_path {
@@ -6790,8 +7078,7 @@ fn run_timeline_extract_cli(arguments: Vec<String>) -> Result<()> {
                     }
                 }
             }
-            println!("{}", serde_json::to_string_pretty(&output)?);
-            Ok(())
+            Ok(output)
         }
         Err(error) => Err(error),
     }
@@ -9593,7 +9880,7 @@ fn print_usage() {
          no command opens the migrated menu; available categories: 1 (timeline 1-5), 2 (dedup 1-6), 3 (print 1-4), 4 (conversion and file naming 1-10), 5 (configuration 1/2), 6 (summary 1/2), 7 (batch 7-1/7-8), and 8 (archive 1-5)\n\
          timeline-precheck --config <workbook.xlsx>\n\
          timeline-compare --config <workbook.xlsx> --template <workbook.xlsx> [--log-dir <dir>] [--log-view user|developer|off] <source.xlsx>...\n\
-         timeline-extract --config <workbook.xlsx> [--output-dir <dir>] [--log-dir <dir>] [--log-view user|developer|off] <source.xlsx>...\n\
+         timeline-extract --config <workbook.xlsx> [--output-dir <dir>] [--log-dir <dir>] [--log-view user|developer|off] [--capabilities <json> --platform <id> [--commit-target]] <source.xlsx>...\n\
          wide-summary --config <workbook.xlsx> <source.xlsx>...\n\
          wide-summary-row-suffix --config <workbook.xlsx> <source.xlsx>...\n\
          wide-summary target writes produce append-plan JSON; execute with dedup-append-execute and matching capability evidence\n\
