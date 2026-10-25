@@ -836,3 +836,7 @@ WSL 验证：`x86_64-unknown-linux-gnu.2.28` release（HEAD `328532c`）与 deb 
 ### 2026-10-25 一键验收脚本扩展至八项与计划审核闭环确认
 
 应用户对"计划文件/候选副本"的询问，确认并验证完整审核闭环：`dedup-comment-plan --plan-output <计划文件>` 独立落盘 ExcelEditPlan JSON（含逐格操作与保留契约），`apply-edit-plan --plan <计划文件> --capabilities ... --platform ...` 直接消费该文件经引擎执行产出候选副本；演示并核实源文件前后 SHA-256 不变、批注保留、仅重复行标红，且 capability 校验在对象特征/保留契约未覆盖时正确拒绝。据此将 `packaging/verify_target.sh` 从五项扩展至八项：新增 T6 按批注去重计划（断言 duplicate_rows=2 与计划文件落盘，无需 capability）、T7 config-init 初始化、T8 archive-date-preview 归档日期预览；配套夹具 `dedup_ledger.xlsx` 入库。WSL 双二进制（2.28 release 与 deb 制品解包）各重验一轮均 8/8 PASS（PROVISIONAL_PASS）。实机复核口径不变。
+
+### 2026-10-25 真实业务配置加载对拍（用户 VBA 工具仓库主簿）
+
+将用户提供的 VBA 工具仓库主簿（https://github.com/Azi-lzb/VBA_Excel_Tools，HEAD `cea6dfa`）作为**真实配置数据源**入库为夹具 `tests/fixtures/vba_config/VbaV2.4.2.xlsm`（公开仓库内容，1.1MB）。其配置页含此前全部合成夹具未覆盖的真实业务配置：15 条时序提取规则、146 条路径标准化映射、17 条去重任务、3 条打印任务、3 家外资行、39 条机构映射（工作表提取任务为空；全局配置页为 VBA 版结构、PyCode 侧无此表属预期差异不参与对拍）。以只读 PyCode 各配置加载器产出逐字段基线 `expected_loaders.json`，新增集成测试 `config_vba_workbook_parity.rs`：Rust `config` 模块同名加载器对同一夹具全部七段配置与基线**逐字段精确一致，零分歧**——首次为配置解析面建立真实业务数据对拍证据。`config.rs` 相应结构补 `Serialize` derive（无行为影响）。Windows 原生全量 `cargo test` 43 项结果全绿、`cargo fmt --check` 通过。该证据覆盖配置加载层；各配置驱动的业务执行仍按各自既有合成/真实验收状态。

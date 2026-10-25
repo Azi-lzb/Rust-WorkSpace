@@ -44,7 +44,7 @@ impl GlobalConfig {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct DedupTask {
     pub row_no: usize,
     pub enabled: bool,
@@ -57,7 +57,7 @@ pub struct DedupTask {
     pub write_mode: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct PrintTask {
     pub row_no: usize,
     pub enabled: bool,
@@ -77,7 +77,7 @@ pub struct PrintTask {
     pub remark: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct ExtractTask {
     pub row_no: usize,
     pub workbook_keywords: String,
@@ -998,7 +998,7 @@ mod tests {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct TimelineRule {
     pub enabled: bool,
     pub name: String,
@@ -1025,7 +1025,7 @@ pub struct TimelineRule {
     pub output_row_no: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct PathMapRule {
     pub enabled: bool,
     pub name: String,
