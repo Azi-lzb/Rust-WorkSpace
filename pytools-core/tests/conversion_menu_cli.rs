@@ -665,7 +665,7 @@ fn local_filename_map_menu_logs_user_developer_and_off_views() -> Result<()> {
     );
     let user_report = output_json(&user)?;
     assert_eq!(user_report["ok"], 1);
-    assert_eq!(user_report["rules"], 1);
+    assert_eq!(user_report["rules"], 2);
     assert!(user_report.get("run_history_path").is_none());
     let user_stderr = stderr(&user);
     assert!(user_stderr.contains("正在读取局部文件名映射配置"));

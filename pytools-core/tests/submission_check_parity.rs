@@ -257,11 +257,193 @@ fn submission_check_menu_matches_python_date_keyword_semantics() -> Result<()> {
     Ok(())
 }
 
+#[test]
+fn submission_check_menu_logs_user_developer_and_off_views() -> Result<()> {
+    let test_directory = TestDirectory::new()?;
+    let root = &test_directory.0;
+    let config = create_config(root)?;
+    let sources = root.join("sources");
+    fs::create_dir_all(&sources)?;
+    fs::create_dir_all(root.join("output"))?;
+    fs::create_dir_all(root.join("logs"))?;
+    for (index, name) in [
+        "2026_Area_Bank_base.txt",
+        "2026_Area_Bank_multi.txt",
+        "misc_submission.txt",
+    ]
+    .iter()
+    .enumerate()
+    {
+        fs::write(sources.join(name), format!("synthetic payload {index}"))?;
+    }
+    let input = format!("4\n8\n2\n{}\n0\n", sources.display());
+
+    for log_view in ["user", "off", "developer"] {
+        let output = run_menu_with_log_view(&config, &input, log_view)?;
+        assert!(
+            output.status.success(),
+            "{log_view} menu failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let report_start = output
+            .stdout
+            .iter()
+            .position(|byte| *byte == b'{')
+            .context("submission-check menu JSON output missing")?;
+        let report: Value = serde_json::Deserializer::from_slice(&output.stdout[report_start..])
+            .into_iter::<Value>()
+            .next()
+            .context("submission-check menu report missing")??;
+        assert_eq!(report["files"], 3);
+        assert_eq!(report["submitted"], 2);
+
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        match log_view {
+            "user" => {
+                assert!(stderr.contains("正在读取提交检查配置"));
+                assert!(stderr.contains("阶段用时"));
+                assert!(stderr.contains("总用时"));
+                assert!(!stderr.contains(&sources.to_string_lossy().to_string()));
+                assert!(!stderr.contains("2026_Area_Bank_base.txt"));
+            }
+            "off" => assert!(stderr.trim().is_empty(), "off view emitted: {stderr}"),
+            "developer" => {
+                let events = stderr
+                    .lines()
+                    .map(serde_json::from_str::<Value>)
+                    .collect::<std::result::Result<Vec<_>, _>>()?;
+                let phases = events
+                    .iter()
+                    .filter_map(|event| event["phase"].as_str())
+                    .collect::<Vec<_>>();
+                for phase in [
+                    "configuration_load",
+                    "input_scan",
+                    "filename_match",
+                    "report_write",
+                ] {
+                    assert!(phases.contains(&phase), "missing developer phase {phase}");
+                }
+                assert!(events.iter().any(|event| {
+                    event["phase"] == "filename_match"
+                        && event["status"] == "progress"
+                        && event["progress"]["processed_rules"].is_number()
+                }));
+                assert!(events.iter().any(|event| {
+                    event["status"] == "completed"
+                        && event["stage_elapsed_ms"].is_number()
+                        && event["total_elapsed_ms"].is_number()
+                }));
+                assert!(events.iter().any(|event| {
+                    event["actual_engine"] == "calamine" && event["status"] == "completed"
+                }));
+                assert!(events.iter().any(|event| {
+                    event["actual_engine"] == "rust_xlsxwriter" && event["status"] == "completed"
+                }));
+                assert!(!stderr.contains(&sources.to_string_lossy().to_string()));
+                assert!(!stderr.contains("2026_Area_Bank_base.txt"));
+
+                let history_path = PathBuf::from(
+                    report["run_history_path"]
+                        .as_str()
+                        .context("developer run history path missing")?,
+                );
+                let history_text = fs::read_to_string(&history_path)?;
+                let history: Value = serde_json::from_str(&history_text)?;
+                assert_eq!(history["feature_id"], "PT-4-8");
+                assert_eq!(history["status"], "succeeded");
+                assert!(history["actual_engines"]
+                    .as_array()
+                    .is_some_and(|engines| engines.iter().any(|engine| engine == "calamine")));
+                assert!(history["actual_engines"].as_array().is_some_and(|engines| {
+                    engines.iter().any(|engine| engine == "rust_xlsxwriter")
+                }));
+                assert!(!history_text.contains(&sources.to_string_lossy().to_string()));
+                assert!(!history_text.contains("2026_Area_Bank_base.txt"));
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    let history_count = fs::read_dir(root.join("logs"))?
+        .filter_map(|entry| entry.ok())
+        .filter(|entry| {
+            entry
+                .path()
+                .extension()
+                .is_some_and(|extension| extension == "json")
+        })
+        .count();
+    assert_eq!(history_count, 1, "only developer view writes history");
+    Ok(())
+}
+
+#[test]
+fn submission_check_developer_history_records_report_write_failure() -> Result<()> {
+    let test_directory = TestDirectory::new()?;
+    let root = &test_directory.0;
+    let config = create_config(root)?;
+    let sources = root.join("sources");
+    fs::create_dir_all(&sources)?;
+    let input = sources.join("2026_Area_Bank_base.txt");
+    fs::write(&input, b"synthetic payload")?;
+    let blocked_output = root.join("output-is-a-file");
+    fs::write(&blocked_output, b"must remain unchanged")?;
+    let logs = root.join("logs");
+    fs::create_dir_all(&logs)?;
+    let output = Command::new(env!("CARGO_BIN_EXE_pytools"))
+        .arg("submission-check")
+        .arg("--config")
+        .arg(&config)
+        .arg("--output-dir")
+        .arg(&blocked_output)
+        .arg("--log-dir")
+        .arg(&logs)
+        .arg("--log-view")
+        .arg("developer")
+        .arg(&input)
+        .output()
+        .context("run submission-check with an unwritable output directory")?;
+    assert!(!output.status.success());
+    assert_eq!(fs::read(&blocked_output)?, b"must remain unchanged");
+    assert_eq!(fs::read(&input)?, b"synthetic payload");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let events = stderr
+        .lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .collect::<Vec<_>>();
+    let failed_write = events
+        .iter()
+        .find(|event| event["phase"] == "report_write" && event["status"] == "failed")
+        .context("missing developer report-write failure event")?;
+    assert_eq!(failed_write["error_type"], "report_write_failed");
+
+    let histories = fs::read_dir(&logs)?
+        .map(|entry| entry.map(|entry| entry.path()))
+        .collect::<std::io::Result<Vec<_>>>()?;
+    assert_eq!(histories.len(), 1);
+    assert!(stderr.contains(&histories[0].to_string_lossy().to_string()));
+    let history_text = fs::read_to_string(&histories[0])?;
+    let history: Value = serde_json::from_str(&history_text)?;
+    assert_eq!(history["status"], "failed");
+    assert!(history["summary"].is_null());
+    assert!(!history_text.contains(&sources.to_string_lossy().to_string()));
+    assert!(!history_text.contains("2026_Area_Bank_base.txt"));
+    Ok(())
+}
+
 fn run_menu(config: &Path, input: &str) -> Result<Output> {
+    run_menu_with_log_view(config, input, "user")
+}
+
+fn run_menu_with_log_view(config: &Path, input: &str, log_view: &str) -> Result<Output> {
     let mut child = Command::new(env!("CARGO_BIN_EXE_pytools"))
         .arg("menu")
         .arg("--config")
         .arg(config)
+        .arg("--log-view")
+        .arg(log_view)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

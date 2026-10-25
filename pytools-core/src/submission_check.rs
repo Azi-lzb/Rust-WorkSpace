@@ -9,6 +9,7 @@ use std::{
     collections::HashMap,
     fs,
     path::{Path, PathBuf},
+    time::Instant,
 };
 
 #[derive(Clone, Debug, Serialize)]
@@ -20,6 +21,80 @@ pub struct SubmissionCheckReport {
     pub missing: usize,
     pub unmatched: usize,
     pub multi: usize,
+}
+
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct SubmissionCheckProgress {
+    pub total_rules: usize,
+    pub processed_rules: usize,
+    pub total_files: usize,
+    pub processed_files: usize,
+    pub submitted_rules: usize,
+    pub missing_rules: usize,
+    pub unmatched_files: usize,
+    pub multi_files: usize,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct SubmissionCheckProgressEvent {
+    pub sequence: usize,
+    pub timestamp: String,
+    pub product: String,
+    pub feature_id: String,
+    pub function: String,
+    pub phase: String,
+    pub status: String,
+    pub user_message: String,
+    pub progress: SubmissionCheckProgress,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stage_elapsed_ms: Option<u128>,
+    pub total_elapsed_ms: u128,
+    pub components: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub actual_engine: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_type: Option<String>,
+}
+
+struct SubmissionCheckProgressEmitter<'a> {
+    started: Instant,
+    sequence: usize,
+    progress: SubmissionCheckProgress,
+    callback: &'a mut dyn FnMut(SubmissionCheckProgressEvent),
+}
+
+impl SubmissionCheckProgressEmitter<'_> {
+    fn emit(
+        &mut self,
+        phase: &str,
+        status: &str,
+        user_message: impl Into<String>,
+        stage_started: Option<Instant>,
+        components: &[&str],
+        actual_engine: Option<&str>,
+        error_type: Option<&str>,
+    ) {
+        self.sequence += 1;
+        let mut recorded_components = Vec::with_capacity(components.len() + 1);
+        recorded_components.push("Rust".to_owned());
+        recorded_components.extend(components.iter().map(|component| (*component).to_owned()));
+        (self.callback)(SubmissionCheckProgressEvent {
+            sequence: self.sequence,
+            timestamp: Local::now().to_rfc3339(),
+            product: "pytools".to_owned(),
+            feature_id: "PT-4-8".to_owned(),
+            function: "submission-check".to_owned(),
+            phase: phase.to_owned(),
+            status: status.to_owned(),
+            user_message: user_message.into(),
+            progress: self.progress.clone(),
+            stage_elapsed_ms: stage_started.map(|started| started.elapsed().as_millis()),
+            total_elapsed_ms: self.started.elapsed().as_millis(),
+            components: recorded_components,
+            actual_engine: actual_engine.map(str::to_owned),
+            error_type: error_type.map(str::to_owned),
+        });
+    }
 }
 #[derive(Clone)]
 struct Rule {
@@ -38,14 +113,112 @@ pub fn run_submission_check(
     inputs: &[PathBuf],
     output_dir: &Path,
 ) -> Result<SubmissionCheckReport> {
-    let rules = load_rules(config)?;
-    anyhow::ensure!(!rules.is_empty(), "提交检查配置 没有启用的检查项。");
+    run_submission_check_with_progress(config, inputs, output_dir, |_| {})
+}
+
+pub fn run_submission_check_with_progress<F>(
+    config: &Path,
+    inputs: &[PathBuf],
+    output_dir: &Path,
+    mut on_event: F,
+) -> Result<SubmissionCheckReport>
+where
+    F: FnMut(SubmissionCheckProgressEvent),
+{
+    let mut emitter = SubmissionCheckProgressEmitter {
+        started: Instant::now(),
+        sequence: 0,
+        progress: SubmissionCheckProgress::default(),
+        callback: &mut on_event,
+    };
+
+    let stage_started = Instant::now();
+    emitter.emit(
+        "configuration_load",
+        "started",
+        "正在读取提交检查配置。",
+        Some(stage_started),
+        &["excel-reader", "calamine"],
+        Some("calamine"),
+        None,
+    );
+    let rules = match load_rules(config) {
+        Ok(rules) => rules,
+        Err(error) => {
+            emitter.emit(
+                "configuration_load",
+                "failed",
+                "读取提交检查配置失败。",
+                Some(stage_started),
+                &["excel-reader", "calamine"],
+                Some("calamine"),
+                Some("config_read_failed"),
+            );
+            return Err(error);
+        }
+    };
+    if rules.is_empty() {
+        let error = anyhow::anyhow!("提交检查配置 没有启用的检查项。");
+        emitter.emit(
+            "configuration_load",
+            "failed",
+            "提交检查配置没有启用的检查项。",
+            Some(stage_started),
+            &["excel-reader", "calamine"],
+            Some("calamine"),
+            Some("no_enabled_rules"),
+        );
+        return Err(error);
+    }
+    emitter.progress.total_rules = rules.len();
+    emitter.emit(
+        "configuration_load",
+        "completed",
+        format!("已读取 {} 条启用检查项。", rules.len()),
+        Some(stage_started),
+        &["excel-reader", "calamine"],
+        Some("calamine"),
+        None,
+    );
+
+    let stage_started = Instant::now();
+    emitter.emit(
+        "input_scan",
+        "started",
+        "正在扫描所选文件及文件夹。",
+        Some(stage_started),
+        &["std::fs"],
+        Some("Rust filesystem"),
+        None,
+    );
     let files = collect_files(inputs);
+    emitter.progress.total_files = files.len();
+    emitter.emit(
+        "input_scan",
+        "completed",
+        format!("发现 {} 个待检查文件。", files.len()),
+        Some(stage_started),
+        &["std::fs"],
+        Some("Rust filesystem"),
+        None,
+    );
+
+    let stage_started = Instant::now();
+    emitter.emit(
+        "filename_match",
+        "started",
+        "正在按文件名匹配检查项。",
+        Some(stage_started),
+        &[],
+        Some("Rust"),
+        None,
+    );
     let mut hits = HashMap::<PathBuf, Vec<usize>>::new();
     for file in &files {
         hits.insert(file.clone(), Vec::new());
     }
     let mut rows = Vec::new();
+    let progress_step = rules.len().div_ceil(20).max(1);
     for (rule_index, rule) in rules.iter().enumerate() {
         let matched = files
             .iter()
@@ -82,7 +255,26 @@ pub fn run_submission_check(
             rule.remark.clone(),
             rule.row.to_string(),
         ]);
+        emitter.progress.processed_rules = rule_index + 1;
+        if emitter.progress.processed_rules % progress_step == 0
+            || emitter.progress.processed_rules == rules.len()
+        {
+            emitter.emit(
+                "filename_match",
+                "progress",
+                format!(
+                    "已匹配 {}/{} 条检查项。",
+                    emitter.progress.processed_rules,
+                    rules.len()
+                ),
+                Some(stage_started),
+                &[],
+                Some("Rust"),
+                None,
+            );
+        }
     }
+    emitter.progress.processed_files = files.len();
     let missing_rules = rows
         .iter()
         .filter(|row| row[5] == "0")
@@ -129,6 +321,87 @@ pub fn run_submission_check(
             ])
         })
         .collect::<Vec<_>>();
+    let submitted = rows.iter().filter(|row| row[5] != "0").count();
+    let missing = rows.len() - submitted;
+    emitter.progress.submitted_rules = submitted;
+    emitter.progress.missing_rules = missing;
+    emitter.progress.unmatched_files = unmatched.len();
+    emitter.progress.multi_files = multi.len();
+    emitter.emit(
+        "filename_match",
+        "completed",
+        format!(
+            "匹配完成：提交 {submitted} 条，缺失 {missing} 条，未识别文件 {} 个，多重命中 {} 个。",
+            unmatched.len(),
+            multi.len()
+        ),
+        Some(stage_started),
+        &[],
+        Some("Rust"),
+        None,
+    );
+
+    let stage_started = Instant::now();
+    emitter.emit(
+        "report_write",
+        "started",
+        "正在生成提交检查工作簿。",
+        Some(stage_started),
+        &["excel-writer", "rust_xlsxwriter"],
+        Some("rust_xlsxwriter"),
+        None,
+    );
+    let output = match write_report(output_dir, &rows, &missing_rules, &unmatched, &multi) {
+        Ok(output) => output,
+        Err(error) => {
+            emitter.emit(
+                "report_write",
+                "failed",
+                "生成提交检查工作簿失败。",
+                Some(stage_started),
+                &["excel-writer", "rust_xlsxwriter"],
+                Some("rust_xlsxwriter"),
+                Some("report_write_failed"),
+            );
+            return Err(error);
+        }
+    };
+    emitter.emit(
+        "report_write",
+        "completed",
+        "已生成提交检查工作簿。",
+        Some(stage_started),
+        &["excel-writer", "rust_xlsxwriter"],
+        Some("rust_xlsxwriter"),
+        None,
+    );
+    emitter.emit(
+        "complete",
+        "completed",
+        "提交检查完成。",
+        None,
+        &["Rust"],
+        None,
+        None,
+    );
+    Ok(SubmissionCheckReport {
+        output,
+        rules: rules.len(),
+        files: files.len(),
+        submitted,
+        missing,
+        unmatched: unmatched.len(),
+        multi: multi.len(),
+    })
+}
+
+fn write_report(
+    output_dir: &Path,
+    rows: &[Vec<String>],
+    missing_rules: &[Vec<String>],
+    unmatched: &[Vec<String>],
+    multi: &[Vec<String>],
+) -> Result<PathBuf> {
     fs::create_dir_all(output_dir)?;
     let output = unique_output(output_dir)?;
     let mut workbook = Workbook::new();
@@ -146,7 +419,7 @@ pub fn run_submission_check(
             "备注",
             "配置行",
         ],
-        &rows,
+        rows,
         &[5, 8],
     )?;
     write_table(
@@ -163,37 +436,27 @@ pub fn run_submission_check(
             "备注",
             "配置行",
         ],
-        &missing_rules,
+        missing_rules,
         &[5, 8],
     )?;
     write_table(
         &mut workbook,
         "未识别文件",
         &["文件名", "源文件路径", "备注"],
-        &unmatched,
+        unmatched,
         &[],
     )?;
     write_table(
         &mut workbook,
         "多重命中文件",
         &["文件名", "源文件路径", "命中配置"],
-        &multi,
+        multi,
         &[],
     )?;
     workbook
         .save(&output)
         .with_context(|| format!("save submission check {}", output.display()))?;
-    let submitted = rows.iter().filter(|row| row[5] != "0").count();
-    let missing = rows.len() - submitted;
-    Ok(SubmissionCheckReport {
-        output,
-        rules: rules.len(),
-        files: files.len(),
-        submitted,
-        missing,
-        unmatched: unmatched.len(),
-        multi: multi.len(),
-    })
+    Ok(output)
 }
 
 fn load_rules(path: &Path) -> Result<Vec<Rule>> {

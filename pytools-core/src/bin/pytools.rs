@@ -53,7 +53,10 @@ use pytools_core::region_sum::{
 use pytools_core::sheet_extract::{is_full_sheet_task, run_extract_sheets_candidate_with_progress};
 use pytools_core::sheet_rename::{build_sheet_rename_plan, run_batch_sheet_rename_candidate};
 use pytools_core::source_discovery::discover_configured_source_files;
-use pytools_core::submission_check::run_submission_check;
+use pytools_core::submission_check::{
+    run_submission_check, run_submission_check_with_progress, SubmissionCheckProgressEvent,
+    SubmissionCheckReport,
+};
 use pytools_core::summary_ops::{
     summarize_by_comments, summarize_by_comments_with_progress, summarize_used_ranges,
     summarize_used_ranges_with_progress, SummaryProgress, SummaryRunEvent,
@@ -2947,6 +2950,10 @@ where
             "8" => {
                 arguments.push("--output-dir".to_owned());
                 arguments.push(global.output_dir.to_string_lossy().into_owned());
+                arguments.push("--log-dir".to_owned());
+                arguments.push(global.log_dir.to_string_lossy().into_owned());
+                arguments.push("--log-view".to_owned());
+                arguments.push(log_view.to_owned());
                 arguments.extend(
                     paths
                         .into_iter()
@@ -7553,9 +7560,162 @@ fn run_submission_check_cli(arguments: Vec<String>) -> Result<()> {
     if options.positional.is_empty() {
         bail!("provide at least one file or directory path");
     }
-    let report = run_submission_check(&config, &options.positional, &output_dir)?;
-    println!("{}", serde_json::to_string_pretty(&report)?);
+    let log_view = options
+        .values
+        .get("log-view")
+        .map(String::as_str)
+        .unwrap_or("user");
+    anyhow::ensure!(
+        matches!(log_view, "user" | "developer" | "off"),
+        "--log-view must be user, developer, or off"
+    );
+    let log_dir = options
+        .values
+        .get("log-dir")
+        .map(PathBuf::from)
+        .or_else(|| load_global(&config).ok().map(|global| global.log_dir))
+        .unwrap_or_else(|| PathBuf::from("logs"));
+    let mut events = Vec::<serde_json::Value>::new();
+    let report_result = if log_view == "off" {
+        run_submission_check(&config, &options.positional, &output_dir)
+    } else {
+        run_submission_check_with_progress(&config, &options.positional, &output_dir, |event| {
+            let value = serde_json::to_value(&event).unwrap_or(serde_json::Value::Null);
+            emit_submission_check_event_view(log_view, &event, &value);
+            if log_view == "developer" {
+                events.push(value);
+            }
+        })
+    };
+    let history_result = if log_view == "developer" {
+        Some(write_submission_check_run_history(
+            &log_dir,
+            report_result.as_ref().ok(),
+            &events,
+        ))
+    } else {
+        None
+    };
+    if let Some(Err(error)) = &history_result {
+        eprintln!("pytools: warning: could not write structured run history: {error:#}");
+    }
+    let report = match report_result {
+        Ok(report) => report,
+        Err(error) => {
+            if let Some(Ok(path)) = &history_result {
+                eprintln!("pytools: developer run history: {}", path.display());
+            }
+            return Err(error);
+        }
+    };
+    let mut output = serde_json::to_value(report)?;
+    if let Some(Ok(path)) = &history_result {
+        output["run_history_path"] = serde_json::json!(path);
+    }
+    if let Some(Err(error)) = &history_result {
+        output["run_history_warning"] =
+            serde_json::json!(format!("could not write structured run history: {error:#}"));
+    }
+    println!("{}", serde_json::to_string_pretty(&output)?);
     Ok(())
+}
+
+fn emit_submission_check_event_view(
+    log_view: &str,
+    event: &SubmissionCheckProgressEvent,
+    event_value: &serde_json::Value,
+) {
+    match log_view {
+        "user" => {
+            if event.phase == "complete" {
+                eprintln!(
+                    "{} 总用时 {}ms。",
+                    event.user_message, event.total_elapsed_ms
+                );
+            } else if matches!(event.status.as_str(), "started" | "progress") {
+                eprintln!("{}", event.user_message);
+            } else if let Some(stage_elapsed_ms) = event.stage_elapsed_ms {
+                eprintln!("{} 阶段用时 {}ms。", event.user_message, stage_elapsed_ms);
+            } else {
+                eprintln!("{}", event.user_message);
+            }
+        }
+        "developer" => {
+            if let Ok(line) = serde_json::to_string(event_value) {
+                eprintln!("{line}");
+            }
+        }
+        "off" => {}
+        _ => unreachable!("submission-check log view is validated before execution"),
+    }
+}
+
+fn write_submission_check_run_history(
+    log_dir: &Path,
+    report: Option<&SubmissionCheckReport>,
+    events: &[serde_json::Value],
+) -> Result<PathBuf> {
+    fs::create_dir_all(log_dir).with_context(|| {
+        format!(
+            "create submission-check log directory {}",
+            log_dir.display()
+        )
+    })?;
+    let timestamp = Local::now().format("%Y%m%d_%H%M%S");
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .context("system clock before Unix epoch")?
+        .as_nanos();
+    let path = log_dir.join(format!("PT-4-8_submission-check_{timestamp}_{nonce}.json"));
+    let mut actual_engines = Vec::<String>::new();
+    let mut components = Vec::<String>::new();
+    for event in events {
+        if let Some(engine) = event["actual_engine"].as_str() {
+            if !actual_engines.iter().any(|existing| existing == engine) {
+                actual_engines.push(engine.to_owned());
+            }
+        }
+        if let Some(event_components) = event["components"].as_array() {
+            for component in event_components
+                .iter()
+                .filter_map(serde_json::Value::as_str)
+            {
+                if !components.iter().any(|existing| existing == component) {
+                    components.push(component.to_owned());
+                }
+            }
+        }
+    }
+    let summary = report.map(|report| {
+        serde_json::json!({
+            "rules": report.rules,
+            "files": report.files,
+            "submitted": report.submitted,
+            "missing": report.missing,
+            "unmatched": report.unmatched,
+            "multi": report.multi,
+        })
+    });
+    let history = serde_json::json!({
+        "schema_version": 1,
+        "product": "pytools",
+        "feature_id": "PT-4-8",
+        "function": "submission-check",
+        "status": if report.is_some() { "succeeded" } else { "failed" },
+        "actual_engines": actual_engines,
+        "components": components,
+        "summary": summary,
+        "total_elapsed_ms": events.last().and_then(|event| event["total_elapsed_ms"].as_u64()),
+        "events": events,
+    });
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)
+        .with_context(|| format!("create submission-check run history {}", path.display()))?;
+    serde_json::to_writer_pretty(&mut file, &history)?;
+    file.write_all(b"\n")?;
+    Ok(path)
 }
 
 fn run_convert_batch_cli(arguments: Vec<String>, excel: bool) -> Result<()> {
@@ -11282,7 +11442,7 @@ fn print_usage() {
          fx-header-plan --input <xlsx> --output <candidate.xlsx> [--plan-output <json>] [--capabilities <json> --platform <id>]\n\
          rename-sheets-plan --config <config.xlsx> --input <xlsx> --output <candidate.xlsx> [--plan-output <json>] [--capabilities <json> --platform <id>]\n\
          rename-sheets --config <config.xlsx> --capabilities <json> --platform <id> [--recursive] <file-or-directory>...\n\
-         submission-check --config <config.xlsx> [--output-dir <dir>] <file-or-directory>...\n\
+         submission-check --config <config.xlsx> [--output-dir <dir>] [--log-dir <dir>] [--log-view user|developer|off] <file-or-directory>...\n\
          archive-date-preview --target-root <dir> [--config <config.xlsx>] [--output-dir <dir>] <file-or-directory>...\n\
          archive-type-preview --config <config.xlsx> --target-root <dir> [--output-dir <dir>] <file-or-directory>...\n\
          archive-date-copy --target-root <dir> [--config <config.xlsx>] [--output-dir <dir>] <file-or-directory>...\n\
