@@ -109,6 +109,17 @@ impl EditBackend for UmyaXlsxBackend {
             .map_err(|error| BackendFailure::unsupported_before_write(format!("{error:#}")))?;
         validate_row_insertion_scope(plan, &workbook)
             .map_err(|error| BackendFailure::unsupported_before_write(format!("{error:#}")))?;
+        for operation in &plan.operations {
+            if let EditOperation::SetFreezePanes { sheet, cell } = operation {
+                if is_freeze_clear_request(cell.as_deref())
+                    && sheet_has_frozen_pane(&workbook, sheet)
+                {
+                    return Err(BackendFailure::unsupported_before_write(format!(
+                        "umya-spreadsheet cannot clear an existing frozen pane on worksheet {sheet:?}; route freeze-pane clears to another verified engine"
+                    )));
+                }
+            }
+        }
         let outline_copies = plan
             .operations
             .iter()
@@ -1436,8 +1447,256 @@ impl OutputValidator for UmyaXlsxValidator {
                 );
             }
         }
+        let moves = plan
+            .operations
+            .iter()
+            .filter_map(|operation| match operation {
+                EditOperation::MoveSheet { sheet, new_index } => Some((sheet.as_str(), *new_index)),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        if !moves.is_empty() {
+            let mut expected_order = excel_reader::read_sheet_names(&plan.input)
+                .with_context(|| format!("reopen source {}", plan.input.display()))?;
+            for (sheet, new_index) in &moves {
+                let current = expected_order
+                    .iter()
+                    .position(|name| name == sheet)
+                    .with_context(|| format!("worksheet {sheet:?} not found"))?;
+                anyhow::ensure!(
+                    *new_index < expected_order.len(),
+                    "move target index {new_index} exceeds workbook sheet count {}",
+                    expected_order.len()
+                );
+                let moved = expected_order.remove(current);
+                expected_order.insert(*new_index, moved);
+            }
+            let actual_order = dump
+                .sheets
+                .iter()
+                .map(|sheet| sheet.name.clone())
+                .collect::<Vec<_>>();
+            anyhow::ensure!(
+                actual_order == expected_order,
+                "candidate sheet order {actual_order:?} does not match the move-sheet plan expectation {expected_order:?}"
+            );
+            assert_scoped_defined_names_follow_sheets(&plan.input, candidate_output)?;
+        }
+        let freeze_edits = plan
+            .operations
+            .iter()
+            .filter_map(|operation| match operation {
+                EditOperation::SetFreezePanes { sheet, cell } => {
+                    Some((sheet.as_str(), cell.as_deref()))
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        let filter_edits = plan
+            .operations
+            .iter()
+            .filter_map(|operation| match operation {
+                EditOperation::SetAutoFilter { sheet, range } => {
+                    Some((sheet.as_str(), range.as_deref()))
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        if !freeze_edits.is_empty() || !filter_edits.is_empty() {
+            let reopened = crate::open_xlsx(candidate_output)
+                .with_context(|| format!("reopen candidate {}", candidate_output.display()))?;
+            for (sheet, cell) in &freeze_edits {
+                assert_freeze_pane_matches_plan(&reopened, &final_sheet_name(plan, sheet), *cell)?;
+            }
+            for (sheet, range) in &filter_edits {
+                assert_auto_filter_matches_plan(&reopened, &final_sheet_name(plan, sheet), *range)?;
+            }
+            assert_filter_database_matches_plan(plan, candidate_output, &filter_edits)?;
+        }
         Ok(())
     }
+}
+
+/// Sheet-scoped defined names must stay attached to the worksheet named in
+/// their scope after a sheet move: the write path renumbers `localSheetId`,
+/// so a stale id would silently re-bind print areas and print titles to a
+/// different worksheet. Compare the resolved (name, scoped worksheet,
+/// reference) records of source and candidate; records whose scope the source
+/// file itself left unresolved are skipped, because the umya read path already
+/// drops them before any write.
+fn assert_scoped_defined_names_follow_sheets(source: &Path, candidate: &Path) -> Result<()> {
+    let scoped_keys = |path: &Path| -> Result<Vec<(String, String, String)>> {
+        let mut keys = Vec::new();
+        for record in excel_reader::read_defined_names(path)? {
+            let scoped_sheet = match &record.scope {
+                excel_reader::DefinedNameScope::Workbook => String::new(),
+                excel_reader::DefinedNameScope::Worksheet {
+                    sheet_name: Some(name),
+                    ..
+                } => name.clone(),
+                _ => continue,
+            };
+            keys.push((
+                record.name,
+                scoped_sheet,
+                normalize_defined_name_reference(&record.raw_reference),
+            ));
+        }
+        keys.sort();
+        Ok(keys)
+    };
+    let expected = scoped_keys(source)
+        .with_context(|| format!("read source defined names {}", source.display()))?;
+    let actual = scoped_keys(candidate)
+        .with_context(|| format!("read candidate defined names {}", candidate.display()))?;
+    anyhow::ensure!(
+        actual == expected,
+        "candidate defined names do not follow their worksheets after the move: expected {expected:?}, found {actual:?}"
+    );
+    Ok(())
+}
+
+/// openpyxl freeze semantics: `None` and `A1` clear the freeze; otherwise the
+/// cell is the first scrollable cell and the active pane follows the splits.
+/// Returns the expected splits, active pane and top-left cell coordinates.
+fn expected_freeze_pane(
+    cell: Option<&str>,
+) -> Result<Option<(f64, f64, umya_spreadsheet::PaneValues, u32, u32)>> {
+    let Some(cell) = cell else {
+        return Ok(None);
+    };
+    if cell.trim().eq_ignore_ascii_case("A1") {
+        return Ok(None);
+    }
+    let (row, column) = parse_cell(cell)?;
+    let x_split = if column > 1 { (column - 1) as f64 } else { 0.0 };
+    let y_split = if row > 1 { (row - 1) as f64 } else { 0.0 };
+    let active_pane = match (column > 1, row > 1) {
+        (true, true) => umya_spreadsheet::PaneValues::BottomRight,
+        (true, false) => umya_spreadsheet::PaneValues::TopRight,
+        (false, true) => umya_spreadsheet::PaneValues::BottomLeft,
+        (false, false) => bail!("freeze panes at A1 clears the freeze"),
+    };
+    Ok(Some((x_split, y_split, active_pane, row, column)))
+}
+
+fn assert_freeze_pane_matches_plan(
+    workbook: &crate::Workbook,
+    sheet: &str,
+    cell: Option<&str>,
+) -> Result<()> {
+    let worksheet = workbook
+        .sheet_by_name(sheet)
+        .with_context(|| format!("output sheet {sheet:?} missing"))?;
+    let pane = worksheet
+        .sheets_views()
+        .sheet_view_list()
+        .iter()
+        .find_map(|view| view.pane());
+    match expected_freeze_pane(cell)? {
+        None => anyhow::ensure!(
+            pane.is_none(),
+            "sheet {sheet:?} still carries a frozen pane after a freeze-panes clear"
+        ),
+        Some((x_split, y_split, active_pane, row, column)) => {
+            let pane = pane.with_context(|| {
+                format!("sheet {sheet:?} has no frozen pane after SetFreezePanes")
+            })?;
+            anyhow::ensure!(
+                format!("{:?}", pane.state()) == "Frozen",
+                "sheet {sheet:?} pane state is not frozen"
+            );
+            anyhow::ensure!(
+                pane.horizontal_split() == x_split && pane.vertical_split() == y_split,
+                "sheet {sheet:?} pane splits are {:?}/{:?} instead of {x_split}/{y_split}",
+                pane.horizontal_split(),
+                pane.vertical_split()
+            );
+            anyhow::ensure!(
+                format!("{:?}", pane.active_pane()) == format!("{:?}", active_pane),
+                "sheet {sheet:?} pane active pane does not match the plan"
+            );
+            anyhow::ensure!(
+                pane.top_left_cell().row_num() == row && pane.top_left_cell().col_num() == column,
+                "sheet {sheet:?} pane top-left cell does not match the plan"
+            );
+        }
+    }
+    Ok(())
+}
+
+fn assert_auto_filter_matches_plan(
+    workbook: &crate::Workbook,
+    sheet: &str,
+    range: Option<&str>,
+) -> Result<()> {
+    let worksheet = workbook
+        .sheet_by_name(sheet)
+        .with_context(|| format!("output sheet {sheet:?} missing"))?;
+    match range {
+        Some(range) => {
+            let actual = worksheet.auto_filter().with_context(|| {
+                format!("sheet {sheet:?} has no AutoFilter after SetAutoFilter")
+            })?;
+            anyhow::ensure!(
+                actual.range().range() == range,
+                "sheet {sheet:?} AutoFilter range is {:?} instead of {range:?}",
+                actual.range().range()
+            );
+        }
+        None => anyhow::ensure!(
+            worksheet.auto_filter().is_none(),
+            "sheet {sheet:?} still carries an AutoFilter after a clear"
+        ),
+    }
+    Ok(())
+}
+
+/// The hidden `_xlnm._FilterDatabase` name must follow the requested
+/// AutoFilter range the way Excel and the openpyxl worker maintain it; the
+/// raw reference comparison normalizes quotes because umya re-renders
+/// non-ASCII sheet names quoted.
+fn assert_filter_database_matches_plan(
+    plan: &ExcelEditPlan,
+    candidate_output: &Path,
+    filter_edits: &[(&str, Option<&str>)],
+) -> Result<()> {
+    if filter_edits.is_empty() {
+        return Ok(());
+    }
+    let records = excel_reader::read_defined_names(candidate_output)?;
+    for (sheet, range) in filter_edits {
+        let final_sheet = final_sheet_name(plan, sheet);
+        let record = records.iter().find(|record| {
+            record.name == "_xlnm._FilterDatabase"
+                && matches!(
+                    &record.scope,
+                    excel_reader::DefinedNameScope::Worksheet {
+                        sheet_name: Some(name),
+                        ..
+                    } if name == &final_sheet
+                )
+        });
+        match range {
+            Some(range) => {
+                let record = record.with_context(|| {
+                    format!("output has no _FilterDatabase defined name for sheet {final_sheet:?}")
+                })?;
+                let expected = format!("{final_sheet}!{}", absolute_range(range)?);
+                anyhow::ensure!(
+                    normalize_defined_name_reference(&record.raw_reference)
+                        == normalize_defined_name_reference(&expected),
+                    "sheet {final_sheet:?} _FilterDatabase is {:?} instead of {expected:?}",
+                    record.raw_reference
+                );
+            }
+            None => anyhow::ensure!(
+                record.is_none(),
+                "sheet {final_sheet:?} still carries a _FilterDatabase after the AutoFilter clear"
+            ),
+        }
+    }
+    Ok(())
 }
 
 fn apply_operation(workbook: &mut crate::Workbook, operation: &EditOperation) -> Result<()> {
@@ -1631,6 +1890,7 @@ fn apply_operation(workbook: &mut crate::Workbook, operation: &EditOperation) ->
                     .all(|sheet| sheet.get_name() != name),
                 "worksheet {name:?} already exists"
             );
+            let active_sheet = active_sheet_name(workbook);
             workbook
                 .new_sheet(name)
                 .with_context(|| format!("create worksheet {name:?}"))?;
@@ -1639,15 +1899,43 @@ fn apply_operation(workbook: &mut crate::Workbook, operation: &EditOperation) ->
             for destination in (*index..appended_index).rev() {
                 collection.swap(destination, destination + 1);
             }
+            remap_sheet_index_metadata(workbook, active_sheet.as_deref());
+        }
+        EditOperation::MoveSheet { sheet, new_index } => {
+            validate_sheet_name(sheet)?;
+            let current_count = workbook.sheet_count();
+            anyhow::ensure!(
+                *new_index < current_count,
+                "move target index {new_index} exceeds workbook sheet count {current_count}"
+            );
+            let current_index = workbook
+                .get_sheet_collection()
+                .iter()
+                .position(|candidate| candidate.get_name() == sheet.as_str())
+                .with_context(|| format!("worksheet {sheet:?} not found"))?;
+            let active_sheet = active_sheet_name(workbook);
+            let collection = workbook.get_sheet_collection_mut();
+            if *new_index < current_index {
+                for slot in (*new_index..current_index).rev() {
+                    collection.swap(slot, slot + 1);
+                }
+            } else if *new_index > current_index {
+                for slot in current_index..*new_index {
+                    collection.swap(slot, slot + 1);
+                }
+            }
+            remap_sheet_index_metadata(workbook, active_sheet.as_deref());
         }
         EditOperation::DeleteSheet { name } => {
             anyhow::ensure!(
                 workbook.sheet_count() > 1,
                 "cannot delete the only worksheet"
             );
+            let active_sheet = active_sheet_name(workbook).filter(|active| active != name);
             workbook
                 .remove_sheet_by_name(name)
                 .with_context(|| format!("delete worksheet {name:?}"))?;
+            remap_sheet_index_metadata(workbook, active_sheet.as_deref());
         }
         EditOperation::SetCellFillColor { sheet, cell, argb } => {
             let normalized = normalize_argb(argb)?;
@@ -1784,8 +2072,40 @@ fn apply_operation(workbook: &mut crate::Workbook, operation: &EditOperation) ->
             // operation. Print-area localSheetId values are applied once the
             // final sheet collection is known.
         }
-        EditOperation::SetFreezePanes { .. } | EditOperation::SetAutoFilter { .. } => {
-            bail!("umya backend does not implement freeze-pane or AutoFilter edits")
+        EditOperation::SetFreezePanes { sheet, cell } => {
+            let target = workbook
+                .get_sheet_by_name_mut(sheet)
+                .with_context(|| format!("worksheet {sheet:?} not found"))?;
+            if is_freeze_clear_request(cell.as_deref()) {
+                // Clearing is a no-op here: a sheet that still carries a pane
+                // is rejected before any write by the preflight check, and a
+                // sheet without a pane is already clear.
+                return Ok(());
+            }
+            apply_freeze_panes(
+                target,
+                cell.as_deref().context("freeze panes cell is missing")?,
+            )?;
+        }
+        EditOperation::SetAutoFilter { sheet, range } => {
+            {
+                let target = workbook
+                    .get_sheet_by_name_mut(sheet)
+                    .with_context(|| format!("worksheet {sheet:?} not found"))?;
+                match range {
+                    Some(range) => target.set_auto_filter(range.as_str()),
+                    None => target.remove_auto_filter(),
+                }
+            }
+            if range.is_some() {
+                update_sheet_filter_database(
+                    workbook,
+                    sheet,
+                    range.as_deref().context("AutoFilter range is missing")?,
+                )?;
+            } else {
+                remove_sheet_filter_database(workbook, sheet)?;
+            }
         }
         EditOperation::ReplaceHeaderText { .. } => {
             bail!("header replacement must use the namespace-aware OOXML header backend")
@@ -2216,6 +2536,189 @@ fn import_range(
     });
     let _ = copy_values;
     Ok(())
+}
+
+/// Name of the currently active worksheet, when the stored tab index is in range.
+fn active_sheet_name(workbook: &crate::Workbook) -> Option<String> {
+    let active_tab = workbook.workbook_view().active_tab() as usize;
+    workbook
+        .get_sheet_collection()
+        .get(active_tab)
+        .map(|sheet| sheet.get_name().to_owned())
+}
+
+/// umya-spreadsheet keeps the `localSheetId` captured at read time on
+/// sheet-scoped defined names (print areas, print titles, user names) and
+/// re-emits that value unchanged, and stores `activeTab` as a raw index. After
+/// the sheet collection order changes, both must be rewritten from the new
+/// positions: scoped names keep pointing at their own worksheet and the
+/// previously active sheet stays active. When the active sheet did not
+/// survive the change, the stored index is clamped into range.
+fn remap_sheet_index_metadata(workbook: &mut crate::Workbook, active_sheet: Option<&str>) {
+    let collection = workbook.get_sheet_collection_mut();
+    for (index, sheet) in collection.iter_mut().enumerate() {
+        for defined_name in sheet.defined_names_mut() {
+            if defined_name.has_local_sheet_id() {
+                defined_name.set_local_sheet_id(index as u32);
+            }
+        }
+    }
+    let count = workbook.sheet_count();
+    let new_active_tab = active_sheet
+        .and_then(|name| {
+            workbook
+                .get_sheet_collection()
+                .iter()
+                .position(|sheet| sheet.get_name() == name)
+        })
+        .map(|position| position as u32)
+        .unwrap_or_else(|| {
+            workbook
+                .workbook_view()
+                .active_tab()
+                .min(count.saturating_sub(1) as u32)
+        });
+    workbook.workbook_view_mut().set_active_tab(new_active_tab);
+}
+
+/// `None` and the degenerate `A1` both mean "no frozen panes" (openpyxl
+/// semantics).
+fn is_freeze_clear_request(cell: Option<&str>) -> bool {
+    cell.map(|cell| cell.trim().eq_ignore_ascii_case("A1"))
+        .unwrap_or(true)
+}
+
+/// Freeze panes with openpyxl semantics: the requested cell is the first
+/// scrollable cell, splits follow its zero-based offsets and the active pane
+/// follows which splits are non-zero. `set_pane` replaces any previous pane
+/// element wholesale, so stale splits from an older freeze cannot survive.
+fn apply_freeze_panes(worksheet: &mut umya_spreadsheet::Worksheet, cell: &str) -> Result<()> {
+    let (row, column) = parse_cell(cell)?;
+    let mut pane = umya_spreadsheet::Pane::default();
+    if column > 1 {
+        pane.set_horizontal_split((column - 1) as f64);
+    }
+    if row > 1 {
+        pane.set_vertical_split((row - 1) as f64);
+    }
+    let mut top_left_cell = umya_spreadsheet::Coordinate::default();
+    top_left_cell.set_coordinate(cell);
+    pane.set_top_left_cell(top_left_cell);
+    pane.set_active_pane(match (column > 1, row > 1) {
+        (true, true) => umya_spreadsheet::PaneValues::BottomRight,
+        (true, false) => umya_spreadsheet::PaneValues::TopRight,
+        (false, true) => umya_spreadsheet::PaneValues::BottomLeft,
+        (false, false) => bail!("freeze panes at A1 clears the freeze"),
+    });
+    pane.set_state(umya_spreadsheet::PaneStateValues::Frozen);
+    let views = worksheet.sheet_views_mut();
+    if views.sheet_view_list().is_empty() {
+        views.add_sheet_view_list_mut(umya_spreadsheet::SheetView::default());
+    }
+    views
+        .sheet_view_list_mut()
+        .first_mut()
+        .context("worksheet has no sheet view")?
+        .set_pane(pane);
+    Ok(())
+}
+
+/// True when any sheet view of the named worksheet currently carries a pane.
+fn sheet_has_frozen_pane(workbook: &crate::Workbook, sheet: &str) -> bool {
+    workbook
+        .get_sheet_collection()
+        .iter()
+        .filter(|sheet_obj| sheet_obj.get_name() == sheet)
+        .flat_map(|sheet_obj| sheet_obj.sheets_views().sheet_view_list().iter())
+        .any(|view| view.pane().is_some())
+}
+
+/// Excel keeps the hidden sheet-scoped `_xlnm._FilterDatabase` name in step
+/// with the worksheet AutoFilter range, and the openpyxl worker regenerates
+/// that name on save; the umya candidate must do the same so AutoFilter plans
+/// cannot leave a stale range behind after row operations.
+fn update_sheet_filter_database(
+    workbook: &mut crate::Workbook,
+    sheet: &str,
+    range: &str,
+) -> Result<()> {
+    let sheet_index = workbook
+        .get_sheet_collection()
+        .iter()
+        .position(|sheet_obj| sheet_obj.get_name() == sheet)
+        .with_context(|| format!("worksheet {sheet:?} not found"))?;
+    let address = format!("{sheet}!{}", absolute_range(range)?);
+    let target = &mut workbook.get_sheet_collection_mut()[sheet_index];
+    // umya's DefinedName::set_address appends to the parsed address list and
+    // offers no way to reset it, so the name is rebuilt wholesale. The hidden
+    // flag is preserved only when the original carried it.
+    let existing_hidden = target
+        .defined_names()
+        .iter()
+        .find(|name| name.name() == "_xlnm._FilterDatabase")
+        .map(|name| name.hidden());
+    target
+        .defined_names_mut()
+        .retain(|name| name.name() != "_xlnm._FilterDatabase");
+    let mut name = umya_spreadsheet::DefinedName::default();
+    name.set_name("_xlnm._FilterDatabase");
+    name.set_address(address);
+    name.set_local_sheet_id(sheet_index as u32);
+    if existing_hidden == Some(true) {
+        name.set_hidden(true);
+    }
+    target.add_defined_names(name);
+    Ok(())
+}
+
+/// Excel removes the sheet-scoped `_xlnm._FilterDatabase` name when the
+/// worksheet AutoFilter is cleared; mirror that here.
+fn remove_sheet_filter_database(workbook: &mut crate::Workbook, sheet: &str) -> Result<()> {
+    let target = workbook
+        .get_sheet_collection_mut()
+        .iter_mut()
+        .find(|sheet_obj| sheet_obj.get_name() == sheet)
+        .with_context(|| format!("worksheet {sheet:?} not found"))?;
+    target
+        .defined_names_mut()
+        .retain(|name| name.name() != "_xlnm._FilterDatabase");
+    Ok(())
+}
+
+/// Render a plan range as the absolute `$A$1:$M$10` form Excel uses inside
+/// defined names.
+fn absolute_range(range: &str) -> Result<String> {
+    range
+        .split(':')
+        .map(|part| {
+            let (row, column) = parse_cell(part)?;
+            Ok(format!("${}${}", column_letters(column), row))
+        })
+        .collect::<Result<Vec<_>>>()
+        .map(|parts| parts.join(":"))
+}
+
+/// umya re-renders defined-name addresses with quotes around non-ASCII sheet
+/// names; both sides of a comparison are dequoted so semantically equal
+/// references compare equal. Sheet names containing apostrophes compare by
+/// their dequoted text.
+fn normalize_defined_name_reference(reference: &str) -> String {
+    reference.replace('\'', "")
+}
+
+/// Worksheet identity after the whole plan: later RenameSheet operations
+/// re-label the sheet targeted by earlier operations (sequential apply
+/// order). Mirrors the openpyxl validator's resolution.
+fn final_sheet_name(plan: &ExcelEditPlan, source_name: &str) -> String {
+    let mut name = source_name.to_owned();
+    for operation in &plan.operations {
+        if let EditOperation::RenameSheet { old_name, new_name } = operation {
+            if old_name == &name {
+                name.clone_from(new_name);
+            }
+        }
+    }
+    name
 }
 
 fn validate_sheet_name(name: &str) -> Result<()> {

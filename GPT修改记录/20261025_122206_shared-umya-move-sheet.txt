@@ -1,0 +1,45 @@
+时间：2026-10-25 12:22:06 Asia/Shanghai
+执行者：Codex main
+修改前 commit：cfe601e（main）
+修改后 commit：本记录与代码修改由同一提交承载；具体提交 ID 见本轮汇报。
+WIP 情况：修改前 main 工作区干净。本次修改的源码、测试、文档与本记录一并提交，未遗留 WIP。未触碰 audit-dev 与 pytools-dev 工作树。另记录一处交接后的外部状态变化：pytools-dev 在交接摘要写成后已由 PyTools Agent 将原未提交 WIP 提交并推送（135704f → 26d0d9e），本会话未做任何改动。
+
+目的：实现共享 MoveSheet 工作表移动操作（Audit S1 真实历史结果页需移到首位且保留原 PageSettings 的候选依赖），并修复 umya 后端结构化 sheet 操作后 sheet-scoped definedName `localSheetId` 与 workbook `activeTab` 滞留的根因——umya 读取时把带 localSheetId 的 definedName（Print_Area、Print_Titles、用户名称）连同原索引值挂在工作表对象上，保存按新顺序原样重发，索引变动后即指向错误工作表。
+
+修改文件：
+- `crates/excel-editor/src/plan.rs`
+- `crates/excel-editor/src/umya_backend.rs`
+- `crates/excel-editor/tests/move_sheet.rs`（新增）
+- `crates/excel-editor/tests/sheet_index_metadata.rs`（新增）
+- `EXCEL_ENGINE_ARCHITECTURE.md`
+- 本记录
+
+变化：
+- `EditOperation` 新增 `MoveSheet { sheet, new_index }`（零基目标位置）；`EditOperationKind`、`kind()` 与操作级 validate 同步扩展；目标索引越界与未知工作表在写前拒绝。
+- umya 后端用相邻交换在对象模型内重排工作表集合，内容与页面设置随对象整体保留；新增 `remap_sheet_index_metadata`：重排后把每张工作表 sheet 级 definedName 的 `localSheetId` 重写为新位置，并让原活动工作表保持活动；活动表未能保留时把 `activeTab` 夹回范围内。
+- `CreateSheetAt` 与 `DeleteSheet` 接入同一重映射，修复同一根因下的既有滞留问题（此前插入/删除工作表也会使后续工作表的 Print_Area/Print_Titles 指向错误工作表）。
+- validator 对包含 MoveSheet 的计划新增语义校验：用 excel-reader 独立读回候选顺序并与"源顺序 + 移动序列"期望比较；再比较源/候选 definedName 的（名称、作用域工作表、原始引用）集合一致，防止 localSheetId 滞留把名称重绑到其他工作表。
+- EXCEL_ENGINE_ARCHITECTURE.md §4.2 该操作行的 umya 单元与证据说明同步登记；状态仍为 unverified（合成证据），不产生生产 capability。
+
+配置及业务路由影响：`MoveSheet` 作为新操作类型进入 `EditOperationKind`，调用方须按证据登记 capability 后才可路由；无默认路由变化。Audit S1 真实模板、完整批次、目标平台均未验收，不因此登记生产 Passed 或改变 S1 状态。
+
+组件版本：不升级。
+
+测试：
+- `cargo test --offline --locked -p excel-editor --test move_sheet`：3 项通过（移到首位保留顺序/localSheetId/activeTab/页面设置与值；向后移动；未知工作表与越界索引写前拒绝且不产生输出）。
+- `cargo test --offline --locked -p excel-editor --test sheet_index_metadata`：3 项通过（CreateSheetAt/DeleteSheet 重映射 Print_Area 作用域、activeTab 跟随、删除活动表时夹取范围）。
+- `cargo test --offline --locked -p excel-editor`：lib 29 项与全部集成测试通过。
+- `cargo test --workspace --locked --offline -q`：全部通过。
+- `cargo fmt -p excel-editor -- --check` 与 `git diff --check`：通过。
+- 编译输出中的 umya deprecated API 警告均为既有，本次未新增警告。
+
+未执行项：未做真实模板/真实 S1 工作簿对拍、Python 基线对拍、Linux glibc 2.28 构建与 deb 验收、性能测量；未在 audit-dev/pytools-dev 运行或修改任何内容。
+
+已知问题：
+- umya 保存按位置重编号 sheetId 与 r:id 并丢弃 calcChain，属于该库整体打开/保存行为，是既有 umya 候选风险，仍须真实模板核验。
+- 源文件中作用域无法解析的 definedName 会在 umya 读取阶段被丢弃（既有行为）；validator 的 definedName 集合比较跳过此类无法定位作用域的记录。
+- 未显式设置 orientation 的工作表经 umya 往返读回为 Portrait 默认值；测试按输入/输出逐表一致断言，不硬编码默认值。
+- 本实现只覆盖 UmyaSpreadsheet 引擎；OOXML Patch、Excelize、openpyxl worker 未实现 MoveSheet，相应计划按既有路由规则拒绝。
+
+删除清单：无。
+回滚：回退本次提交即恢复原有 19 个操作集合与 CreateSheetAt/DeleteSheet 原行为；不回滚、不重写既有提交，不修改输入工作簿。
