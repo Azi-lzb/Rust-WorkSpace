@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
 """Compare the Rust S5 config-check port with the Python baseline.
 
-Runs `validate_s5_config` on both sides for a set of scopes (configuration
-level only: no template or external file, which selects the ported
-not-checked branches), then diffs the full result dictionaries field by
-field. Only aggregate counts are persisted.
+Runs `validate_s5_config` on both sides for configuration-level cases and,
+when supplied, full-scope template/external address checks. Inputs are copied
+to a temporary directory; only aggregate counts are persisted.
 """
 
 from __future__ import annotations
@@ -37,6 +36,16 @@ def diff_values(left, right, path: str, diffs: list[str]) -> None:
             else:
                 diff_values(left[key], right[key], f"{path}.{key}", diffs)
     elif isinstance(left, list) and isinstance(right, list):
+        if path.endswith((".errors", ".configuration_errors")):
+            # Python builds some diagnostic collections from sets, so their
+            # output order is not a stable contract. Compare full objects in a
+            # deterministic order while preserving every field/location.
+            error_key = lambda item: (
+                str(item.get("message", "")) if isinstance(item, dict) else "",
+                json.dumps(item, ensure_ascii=False, sort_keys=True),
+            )
+            left = sorted(left, key=error_key)
+            right = sorted(right, key=error_key)
         if len(left) != len(right):
             diffs.append(f"{path}: length {len(left)} vs {len(right)}")
         for index in range(min(len(left), len(right))):
@@ -50,6 +59,8 @@ def run_case(case: dict, python_side) -> dict:
         report = python_side(
             config_path=case["config"],
             template_path=case.get("template_path", ""),
+            template_dir=case.get("template_dir", ""),
+            template_index_path=case.get("template_index_path", ""),
             external_path=case.get("external_path", ""),
             business=case.get("business", ""),
             scope=case["scope"],
@@ -68,6 +79,14 @@ def main() -> int:
     parser.add_argument("--source-root", type=Path, required=True)
     parser.add_argument("--config-workbook", type=Path, required=True)
     parser.add_argument("--template-workbook", type=Path)
+    parser.add_argument("--template-dir", type=Path)
+    parser.add_argument("--external-workbook", type=Path)
+    parser.add_argument(
+        "--sample-kind",
+        choices=("unspecified", "synthetic", "real"),
+        default="unspecified",
+        help="Label the supplied sample type in the aggregate report.",
+    )
     parser.add_argument("--workspace", type=Path, default=ROOT)
     parser.add_argument("--report", type=Path, required=True)
     args = parser.parse_args()
@@ -88,6 +107,14 @@ def main() -> int:
         if args.template_workbook:
             template_copy = directory / "template.xlsx"
             shutil.copy2(args.template_workbook.resolve(strict=True), template_copy)
+        template_dir_copy = None
+        if args.template_dir:
+            template_dir_copy = directory / "templates"
+            shutil.copytree(args.template_dir.resolve(strict=True), template_dir_copy)
+        external_copy = None
+        if args.external_workbook:
+            external_copy = directory / "external.xlsx"
+            shutil.copy2(args.external_workbook.resolve(strict=True), external_copy)
 
         case_reports = []
         total_diffs = 0
@@ -95,6 +122,31 @@ def main() -> int:
         if args.template_workbook:
             all_cases = all_cases + [
                 {"scope": "current", "template_path": str(template_copy)},
+            ]
+        if template_dir_copy:
+            empty_template_dir = directory / "empty_templates"
+            empty_template_dir.mkdir()
+            index_path = str(directory / "template_index.json")
+            external_path = str(external_copy) if external_copy else ""
+            all_cases = all_cases + [
+                {
+                    "scope": "all",
+                    "template_dir": str(template_dir_copy),
+                    "template_index_path": index_path,
+                    "external_path": external_path,
+                },
+                {
+                    "scope": "all_enabled",
+                    "template_dir": str(template_dir_copy),
+                    "template_index_path": index_path,
+                    "external_path": external_path,
+                },
+                {
+                    "scope": "all",
+                    "template_dir": str(empty_template_dir),
+                    "template_index_path": index_path,
+                    "external_path": external_path,
+                },
             ]
         for case_index, base_case in enumerate(all_cases):
             case = {**base_case, "config": str(config_copy)}
@@ -105,6 +157,8 @@ def main() -> int:
             request = {
                 "config": case["config"],
                 "template_path": case.get("template_path", ""),
+                "template_dir": case.get("template_dir", ""),
+                "template_index_path": case.get("template_index_path", ""),
                 "external_path": case.get("external_path", ""),
                 "business": case.get("business", ""),
                 "scope": case["scope"],
@@ -119,7 +173,7 @@ def main() -> int:
             environment["AUDIT_S5_CHECK_REPORT"] = str(rust_report)
             completed = subprocess.run(
                 [
-                    "cargo", "test", "-p", "audit-core", "--test", "s5_config_check_parity",
+                    "cargo", "test", "--offline", "-p", "audit-core", "--test", "s5_config_check_parity",
                     "--locked", "--", "--ignored", "--nocapture",
                 ],
                 cwd=workspace,
@@ -172,12 +226,15 @@ def main() -> int:
             "suite": "audit.s5_config_check_parity",
             "status": "completed" if total_diffs == 0 else "mismatch",
             "sample_scope": {
-                "config_level_only": True,
+                "config_level_only": not bool(template_dir_copy),
                 "cases": [
                     {"scope": case["scope"], "business": case.get("business", "")}
-                    for case in CASES
+                    for case in all_cases
                 ],
                 "config_copied_to_temporary": True,
+                "template_directory_copied_to_temporary": bool(template_dir_copy),
+                "external_workbook_copied_to_temporary": bool(external_copy),
+                "sample_kind": args.sample_kind,
             },
             "comparison": {
                 "case_count": len(all_cases),
@@ -192,14 +249,18 @@ def main() -> int:
                 ),
                 "inputs_unchanged": True,
                 "raw_paths_or_messages_persisted": False,
+                "unordered_collections": ["errors", "configuration_errors"],
                 "capability_status": "unverified",
                 "production_route_eligible": False,
             },
             "limitations": [
-                "Template/external workbook address scanning (including the "
-                "all/all_enabled full-scope branch) is not migrated; providing "
-                "a template or external file selects the not-migrated boundary "
-                "on the Rust side and is excluded from parity.",
+                (
+                    "The full-scope parity case uses copied real workbook inputs "
+                    "and covers only the supplied template directory and external workbook."
+                    if args.sample_kind == "real"
+                    else "The full-scope parity case covers only the supplied template "
+                    "directory and external workbook; it is not exhaustive."
+                ),
                 "Load-error variants attach empty locations on the Rust side "
                 "(Python row.check adds cell locations); the real configuration "
                 "loads cleanly so no error variant is exercised.",

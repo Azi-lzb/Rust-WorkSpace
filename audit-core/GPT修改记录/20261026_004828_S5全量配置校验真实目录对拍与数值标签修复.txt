@@ -1,0 +1,51 @@
+# S5 全量配置校验真实目录对拍与数值标签修复
+
+## 修改信息
+
+- 时间：2026-10-26 00:48（Asia/Shanghai）
+- 执行者：Codex
+- 修改前 commit：`2bea6d56a9c4f7f43fb1f2746560bf603b2947c3`
+- 修改后 commit：本记录随本次独立功能提交；SHA 由 Git 生成。
+- WIP：在既有 S5 全量模板扫描工作基础上继续修改。保留用户提供的本地未跟踪材料、临时目录和旧日期的首次真实对拍报告；这些文件不纳入本次提交。
+
+## 目的与变更
+
+将 `s5-config-check` 的 `all` / `all_enabled` 模板目录检查接入真实 CLI，并核实全目录 Python/Rust 结果。修复真实模板中整数单元格标签在 openpyxl 与 Calamine 之间的表示差异，避免行路径漏匹配。
+
+- `audit-core/src/bin/open-data-audit.rs`：增加 `--template-dir`、全目录调用和实际模板目录引擎日志。
+- `audit-core/src/s5_config_check.rs`：扫描 XLSX 模板工作表元数据，按 Python 规则选择唯一业务模板；不写入模板目录或 Python 的缓存索引。
+- `audit-core/src/s5_scan.rs`：恢复 OOXML 整数标签与 Python `int` 字符串语义；按完整行路径序列分组重复行，并匹配文本、数值、布尔值和公式标签。
+- `audit-core/src/s5_external_layout.rs`：补齐 Python 机构代码列的两个既有标题别名。
+- `audit-core/tests/s5_previous_source_cli.rs`：覆盖全目录 CLI、无目录失败状态、外部标题别名与整数/布尔/公式标签。
+- `audit-core/tests/compare/compare_s5_config_check.py`：增加全目录输入和样本类型参数；对错误集合按完整对象排序后对拍，因为 Python 基线从 `set` 生成错误列表，顺序不稳定。错误消息、位置及其他字段仍逐项比较。
+- `audit-core/MIGRATION_INVENTORY.md`：记录真实目录对拍、未定位引用及未验收范围。
+- `audit-core/probe/reports/s5_config_check_fullscope_real_windows_native_20261026.json`：仅保存汇总证据，不保存本机路径、业务消息或工作簿内容。
+
+本切片只涉及 Audit 业务层和 Audit 测试，不修改公共 crate、根 Cargo 配置、原 Python 项目或真实样本；无 VBA 迁移和配置格式变更。
+
+## 验证
+
+- `cargo fmt --all -- --check`：通过。
+- `git diff --check`：通过；Git 提示部分文件的工作区换行符转换警告。
+- `cargo test --offline --locked -p audit-core --test s5_previous_source_cli -- --nocapture`：15 passed，1 ignored，0 failed。
+- Windows 原生 Python/Rust 全目录真实对拍：6 个场景、0 个字段差异；19 个业务共检查 4,215 个模板地址、唯一定位 4,151 个、64 个未定位结果两侧一致；外部地址 43/43。
+- Windows 原生 `open-data-audit s5-config-check --scope all` CLI：19 个业务、4,215/4,151 模板地址计数、64 个未定位；外部地址 43/43。按配置正确返回 `valid=false`、扫描完成 `complete=true`，开发者日志记录 Calamine reader、OOXML 模板目录读取引擎及约 48.2 秒耗时。
+- 既有合成全目录对拍：6 个场景、0 个差异，见 `probe/reports/s5_config_check_fullscope_synthetic_parity_windows_native_20261025.json`。
+- 公共 XLSM 修复：main 提交 `3e53e7e` 的 reader 变更已由 Audit 提交 `579155f` 等效包含；不重复 cherry-pick。本项与 Audit 共享能力请求 #8 无关，#8 仍未解决。
+
+## 未执行与已知问题
+
+- S5-F01 整体仍未验证；本次只覆盖配置校验的全目录扫描，不代表审核运行、真实结果表写回、公式/样式保真或 GUI 已验收。
+- 真实配置存在 64 个无法唯一定位的模板地址，Rust 与 Python 结果相同；CLI 如实报告失败。
+- 损坏模板分支、Python `TemplateCatalog` 缓存行为、WSL、Linux/glibc 2.28、deb、麒麟 V10/UOS V20 均未验证。
+- 未运行 openpyxl 修改 worker；本次 CLI 读取真实输入但不写入任何源文件或模板。
+- Audit 共享能力请求 #8 保持未解决；本次没有修改共享 Excel-Core。
+
+## 删除与回滚
+
+- 临时扫描诊断集成测试在对拍后已删除；其输出只写入系统临时目录。
+- 本次没有删除或覆盖用户文件。回滚本功能时使用 `git revert <本次功能提交 SHA>`；不要使用 reset、clean 或 force push。
+
+## 【组件版本】
+
+不升级；这是现有 workspace crate 内的业务迁移切片，不采用旧项目 Sx-Fxx 组件版本制度。

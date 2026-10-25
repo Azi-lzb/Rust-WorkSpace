@@ -64,16 +64,59 @@ fn write_source(path: &Path, value: f64) {
     workbook.save(path).expect("save source workbook");
 }
 
+#[test]
+fn s5_scan_stringifies_numeric_boolean_and_formula_labels() {
+    let directory = temporary_directory();
+    let path = directory.join("labels.xlsx");
+    let mut workbook = excel_writer::Workbook::new();
+    let sheet = workbook
+        .add_worksheet()
+        .set_name("路径")
+        .expect("name path labels sheet");
+    sheet.write_number(0, 0, 1.5).expect("write numeric label");
+    sheet
+        .write_boolean(0, 1, true)
+        .expect("write boolean label");
+    sheet
+        .write_formula(0, 2, "=1+1")
+        .expect("write formula label");
+    sheet
+        .write_number(1, 0, 2.0)
+        .expect("write integer numeric label");
+    workbook.save(&path).expect("save path labels workbook");
+
+    let book = audit_core::s5_scan::ScanBook::open(&path).expect("read path labels workbook");
+    assert_eq!(
+        book.row_sequence("路径", 1, 1, 3),
+        vec![
+            ("1.5".to_owned(), 0),
+            ("True".to_owned(), 1),
+            ("=1+1".to_owned(), 2),
+        ]
+    );
+    assert_eq!(
+        book.row_sequence("路径", 2, 1, 1),
+        vec![("2".to_owned(), 0)]
+    );
+    assert_eq!(book.cell_raw_text("路径", 2, 1), "2");
+
+    fs::remove_dir_all(directory).expect("remove path labels fixture directory");
+}
+
 fn write_external_source(path: &Path, value: f64) {
-    write_external_source_variant(path, value, false, false, false);
+    write_external_source_variant(path, value, false, false, false, "机构代码");
+}
+
+fn write_external_source_with_python_code_alias(path: &Path, value: f64) {
+    write_external_source_variant(path, value, false, false, false, "社会信用代码");
 }
 
 fn write_external_source_with_layout_warning(path: &Path, value: f64, warning: bool) {
-    write_external_source_variant(path, value, warning, false, false);
+    write_external_source_variant(path, value, warning, false, false, "机构代码");
 }
 
 fn write_external_source_with_invalid_numeric(path: &Path) {
-    write_external_source_variant(path, 0.0, false, true, false);
+    write_external_source_variant(path, 0.0, false, true, false, "机构代码");
 }
 
 fn write_external_time_series_source(path: &Path, value: f64) {
@@ -148,6 +191,7 @@ fn write_external_source_variant(
     warning: bool,
     invalid_numeric: bool,
     time_series: bool,
+    mapping_code_header: &str,
 ) {
     let mut workbook = excel_writer::Workbook::new();
     let mapping = workbook
@@ -155,7 +199,7 @@ fn write_external_source_variant(
         .set_name("机构参照表")
         .expect("name external mapping sheet");
     mapping
-        .write_string(0, 0, "机构代码")
+        .write_string(0, 0, mapping_code_header)
         .expect("write mapping identity header");
     mapping
         .write_string(0, 1, "报表项目")
@@ -567,6 +611,22 @@ fn run_config_check_cli(config: &Path, external: Option<&Path>, developer_view: 
     command.output().expect("run S5 config-check CLI")
 }
 
+fn run_full_scope_config_check_cli(config: &Path, template_dir: &Path, external: &Path) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_open-data-audit"))
+        .arg("s5-config-check")
+        .arg("--config")
+        .arg(config)
+        .arg("--template-dir")
+        .arg(template_dir)
+        .arg("--external-path")
+        .arg(external)
+        .arg("--scope")
+        .arg("all")
+        .arg("--developer-view")
+        .output()
+        .expect("run full-scope S5 config-check CLI")
+}
+
 #[test]
 fn s5_config_check_cli_scans_external_metric_headers() {
     let directory = temporary_directory();
@@ -600,6 +660,29 @@ fn s5_config_check_cli_scans_external_metric_headers() {
 }
 
 #[test]
+fn s5_config_check_cli_accepts_python_external_identity_alias() {
+    let directory = temporary_directory();
+    let config = directory.join("config.xlsx");
+    let external = directory.join("external.xlsx");
+    write_config(&config, true, false);
+    write_external_source_with_python_code_alias(&external, 0.15);
+
+    let output = run_config_check_cli(&config, Some(&external), false);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: Value = serde_json::from_slice(&output.stdout).expect("valid config-check JSON");
+    assert_eq!(report["valid"], true);
+    assert_eq!(report["checks"]["external_addresses"]["status"], "passed");
+    assert_eq!(report["checks"]["external_addresses"]["checked"], 1);
+    assert_eq!(report["checks"]["external_addresses"]["resolved"], 1);
+
+    fs::remove_dir_all(directory).expect("remove external alias fixture directory");
+}
+
+#[test]
 fn s5_config_check_cli_marks_missing_external_file_invalid() {
     let directory = temporary_directory();
     let config = directory.join("config.xlsx");
@@ -624,6 +707,105 @@ fn s5_config_check_cli_marks_missing_external_file_invalid() {
     );
 
     fs::remove_dir_all(directory).expect("remove config-check failure directory");
+}
+
+#[test]
+fn s5_config_check_cli_scans_full_scope_template_catalog() {
+    let directory = temporary_directory();
+    let config = directory.join("config.xlsx");
+    let external = directory.join("external.xlsx");
+    let template_dir = directory.join("templates");
+    fs::create_dir_all(&template_dir).expect("create template catalog directory");
+    write_config(&config, true, false);
+    write_external_source(&external, 0.15);
+    write_source(&template_dir.join("单位贷款模板.xlsx"), 115.0);
+    write_source(&template_dir.join("备用模板.xlsx"), 115.0);
+
+    let output = run_full_scope_config_check_cli(&config, &template_dir, &external);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: Value = serde_json::from_slice(&output.stdout).expect("valid config-check JSON");
+    assert_eq!(report["valid"], true);
+    assert_eq!(report["complete"], true);
+    assert_eq!(report["scope"], "all");
+    assert_eq!(report["business"], "");
+    assert_eq!(report["checks"]["template_addresses"]["status"], "passed");
+    assert_eq!(report["checks"]["template_addresses"]["checked"], 1);
+    assert_eq!(report["checks"]["template_addresses"]["resolved"], 1);
+    assert_eq!(
+        report["checks"]["template_addresses"]["businesses"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(
+        report["checks"]["template_addresses"]["businesses"][0]["template_name"],
+        "单位贷款模板.xlsx"
+    );
+    assert_eq!(report["checks"]["external_addresses"]["status"], "passed");
+    let events = String::from_utf8_lossy(&output.stderr)
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).expect("progress JSON"))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        events[0]["template_catalog_engine"],
+        "OOXML workbook.xml via excel-reader"
+    );
+    assert!(events[1]["elapsed_ms"].as_u64().is_some());
+
+    fs::remove_dir_all(directory).expect("remove full-scope config-check directory");
+}
+
+#[test]
+fn s5_config_check_cli_marks_full_scope_without_catalog_incomplete() {
+    let directory = temporary_directory();
+    let config = directory.join("config.xlsx");
+    let external = directory.join("external.xlsx");
+    let missing_template_dir = directory.join("missing_templates");
+    write_config(&config, true, false);
+    write_external_source(&external, 0.15);
+
+    let output = run_full_scope_config_check_cli(&config, &missing_template_dir, &external);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: Value = serde_json::from_slice(&output.stdout).expect("valid config-check JSON");
+    assert_eq!(report["valid"], true);
+    assert_eq!(report["complete"], false);
+    assert_eq!(
+        report["checks"]["template_addresses"]["status"],
+        "not_checked"
+    );
+    assert!(report["warnings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|warning| { warning.as_str().unwrap_or_default().contains("模板目录") }));
+    assert_eq!(report["checks"]["external_addresses"]["status"], "passed");
+
+    fs::remove_dir_all(directory).expect("remove full-scope missing-catalog directory");
+}
+
+#[test]
+#[ignore = "manual parity fixture exporter; requires AUDIT_S5_CONFIG_FIXTURE_DIR"]
+fn exports_s5_config_check_fixture_for_python_parity() {
+    let directory = PathBuf::from(
+        std::env::var_os("AUDIT_S5_CONFIG_FIXTURE_DIR")
+            .expect("AUDIT_S5_CONFIG_FIXTURE_DIR must point to a temporary output directory"),
+    );
+    fs::create_dir_all(&directory).expect("create parity fixture directory");
+    let template_dir = directory.join("templates");
+    fs::create_dir_all(&template_dir).expect("create parity template directory");
+    write_config(&directory.join("config.xlsx"), true, false);
+    write_external_source(&directory.join("external.xlsx"), 0.15);
+    write_source(&template_dir.join("单位贷款模板.xlsx"), 115.0);
+    write_source(&template_dir.join("备用模板.xlsx"), 115.0);
 }
 
 #[test]

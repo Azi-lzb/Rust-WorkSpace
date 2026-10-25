@@ -8,10 +8,12 @@ use excel_reader::{read_value_columns_with_iso_dates, CellValue};
 use std::collections::{BTreeMap, BTreeSet};
 
 const MAPPING_SHEETS: [&str; 2] = ["机构参照表", "机构参照"];
-const IDENTITY_LABELS: [&str; 8] = [
+const IDENTITY_LABELS: [&str; 10] = [
     "统一社会信用代码",
     "法人机构统一社会信用代码",
     "统一信用代码",
+    "社会信用代码",
+    "社会统一信用代码",
     "机构代码",
     "机构编码",
     "机构编号",

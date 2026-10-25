@@ -1,0 +1,115 @@
+{
+  "schema_version": 1,
+  "suite": "audit.s5_config_check_parity",
+  "status": "completed",
+  "sample_scope": {
+    "config_level_only": false,
+    "cases": [
+      {
+        "scope": "current",
+        "business": ""
+      },
+      {
+        "scope": "current",
+        "business": "单位贷款"
+      },
+      {
+        "scope": "current_business",
+        "business": ""
+      },
+      {
+        "scope": "all",
+        "business": ""
+      },
+      {
+        "scope": "all_enabled",
+        "business": ""
+      },
+      {
+        "scope": "all",
+        "business": ""
+      }
+    ],
+    "config_copied_to_temporary": true,
+    "template_directory_copied_to_temporary": true,
+    "external_workbook_copied_to_temporary": true
+  },
+  "comparison": {
+    "case_count": 6,
+    "total_diff_count": 0,
+    "cases": [
+      {
+        "scope": "current",
+        "business": "",
+        "python_status": "ok",
+        "rust_status": "ok",
+        "diff_count": 0,
+        "diff_paths_sample": [],
+        "python_valid": true,
+        "python_complete": false
+      },
+      {
+        "scope": "current",
+        "business": "单位贷款",
+        "python_status": "ok",
+        "rust_status": "ok",
+        "diff_count": 0,
+        "diff_paths_sample": [],
+        "python_valid": true,
+        "python_complete": false
+      },
+      {
+        "scope": "current_business",
+        "business": "",
+        "python_status": "ok",
+        "rust_status": "ok",
+        "diff_count": 0,
+        "diff_paths_sample": [],
+        "python_valid": false,
+        "python_complete": false
+      },
+      {
+        "scope": "all",
+        "business": "",
+        "python_status": "ok",
+        "rust_status": "ok",
+        "diff_count": 0,
+        "diff_paths_sample": [],
+        "python_valid": true,
+        "python_complete": true
+      },
+      {
+        "scope": "all_enabled",
+        "business": "",
+        "python_status": "ok",
+        "rust_status": "ok",
+        "diff_count": 0,
+        "diff_paths_sample": [],
+        "python_valid": true,
+        "python_complete": true
+      },
+      {
+        "scope": "all",
+        "business": "",
+        "python_status": "ok",
+        "rust_status": "ok",
+        "diff_count": 0,
+        "diff_paths_sample": [],
+        "python_valid": true,
+        "python_complete": false
+      }
+    ]
+  },
+  "verification": {
+    "rust_runner": "audit-core/tests/s5_config_check_parity.rs",
+    "python_baseline": "base_audit.systems.s5_configured_statistics.service.validate_s5_config",
+    "inputs_unchanged": true,
+    "raw_paths_or_messages_persisted": false,
+    "capability_status": "unverified",
+    "production_route_eligible": false
+  },
+  "limitations": [
+    "The full-scope parity case is synthetic and covers the selected template, metric paths, and external address set only.",
+    "Load-error variants attach empty locations on the Rust side (Python row.check adds cell locations); the real configuration loads cleanly so no error variant is exercised."
+  ]
+}

@@ -4,22 +4,19 @@
 //! `s5_configured_statistics.service.validate_s5_config` for the
 //! configuration checks: scope handling, business inference from a matched
 //! template, configuration loading with error mapping, rule/business counters,
-//! enabled-rule reference extraction, and current-scope template/external
-//! address validation.
-//!
-//! Port boundary: the `all`/`all_enabled` template-catalog scan is not
-//! migrated; calls that would enter that branch return an explicit error.
+//! enabled-rule reference extraction, and current/full-scope template/external
+//! address validation. Full-scope catalog discovery reads XLSX sheet metadata
+//! without writing the Python catalog's optimization index.
 
 use crate::s5_config::{load_configuration, Configuration};
 use crate::s5_config_dsl::{calls_in, parse_dictionary, parse_expression, Node};
 use crate::s5_external_layout::ExternalLayout;
 use crate::s5_scan::{scan_rule_paths, ScanBook};
-use excel_reader::read_workbook;
+use excel_reader::{read_workbook, read_xlsx_sheet_names_ooxml};
 use serde_json::{json, Value};
-use std::collections::BTreeMap;
-use std::path::Path;
-
-const NOT_MIGRATED_SCAN: &str = "S5 配置校验的全量模板目录扫描尚未迁移，请使用当前业务范围检查";
+use std::collections::{BTreeMap, BTreeSet};
+use std::fs;
+use std::path::{Path, PathBuf};
 
 fn configuration_error_to_json(message: &str) -> Value {
     json!({"message": message, "locations": []})
@@ -309,6 +306,14 @@ struct RuleReferences {
     dynamic_refs: Vec<DynamicReference>,
 }
 
+#[derive(Clone, Debug)]
+struct TemplateProfile {
+    path: PathBuf,
+    name: String,
+    report_name: String,
+    sheet_names: BTreeSet<String>,
+}
+
 fn path_argument(node: &Node) -> Vec<String> {
     match node {
         Node::Literal(crate::s5_config_dsl::LiteralNode {
@@ -489,8 +494,8 @@ fn rule_references(configuration: &Configuration, business: &str) -> RuleReferen
 ///
 /// `template_path`, `template_dir`, `template_index_path`, and `external_path`
 /// follow the Python signature. Current-scope template and external address
-/// checks use the selected workbooks; full-scope template catalog discovery
-/// remains explicitly unsupported.
+/// checks use the selected workbook; full-scope checks discover a unique
+/// template per enabled business from the supplied directory.
 pub fn validate_s5_config(
     config_path: &Path,
     template_path: &str,
@@ -500,7 +505,9 @@ pub fn validate_s5_config(
     business: &str,
     scope: &str,
 ) -> Result<Value, crate::s5_config::LoadError> {
-    let _ = (template_dir, template_index_path);
+    // The Python catalog index is an optimization cache. Rust reads the
+    // directory directly and deliberately leaves user template folders alone.
+    let _ = template_index_path;
     set_configuration_source_path(config_path);
     let full_scope = scope == "all" || scope == "all_enabled";
     let strict_current = scope == "current_business";
@@ -559,13 +566,8 @@ pub fn validate_s5_config(
             "configuration_errors": [configuration_error_to_json(message)],
         }));
     }
-    if full_scope {
-        return Err(crate::s5_config::LoadError::configuration(
-            NOT_MIGRATED_SCAN,
-        ));
-    }
-
-    let configuration = match load_configuration(config_path, false, &business) {
+    let configuration_business = if full_scope { "" } else { &business };
+    let configuration = match load_configuration(config_path, false, configuration_business) {
         Ok(configuration) => configuration,
         Err(error) => {
             return Ok(json!({
@@ -672,59 +674,256 @@ pub fn validate_s5_config(
         }));
     }
 
-    let references = rule_references(&configuration, &business);
-    let dynamic_for_business = references
-        .dynamic_refs
-        .iter()
-        .filter(|item| item.business == business)
-        .count();
+    let references = rule_references(&configuration, if full_scope { "" } else { &business });
+    let mut warnings = Vec::new();
+    let mut configuration_errors = Vec::new();
+    let (template_check, business_checks) = if full_scope {
+        let mut required_sheets: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+        for ((business_name, sheet, _, _), _) in &references.template_refs {
+            required_sheets
+                .entry(business_name.clone())
+                .or_default()
+                .insert(sheet.clone());
+        }
+        for reference in &references.dynamic_refs {
+            required_sheets
+                .entry(reference.business.clone())
+                .or_default()
+                .insert(reference.sheet.clone());
+        }
 
-    let template_check =
-        if references.template_refs.is_empty() && references.dynamic_refs.is_empty() {
-            json!({
-                "status": "no_references", "business": business, "checked": 0,
-                "resolved": 0, "errors": [], "dynamic_references": dynamic_for_business,
-            })
-        } else if template_path.is_empty() {
-            json!({
-                "status": "not_checked", "business": business, "checked": 0,
-                "resolved": 0, "errors": [], "dynamic_references": dynamic_for_business,
-                "message": "尚未选择或识别匹配模板，无法检查模板取数地址",
-            })
+        let (profiles, catalog_error) =
+            if !template_dir.is_empty() && Path::new(template_dir).is_dir() {
+                match discover_template_profiles(Path::new(template_dir)) {
+                    Ok(profiles) if profiles.is_empty() => {
+                        (profiles, "模板目录中没有可读取的 XLSX 模板".to_owned())
+                    }
+                    Ok(profiles) => (profiles, String::new()),
+                    Err(error) => (Vec::new(), format!("无法读取模板目录：{error}")),
+                }
+            } else {
+                (Vec::new(), "模板目录中没有可读取的 XLSX 模板".to_owned())
+            };
+
+        let mut template_checks = Vec::new();
+        let mut business_checks = Vec::new();
+        let mut template_checked = 0usize;
+        let mut template_resolved = 0usize;
+        for business_name in &all_businesses {
+            let required = required_sheets
+                .get(business_name)
+                .cloned()
+                .unwrap_or_default();
+            let dynamic_references = references
+                .dynamic_refs
+                .iter()
+                .filter(|reference| &reference.business == business_name)
+                .count();
+            let (check, template_name) = if required.is_empty() {
+                (
+                    json!({
+                        "status": "no_references", "business": business_name,
+                        "checked": 0, "resolved": 0, "errors": [],
+                        "dynamic_references": 0,
+                        "message": "该业务启用规则没有模板取数地址引用",
+                    }),
+                    String::new(),
+                )
+            } else if profiles.is_empty() {
+                let message = format!(
+                    "业务“{business_name}”未检查模板地址：{}",
+                    if catalog_error.is_empty() {
+                        "请先选择有效的模板文件目录"
+                    } else {
+                        &catalog_error
+                    }
+                );
+                (
+                    json!({
+                        "status": "not_checked", "business": business_name,
+                        "checked": 0, "resolved": 0, "errors": [],
+                        "dynamic_references": dynamic_references, "message": message,
+                    }),
+                    String::new(),
+                )
+            } else {
+                let (selected, match_error) =
+                    select_business_template(business_name, &required, &profiles);
+                if let Some(profile) = selected {
+                    let mut check = check_template_addresses(
+                        &configuration,
+                        &profile.path,
+                        business_name,
+                        &references,
+                    )?;
+                    if let Some(object) = check.as_object_mut() {
+                        object.insert(
+                            "template_path".to_owned(),
+                            json!(report_path_text(&profile.path)),
+                        );
+                        object.insert("template_name".to_owned(), json!(profile.name));
+                    }
+                    (check, profile.name.clone())
+                } else {
+                    (
+                        json!({
+                            "status": "not_checked", "business": business_name,
+                            "checked": 0, "resolved": 0, "errors": [],
+                            "dynamic_references": dynamic_references,
+                            "message": match_error,
+                        }),
+                        String::new(),
+                    )
+                }
+            };
+
+            template_checked += check
+                .get("checked")
+                .and_then(Value::as_u64)
+                .unwrap_or_default() as usize;
+            template_resolved += check
+                .get("resolved")
+                .and_then(Value::as_u64)
+                .unwrap_or_default() as usize;
+            if matches!(
+                check.get("status").and_then(Value::as_str),
+                Some("not_checked" | "partial")
+            ) {
+                if let Some(message) = check.get("message").and_then(Value::as_str) {
+                    warnings.push(message.to_owned());
+                }
+            }
+            if let Some(issues) = check.get("errors").and_then(Value::as_array) {
+                for issue in issues {
+                    let mut issue = issue.clone();
+                    if let Some(object) = issue.as_object_mut() {
+                        object.insert("business".to_owned(), json!(business_name));
+                    }
+                    configuration_errors.push(issue);
+                }
+            }
+            template_checks.push(check.clone());
+            business_checks.push(json!({
+                "name": business_name,
+                "rules": rules_by_business(business_name),
+                "enabled_rules": enabled_by_business(business_name),
+                "template": template_name,
+                "template_addresses": check.as_object().map(|object| {
+                    object.iter()
+                        .filter(|(key, _)| key.as_str() != "errors")
+                        .map(|(key, value)| (key.clone(), value.clone()))
+                        .collect::<serde_json::Map<String, Value>>()
+                }).unwrap_or_default(),
+            }));
+        }
+
+        if !catalog_error.is_empty()
+            && template_checks
+                .iter()
+                .any(|check| check.get("status").and_then(Value::as_str) == Some("not_checked"))
+        {
+            warnings.push(catalog_error);
+        }
+        let statuses: BTreeSet<&str> = template_checks
+            .iter()
+            .filter_map(|check| check.get("status").and_then(Value::as_str))
+            .collect();
+        let status = if statuses.contains("failed") {
+            "failed"
+        } else if statuses.contains("not_checked") {
+            "not_checked"
+        } else if statuses.contains("partial") {
+            "partial"
+        } else if statuses == BTreeSet::from(["no_references"]) {
+            "no_references"
         } else {
-            check_template_addresses(
-                &configuration,
-                Path::new(template_path),
-                &business,
-                &references,
-            )?
+            "passed"
         };
-    let template_file_name = if template_path.is_empty() {
-        "".to_owned()
+        (
+            json!({
+                "status": status,
+                "checked": template_checked,
+                "resolved": template_resolved,
+                "businesses": template_checks,
+                "message": format!(
+                    "全量检查 {} 个启用业务的模板地址，成功定位 {template_resolved}/{template_checked} 个",
+                    all_businesses.len(),
+                ),
+            }),
+            business_checks,
+        )
     } else {
-        std::path::Path::new(template_path)
-            .file_name()
-            .map(|name| name.to_string_lossy().into_owned())
-            .unwrap_or_default()
+        let dynamic_for_business = references
+            .dynamic_refs
+            .iter()
+            .filter(|item| item.business == business)
+            .count();
+        let template_check =
+            if references.template_refs.is_empty() && references.dynamic_refs.is_empty() {
+                json!({
+                    "status": "no_references", "business": business, "checked": 0,
+                    "resolved": 0, "errors": [], "dynamic_references": dynamic_for_business,
+                })
+            } else if template_path.is_empty() {
+                json!({
+                    "status": "not_checked", "business": business, "checked": 0,
+                    "resolved": 0, "errors": [], "dynamic_references": dynamic_for_business,
+                    "message": "尚未选择或识别匹配模板，无法检查模板取数地址",
+                })
+            } else {
+                check_template_addresses(
+                    &configuration,
+                    Path::new(template_path),
+                    &business,
+                    &references,
+                )?
+            };
+        let template_file_name = if template_path.is_empty() {
+            "".to_owned()
+        } else {
+            Path::new(template_path)
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_default()
+        };
+        let business_checks = vec![json!({
+            "name": business,
+            "rules": if business.is_empty() {
+                configuration.rules.len()
+            } else {
+                rules_by_business(&business)
+            },
+            "enabled_rules": if business.is_empty() {
+                enabled_rules
+            } else {
+                enabled_by_business(&business)
+            },
+            "template": template_file_name,
+            "template_addresses": template_check.as_object().map(|object| {
+                object.iter()
+                    .filter(|(key, _)| key.as_str() != "errors")
+                    .map(|(key, value)| (key.clone(), value.clone()))
+                    .collect::<serde_json::Map<String, Value>>()
+            }).unwrap_or_default(),
+        })];
+        if matches!(
+            template_check.get("status").and_then(Value::as_str),
+            Some("not_checked" | "partial")
+        ) {
+            if let Some(message) = template_check.get("message").and_then(Value::as_str) {
+                warnings.push(message.to_owned());
+            }
+        }
+        if let Some(issues) = template_check.get("errors").and_then(Value::as_array) {
+            configuration_errors.extend(issues.iter().cloned());
+        }
+        (template_check, business_checks)
     };
-    let business_checks = json!([{
-        "name": business,
-        "rules": if business.is_empty() {
-            configuration.rules.len()
-        } else {
-            rules_by_business(&business)
-        },
-        "enabled_rules": if business.is_empty() {
-            enabled_rules
-        } else {
-            enabled_by_business(&business)
-        },
-        "template": template_file_name,
-        "template_addresses": template_check.as_object().map(|object| {
-            object.iter().filter(|(key, _)| key.as_str() != "errors").map(|(key, value)| (key.clone(), value.clone())).collect::<serde_json::Map<String, Value>>()
-        }).unwrap_or_default(),
-    }]);
+
     let external_check = check_external_addresses(config_path, external_path, &references)?;
+    if let Some(issues) = external_check.get("errors").and_then(Value::as_array) {
+        configuration_errors.extend(issues.iter().cloned());
+    }
     let template_status_text = template_check
         .get("status")
         .and_then(Value::as_str)
@@ -735,20 +934,8 @@ pub fn validate_s5_config(
         .unwrap_or_default();
     let checks_complete = !matches!(template_status_text, "not_checked" | "partial")
         && !matches!(external_status_text, "not_checked" | "partial");
-    let mut configuration_errors = Vec::new();
-    for check in [&template_check, &external_check] {
-        if let Some(errors) = check.get("errors").and_then(Value::as_array) {
-            configuration_errors.extend(errors.iter().cloned());
-        }
-    }
     let valid = configuration_errors.is_empty();
 
-    let mut warnings: Vec<String> = Vec::new();
-    if matches!(template_status_text, "not_checked" | "partial") {
-        if let Some(message) = template_check.get("message").and_then(Value::as_str) {
-            warnings.push(message.to_owned());
-        }
-    }
     if matches!(external_status_text, "not_checked" | "partial") {
         if let Some(message) = external_check.get("message").and_then(Value::as_str) {
             warnings.push(message.to_owned());
@@ -983,9 +1170,8 @@ fn config_locations(
     locations
 }
 
-/// Mirror of `_check_template_addresses` for the current business with a
-/// selected template workbook. Full-scope template catalog discovery remains
-/// outside this current-business path.
+/// Mirror of `_check_template_addresses` for one business and its selected
+/// template workbook, whether selected directly or from the full-scope catalog.
 fn check_template_addresses(
     configuration: &Configuration,
     template_path: &Path,
@@ -1165,6 +1351,198 @@ fn check_template_addresses(
         "resolved": resolved, "errors": errors, "dynamic_references": dynamic.len(),
         "message": message,
     }))
+}
+
+fn discover_template_profiles(template_dir: &Path) -> Result<Vec<TemplateProfile>, String> {
+    let entries = fs::read_dir(template_dir).map_err(|error| error.to_string())?;
+    let mut paths = Vec::new();
+    for entry in entries {
+        let path = entry.map_err(|error| error.to_string())?.path();
+        let is_xlsx = path
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("xlsx"));
+        let is_temporary = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.starts_with("~$"));
+        if is_xlsx && !is_temporary {
+            paths.push(path);
+        }
+    }
+    paths.sort();
+
+    paths
+        .into_iter()
+        .map(|path| {
+            let path = fs::canonicalize(&path).map_err(|error| error.to_string())?;
+            let name = path
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            let stem = path
+                .file_stem()
+                .map(|stem| stem.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            let sheet_names = read_xlsx_sheet_names_ooxml(&path)
+                .map_err(|error| format!("读取模板工作表名称失败（{name}）：{error}"))?
+                .into_iter()
+                .collect();
+            Ok(TemplateProfile {
+                path,
+                name,
+                report_name: normalize_template_name(&stem),
+                sheet_names,
+            })
+        })
+        .collect()
+}
+
+fn report_path_text(path: &Path) -> String {
+    let text = path.to_string_lossy();
+    #[cfg(windows)]
+    {
+        if let Some(unc_path) = text.strip_prefix(r"\\?\UNC\") {
+            return format!(r"\\{unc_path}");
+        }
+        if let Some(path) = text.strip_prefix(r"\\?\") {
+            return path.to_owned();
+        }
+    }
+    text.into_owned()
+}
+
+fn select_business_template<'a>(
+    business: &str,
+    required_sheets: &BTreeSet<String>,
+    profiles: &'a [TemplateProfile],
+) -> (Option<&'a TemplateProfile>, String) {
+    let exact: Vec<&TemplateProfile> = profiles
+        .iter()
+        .filter(|profile| required_sheets.is_subset(&profile.sheet_names))
+        .collect();
+    if exact.len() == 1 {
+        return (Some(exact[0]), String::new());
+    }
+
+    let mut candidates = exact;
+    if candidates.is_empty() {
+        candidates = profiles
+            .iter()
+            .filter(|profile| {
+                profile
+                    .path
+                    .file_stem()
+                    .is_some_and(|stem| stem.to_string_lossy().contains(business))
+                    || profile.report_name.contains(business)
+            })
+            .collect();
+        if candidates.len() == 1 {
+            return (Some(candidates[0]), String::new());
+        }
+    }
+    if candidates.len() > 1 {
+        let named: Vec<&TemplateProfile> = candidates
+            .iter()
+            .copied()
+            .filter(|profile| {
+                profile
+                    .path
+                    .file_stem()
+                    .is_some_and(|stem| stem.to_string_lossy().contains(business))
+            })
+            .collect();
+        if named.len() == 1 {
+            return (Some(named[0]), String::new());
+        }
+        let names = candidates
+            .iter()
+            .take(5)
+            .map(|profile| profile.name.as_str())
+            .collect::<Vec<_>>()
+            .join("、");
+        return (
+            None,
+            format!("业务“{business}”对应多个模板，无法安全选择：{names}"),
+        );
+    }
+
+    let best = profiles
+        .iter()
+        .map(|profile| required_sheets.intersection(&profile.sheet_names).count())
+        .max()
+        .unwrap_or_default();
+    if best > 0 {
+        let names = profiles
+            .iter()
+            .filter(|profile| required_sheets.intersection(&profile.sheet_names).count() == best)
+            .map(|profile| profile.name.as_str())
+            .collect::<Vec<_>>()
+            .join("、");
+        let names: String = names.chars().take(400).collect();
+        return (
+            None,
+            format!("模板目录没有工作表覆盖业务“{business}”所需的路径；最接近的模板：{names}"),
+        );
+    }
+
+    (
+        None,
+        format!(
+            "模板目录中没有找到业务“{business}”所需工作表：{}",
+            required_sheets
+                .iter()
+                .cloned()
+                .collect::<Vec<_>>()
+                .join("、")
+        ),
+    )
+}
+
+fn normalize_template_name(value: &str) -> String {
+    let value = value
+        .trim()
+        .trim_start_matches(|character| character == '!' || character == '！');
+    let characters: Vec<char> = value.chars().collect();
+    let mut normalized = String::with_capacity(value.len());
+    let mut index = 0;
+    while index < characters.len() {
+        let year_start = index + 3 < characters.len()
+            && characters[index] == '2'
+            && characters[index + 1] == '0'
+            && characters[index + 2].is_ascii_digit()
+            && characters[index + 3].is_ascii_digit();
+        if year_start {
+            let mut cursor = index + 4;
+            let mut groups = 0;
+            while groups < 2 {
+                let pair_start =
+                    if cursor < characters.len() && matches!(characters[cursor], '-' | '.' | '_') {
+                        cursor + 1
+                    } else {
+                        cursor
+                    };
+                if pair_start + 1 < characters.len()
+                    && characters[pair_start].is_ascii_digit()
+                    && characters[pair_start + 1].is_ascii_digit()
+                {
+                    cursor = pair_start + 2;
+                    groups += 1;
+                } else {
+                    break;
+                }
+            }
+            if groups > 0 {
+                index = cursor;
+                continue;
+            }
+        }
+        normalized.push(characters[index]);
+        index += 1;
+    }
+    normalized
+        .trim_end_matches(|character| matches!(character, ' ' | '_' | '.' | '-'))
+        .to_owned()
 }
 
 fn check_external_addresses(

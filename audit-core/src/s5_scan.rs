@@ -13,9 +13,19 @@
 
 use crate::s5_layout::{NamedRegion, STRUCTURE_PREFIXES};
 use excel_reader::{read_workbook, WorkbookDump};
+use roxmltree::Document;
 use serde::Serialize;
-use std::collections::{BTreeMap, BTreeSet};
-use std::path::{Path, PathBuf};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fs::File,
+    io::{Read, Seek},
+    path::{Path, PathBuf},
+};
+use zip::ZipArchive;
+
+const SPREADSHEET_MAIN_NS: &str = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
+const OFFICE_REL_NS: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+const PACKAGE_REL_NS: &str = "http://schemas.openxmlformats.org/package/2006/relationships";
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct ScanPairLocation {
@@ -45,7 +55,171 @@ pub struct ScanBook {
     dump: WorkbookDump,
     /// (sheet, row) -> merged spans (min_col, max_col, anchor_row, anchor_col).
     merged_by_row: BTreeMap<(String, usize), Vec<(usize, usize, usize, usize)>>,
+    /// Numeric cells whose OOXML lexical form is an integer. openpyxl reads
+    /// these as Python `int`, while Calamine may expose the same cell as f64.
+    integer_numeric_labels: BTreeMap<(String, String), String>,
     sheet_names: Vec<String>,
+}
+
+fn read_zip_xml_part<R: Read + Seek>(
+    archive: &mut ZipArchive<R>,
+    name: &str,
+) -> Result<String, String> {
+    let mut part = archive
+        .by_name(name)
+        .map_err(|error| format!("read OOXML part {name}: {error}"))?;
+    let mut xml = String::new();
+    part.read_to_string(&mut xml)
+        .map_err(|error| format!("read OOXML part {name} bytes: {error}"))?;
+    Ok(xml)
+}
+
+fn resolve_workbook_target(target: &str) -> Option<String> {
+    let normalized = target.replace('\\', "/");
+    if normalized.contains(':') {
+        return None;
+    }
+    let package_rooted = normalized.starts_with('/') || normalized.starts_with("xl/");
+    let mut parts: Vec<&str> = if package_rooted {
+        Vec::new()
+    } else {
+        vec!["xl"]
+    };
+    for part in normalized.split('/') {
+        match part {
+            "" | "." => {}
+            ".." => {
+                parts.pop()?;
+            }
+            value => parts.push(value),
+        }
+    }
+    (!parts.is_empty()).then(|| parts.join("/"))
+}
+
+fn canonical_integer_lexeme(raw: &str) -> Option<String> {
+    let raw = raw.trim();
+    let (negative, digits) = match raw.strip_prefix('-') {
+        Some(digits) => (true, digits),
+        None => (false, raw.strip_prefix('+').unwrap_or(raw)),
+    };
+    if digits.is_empty() || !digits.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    let significant = digits.trim_start_matches('0');
+    if significant.is_empty() {
+        return Some("0".to_owned());
+    }
+    Some(if negative {
+        format!("-{significant}")
+    } else {
+        significant.to_owned()
+    })
+}
+
+/// Recover the int/float distinction that Python's XLSX reader derives from
+/// the stored numeric lexeme. This is label metadata only; Calamine remains
+/// the source for cell values and formulas.
+fn integer_numeric_labels(path: &Path) -> Result<BTreeMap<(String, String), String>, String> {
+    let extension = path
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or_default();
+    if !extension.eq_ignore_ascii_case("xlsx") && !extension.eq_ignore_ascii_case("xlsm") {
+        return Ok(BTreeMap::new());
+    }
+
+    let file = File::open(path).map_err(|error| format!("open workbook OOXML: {error}"))?;
+    let mut archive =
+        ZipArchive::new(file).map_err(|error| format!("open workbook ZIP: {error}"))?;
+    let workbook_xml = read_zip_xml_part(&mut archive, "xl/workbook.xml")?;
+    let relationships_xml = read_zip_xml_part(&mut archive, "xl/_rels/workbook.xml.rels")?;
+    let workbook = Document::parse(&workbook_xml)
+        .map_err(|error| format!("parse workbook.xml for numeric labels: {error}"))?;
+    let relationships = Document::parse(&relationships_xml)
+        .map_err(|error| format!("parse workbook relationships for numeric labels: {error}"))?;
+
+    let mut targets = BTreeMap::new();
+    for relationship in relationships.root_element().children().filter(|node| {
+        node.is_element()
+            && node.tag_name().namespace() == Some(PACKAGE_REL_NS)
+            && node.tag_name().name() == "Relationship"
+    }) {
+        if relationship.attribute("TargetMode") == Some("External") {
+            continue;
+        }
+        let (Some(id), Some(target), Some(kind)) = (
+            relationship.attribute("Id"),
+            relationship.attribute("Target"),
+            relationship.attribute("Type"),
+        ) else {
+            continue;
+        };
+        targets.insert(
+            id.to_owned(),
+            (target.to_owned(), kind.ends_with("/worksheet")),
+        );
+    }
+
+    let mut labels = BTreeMap::new();
+    for sheet in workbook.root_element().descendants().filter(|node| {
+        node.is_element()
+            && node.tag_name().namespace() == Some(SPREADSHEET_MAIN_NS)
+            && node.tag_name().name() == "sheet"
+    }) {
+        let (Some(sheet_name), Some(relationship_id)) = (
+            sheet.attribute("name"),
+            sheet.attribute((OFFICE_REL_NS, "id")),
+        ) else {
+            continue;
+        };
+        let Some((target, is_worksheet)) = targets.get(relationship_id) else {
+            return Err(format!(
+                "worksheet relationship {relationship_id} is missing"
+            ));
+        };
+        if !is_worksheet {
+            continue;
+        }
+        let part_name = resolve_workbook_target(target)
+            .ok_or_else(|| format!("unsupported worksheet target {target}"))?;
+        let worksheet_xml = read_zip_xml_part(&mut archive, &part_name)?;
+        let worksheet = Document::parse(&worksheet_xml)
+            .map_err(|error| format!("parse worksheet XML for numeric labels: {error}"))?;
+        for cell in worksheet.root_element().descendants().filter(|node| {
+            node.is_element()
+                && node.tag_name().namespace() == Some(SPREADSHEET_MAIN_NS)
+                && node.tag_name().name() == "c"
+        }) {
+            if cell.attribute("t").is_some_and(|kind| kind != "n")
+                || cell.children().any(|child| {
+                    child.is_element()
+                        && child.tag_name().namespace() == Some(SPREADSHEET_MAIN_NS)
+                        && child.tag_name().name() == "f"
+                })
+            {
+                continue;
+            }
+            let (Some(reference), Some(value)) = (
+                cell.attribute("r"),
+                cell.children().find(|child| {
+                    child.is_element()
+                        && child.tag_name().namespace() == Some(SPREADSHEET_MAIN_NS)
+                        && child.tag_name().name() == "v"
+                }),
+            ) else {
+                continue;
+            };
+            let Some((column, row)) = parse_cell(reference) else {
+                continue;
+            };
+            let Some(label) = canonical_integer_lexeme(value.text().unwrap_or_default()) else {
+                continue;
+            };
+            labels.insert((sheet_name.to_owned(), address_of(row, column)), label);
+        }
+    }
+    Ok(labels)
 }
 
 fn parse_bounds(reference: &str) -> Option<(usize, usize, usize, usize)> {
@@ -95,6 +269,7 @@ fn address_of(row: usize, column: usize) -> String {
 impl ScanBook {
     pub fn open(path: &Path) -> Result<Self, String> {
         let dump = read_workbook(path).map_err(|error| error.to_string())?;
+        let integer_numeric_labels = integer_numeric_labels(path)?;
         let sheet_names = dump.sheets.iter().map(|sheet| sheet.name.clone()).collect();
         let mut merged_by_row: BTreeMap<(String, usize), Vec<(usize, usize, usize, usize)>> =
             BTreeMap::new();
@@ -115,6 +290,7 @@ impl ScanBook {
             path: path.to_path_buf(),
             dump,
             merged_by_row,
+            integer_numeric_labels,
             sheet_names,
         })
     }
@@ -137,32 +313,48 @@ impl ScanBook {
             .unwrap_or(false)
     }
 
-    /// Stored (cached) cell content as `(type, text)`; numeric cells render
-    /// through their shortest JSON text.
+    fn integer_numeric_label(
+        &self,
+        sheet: &str,
+        address: &str,
+        value: &serde_json::Value,
+    ) -> Option<String> {
+        if value.get("type").and_then(serde_json::Value::as_str) != Some("number") {
+            return None;
+        }
+        self.integer_numeric_labels
+            .get(&(sheet.to_owned(), address.to_owned()))
+            .cloned()
+    }
+
+    /// Stored (cached) cell content as `(type, text)`; integer-formatted XLSX
+    /// numbers retain Python's int string representation for path labels.
     pub fn stored_value(&self, sheet: &str, row: usize, column: usize) -> (String, String) {
+        let address = address_of(row, column);
         self.dump
             .sheets
             .iter()
             .find(|candidate| candidate.name == sheet)
-            .and_then(|sheet_dump| sheet_dump.values.get(&address_of(row, column)))
+            .and_then(|sheet_dump| sheet_dump.values.get(&address))
             .map(|value| {
                 let kind = value
                     .get("type")
                     .and_then(serde_json::Value::as_str)
                     .unwrap_or_default()
                     .to_owned();
-                let text = match value.get("value") {
-                    Some(serde_json::Value::String(text)) => text.trim().to_owned(),
-                    Some(serde_json::Value::Number(number)) => number.to_string(),
-                    Some(serde_json::Value::Bool(flag)) => {
-                        if *flag {
+                let text = self
+                    .integer_numeric_label(sheet, &address, value)
+                    .or_else(|| match value.get("value") {
+                        Some(serde_json::Value::String(text)) => Some(text.trim().to_owned()),
+                        Some(serde_json::Value::Number(number)) => Some(number.to_string()),
+                        Some(serde_json::Value::Bool(flag)) => Some(if *flag {
                             "True".to_owned()
                         } else {
                             "False".to_owned()
-                        }
-                    }
-                    _ => String::new(),
-                };
+                        }),
+                        _ => None,
+                    })
+                    .unwrap_or_default();
                 (kind, text)
             })
             .unwrap_or_else(|| ("empty".to_owned(), String::new()))
@@ -179,21 +371,21 @@ impl ScanBook {
             .and_then(|sheet_dump| {
                 let address = address_of(row, column);
                 sheet_dump.formulas.get(&address).cloned().or_else(|| {
-                    sheet_dump
-                        .values
-                        .get(&address)
-                        .map(|value| match value.get("value") {
-                            Some(serde_json::Value::String(text)) => text.clone(),
-                            Some(serde_json::Value::Number(number)) => number.to_string(),
-                            Some(serde_json::Value::Bool(flag)) => {
-                                if *flag {
-                                    "是".to_owned()
-                                } else {
-                                    "否".to_owned()
+                    sheet_dump.values.get(&address).map(|value| {
+                        self.integer_numeric_label(sheet, &address, value)
+                            .unwrap_or_else(|| match value.get("value") {
+                                Some(serde_json::Value::String(text)) => text.clone(),
+                                Some(serde_json::Value::Number(number)) => number.to_string(),
+                                Some(serde_json::Value::Bool(flag)) => {
+                                    if *flag {
+                                        "是".to_owned()
+                                    } else {
+                                        "否".to_owned()
+                                    }
                                 }
-                            }
-                            _ => String::new(),
-                        })
+                                _ => String::new(),
+                            })
+                    })
                 })
             })
             .unwrap_or_default()
@@ -275,17 +467,35 @@ impl ScanBook {
                 }
             }
         }
+        let address = address_of(row, column);
         sheet_dump
-            .values
-            .get(&address_of(row, column))
-            .map(|value| {
-                value
-                    .get("value")
-                    .and_then(serde_json::Value::as_str)
-                    .map(str::trim)
-                    .unwrap_or_default()
-                    .to_owned()
+            .formulas
+            .get(&address)
+            .map(|formula| {
+                if formula.starts_with('=') {
+                    formula.clone()
+                } else {
+                    format!("={formula}")
+                }
             })
+            .or_else(|| {
+                sheet_dump.values.get(&address).map(|value| {
+                    self.integer_numeric_label(sheet, &address, value)
+                        .unwrap_or_else(|| match value.get("value") {
+                            Some(serde_json::Value::String(text)) => text.clone(),
+                            Some(serde_json::Value::Number(number)) => number.to_string(),
+                            Some(serde_json::Value::Bool(flag)) => {
+                                if *flag {
+                                    "True".to_owned()
+                                } else {
+                                    "False".to_owned()
+                                }
+                            }
+                            _ => String::new(),
+                        })
+                })
+            })
+            .map(|label| label.trim().to_owned())
             .unwrap_or_default()
     }
 
@@ -387,13 +597,12 @@ pub fn row_path_candidates(
             _ => runs.push(vec![row]),
         }
     }
-    let mut run_groups: BTreeMap<Vec<String>, Vec<Vec<usize>>> = BTreeMap::new();
+    let mut run_groups: BTreeMap<Vec<Vec<String>>, Vec<Vec<usize>>> = BTreeMap::new();
     for run in runs {
-        let signature: Vec<String> = run
+        let signature: Vec<Vec<String>> = run
             .iter()
             .filter_map(|row| entries.get(row).map(|entry| entry.path.clone()))
-            .next()
-            .unwrap_or_default();
+            .collect();
         run_groups.entry(signature).or_default().push(run);
     }
 

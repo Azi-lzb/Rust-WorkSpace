@@ -74,7 +74,7 @@ enum Command {
     S5FilePeriodHints(S5FilePeriodHintsArgs),
     /// Match selected S5 XLSX workbooks to one template by worksheet names.
     S5MatchTemplate(S5MatchTemplateArgs),
-    /// Validate S5 configuration rules and their selected template/external addresses.
+    /// Validate S5 configuration rules and current/full-scope template/external addresses.
     S5ConfigCheck(S5ConfigCheckArgs),
     /// Run the S5 configured audit against current and optional previous-period sources.
     S5AuditRun(S5AuditRunArgs),
@@ -682,6 +682,10 @@ struct S5ConfigCheckArgs {
     /// Optional selected template workbook for current-scope address checks.
     #[arg(long)]
     template_path: Option<PathBuf>,
+
+    /// Template directory for full-scope address checks.
+    #[arg(long)]
+    template_dir: Option<PathBuf>,
 
     /// Optional selected external workbook for V_EXT header checks.
     #[arg(long)]
@@ -4286,11 +4290,23 @@ fn run_s5_config_check(arguments: S5ConfigCheckArgs) -> Result<()> {
         .as_deref()
         .map(|path| path.to_string_lossy().into_owned())
         .unwrap_or_default();
+    let template_dir = arguments
+        .template_dir
+        .as_deref()
+        .map(|path| path.to_string_lossy().into_owned())
+        .unwrap_or_default();
     let external_path = arguments
         .external_path
         .as_deref()
         .map(|path| path.to_string_lossy().into_owned())
         .unwrap_or_default();
+    let template_catalog_engine = if matches!(arguments.scope.as_str(), "all" | "all_enabled")
+        && arguments.template_dir.is_some()
+    {
+        "OOXML workbook.xml via excel-reader"
+    } else {
+        "not_used"
+    };
     if arguments.developer_view {
         eprintln!(
             "{}",
@@ -4298,8 +4314,10 @@ fn run_s5_config_check(arguments: S5ConfigCheckArgs) -> Result<()> {
                 "type": "progress",
                 "step": "s5_config_check_started",
                 "engine": "Calamine via excel-reader",
+                "template_catalog_engine": template_catalog_engine,
                 "config": arguments.config.display().to_string(),
                 "template_path": template_path.as_str(),
+                "template_dir": template_dir.as_str(),
                 "external_path": external_path.as_str(),
                 "scope": arguments.scope.as_str(),
                 "elapsed_ms": 0,
@@ -4309,7 +4327,7 @@ fn run_s5_config_check(arguments: S5ConfigCheckArgs) -> Result<()> {
     let result = validate_s5_config(
         &arguments.config,
         &template_path,
-        "",
+        &template_dir,
         "",
         &external_path,
         &arguments.business,
@@ -4322,6 +4340,7 @@ fn run_s5_config_check(arguments: S5ConfigCheckArgs) -> Result<()> {
                 "type": "progress",
                 "step": "s5_config_check_completed",
                 "engine": "Calamine via excel-reader",
+                "template_catalog_engine": template_catalog_engine,
                 "valid": result.get("valid").and_then(serde_json::Value::as_bool),
                 "complete": result.get("complete").and_then(serde_json::Value::as_bool),
                 "elapsed_ms": started.elapsed().as_millis(),
