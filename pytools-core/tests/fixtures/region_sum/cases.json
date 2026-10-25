@@ -6,12 +6,13 @@
     "no_target.xlsx",
     "non_numeric_missing.xlsx",
     "numeric_text_underscores.xlsx",
+    "unicode_math_digits.xlsx",
     "broken.xlsx"
   ],
   "expected_stats": {
-    "files": 5,
-    "sheets": 5,
-    "errors": 3,
+    "files": 6,
+    "sheets": 10,
+    "errors": 8,
     "failed_files": 1
   }
 }

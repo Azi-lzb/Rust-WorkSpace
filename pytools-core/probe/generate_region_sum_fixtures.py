@@ -26,6 +26,26 @@ def save_book(path: Path, sheets: dict[str, list[list[object]]]) -> None:
     book.close()
 
 
+def save_unicode_math_digits_fixture() -> None:
+    mathematical_decimal_zeroes = (0x1D7CE, 0x1D7D8, 0x1D7E2, 0x1D7EC, 0x1D7F6)
+    mathematical_sheets = {}
+    for index, zero in enumerate(mathematical_decimal_zeroes, start=1):
+        digits = [chr(zero + value) for value in range(10)]
+        numeric_text = f"{digits[1]}_{digits[0]}{digits[0]}{digits[0]}.{digits[2]}{digits[5]}"
+        mathematical_sheets[f"分地区数学数字{index}"] = [
+            ["地区总分校验"],
+            ["序号", "地区", "金额"],
+            [None, "惠州市", numeric_text],
+            [1, "惠阳区", 500],
+            [2, "博罗县", 499],
+            [3, "惠东县", 0],
+            [4, "龙门县", 0],
+            [5, "惠州市本部", 0],
+            [6, "大亚湾", 0],
+        ]
+    save_book(FIXTURE_DIR / "unicode_math_digits.xlsx", mathematical_sheets)
+
+
 def save_cached_formula_book(path: Path) -> None:
     """Create a synthetic source whose total cells have cached formula values."""
     book = Workbook()
@@ -140,6 +160,7 @@ def main() -> None:
             ],
         },
     )
+    save_unicode_math_digits_fixture()
     (FIXTURE_DIR / "broken.xlsx").write_bytes(b"not a workbook")
     cases = {
         "schema_version": 1,
@@ -149,9 +170,10 @@ def main() -> None:
             "no_target.xlsx",
             "non_numeric_missing.xlsx",
             "numeric_text_underscores.xlsx",
+            "unicode_math_digits.xlsx",
             "broken.xlsx",
         ],
-        "expected_stats": {"files": 5, "sheets": 5, "errors": 3, "failed_files": 1},
+        "expected_stats": {"files": 6, "sheets": 10, "errors": 8, "failed_files": 1},
     }
     (FIXTURE_DIR / "cases.json").write_text(
         json.dumps(cases, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
