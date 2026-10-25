@@ -172,15 +172,46 @@ fn s2_service_runs_both_file_based_paths_and_keeps_inputs_unchanged() {
         let output = command.output().unwrap();
         let stderr = String::from_utf8_lossy(&output.stderr);
         let mut cli_events = Vec::<S2ProgressEvent>::new();
+        let mut cli_log_events = Vec::<Value>::new();
         let mut cli_errors = Vec::new();
         for line in stderr.lines() {
             if let Ok(value) = serde_json::from_str::<Value>(line) {
                 if value["type"] == "progress" {
+                    cli_log_events.push(value.clone());
                     cli_events.push(serde_json::from_value(value["event"].clone()).unwrap());
                 }
             } else if let Some(error) = line.strip_prefix("open-data-audit: ") {
                 cli_errors.push(error.to_owned());
             }
+        }
+        assert!(!cli_log_events.is_empty());
+        assert!(cli_log_events.iter().all(|entry| {
+            entry["engine"].is_string()
+                && entry["elapsed_ms"].as_u64().is_some()
+                && entry["stage_elapsed_ms"].as_u64().is_some()
+        }));
+        assert!(cli_log_events
+            .windows(2)
+            .all(|pair| { pair[0]["elapsed_ms"].as_u64() <= pair[1]["elapsed_ms"].as_u64() }));
+        if scenario == "invalid_config" {
+            assert!(cli_log_events
+                .iter()
+                .any(|entry| entry["event"]["stage"] == "config" && entry["engine"] == "Calamine"));
+        } else {
+            assert!(
+                cli_log_events
+                    .iter()
+                    .any(|entry| entry["event"]["stage"] == "current"
+                        && entry["engine"] == "Calamine")
+            );
+            assert!(cli_log_events
+                .iter()
+                .any(|entry| entry["event"]["stage"] == "rules"
+                    && entry["engine"] == "Rust audit-core"));
+            assert!(cli_log_events
+                .iter()
+                .any(|entry| entry["event"]["stage"] == "export"
+                    && entry["engine"] == "rust_xlsxwriter"));
         }
         fs::create_dir_all(&scenario_root).unwrap();
         let cli_result = if scenario == "invalid_config" {

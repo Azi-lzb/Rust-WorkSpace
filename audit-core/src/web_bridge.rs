@@ -7,7 +7,7 @@ use crate::{
     period_pairs::{list_period_pairs, report_source_warning},
     s1_template_inspection::{inspect_s1_template, INSPECTION_ENGINE},
     s2_config_check::check_s2_config,
-    s2_service::{run_s2_audit, S2ProgressEvent, S2RunRequest},
+    s2_service::{run_s2_audit, s2_engine_for_stage, S2ProgressEvent, S2RunRequest},
 };
 use anyhow::{Context, Result};
 use axum::{
@@ -809,11 +809,21 @@ fn start_period_compare_v2(state: &AppState) -> std::result::Result<Value, ApiEr
 
 fn run_s2_worker(state: AppState, request: S2RunRequest) {
     let worker_started = Instant::now();
+    let mut active_stage = String::new();
+    let mut stage_started = worker_started;
     let mut on_progress = |event: S2ProgressEvent| {
+        if active_stage != event.stage {
+            active_stage.clone_from(&event.stage);
+            stage_started = Instant::now();
+        }
         let mut ui = state.lock();
         ui.value["status"] = json!(format!("{}……", event.label));
-        ui.value["periodProgress"] =
-            progress_value(&event, "running", worker_started.elapsed().as_secs_f64());
+        ui.value["periodProgress"] = progress_value(
+            &event,
+            "running",
+            worker_started.elapsed().as_secs_f64(),
+            stage_started.elapsed().as_secs_f64(),
+        );
     };
     let result = run_s2_audit(&request, Some(&mut on_progress));
     let mut ui = state.lock();
@@ -856,16 +866,33 @@ fn run_s2_worker(state: AppState, request: S2RunRequest) {
     }
 }
 
-fn progress_value(event: &S2ProgressEvent, status: &str, elapsed: f64) -> Value {
+fn progress_value(
+    event: &S2ProgressEvent,
+    status: &str,
+    elapsed: f64,
+    stage_elapsed: f64,
+) -> Value {
+    let engine = s2_engine_for_stage(&event.stage);
+    let label = engine.map_or_else(
+        || event.label.clone(),
+        |engine| {
+            format!(
+                "{} · {engine} · 本阶段已运行 {:.2} 秒",
+                event.label, stage_elapsed
+            )
+        },
+    );
     json!({
         "status": status,
         "stage": event.stage,
-        "label": event.label,
+        "label": label,
+        "engine": engine,
         "percent": event.percent.clamp(0.0, 99.0),
         "current": event.current,
         "total": event.total,
         "message": event.message,
-        "elapsedSeconds": elapsed
+        "elapsedSeconds": elapsed,
+        "stageElapsedSeconds": stage_elapsed
     })
 }
 
@@ -1106,7 +1133,8 @@ impl IntoResponse for ApiError {
 
 #[cfg(test)]
 mod tests {
-    use super::{browse_dir, dispatch_api, render_index, AppState};
+    use super::{browse_dir, dispatch_api, progress_value, render_index, AppState};
+    use crate::s2_service::S2ProgressEvent;
     use excel_writer::Workbook;
     use serde_json::{json, Value};
     use std::{
@@ -1135,6 +1163,25 @@ mod tests {
         assert_eq!(value["filePickerMode"], "浏览器内置");
         assert_eq!(value["busy"], false);
         assert_eq!(value["template"], "");
+    }
+
+    #[test]
+    fn s2_progress_view_includes_stage_engine_and_elapsed_time() {
+        let event = S2ProgressEvent {
+            stage: "current".to_owned(),
+            label: "读取本期报表".to_owned(),
+            percent: 12.0,
+            current: 1,
+            total: 2,
+            message: "读取工作簿".to_owned(),
+        };
+        let value = progress_value(&event, "running", 1.5, 0.25);
+
+        assert_eq!(value["engine"], "Calamine");
+        assert_eq!(value["elapsedSeconds"], 1.5);
+        assert_eq!(value["stageElapsedSeconds"], 0.25);
+        assert!(value["label"].as_str().unwrap().contains("Calamine"));
+        assert!(value["label"].as_str().unwrap().contains("本阶段已运行"));
     }
 
     #[test]

@@ -33,7 +33,7 @@ use audit_core::{
         issues_from_validation_formula_scan, validation_formula_scan_failure_issue,
         S1ValidationFormulaScanPlan,
     },
-    s2_service::{run_s2_audit, S2ProgressEvent, S2RunRequest},
+    s2_service::{run_s2_audit, s2_engine_for_stage, S2ProgressEvent, S2RunRequest},
     s2_summary::S2AuditSummary,
     s3_explanation_export::export_selected_explanations,
     s5_config::load_configuration,
@@ -775,8 +775,22 @@ fn run() -> Result<()> {
                 output_directory: arguments.output_dir,
                 external_workbook: arguments.external,
             };
+            let run_started = Instant::now();
+            let mut active_stage = String::new();
+            let mut stage_started = run_started;
             let mut on_progress = |event: S2ProgressEvent| {
-                let output = serde_json::json!({"type": "progress", "event": event});
+                if active_stage != event.stage {
+                    active_stage.clone_from(&event.stage);
+                    stage_started = Instant::now();
+                }
+                let engine = s2_engine_for_stage(&event.stage);
+                let output = serde_json::json!({
+                    "type": "progress",
+                    "event": event,
+                    "engine": engine,
+                    "elapsed_ms": run_started.elapsed().as_millis(),
+                    "stage_elapsed_ms": stage_started.elapsed().as_millis()
+                });
                 eprintln!(
                     "{}",
                     serde_json::to_string(&output).expect("progress event is serializable")

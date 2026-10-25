@@ -1,0 +1,81 @@
+{
+  "status": "passed",
+  "feature": "S2-F01 progress logging",
+  "platform": "Windows native x64",
+  "cli": {
+    "entry": "open-data-audit s2",
+    "progress_event_count": 69,
+    "all_events_have": [
+      "engine",
+      "elapsed_ms",
+      "stage_elapsed_ms"
+    ],
+    "elapsed_ms_is_monotonic": true,
+    "stage_elapsed_ms_semantics": "Time elapsed in the active stage when each event is emitted.",
+    "stages": [
+      "config",
+      "current",
+      "previous",
+      "validate",
+      "period",
+      "rules",
+      "external_read",
+      "external",
+      "export",
+      "save",
+      "complete"
+    ],
+    "engines": [
+      "Calamine",
+      "Rust audit-core",
+      "rust_xlsxwriter",
+      "rust_xlsxwriter + Calamine read-back"
+    ]
+  },
+  "web_progress": {
+    "periodProgress_fields": [
+      "engine",
+      "elapsedSeconds",
+      "stageElapsedSeconds"
+    ],
+    "visible_label_includes_engine_and_active_stage_elapsed": true,
+    "bundled_frontend_html_modified": false
+  },
+  "real_batch_regression": {
+    "current_period": "2026-06-30",
+    "previous_period": "2026-03-31",
+    "source_workbooks": 42,
+    "hashed_inputs_including_config_and_external": 44,
+    "changed_input_hashes": 0,
+    "rust_cli_exit_code": 0,
+    "summary": {
+      "institutions": 7,
+      "forms": 3,
+      "indicators": 728,
+      "total_findings": 1095,
+      "abnormal_findings": 536
+    },
+    "python_report_workbook_cell_comparison": {
+      "python_report": "2026-10-26 real S2 service output",
+      "rust_sheets": 3,
+      "compared_cells": 17520,
+      "numeric_cells": 3173,
+      "relative_numeric_tolerance": 1e-15,
+      "difference_count": 0
+    }
+  },
+  "tests": {
+    "cargo_test_audit_core_lib_progress_filter": "2 passed",
+    "cargo_test_audit_core_s2_service_parity": "1 passed; no-external, external, and invalid-config synthetic CLI cases",
+    "rustfmt_edition_2021_check_for_changed_files": "passed"
+  },
+  "timing": {
+    "rust_cli_wall_ms": 2697,
+    "scope": "Native binary process wall time for this sample; not a performance benchmark."
+  },
+  "limitations": [
+    "The run log update does not change S2 business behavior or complete S2-F01 acceptance.",
+    "Only this Windows real batch was run; Linux/glibc 2.28, target systems, and deb packaging remain unverified.",
+    "Audit shared capability request #8 remains unresolved and is unrelated to this change."
+  ]
+}

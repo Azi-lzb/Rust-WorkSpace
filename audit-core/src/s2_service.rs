@@ -51,6 +51,17 @@ pub struct S2RunResult {
     pub report_path: PathBuf,
 }
 
+/// Return the actual implementation used for an S2 progress stage.
+pub fn s2_engine_for_stage(stage: &str) -> Option<&'static str> {
+    match stage {
+        "config" | "current" | "previous" | "external_read" => Some("Calamine"),
+        "validate" | "period" | "rules" | "external" | "complete" => Some("Rust audit-core"),
+        "export" => Some("rust_xlsxwriter"),
+        "save" => Some("rust_xlsxwriter + Calamine read-back"),
+        _ => None,
+    }
+}
+
 /// Return the source service's read-only configuration issue messages.
 pub fn check_config(config_path: impl AsRef<Path>) -> Vec<String> {
     check_s2_config(config_path)
@@ -416,4 +427,23 @@ fn file_name(path: &Path) -> &str {
     path.file_name()
         .and_then(|name| name.to_str())
         .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::s2_engine_for_stage;
+
+    #[test]
+    fn progress_stages_report_the_engine_used_by_each_stage() {
+        assert_eq!(s2_engine_for_stage("config"), Some("Calamine"));
+        assert_eq!(s2_engine_for_stage("current"), Some("Calamine"));
+        assert_eq!(s2_engine_for_stage("period"), Some("Rust audit-core"));
+        assert_eq!(s2_engine_for_stage("external_read"), Some("Calamine"));
+        assert_eq!(s2_engine_for_stage("export"), Some("rust_xlsxwriter"));
+        assert_eq!(
+            s2_engine_for_stage("save"),
+            Some("rust_xlsxwriter + Calamine read-back")
+        );
+        assert_eq!(s2_engine_for_stage("unknown"), None);
+    }
 }
