@@ -19,7 +19,7 @@ import sys
 import tempfile
 import time
 import xml.etree.ElementTree as ET
-from datetime import date, datetime, time as datetime_time
+from datetime import date, datetime, time as datetime_time, timedelta
 from importlib.metadata import version
 from pathlib import Path
 from zipfile import ZIP_DEFLATED, ZipFile
@@ -93,6 +93,7 @@ def make_input(
     date_1904: bool = False,
     time_only: bool = False,
     elapsed_duration: bool = False,
+    elapsed_formula: bool = False,
     elapsed_number_format: str | None = None,
 ) -> None:
     workbook = Workbook()
@@ -115,6 +116,9 @@ def make_input(
     sheet["A5"] = "公司甲"
     if elapsed_duration:
         sheet["B5"] = 1.123456789
+        sheet["B5"].number_format = elapsed_number_format or "[h]:mm:ss.000"
+    elif elapsed_formula:
+        sheet["B5"] = "=0.75+0.373456789"
         sheet["B5"].number_format = elapsed_number_format or "[h]:mm:ss.000"
     elif cached_formula:
         sheet["B5"] = "=8+2.25"
@@ -150,6 +154,14 @@ def make_input(
         mark_macro_enabled_workbook_type(path)
     if cached_formula:
         patch_cached_formula(path, "B5", "8+2.25", "10.25")
+    if elapsed_formula:
+        patch_cached_formula(
+            path,
+            "B5",
+            "0.75+0.373456789",
+            "1.123456789",
+            expected_value=elapsed_formula_source_value(),
+        )
     if time_only:
         check = load_workbook(path, data_only=True, read_only=False)
         try:
@@ -192,7 +204,24 @@ def mark_macro_enabled_workbook_type(path: Path) -> None:
     temporary.replace(path)
 
 
-def patch_cached_formula(path: Path, address: str, formula_text: str, cached_value: str) -> None:
+def elapsed_formula_source_value() -> timedelta:
+    # The synthetic [h]:mm:ss.000 cell is read back by openpyxl at millisecond precision.
+    return timedelta(milliseconds=round(1.123456789 * 86_400_000))
+
+
+def elapsed_formula_projected_serial() -> float:
+    # PyCode emits the rounded source timedelta as an Excel duration serial.
+    return elapsed_formula_source_value().total_seconds() / 86_400
+
+
+def patch_cached_formula(
+    path: Path,
+    address: str,
+    formula_text: str,
+    cached_value: str,
+    *,
+    expected_value: float | timedelta | None = None,
+) -> None:
     main_ns = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
     ET.register_namespace("", main_ns)
     with ZipFile(path, "r") as source_archive:
@@ -232,20 +261,30 @@ def patch_cached_formula(path: Path, address: str, formula_text: str, cached_val
     try:
         if formula_book["Report"][address].value != f"={formula_text}":
             raise AssertionError("formula text did not round trip in source fixture")
-        if value_book["Report"][address].value != float(cached_value):
-            raise AssertionError("formula cache did not round trip in source fixture")
+        expected = float(cached_value) if expected_value is None else expected_value
+        actual = value_book["Report"][address].value
+        if actual != expected:
+            raise AssertionError(
+                f"formula cache did not round trip in source fixture: {actual!r} != {expected!r}"
+            )
     finally:
         formula_book.close()
         value_book.close()
 
 
-def assert_cached_value_projected(paths: list[Path], expected: float) -> None:
+def assert_cached_value_projected(paths: list[Path], expected: float | timedelta) -> None:
     for path in paths:
         workbook = load_workbook(path, data_only=True, read_only=False)
         try:
+            def matches(value: object) -> bool:
+                if isinstance(expected, timedelta):
+                    return isinstance(value, timedelta) and value == expected
+                return isinstance(value, (int, float)) and math.isclose(
+                    float(value), expected, rel_tol=1e-15, abs_tol=1e-15
+                )
+
             if not any(
-                isinstance(cell.value, (int, float))
-                and math.isclose(float(cell.value), expected, rel_tol=1e-15, abs_tol=1e-15)
+                matches(cell.value)
                 for worksheet in workbook.worksheets
                 for row in worksheet.iter_rows()
                 for cell in row
@@ -965,10 +1004,13 @@ def run_case(
     date_1904: bool = False,
     time_only: bool = False,
     elapsed_duration: bool = False,
+    elapsed_formula: bool = False,
     elapsed_number_format: str | None = None,
 ) -> dict[str, object]:
     if elapsed_duration:
         case_name = f"elapsed_duration_{'row_suffix' if row_suffix else 'no_suffix'}"
+    elif elapsed_formula:
+        case_name = f"elapsed_formula_{'row_suffix' if row_suffix else 'no_suffix'}"
     elif time_only:
         case_name = (
             f"date_{'1904' if date_1904 else '1900'}_time_only_"
@@ -989,6 +1031,7 @@ def run_case(
         date_1904=date_1904,
         time_only=time_only,
         elapsed_duration=elapsed_duration,
+        elapsed_formula=elapsed_formula,
         elapsed_number_format=elapsed_number_format,
     )
     python_output = case / "python_output"
@@ -1099,10 +1142,14 @@ def run_case(
         }
     assert_parity(python_target, candidate)
     assert_parity(python_target, committed_target)
-    if cached_formula:
-        assert_cached_value_projected(
-            [baseline, actual, python_target, candidate, committed_target], 10.25
+    if cached_formula or elapsed_formula:
+        cached_result: float = (
+            elapsed_formula_projected_serial() if elapsed_formula else 10.25
         )
+        assert_cached_value_projected(
+            [baseline, actual, python_target, candidate, committed_target], cached_result
+        )
+    if cached_formula:
         for output_path in [baseline, actual, python_target, candidate, committed_target]:
             assert_blank_data_date_format(output_path)
     if source.read_bytes() != source_before or config.read_bytes() != config_before:
@@ -1113,8 +1160,9 @@ def run_case(
     result = {
         "row_suffix": row_suffix,
         "elapsed_duration": elapsed_duration,
+        "elapsed_formula": elapsed_formula,
         "elapsed_number_format": elapsed_number_format,
-        "cached_formula_value_projected": cached_formula,
+        "cached_formula_value_projected": cached_formula or elapsed_formula,
         "time_only_value": time_only,
         "source_date_system": "1904" if date_1904 else "1900",
         "calendar_date_projection": date_projection,
@@ -1148,6 +1196,7 @@ def run_existing_target_case(
     row_suffix: bool,
     *,
     elapsed_duration: bool = False,
+    elapsed_formula: bool = False,
     elapsed_number_format: str | None = None,
     source_filename: str = "sample_2024-06-30.xlsx",
 ) -> dict[str, object]:
@@ -1157,6 +1206,7 @@ def run_existing_target_case(
     make_input(
         source,
         elapsed_duration=elapsed_duration,
+        elapsed_formula=elapsed_formula,
         elapsed_number_format=elapsed_number_format,
     )
     seed_output = case / "seed_output"
@@ -1195,6 +1245,11 @@ def run_existing_target_case(
     make_test_capability(plan_path, capability_path)
     candidate, execution = execute_existing_target_plan(plan_path, capability_path)
     assert_parity(expected, candidate, compare_effective_styles=False)
+    if elapsed_formula:
+        assert_cached_value_projected(
+            [python_summary, actual_summary, expected, candidate, rust_target],
+            elapsed_formula_projected_serial(),
+        )
     style_differences = effective_style_differences(expected, candidate)
     assert_sheet_sentinels(expected, candidate, ("Before", "After"))
     assert_replacement_drops(seed_target, expected)
@@ -1211,6 +1266,8 @@ def run_existing_target_case(
     result = {
         "row_suffix": row_suffix,
         "elapsed_duration": elapsed_duration,
+        "elapsed_formula": elapsed_formula,
+        "cached_formula_value_projected": elapsed_formula,
         "elapsed_number_format": elapsed_number_format,
         "summary_status": "passed",
         "existing_target_replacement_status": "passed",
@@ -1502,6 +1559,88 @@ def main() -> int:
                 / "reports"
                 / f"wide_summary_elapsed_duration_parity_{date.today():%Y%m%d}.json"
             )
+            report_path.write_text(
+                json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+            )
+            print(
+                json.dumps(
+                    {
+                        "report": str(report_path),
+                        "summary_cases": len(summary_results),
+                        "existing_target_cases": len(existing_target_results),
+                        "status": report["status"],
+                    },
+                    ensure_ascii=False,
+                )
+            )
+            cleanup_probe_directory(root)
+        return 0
+
+    if sys.argv[1:] == ["--elapsed-duration-formula"]:
+        with tempfile.TemporaryDirectory(
+            prefix="pytools-wide-elapsed-formula-probe-", ignore_cleanup_errors=True
+        ) as temp:
+            root = Path(temp)
+            summary_results = [
+                run_case(root, row_suffix, elapsed_formula=True)
+                for row_suffix in (False, True)
+            ]
+            existing_target_results = [
+                run_existing_target_case(root, row_suffix, elapsed_formula=True)
+                for row_suffix in (False, True)
+            ]
+            report = {
+                "schema_version": 1,
+                "suite": "pytools.timeline.wide_summary_cached_elapsed_formula_parity",
+                "date": date.today().isoformat(),
+                "status": "passed_synthetic_python_rust_parity",
+                "baseline": "PyCode/core/wide_397_398.py::run_wide_summary",
+                "rust_entry": "pytools menu -> 1 timeline -> 3/4 wide summary -> confirm",
+                "input": {
+                    "format": "xlsx",
+                    "kind": "synthetic",
+                    "formula_cell": (
+                        "elapsed-formatted formula with an explicit cached numeric result"
+                    ),
+                    "number_format": "[h]:mm:ss.000",
+                    "formula_recalculation": "not performed; existing cached result is projected",
+                    "cases": [
+                        "row-suffix and no-suffix summary variants",
+                        "new target append and existing target replacement",
+                    ],
+                },
+                "comparison": {
+                    "summary_values_types_and_effective_styles": "exact",
+                    "new_target_values_types_and_effective_styles": "exact",
+                    "existing_target_values_types": "exact",
+                    "existing_target_style_differences": "reported_per_case",
+                    "source_and_configuration_unchanged": True,
+                },
+                "summary_results": summary_results,
+                "existing_target_results": existing_target_results,
+                "safety": {
+                    "source_unchanged": True,
+                    "configuration_unchanged": True,
+                    "outputs_temporary_only": True,
+                    "report_contains_input_filenames_or_cell_values": False,
+                },
+                "limitations": [
+                    "Synthetic XLSX only; a sanitized real wide-summary workbook is still required for business acceptance.",
+                    "The fixture carries a pre-populated formula cache; this does not test Excel formula recalculation.",
+                    "Other formula shapes, input formats, Linux targets and offline deb acceptance were not tested.",
+                ],
+            }
+            report_path = (
+                WORKSPACE
+                / "pytools-core"
+                / "probe"
+                / "reports"
+                / f"wide_summary_cached_elapsed_formula_parity_{date.today():%Y%m%d}.json"
+            )
+            if report_path.exists():
+                raise FileExistsError(
+                    f"refusing to overwrite existing parity report: {report_path}"
+                )
             report_path.write_text(
                 json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
             )
