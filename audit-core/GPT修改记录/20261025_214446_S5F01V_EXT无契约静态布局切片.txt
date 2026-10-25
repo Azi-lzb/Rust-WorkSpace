@@ -3,7 +3,7 @@
 - 时间：2026-10-25（Windows 原生）
 - 执行者：Codex
 - 修改前 HEAD：`9d869226d71377be1fc0d0f64ab928a07b721302`
-- 修改后 HEAD：待本轮功能提交
+- 修改后业务功能提交：`a276f30f093a1c2f5ca8d4144f193e15c8a8539d`（已推送 `origin/audit-dev`）
 WIP：开始时保留 `HANDOFF_ZCODE_TO_CODEX.md` 未跟踪文件，并在既有 `s5_external_layout`/模块导出 WIP 上继续；未覆盖或提交交接文件。
 
 【目的】将 Python `external_layout` 的普通静态 V_EXT 布局接入实际 `s5-audit-run` 取数链。范围为单个显式外部来源、无 `数据源契约` 的普通布局；S5-F01 整体仍未验证。
