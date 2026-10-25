@@ -1,0 +1,36 @@
+# S5 多来源歧义回退对拍
+
+- 时间：2026-10-26 06:52（Asia/Shanghai）
+- 执行者：Codex Audit migration agent
+- 分支：audit-dev
+- 修改前 commit：`a8de8d27922aaed6f631ceb1b27cd98d24ff3feb`
+- 修改后 commit：随本次验证记录提交；SHA 可由 Git 历史追溯。
+- WIP：保留未跟踪 handoff、pytest 临时目录和原有报告；没有覆盖或清理其他未跟踪报告。未修改 Python 源项目、真实业务样本、共享 crates、`Cargo.lock`、根 Cargo 配置、`pytools-core/**`、`DEVELOPMENT_GOAL.md` 或 main。
+- 【组件版本】：无产品代码/版本变更；不适用旧版 Sx-Fxx 组件编号。
+
+## 目的与变更
+
+补齐上一提交 `a8de8d2` 的 S5 多当前来源绑定错误分支验证。集成测试现在覆盖重复业务绑定的显式歧义拒绝，并与 Python `SourceRepository._binding` 比较完整 CLI 输出；对拍器报告 Python/Rust 汇总状态计数，并拒绝覆盖已有报告。
+
+- `audit-core/tests/s5_previous_source_cli.rs`：参数化多来源 CLI helper；增加双重同业务来源歧义场景、错误描述断言和可选 Python/Rust 对拍报告输出。
+- `audit-core/tests/compare/compare_s5_outputs.py`：将两侧状态计数写入聚合报告。
+- `audit-core/MIGRATION_INVENTORY.md`：记录歧义回退证据及剩余边界。
+- `audit-core/probe/reports/s5_multiple_current_sources_ambiguous_synthetic_parity_windows_native_20261026.json`：保存不含原始业务值和本机路径的合成对拍摘要。
+
+Python 与 Rust 均将歧义来源归类为 `CONFIG_ERROR`，不是 `RETRIEVAL_FAILED`；本次检查确认两侧一致，没有发现产品代码缺陷。
+
+## 验证
+
+- Windows 原生 Python 3.12.10 / Rust CLI 合成对拍：正常路径覆盖显式来源 ID 与唯一业务回退；歧义路径配置两个相同业务的候选来源。歧义结果状态均为 `CONFIG_ERROR=1`、`TRIGGERED=1`，完整输出差异 0，输入未变。
+- `cargo test --offline --locked -p audit-core --test s5_previous_source_cli`：17 passed、1 ignored（手动 fixture 导出用例）。
+- `rustfmt --edition 2021 --check audit-core/tests/s5_previous_source_cli.rs`、`python -m py_compile audit-core/tests/compare/compare_s5_outputs.py`、`git diff --check`：通过。
+
+## 未执行与已知限制
+
+- 无真实多来源样本；无业务匹配来源、外部/上期多来源、Linux/glibc 2.28、deb、麒麟 V10/UOS V20 未验收。
+- S5-F01 整体仍未验收；生产 capability 仍为 unverified；Audit 共享能力请求 #8 仍未解决。
+
+## 删除与回滚
+
+- 未删除文件或修改用户样本。
+- 回滚本验证提交即可撤销新增测试、报告字段、迁移清单与证据记录；上一提交的 S5 多来源实现不受影响。

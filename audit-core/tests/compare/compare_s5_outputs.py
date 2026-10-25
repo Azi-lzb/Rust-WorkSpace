@@ -550,6 +550,10 @@ def main() -> int:
             "diff_count": len(diffs),
             "diff_paths_sample": sorted(set(diffs))[:20],
             "cell_value_differences": value_differences,
+            "status_counts": {
+                "python": py_ledger.get("status_counts"),
+                "rust": rs_ledger.get("status_counts"),
+            },
         },
         "verification": {
             "rust_runner": (

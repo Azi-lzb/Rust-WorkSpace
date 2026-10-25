@@ -216,4 +216,4 @@ Windows 原生真实单位贷款审核副本、config-real 配置及模板目录
 
 `s5-audit-run` 支持重复 `--current-source SOURCE_ID=BUSINESS=FILE` 与主来源 `--source-business`；`V_CUR` 按显式逻辑来源 ID 选择，未指定来源时按 Python `SourceRepository._binding` 的业务绑定唯一选择或返回歧义/缺失错误。所有本期来源共用本次期间和机构身份门禁，附加来源进入审核副本和哈希总账。Python/Rust 合成 CLI 对拍同时覆盖显式 ID 和业务回退两条规则，结果行 2/2、输出工作簿/副本/清单差异 0，输入未变；超链接比较将 URI fragment 与 OOXML `location` 属性归一为同一目标。证据见 `probe/reports/s5_multiple_current_sources_synthetic_parity_windows_native_20261026_v3.json`。
 
-该切片仅有 Windows 合成样本证据；真实多来源业务、重复/歧义来源、跨平台及完整 S5-F01 验收未完成，生产 capability 仍为 unverified。Audit 共享能力请求 #8 保持未解决。
+另用两条同业务来源覆盖歧义回退：Python 与 Rust 均生成 `CONFIG_ERROR=1`、`TRIGGERED=1`，结果工作簿和审核副本/清单差异 0，输入未变；见 `probe/reports/s5_multiple_current_sources_ambiguous_synthetic_parity_windows_native_20261026.json`。该切片仍只有 Windows 合成样本证据；真实多来源业务、业务无匹配来源、跨平台及完整 S5-F01 验收未完成，生产 capability 仍为 unverified。Audit 共享能力请求 #8 保持未解决。

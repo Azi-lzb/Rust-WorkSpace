@@ -800,15 +800,13 @@ fn run_cli(
 fn run_multi_current_cli(
     config: &Path,
     primary: &Path,
-    additional: &Path,
+    additional_sources: &[(&str, &str, &Path)],
+    template_dir: &Path,
     output_dir: &Path,
+    run_id: &str,
 ) -> Output {
-    let empty_template_dir = primary
-        .parent()
-        .expect("primary source parent directory")
-        .join("empty-multi-current-layout-templates");
-    fs::create_dir_all(&empty_template_dir).expect("create empty template directory");
-    Command::new(env!("CARGO_BIN_EXE_open-data-audit"))
+    let mut command = Command::new(env!("CARGO_BIN_EXE_open-data-audit"));
+    command
         .arg("s5-audit-run")
         .arg("--config")
         .arg(config)
@@ -818,10 +816,14 @@ fn run_multi_current_cli(
         .arg("CUR_A")
         .arg("--source-business")
         .arg("其他业务")
-        .arg("--current-source")
-        .arg(format!("CUR_B=单位贷款={}", additional.display()))
         .arg("--template-dir")
-        .arg(empty_template_dir)
+        .arg(template_dir);
+    for (source_id, business, path) in additional_sources {
+        command
+            .arg("--current-source")
+            .arg(format!("{source_id}={business}={}", path.display()));
+    }
+    command
         .arg("--period")
         .arg("2026-08-31")
         .arg("--org-code")
@@ -835,10 +837,76 @@ fn run_multi_current_cli(
         .arg("--output-dir")
         .arg(output_dir)
         .arg("--run-id")
-        .arg("multi-current")
-        .arg("--developer-view")
+        .arg(run_id)
+        .arg("--developer-view");
+    command.output().expect("run S5 multi-current CLI")
+}
+
+fn run_multi_source_python_rust_parity(
+    python_source_root: &Path,
+    config: &Path,
+    primary: &Path,
+    additional_sources: &[(&str, &str, &Path)],
+    template_dir: &Path,
+    report_path: &Path,
+) -> Value {
+    assert!(
+        !report_path.exists(),
+        "refusing to overwrite parity report: {}",
+        report_path.display()
+    );
+    let comparator = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("compare")
+        .join("compare_s5_outputs.py");
+    let rust_binary = env!("CARGO_BIN_EXE_open-data-audit");
+    let python = std::env::var_os("PYTHON").unwrap_or_else(|| "python".into());
+    let mut command = Command::new(python);
+    command
+        .arg(comparator)
+        .arg("--source-root")
+        .arg(python_source_root)
+        .arg("--config-workbook")
+        .arg(config)
+        .arg("--audit-copy")
+        .arg(primary)
+        .arg("--source-id")
+        .arg("CUR_A")
+        .arg("--source-business")
+        .arg("其他业务")
+        .arg("--period")
+        .arg("2026-08-31")
+        .arg("--institution-code")
+        .arg("I001")
+        .arg("--institution-name")
+        .arg("合成机构");
+    for (source_id, business, path) in additional_sources {
+        command
+            .arg("--current-source")
+            .arg(format!("{source_id}={business}={}", path.display()));
+    }
+    command
+        .arg("--business")
+        .arg("其他业务")
+        .arg("--business")
+        .arg("单位贷款")
+        .arg("--template-dir")
+        .arg(template_dir)
+        .arg("--rust-bin")
+        .arg(rust_binary)
+        .arg("--report")
+        .arg(report_path);
+    let output = command
         .output()
-        .expect("run S5 multi-current CLI")
+        .expect("run Python/Rust multi-source parity comparator");
+    assert!(
+        output.status.success(),
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    serde_json::from_slice(&fs::read(report_path).expect("read multi-source parity report"))
+        .expect("valid multi-source parity report")
 }
 
 fn run_config_check_cli(config: &Path, external: Option<&Path>, developer_view: bool) -> Output {
@@ -1173,7 +1241,15 @@ fn s5_audit_cli_selects_multiple_current_sources_by_rule_binding() {
     write_source(&primary, 111.0);
     write_source(&additional, 222.0);
 
-    let output = run_multi_current_cli(&config, &primary, &additional, &output_dir);
+    let additional_sources = [("CUR_B", "单位贷款", additional.as_path())];
+    let output = run_multi_current_cli(
+        &config,
+        &primary,
+        &additional_sources,
+        &template_dir,
+        &output_dir,
+        "multi-current",
+    );
     assert!(
         output.status.success(),
         "{}",
@@ -1242,56 +1318,88 @@ fn s5_audit_cli_selects_multiple_current_sources_by_rule_binding() {
         let report_path = std::env::var_os("AUDIT_S5_MULTI_SOURCE_REPORT")
             .map(PathBuf::from)
             .unwrap_or_else(|| directory.join("multi-source-parity.json"));
-        let comparator = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("tests")
-            .join("compare")
-            .join("compare_s5_outputs.py");
-        let rust_binary = env!("CARGO_BIN_EXE_open-data-audit");
-        let python = std::env::var_os("PYTHON").unwrap_or_else(|| "python".into());
-        let parity_output = Command::new(python)
-            .arg(comparator)
-            .arg("--source-root")
-            .arg(python_source_root)
-            .arg("--config-workbook")
-            .arg(&config)
-            .arg("--audit-copy")
-            .arg(&primary)
-            .arg("--current-source")
-            .arg(format!("CUR_B=单位贷款={}", additional.display()))
-            .arg("--source-id")
-            .arg("CUR_A")
-            .arg("--source-business")
-            .arg("其他业务")
-            .arg("--period")
-            .arg("2026-08-31")
-            .arg("--institution-code")
-            .arg("I001")
-            .arg("--institution-name")
-            .arg("合成机构")
-            .arg("--business")
-            .arg("其他业务")
-            .arg("--business")
-            .arg("单位贷款")
-            .arg("--template-dir")
-            .arg(&template_dir)
-            .arg("--rust-bin")
-            .arg(rust_binary)
-            .arg("--report")
-            .arg(&report_path)
-            .output()
-            .expect("run Python/Rust multi-source parity comparator");
-        assert!(
-            parity_output.status.success(),
-            "{}\n{}",
-            String::from_utf8_lossy(&parity_output.stdout),
-            String::from_utf8_lossy(&parity_output.stderr)
+        let python_source_root = PathBuf::from(python_source_root);
+        let report = run_multi_source_python_rust_parity(
+            &python_source_root,
+            &config,
+            &primary,
+            &additional_sources,
+            &template_dir,
+            &report_path,
         );
-        let report: Value =
-            serde_json::from_slice(&fs::read(report_path).expect("read parity report"))
-                .expect("valid parity report");
         assert_eq!(report["status"], "completed");
         assert_eq!(report["comparison"]["diff_count"], 0);
         assert_eq!(report["verification"]["inputs_unchanged"], true);
+        assert_eq!(
+            report["comparison"]["status_counts"]["rust"]["TRIGGERED"],
+            2
+        );
+    }
+
+    let ambiguous = directory.join("ambiguous.xlsx");
+    write_source(&ambiguous, 333.0);
+    let ambiguous_sources = [
+        ("CUR_B", "单位贷款", additional.as_path()),
+        ("CUR_C", "单位贷款", ambiguous.as_path()),
+    ];
+    let ambiguous_output = run_multi_current_cli(
+        &config,
+        &primary,
+        &ambiguous_sources,
+        &template_dir,
+        &directory.join("out-ambiguous"),
+        "ambiguous-current",
+    );
+    assert!(
+        ambiguous_output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&ambiguous_output.stderr)
+    );
+    let ambiguous_summary: Value =
+        serde_json::from_slice(&ambiguous_output.stdout).expect("valid ambiguous-source JSON");
+    assert_eq!(ambiguous_summary["status"], "completed");
+    assert_eq!(ambiguous_summary["status_counts"]["TRIGGERED"], 1);
+    assert_eq!(ambiguous_summary["status_counts"]["CONFIG_ERROR"], 1);
+    let ambiguous_result = read_workbook(
+        ambiguous_summary["output_files"]["result_workbook"]
+            .as_str()
+            .expect("ambiguous result workbook path"),
+    )
+    .expect("read ambiguous-source result workbook");
+    let ambiguous_sheet = ambiguous_result
+        .sheets
+        .iter()
+        .find(|sheet| sheet.name == "审核结果")
+        .expect("ambiguous result sheet");
+    assert_eq!(
+        CellValue::from_probe_json(&ambiguous_sheet.values["I3"])
+            .expect("ambiguous-source error description"),
+        CellValue::Text("业务 单位贷款 对应多个current数据源，请显式选择逻辑来源".to_owned())
+    );
+    if let Some(python_source_root) = std::env::var_os("AUDIT_PYTHON_SOURCE_ROOT") {
+        let python_source_root = PathBuf::from(python_source_root);
+        let ambiguous_report = std::env::var_os("AUDIT_S5_MULTI_SOURCE_AMBIGUOUS_REPORT")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| directory.join("ambiguous-multi-source-parity.json"));
+        let report = run_multi_source_python_rust_parity(
+            &python_source_root,
+            &config,
+            &primary,
+            &ambiguous_sources,
+            &template_dir,
+            &ambiguous_report,
+        );
+        assert_eq!(report["status"], "completed");
+        assert_eq!(report["comparison"]["diff_count"], 0);
+        assert_eq!(report["verification"]["inputs_unchanged"], true);
+        assert_eq!(
+            report["comparison"]["status_counts"]["python"]["CONFIG_ERROR"],
+            1
+        );
+        assert_eq!(
+            report["comparison"]["status_counts"]["rust"]["CONFIG_ERROR"],
+            1
+        );
     }
 
     fs::remove_dir_all(directory).expect("remove multi-source S5 CLI files");
