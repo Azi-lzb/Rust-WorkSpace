@@ -62,6 +62,9 @@ fn interactive_print_menu_routes_all_four_actions_plan_only() -> Result<()> {
             "print comment menu {choice} failed: {}",
             String::from_utf8_lossy(&output.stderr)
         );
+        let user_output = String::from_utf8_lossy(&output.stdout);
+        assert!(user_output.contains("开始处理：按批注"));
+        assert!(user_output.contains("处理完成：命中 1 张工作表、2 个打印区域"));
         let response = output_json(&output)?;
         assert_eq!(response["matching_sheets"], 1);
         assert_eq!(response["marked_ranges"], 2);
@@ -126,6 +129,104 @@ fn interactive_print_menu_routes_all_four_actions_plan_only() -> Result<()> {
 }
 
 #[test]
+fn interactive_print_menu_logs_all_actions_and_off_suppresses_progress() -> Result<()> {
+    let root = TestDirectory::new()?;
+    let source = root.path().join("source.xlsx");
+    let target = root.path().join("printed.xlsx");
+    let config = create_print_config(root.path(), &source, &target)?;
+    create_print_source(&source)?;
+
+    let cases = [
+        (
+            "PT-3-1",
+            "comment-keep-format",
+            format!("3\n1\n{}\n0\n", source.display()),
+        ),
+        (
+            "PT-3-2",
+            "comment-fast-copy",
+            format!("3\n2\n{}\n0\n", source.display()),
+        ),
+        ("PT-3-3", "config_plan", "3\n3\n0\n".to_owned()),
+        ("PT-3-4", "config_precheck", "3\n4\n0\n".to_owned()),
+    ];
+    let log_dir = root.path().join("logs");
+    for (index, (feature_id, action, input)) in cases.iter().enumerate() {
+        let result = run_menu_with_view(&config, input, "developer")?;
+        assert!(
+            result.status.success(),
+            "{feature_id} developer menu failed: {}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        let stdout = String::from_utf8_lossy(&result.stdout);
+        assert!(stdout.contains(&format!("PT-3 开始：{feature_id} {action}")));
+        assert!(stdout.contains(&format!("PT-3 完成：{feature_id}")));
+        let _ = output_json(&result)?;
+
+        let histories = fs::read_dir(&log_dir)?
+            .filter_map(|entry| entry.ok())
+            .map(|entry| entry.path())
+            .filter(|path| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.starts_with(&format!("pytools-print-{action}-")))
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(histories.len(), 1, "one history per {feature_id}");
+        let all_history_count = fs::read_dir(&log_dir)?.count();
+        assert_eq!(all_history_count, index + 1);
+        let history_text = fs::read_to_string(&histories[0])?;
+        assert!(!history_text.contains(&source.to_string_lossy().to_string()));
+        assert!(!history_text.contains(&config.to_string_lossy().to_string()));
+        let history: Value = serde_json::from_str(&history_text)?;
+        assert_eq!(history["feature_id"], *feature_id);
+        assert_eq!(history["action"], *action);
+        assert_eq!(history["status"], "succeeded");
+        assert!(history["elapsed_ms"].as_u64().is_some());
+        assert!(history["actual_engines"]
+            .as_array()
+            .is_some_and(|engines| engines.iter().any(|engine| engine == "calamine")));
+        assert_eq!(history["excel_modifier_invoked"], false);
+        assert_eq!(history["excel_writer_invoked"], false);
+        match *action {
+            "comment-keep-format" | "comment-fast-copy" => {
+                assert_eq!(history["metrics"]["matching_sheets"], 1);
+                assert_eq!(history["metrics"]["marked_ranges"], 2);
+                assert_eq!(history["plan_only"], true);
+            }
+            "config_plan" => {
+                assert_eq!(history["metrics"]["planned_groups"], 1);
+                assert_eq!(history["metrics"]["plan_files"], 1);
+                assert_eq!(history["plan_only"], true);
+            }
+            "config_precheck" => {
+                assert_eq!(history["metrics"]["passed_tasks"], 1);
+                assert_eq!(history["metrics"]["failed_tasks"], 0);
+                assert_eq!(history["plan_only"], false);
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    let user_result = run_menu_with_view(&config, "3\n4\n0\n", "user")?;
+    assert!(user_result.status.success());
+    let user_output = String::from_utf8_lossy(&user_result.stdout);
+    assert!(user_output.contains("开始处理：按配置预校验打印任务"));
+    assert!(user_output.contains("处理完成：通过 1 项、警告 0 项、失败 0 项"));
+    let history_count_before_off = fs::read_dir(&log_dir)?.count();
+
+    let off_result = run_menu_with_view(&config, "3\n4\n0\n", "off")?;
+    assert!(off_result.status.success());
+    let off_output = String::from_utf8_lossy(&off_result.stdout);
+    assert!(!off_output.contains("PT-3 开始："));
+    assert!(!off_output.contains("PT-3 完成："));
+    assert!(!off_output.contains("开始处理："));
+    assert!(!off_output.contains("处理完成："));
+    assert_eq!(fs::read_dir(&log_dir)?.count(), history_count_before_off);
+    Ok(())
+}
+
+#[test]
 fn interactive_print_comment_menu_executes_after_capability_and_confirmation() -> Result<()> {
     let root = TestDirectory::new()?;
     for (choice, drop_comments, hide_zero) in [(1, false, false), (2, true, true)] {
@@ -142,7 +243,9 @@ fn interactive_print_comment_menu_executes_after_capability_and_confirmation() -
         let source_before = fs::read(&source)?;
 
         let menu_input = format!("3\n{choice}\n{}\ny\n0\n", source.display());
-        let result = run_menu_with_capability(&config, &capability_path, &menu_input)?;
+        let log_view = if choice == 1 { "developer" } else { "user" };
+        let result =
+            run_menu_with_capability_and_view(&config, &capability_path, &menu_input, log_view)?;
         assert!(
             result.status.success(),
             "confirmed print mode {choice} failed: {}",
@@ -161,6 +264,23 @@ fn interactive_print_comment_menu_executes_after_capability_and_confirmation() -
         );
         assert!(stdout.contains(&output.to_string_lossy().to_string()));
         assert!(output.is_file());
+        if choice == 1 {
+            let history_path = fs::read_dir(root.path().join("logs"))?
+                .filter_map(|entry| entry.ok())
+                .map(|entry| entry.path())
+                .find(|path| {
+                    path.file_name()
+                        .and_then(|name| name.to_str())
+                        .is_some_and(|name| name.starts_with("pytools-print-comment-keep-format-"))
+                })
+                .context("executed print menu history missing")?;
+            let history: Value = serde_json::from_slice(&fs::read(history_path)?)?;
+            assert_eq!(history["status"], "succeeded");
+            assert_eq!(history["excel_modifier_invoked"], true);
+            assert!(history["actual_engines"]
+                .as_array()
+                .is_some_and(|engines| engines.iter().any(|engine| engine == "umya_spreadsheet")));
+        }
         let workbook = read_workbook(&output)?;
         assert_eq!(
             workbook
@@ -361,12 +481,16 @@ fn create_print_config(root: &Path, source: &Path, target: &Path) -> Result<Path
 }
 
 fn run_menu(config: &Path, input: &str) -> Result<Output> {
+    run_menu_with_view(config, input, "user")
+}
+
+fn run_menu_with_view(config: &Path, input: &str, log_view: &str) -> Result<Output> {
     let mut child = Command::new(env!("CARGO_BIN_EXE_pytools"))
         .arg("menu")
         .arg("--config")
         .arg(config)
         .arg("--log-view")
-        .arg("user")
+        .arg(log_view)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -384,6 +508,15 @@ fn run_menu(config: &Path, input: &str) -> Result<Output> {
 }
 
 fn run_menu_with_capability(config: &Path, capability: &Path, input: &str) -> Result<Output> {
+    run_menu_with_capability_and_view(config, capability, input, "user")
+}
+
+fn run_menu_with_capability_and_view(
+    config: &Path,
+    capability: &Path,
+    input: &str,
+    log_view: &str,
+) -> Result<Output> {
     let mut child = Command::new(env!("CARGO_BIN_EXE_pytools"))
         .arg("menu")
         .arg("--config")
@@ -393,7 +526,7 @@ fn run_menu_with_capability(config: &Path, capability: &Path, input: &str) -> Re
         .arg("--platform")
         .arg(COMMENT_PRINT_PLATFORM)
         .arg("--log-view")
-        .arg("user")
+        .arg(log_view)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

@@ -9,14 +9,18 @@ use std::{
     fs,
     path::{Path, PathBuf},
     process::{Command, Output},
+    sync::atomic::{AtomicU64, Ordering},
 };
+
+static NEXT_TEST_DIR_ID: AtomicU64 = AtomicU64::new(0);
 
 struct TestDir(PathBuf);
 
 impl TestDir {
     fn new() -> Self {
+        let serial = NEXT_TEST_DIR_ID.fetch_add(1, Ordering::Relaxed);
         let path = std::env::temp_dir().join(format!(
-            "pytools-print-config-{}-{}",
+            "pytools-print-config-{}-{}-{serial}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)

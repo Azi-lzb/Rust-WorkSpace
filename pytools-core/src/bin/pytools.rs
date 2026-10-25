@@ -315,6 +315,7 @@ where
                 output,
                 config_path,
                 global,
+                log_view,
                 allow_native_dialog,
                 capabilities,
                 platform,
@@ -1902,6 +1903,7 @@ fn run_interactive_print_menu<R, W>(
     output: &mut W,
     config_path: &Path,
     global: &GlobalConfig,
+    log_view: &str,
     allow_native_dialog: bool,
     capabilities: Option<&Path>,
     platform: Option<&str>,
@@ -1992,13 +1994,37 @@ where
                         "--platform".to_owned(),
                         platform.to_owned(),
                     ]);
-                    run_print_comment_plan(arguments)?;
+                    run_print_menu_action(
+                        output,
+                        global,
+                        log_view,
+                        if choice == "1" { "PT-3-1" } else { "PT-3-2" },
+                        action,
+                        if choice == "1" {
+                            "按批注保留格式准备打印"
+                        } else {
+                            "按批注快速复制准备打印"
+                        },
+                        || build_print_comment_plan_report(arguments),
+                    )?;
                     return Ok(());
                 }
                 if capabilities.is_some() {
                     writeln!(output, "[未执行] 保留源工作簿，仅生成打印计划。")?;
                 }
-                run_print_comment_plan(arguments)?;
+                run_print_menu_action(
+                    output,
+                    global,
+                    log_view,
+                    if choice == "1" { "PT-3-1" } else { "PT-3-2" },
+                    action,
+                    if choice == "1" {
+                        "按批注保留格式准备打印"
+                    } else {
+                        "按批注快速复制准备打印"
+                    },
+                    || build_print_comment_plan_report(arguments),
+                )?;
                 return Ok(());
             }
             "3" => {
@@ -2008,17 +2034,329 @@ where
                     "--output-dir".to_owned(),
                     output_dir.to_string_lossy().into_owned(),
                 ]);
-                run_print_config_plan(arguments)?;
+                run_print_menu_action(
+                    output,
+                    global,
+                    log_view,
+                    "PT-3-3",
+                    "config_plan",
+                    "按配置准备打印文件",
+                    || build_print_config_plan_report(arguments),
+                )?;
                 return Ok(());
             }
             "4" => {
-                run_print_config_precheck(config_cli_arguments(config_path))?;
+                run_print_menu_action(
+                    output,
+                    global,
+                    log_view,
+                    "PT-3-4",
+                    "config_precheck",
+                    "按配置预校验打印任务",
+                    || {
+                        Ok(serde_json::to_value(build_print_config_precheck_report(
+                            config_cli_arguments(config_path),
+                        )?)?)
+                    },
+                )?;
                 return Ok(());
             }
             "0" => return Ok(()),
             _ => writeln!(output, "仅接受 1、2、3、4 或 0")?,
         }
     }
+}
+
+fn run_print_menu_action<W, F>(
+    output: &mut W,
+    global: &GlobalConfig,
+    log_view: &str,
+    feature_id: &str,
+    action: &str,
+    label: &str,
+    run: F,
+) -> Result<()>
+where
+    W: Write,
+    F: FnOnce() -> Result<serde_json::Value>,
+{
+    let started_at = Local::now();
+    let started = Instant::now();
+    match log_view {
+        "user" => writeln!(output, "开始处理：{label}")?,
+        "developer" => writeln!(output, "PT-3 开始：{feature_id} {action}")?,
+        _ => {}
+    }
+
+    let report = match run() {
+        Ok(report) => report,
+        Err(error) => {
+            let elapsed_ms = started.elapsed().as_millis();
+            if log_view == "developer" {
+                match write_print_menu_run_history(
+                    global,
+                    feature_id,
+                    action,
+                    "failed",
+                    &started_at,
+                    elapsed_ms,
+                    &serde_json::json!({}),
+                    &[],
+                    &[],
+                    false,
+                    Some("print_menu_action_failed"),
+                ) {
+                    Ok(path) => writeln!(output, "PT-3 失败：{feature_id}，耗时 {elapsed_ms} ms；运行记录：{}；错误：{error:#}", path.display())?,
+                    Err(log_error) => writeln!(output, "PT-3 失败：{feature_id}，耗时 {elapsed_ms} ms；运行记录写入失败：{log_error:#}；错误：{error:#}")?,
+                }
+            } else if log_view == "user" {
+                writeln!(output, "处理失败：{label}。")?;
+            }
+            return Err(error);
+        }
+    };
+
+    let elapsed_ms = started.elapsed().as_millis();
+    let metrics = print_menu_metrics(action, &report);
+    let failed_precheck =
+        action == "config_precheck" && metrics["failed_tasks"].as_u64().unwrap_or_default() > 0;
+    let status = if failed_precheck {
+        "failed"
+    } else {
+        "succeeded"
+    };
+    let actual_engines = print_menu_actual_engines(&report);
+    let modifier_invoked = actual_engines.len() > 1;
+    let mut actual_components = print_menu_components(action);
+    if modifier_invoked {
+        actual_components.push("excel-editor::ExcelModifier");
+    }
+
+    match log_view {
+        "user" => {
+            if failed_precheck {
+                writeln!(
+                    output,
+                    "预校验完成：{}，耗时 {elapsed_ms} ms。",
+                    print_menu_summary(action, &metrics)
+                )?;
+            } else {
+                writeln!(
+                    output,
+                    "处理完成：{}，耗时 {elapsed_ms} ms。",
+                    print_menu_summary(action, &metrics)
+                )?;
+            }
+        }
+        "developer" => {
+            match write_print_menu_run_history(
+                global,
+                feature_id,
+                action,
+                status,
+                &started_at,
+                elapsed_ms,
+                &metrics,
+                &actual_engines,
+                &actual_components,
+                modifier_invoked,
+                failed_precheck.then_some("print_precheck_failures"),
+            ) {
+                Ok(path) => writeln!(output, "PT-3 完成：{feature_id}，{}，实际引擎：{}，实际组件：{}，ExcelModifier {}，Excel writer 未调用，耗时 {elapsed_ms} ms；运行记录：{}", print_menu_summary(action, &metrics), actual_engines.join(", "), actual_components.join(", "), if modifier_invoked { "已调用" } else { "未调用" }, path.display())?,
+                Err(error) => writeln!(output, "PT-3 完成：{feature_id}，{}，实际引擎：{}，实际组件：{}，ExcelModifier {}，Excel writer 未调用，耗时 {elapsed_ms} ms；运行记录写入失败：{error:#}", print_menu_summary(action, &metrics), actual_engines.join(", "), actual_components.join(", "), if modifier_invoked { "已调用" } else { "未调用" })?,
+            }
+        }
+        _ => {}
+    }
+
+    writeln!(output, "{}", serde_json::to_string_pretty(&report)?)?;
+    if failed_precheck {
+        bail!(
+            "print precheck found {} failure(s)",
+            metrics["failed_tasks"].as_u64().unwrap_or_default()
+        );
+    }
+    Ok(())
+}
+
+fn print_menu_components(action: &str) -> Vec<&'static str> {
+    match action {
+        "comment-keep-format" | "comment-fast-copy" => vec![
+            "pytools_core::print_ops::build_comment_print_plan",
+            "excel_reader::Calamine",
+        ],
+        "config_plan" => vec![
+            "pytools_core::config::load_print_tasks",
+            "pytools_core::print_ops::build_config_print_plans",
+            "excel_reader::Calamine",
+        ],
+        "config_precheck" => vec![
+            "pytools_core::config::load_print_tasks",
+            "pytools_core::print_ops::precheck_print_tasks",
+            "excel_reader::Calamine",
+        ],
+        _ => Vec::new(),
+    }
+}
+
+fn print_menu_actual_engines(report: &serde_json::Value) -> Vec<String> {
+    fn collect(value: &serde_json::Value, engines: &mut Vec<String>) {
+        match value {
+            serde_json::Value::Array(items) => {
+                for item in items {
+                    collect(item, engines);
+                }
+            }
+            serde_json::Value::Object(fields) => {
+                if let Some(engine) = fields.get("engine").and_then(serde_json::Value::as_str) {
+                    if !engines.iter().any(|existing| existing == engine) {
+                        engines.push(engine.to_owned());
+                    }
+                }
+                for (name, value) in fields {
+                    if name != "engine" {
+                        collect(value, engines);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let mut engines = vec!["calamine".to_owned()];
+    collect(report, &mut engines);
+    engines
+}
+
+fn print_menu_metrics(action: &str, report: &serde_json::Value) -> serde_json::Value {
+    let count = |value: &serde_json::Value| value.as_u64().unwrap_or_default();
+    match action {
+        "comment-keep-format" | "comment-fast-copy" => serde_json::json!({
+            "matching_sheets": count(&report["matching_sheets"]),
+            "marked_ranges": count(&report["marked_ranges"]),
+            "execution": if report["execution"].is_object() { "executed" } else { "plan_only" },
+        }),
+        "config_plan" => {
+            let items = report.as_array().cloned().unwrap_or_default();
+            let mut matching_sheets = 0u64;
+            let mut marked_ranges = 0u64;
+            let mut planned_operations = 0u64;
+            let mut plan_files = 0u64;
+            for item in &items {
+                let details = &item["report"];
+                matching_sheets += count(&details["matching_sheets"]);
+                marked_ranges += count(&details["marked_ranges"]);
+                planned_operations += details["plan"]["operations"]
+                    .as_array()
+                    .map_or(0, |operations| operations.len() as u64);
+                plan_files += u64::from(item["plan_file"].is_string());
+            }
+            serde_json::json!({
+                "planned_groups": items.len(),
+                "matching_sheets": matching_sheets,
+                "marked_ranges": marked_ranges,
+                "planned_operations": planned_operations,
+                "plan_files": plan_files,
+            })
+        }
+        "config_precheck" => serde_json::json!({
+            "passed_tasks": count(&report["ok"]),
+            "warning_tasks": count(&report["warnings"]),
+            "failed_tasks": count(&report["failed"]),
+        }),
+        _ => serde_json::json!({}),
+    }
+}
+
+fn print_menu_summary(action: &str, metrics: &serde_json::Value) -> String {
+    let count = |name: &str| metrics[name].as_u64().unwrap_or_default();
+    if action == "config_precheck" {
+        return format!(
+            "通过 {} 项、警告 {} 项、失败 {} 项",
+            count("passed_tasks"),
+            count("warning_tasks"),
+            count("failed_tasks")
+        );
+    }
+    if action == "config_plan" {
+        return format!(
+            "生成 {} 组计划，命中 {} 张表、{} 个打印区域，计划操作 {} 项",
+            count("planned_groups"),
+            count("matching_sheets"),
+            count("marked_ranges"),
+            count("planned_operations")
+        );
+    }
+    format!(
+        "命中 {} 张工作表、{} 个打印区域，{}",
+        count("matching_sheets"),
+        count("marked_ranges"),
+        if metrics["execution"] == "executed" {
+            "已生成工作簿"
+        } else {
+            "已生成计划"
+        }
+    )
+}
+
+fn write_print_menu_run_history(
+    global: &GlobalConfig,
+    feature_id: &str,
+    action: &str,
+    status: &str,
+    started_at: &chrono::DateTime<Local>,
+    elapsed_ms: u128,
+    metrics: &serde_json::Value,
+    actual_engines: &[String],
+    actual_components: &[&str],
+    excel_modifier_invoked: bool,
+    error_type: Option<&str>,
+) -> Result<PathBuf> {
+    fs::create_dir_all(&global.log_dir)
+        .with_context(|| format!("create print log directory {}", global.log_dir.display()))?;
+    let timestamp = Local::now().format("%Y%m%d_%H%M%S_%f");
+    let history = serde_json::json!({
+        "schema_version": 1,
+        "feature_id": feature_id,
+        "action": action,
+        "status": status,
+        "started_at": started_at.to_rfc3339(),
+        "elapsed_ms": elapsed_ms,
+        "stages": [{
+            "name": if action == "config_precheck" { "configuration_precheck" } else { "workbook_read_and_plan" },
+            "elapsed_ms": elapsed_ms
+        }],
+        "metrics": metrics,
+        "actual_engines": actual_engines,
+        "actual_components": actual_components,
+        "excel_modifier_invoked": excel_modifier_invoked,
+        "excel_writer_invoked": false,
+        "plan_only": action != "config_precheck" && !excel_modifier_invoked,
+        "error_type": error_type,
+    });
+    for suffix in 1..=1000 {
+        let suffix = if suffix == 1 {
+            String::new()
+        } else {
+            format!("-{suffix}")
+        };
+        let path = global
+            .log_dir
+            .join(format!("pytools-print-{action}-{timestamp}{suffix}.json"));
+        match OpenOptions::new().write(true).create_new(true).open(&path) {
+            Ok(mut file) => {
+                serde_json::to_writer_pretty(&mut file, &history)?;
+                file.write_all(b"\n")?;
+                return Ok(path);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => {
+                return Err(error)
+                    .with_context(|| format!("create print run history {}", path.display()))
+            }
+        }
+    }
+    bail!("could not allocate a unique print run history filename")
 }
 
 fn run_interactive_convert_menu<R, W>(
@@ -3918,6 +4256,12 @@ fn parse_duplicate_action(value: &str) -> Result<DuplicateAction> {
 }
 
 fn run_print_comment_plan(arguments: Vec<String>) -> Result<()> {
+    let result = build_print_comment_plan_report(arguments)?;
+    println!("{}", serde_json::to_string_pretty(&result)?);
+    Ok(())
+}
+
+fn build_print_comment_plan_report(arguments: Vec<String>) -> Result<serde_json::Value> {
     let options = parse_cli_arguments(arguments)?;
     let input = required_path(&options, "input")?;
     let output = required_path(&options, "output")?;
@@ -3962,8 +4306,7 @@ fn run_print_comment_plan(arguments: Vec<String>) -> Result<()> {
             result["execution"] = serde_json::json!(execution);
         }
     }
-    println!("{}", serde_json::to_string_pretty(&result)?);
-    Ok(())
+    Ok(result)
 }
 
 fn parse_cli_bool(value: &str) -> bool {
@@ -3974,10 +4317,7 @@ fn parse_cli_bool(value: &str) -> bool {
 }
 
 fn run_print_config_precheck(arguments: Vec<String>) -> Result<()> {
-    let options = parse_cli_arguments(arguments)?;
-    let config = required_path(&options, "config")?;
-    let tasks = pytools_core::config::load_print_tasks(config)?;
-    let report = precheck_print_tasks(&tasks);
+    let report = build_print_config_precheck_report(arguments)?;
     println!("{}", serde_json::to_string_pretty(&report)?);
     if report.failed > 0 {
         bail!("print precheck found {} failure(s)", report.failed);
@@ -3985,7 +4325,22 @@ fn run_print_config_precheck(arguments: Vec<String>) -> Result<()> {
     Ok(())
 }
 
+fn build_print_config_precheck_report(
+    arguments: Vec<String>,
+) -> Result<pytools_core::print_ops::PrintPrecheck> {
+    let options = parse_cli_arguments(arguments)?;
+    let config = required_path(&options, "config")?;
+    let tasks = pytools_core::config::load_print_tasks(config)?;
+    Ok(precheck_print_tasks(&tasks))
+}
+
 fn run_print_config_plan(arguments: Vec<String>) -> Result<()> {
+    let report = build_print_config_plan_report(arguments)?;
+    println!("{}", serde_json::to_string_pretty(&report)?);
+    Ok(())
+}
+
+fn build_print_config_plan_report(arguments: Vec<String>) -> Result<serde_json::Value> {
     let options = parse_cli_arguments(arguments)?;
     let config = required_path(&options, "config")?;
     let output_dir = match options.values.get("output-dir") {
@@ -4040,8 +4395,7 @@ fn run_print_config_plan(arguments: Vec<String>) -> Result<()> {
             "execution": execution,
         }));
     }
-    println!("{}", serde_json::to_string_pretty(&output)?);
-    Ok(())
+    Ok(serde_json::Value::Array(output))
 }
 
 fn run_village_split_plan(arguments: Vec<String>) -> Result<()> {

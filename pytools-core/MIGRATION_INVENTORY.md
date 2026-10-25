@@ -531,7 +531,13 @@ Windows 原生 `cargo fmt --manifest-path pytools-core/Cargo.toml -- --check` �
 
 增量主菜单类别 3 已接入 3-1 按批注保留格式、3-2 按批注快速复制、3-3 按配置准备打印文件和 3-4 配置预校验。评论标记的两种计划分别映射保留批注/样式和快速模式；配置输出保持 plan-only，未生成候选文件，也不渲染或导出 PDF。Windows 原生 Rust 菜单集成测试 1/1 验证四个入口、两个打印区域、模式属性、目标未创建和配置预校验；底层 PyCode/Rust 合成对拍见 probe/reports/print_comment_plan_parity_20261023.json、print_comment_execution_parity_20261023.json、print_precheck_parity_20261023.json 和 print_config_execution_parity_20261023.json。
 
-真实业务模板、生产 capability、结构化用户/开发者/off 日志、麒麟/UOS、glibc 2.28 和 deb 仍未验证；页面设置工作流不包含打印渲染。
+真实业务模板、生产 capability、麒麟/UOS、glibc 2.28 和 deb 仍未验证；页面设置工作流不包含打印渲染。
+
+### 2026-10-25 PT-3 打印交互菜单双视图日志接入
+
+主菜单 `--log-view <user|developer|off>` 现已传入 PT-3-1 至 PT-3-4。user 视图显示开始/完成、命中工作表/打印区域或预校验计数及耗时；developer 视图写入脱敏历史 JSON，记录 PT 编号、状态、统计、阶段耗时、实际 Calamine/ExcelModifier 引擎和 Rust 组件，不保存配置、源簿或输出路径；off 不输出进度且不创建历史。原打印行为保持不变：PT-3-1/3-2 仍仅在用户确认且提供匹配能力时经 ExcelModifier 生成新工作簿，否则只生成计划；PT-3-3 仍为 plan-only；PT-3-4 仍只预校验。未增加打印属性、渲染或 PDF。
+
+Windows 原生 `cargo fmt --manifest-path pytools-core/Cargo.toml -- --check` 通过；`cargo test --offline --locked -p pytools-core --test print_menu_cli --test print_config_new_target --test print_comment_execution -j 1` 通过（4 + 2 + 1 项）。真实 CLI 测试覆盖四项 developer 历史、路径脱敏、业务计数、user/off 行为及 PT-3-1 capability 执行引擎记录。首轮复验暴露 `print_config_new_target` 并行测试可能共享同一时间戳目录；测试夹具增加进程内序号后，重跑全绿。未重跑 Python/Rust 页面设置语义对拍，业务计划/执行路径未改变；此前合成对拍证据仍适用。无真实打印模板或生产 capability；麒麟/UOS 实机、glibc 2.28 实机、deb 与离线交付仍未验收。
 
 ### 2026-10-24 PT-4 转换与文件操作交互菜单及提交检查对拍补充
 
