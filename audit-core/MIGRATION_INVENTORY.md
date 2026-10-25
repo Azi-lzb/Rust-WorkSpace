@@ -89,7 +89,7 @@
 
 ### S1-F01 真实配置映射补充验证
 
-用户提供的真实逐笔配置与个人贷款命名区域模板，经 Windows 原生 Python/Rust 完整规则定义和模板健康检查对拍，差异为 0（895 条规则、4 个公式复制区、8 个结构区）；模板未改变。另以同一真实配置的条件格式模板和匹配输入完成 S1 条件审核对拍：4 条规则、602 个评估格、2 条 Issue，字段差异 0，见 `probe/reports/s1_conditional_audit_config_real_windows_native_20261025.json`。该样本 Python 总耗时 281 ms，Rust `calamine+namespace_aware_ooxml` 总耗时 261 ms；仅为本样本观测，不用于路由决策。模板规则报告：`probe/reports/s1_template_rule_discovery_config_real_windows_native_20261025.json`。以上证据只覆盖真实配置加载/模板规则发现和条件格式 Issue 切片；公式复制、历史簿写回、公式重算及完整 S1-F01 仍未验证。
+用户提供的真实逐笔配置与个人贷款命名区域模板，经 Windows 原生 Python/Rust 完整规则定义和模板健康检查对拍，差异为 0（895 条规则、4 个公式复制区、8 个结构区）；模板未改变。另以同一真实配置的条件格式模板和匹配输入完成 S1 条件审核对拍：4 条规则、602 个评估格、2 条 Issue，字段差异 0，见 `probe/reports/s1_conditional_audit_config_real_windows_native_20261025.json`。该样本 Python 总耗时 281 ms，Rust `calamine+namespace_aware_ooxml` 总耗时 261 ms；仅为本样本观测，不用于路由决策。使用 `s1-audit-directory` 在真实源簿/既有审核副本上执行配置化 S1 链：当前公式 Issue 297 条、条件格式 Issue 0 条，Python/Rust 当前集及合流历史分类字段差异均 0；模板验证扫描 1,072 个公式、0 个错误，全部输入未改变。该链使用已有审核副本值，未执行公式复制或重算，报告见 `probe/reports/s1_audit_directory_config_real_windows_native_20261025.json`。模板规则报告：`probe/reports/s1_template_rule_discovery_config_real_windows_native_20261025.json`。以上证据只覆盖真实配置加载/模板规则发现、条件格式 Issue 切片和已有审核副本上的 S1 计算/分类链；公式复制、历史簿写回、公式重算及完整 S1-F01 仍未验证。
 
 ## Rust 前端接入状态
 

@@ -1,0 +1,35 @@
+# S1-F01 真实配置审核链路对拍
+
+- 时间：2026-10-25 09:35（Asia/Shanghai）
+- 执行者：Codex Audit migration agent
+- 分支：audit-dev
+- 修改前 commit：`071bdf1`
+- 修改后 commit：本记录随本轮提交，提交号由 Git 历史追溯。
+- WIP：开始时只有本轮生成的脱敏对拍报告未提交；此前工作区干净。未修改 `DEVELOPMENT_GOAL.md`、源 Python 项目、真实工作簿、`pytools-core/**`、共享 crates、`Cargo.lock` 或根 Cargo 配置。
+
+## 目的
+
+继续验证用户提供的真实 S1 配置在 Rust `s1-audit-directory` 入口中的实际使用。使用现存真实源工作簿与对应审核副本，对 Python S1 业务 handler 和 Rust S1 CLI 的公式 Issue、条件格式 Issue、验证公式扫描及历史分类进行只读对拍。
+
+## 修改文件
+
+- `audit-core/probe/reports/s1_audit_directory_config_real_windows_native_20261025.json`：新增脱敏的真实 S1 链路对拍摘要，不含工作簿路径、文件名、Issue 原始值或 Issue 行。
+- `audit-core/MIGRATION_INVENTORY.md`：记录实际 CLI 对拍结果及公式复制/重算未覆盖边界。
+- 本记录。
+
+## 验证
+
+- Windows 原生 Rust `s1-audit-directory` CLI 使用显式模板、真实映射配置和既有审核副本；Python 基线使用同一源簿/审核副本对拍。
+- 当前公式 Issue：Python/Rust 各 297 条，逐字段差异 0；条件格式 Issue 本样本两侧均为 0；合流、历史分类结果差异 0，297 条均分类为新问题。
+- 模板验证扫描 1,072 个公式，错误 0；模板选择与 Python 一致；对比涉及的工作簿均未改变。
+- Rust CLI 总耗时 2,094 ms；reader/业务阶段包含 `calamine`、`calamine+namespace_aware_ooxml` 和 S1 Issue/history 处理。单样本耗时不作为性能基准。
+- 公式读取来自已有审核副本的已保存值；本次未执行公式复制、重算或历史簿写回。报告 `verification.formula_recalculation` 明确为 not performed。
+
+## 未执行项、已知问题与回滚
+
+- 新鲜审核副本生成、公式复制写回和真实缓存重算仍未验收；完整 S1-F01 保持未验证。
+- 非首位 S1 历史页排序需 main 协调共享 `MoveSheet`；Audit 侧继续 fail-closed，未改共享代码。
+- 目标 Linux 与独立 deb 验收未执行。
+- 本地提交后不推送：待推送差异仍包含 `DEVELOPMENT_GOAL.md` 既有改动，按用户要求保持远程不变。
+- 回滚：可单独回退本报告、迁移清单补充及本记录；无代码或用户文件变更。
+- 组件版本：不升级。

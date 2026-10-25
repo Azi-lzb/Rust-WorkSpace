@@ -1,0 +1,101 @@
+{
+  "schema_version": 1,
+  "suite": "audit.s1_issue_chain",
+  "baseline": "Open-Data-Audit UOS/native DAG formula/conditional Issues plus s1audit_configured validation-formula scan mapped into the unified S1 Issue stream",
+  "status": "passed",
+  "python": {
+    "formula_issues": 297,
+    "conditional_issues": 0,
+    "validation_formula_scan": {
+      "status": "COMPLETED",
+      "template_count": 1,
+      "formula_cells_scanned": 1072,
+      "errors": 0,
+      "missing_sheets": 0,
+      "mapped_issues": 0
+    },
+    "conditional_evaluated_cells": 0,
+    "legacy_formula_conditional_issues": 297,
+    "merged_issues": 297,
+    "history_rows_read": 0
+  },
+  "rust": {
+    "formula_issues": 297,
+    "conditional_issues": 0,
+    "validation_formula_scan_issues": 0,
+    "merged_issues": 297,
+    "resolved_issues": 0,
+    "readers": [
+      "calamine",
+      "calamine+namespace_aware_ooxml",
+      "rust_s1_issue_chain+rust_s1_history"
+    ],
+    "history_rows_read": null,
+    "cli_elapsed_ms": 2094,
+    "cli_peak_rss_kib": null,
+    "template_selection_mode": "explicit",
+    "template_selection_matches_baseline": true,
+    "result_workbook": null,
+    "history_result_workbook": null
+  },
+  "comparison": {
+    "current_issues": {
+      "expected_count": 297,
+      "actual_count": 297,
+      "missing_in_rust": 0,
+      "missing_in_python": 0,
+      "field_difference_counts": {}
+    },
+    "resolved_issues": {
+      "expected_count": 0,
+      "actual_count": 0,
+      "missing_in_rust": 0,
+      "missing_in_python": 0,
+      "field_difference_counts": {}
+    },
+    "merged_history": {
+      "expected_count": 297,
+      "actual_count": 297,
+      "missing_in_rust": 0,
+      "missing_in_python": 0,
+      "field_difference_counts": {}
+    },
+    "history_classification": {
+      "python": {
+        "history_rows": 0,
+        "merged_history_rows": 297,
+        "new_issues": 297,
+        "continuous_issues": 0,
+        "recurring_issues": 0,
+        "resolved_issues": 0,
+        "resolved_statuses": {}
+      },
+      "rust": {
+        "history_rows": 0,
+        "merged_history_rows": 297,
+        "current_issues": 297,
+        "new_issues": 297,
+        "continuous_issues": 0,
+        "recurring_issues": 0,
+        "resolved_issues": 0
+      }
+    },
+    "history_input": null,
+    "result_workbook": null,
+    "history_result_workbook": null,
+    "mismatch_count": 0
+  },
+  "verification": {
+    "all_workbooks_unchanged": true,
+    "history_workbook_input_provided": false,
+    "formula_recalculation": "not performed; saved audit-copy values only",
+    "raw_issue_values_or_paths_persisted": false,
+    "validation_formula_scan_mapping": "Python RuleResult scan errors are normalized to the Issue fields used by Rust before history classification; formulas, values, and raw paths are not persisted.",
+    "python_conditional_metadata_source": "workflow.adapters.native_audit_handlers.handle_conditional_issue_extract",
+    "windows_general_handler_metadata_behavior": "workflow.adapters.audit_handlers.handle_conditional_issue_extract passes source organization fields; S1 UOS/native path intentionally leaves them empty",
+    "scope": "one read-only real source/audit-copy pair and one S1 template",
+    "source_filename_alias_used_for_linux_component_limit": false,
+    "rust_cli_peak_rss_scope": "not measured",
+    "python_conditional_total_time_s": 0.234
+  }
+}
