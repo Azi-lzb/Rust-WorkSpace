@@ -1,0 +1,13 @@
+# S5 模板目录自动匹配真实输出验证
+
+- 时间：2026-10-26 02:42:42 +08:00
+- 执行者：Codex
+- 验证前 HEAD：8bf75c7da4670987272d30b929c2c23a58dddb2c；本项只补真实证据，不改 Rust 业务代码。
+- WIP：保留 `HANDOFF_ZCODE_TO_CODEX.md`、`.pytest-tmp-v3/`、首次输出差异报告及其他既有未跟踪报告；未修改或提交。
+- 目的：补齐上一项模板审核副本修复尚未覆盖的 `--template-dir` 自动匹配分支。
+- 验证：
+  - Windows 原生 Python 3.12.10/openpyxl 与 Rust 对拍使用真实配置、源表和模板目录；377 条结果及输出工作簿、审核副本、SHA-256 清单差异 0。报告：`audit-core/probe/reports/s5_outputs_real_template_dir_windows_native_20261026.json`。
+  - 正式 `s5-audit-run --template-dir` CLI 完成 377 条结果，状态计数 PASSED 352、TRIGGERED 24、RETRIEVAL_FAILED 1；Rust 选择 `！10.基础数据-单位贷款202609.xlsx`，与 Python 的布局编号/副本名称一致，current/layout/configuration 三项快照匹配。
+  - CLI 的模板目录扫描及审核共耗时 13,295 ms，其中模板选择 8,923 ms；该测量只描述此次目录和样本。输出写在系统临时目录，源目录及真实输入保持只读。
+- 状态：显式路径与自动目录匹配的模板副本输出均通过当前真实单业务切片；不代表 S5-F01 整体完成。Audit #8 共享能力、其他业务覆盖和 Linux/deb/目标系统验收仍未完成。
+- 回滚：撤回本记录、对应迁移清单句子及该目录对拍报告；上一提交的业务修复不受影响。

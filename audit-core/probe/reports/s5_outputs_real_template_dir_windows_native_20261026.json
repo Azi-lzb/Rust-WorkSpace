@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "suite": "audit.s5_run_outputs_parity",
+  "status": "completed",
+  "sample_scope": {
+    "business": "单位贷款",
+    "run_id": "PARITYRUN",
+    "files_copied_to_temporary": true,
+    "template_path_supplied": false,
+    "template_dir_supplied": true,
+    "python_writer_engine": "openpyxl (styling baseline)"
+  },
+  "comparison": {
+    "diff_count": 0,
+    "diff_paths_sample": []
+  },
+  "verification": {
+    "rust_runner": "audit-core/tests/s5_outputs_parity.rs",
+    "python_baseline": "s1audit_configured.engine.run(output_dir=...) with AUDIT3_WRITER_ENGINE=openpyxl",
+    "python_baseline_version": "3.12.10",
+    "inputs_unchanged": true,
+    "raw_values_persisted": false,
+    "capability_status": "unverified",
+    "production_route_eligible": false
+  },
+  "limitations": [
+    "Conditional-format and data-quality tables are compared empty; their populated paths belong to the S1 conditional-format bridge.",
+    "Structure snapshots and hash-integrity downgrade are out of scope.",
+    "Colors compare modulo the 8-digit alpha prefix and fitToWidth=1 compares equal to an omitted attribute under fitToPage: both are rust_xlsxwriter/openpyxl serializer representation deltas with identical Excel semantics."
+  ]
+}
