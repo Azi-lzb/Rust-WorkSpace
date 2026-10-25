@@ -2177,27 +2177,41 @@ fn validate_unmodified_styles(
         let output_sheet = output
             .sheet_by_name(&output_name)
             .with_context(|| format!("style-preservation output sheet {output_name:?} missing"))?;
+        let row_map = plan_row_map(plan, source_name)?;
         for source_cell in source_sheet.cells() {
             let address = source_cell.coordinate().to_string();
-            if style_is_modified_by_plan(plan, source_name, &output_name, &address)? {
+            let output_address = match &row_map {
+                Some(map) => match map.map_address(&address)? {
+                    Some(mapped) => mapped,
+                    // The plan deletes the row owning this source cell; its
+                    // removal is the requested semantics, not a loss.
+                    None => continue,
+                },
+                None => address.clone(),
+            };
+            if style_is_modified_by_plan(plan, source_name, &output_name, &output_address)? {
                 continue;
             }
             let actual = output_sheet
-                .cell(address.as_str())
+                .cell(output_address.as_str())
                 .map(|cell| cell.style().clone())
                 .unwrap_or_default();
             // openpyxl normalizes non-anchor cells in merged ranges when it
             // loads/saves a workbook. Validate only border sides on the
             // merged range perimeter here; non-border style comes from the
-            // anchor, which is checked independently above.
-            if let Some(equal) =
-                merged_member_effective_borders_equal(source_sheet, output_sheet, &address)
-            {
-                anyhow::ensure!(
-                    equal,
-                    "Rust unmodified merged-cell border readback mismatch at {output_name}!{address}"
-                );
-                continue;
+            // anchor, which is checked independently above. The perimeter
+            // check compares shared coordinates, so it only applies when the
+            // row mapping leaves this address in place.
+            if output_address == address {
+                if let Some(equal) =
+                    merged_member_effective_borders_equal(source_sheet, output_sheet, &address)
+                {
+                    anyhow::ensure!(
+                        equal,
+                        "Rust unmodified merged-cell border readback mismatch at {output_name}!{address}"
+                    );
+                    continue;
+                }
             }
             anyhow::ensure!(
                 styles_semantically_equal(&actual, source_cell.style()),
@@ -2288,6 +2302,105 @@ fn final_sheet_name(plan: &ExcelEditPlan, source_name: &str) -> String {
         }
     }
     name
+}
+
+/// Sequential source-row → output-row mapping for one worksheet, derived by
+/// simulating the plan's DeleteRows/InsertRows operations in application
+/// order. Plans author row operations before the cell edits that target the
+/// final coordinates; a cell edit authored before a row operation is not
+/// remapped.
+struct PlanRowMap {
+    rows: BTreeMap<u32, Option<u32>>,
+    beyond_from: u32,
+    beyond_shift: i64,
+}
+
+impl PlanRowMap {
+    fn output_row(&self, source_row: u32) -> Option<u32> {
+        if source_row >= self.beyond_from {
+            Some((source_row as i64 + self.beyond_shift) as u32)
+        } else {
+            self.rows.get(&source_row).copied().flatten()
+        }
+    }
+
+    /// `Ok(None)` means the plan deletes the row owning this source address.
+    fn map_address(&self, address: &str) -> Result<Option<String>> {
+        let (row, column) = parse_cell(address)?;
+        Ok(self
+            .output_row(row)
+            .map(|row| format!("{}{}", column_letters(column), row)))
+    }
+}
+
+/// Build the per-sheet row mapping for the unmodified-readback comparisons.
+/// Returns `None` when the plan has no row operations for the worksheet so
+/// callers keep the identity fast path.
+fn plan_row_map(plan: &ExcelEditPlan, source_sheet: &str) -> Result<Option<PlanRowMap>> {
+    let matches_sheet =
+        |sheet: &str| sheet == source_sheet || sheet == final_sheet_name(plan, source_sheet);
+    let row_operations: Vec<(&u32, &u32, bool)> = plan
+        .operations
+        .iter()
+        .filter_map(|operation| match operation {
+            EditOperation::DeleteRows {
+                sheet,
+                first_row,
+                count,
+            } if matches_sheet(sheet) => Some((first_row, count, true)),
+            EditOperation::InsertRows {
+                sheet,
+                first_row,
+                count,
+            } if matches_sheet(sheet) => Some((first_row, count, false)),
+            _ => None,
+        })
+        .collect();
+    if row_operations.is_empty() {
+        return Ok(None);
+    }
+    // rows[i] models current worksheet row i+1: Some(source row) or None for
+    // a row the plan inserted. Source rows below the simulated window shift
+    // uniformly and resolve through `beyond_shift`.
+    let mut rows: Vec<Option<u32>> = Vec::new();
+    let mut next_source_row: u32 = 1;
+    for (first_row, count, delete) in row_operations {
+        let first = *first_row as usize;
+        let count = *count as usize;
+        if delete {
+            let end = first
+                .checked_add(count)
+                .and_then(|end| end.checked_sub(1))
+                .context("row deletion range overflows")?;
+            while rows.len() < end {
+                rows.push(Some(next_source_row));
+                next_source_row += 1;
+            }
+            rows.drain(first - 1..first - 1 + count);
+        } else {
+            while rows.len() < first - 1 {
+                rows.push(Some(next_source_row));
+                next_source_row += 1;
+            }
+            rows.splice(first - 1..first - 1, std::iter::repeat(None).take(count));
+        }
+    }
+    let highest_placed = next_source_row - 1;
+    let mut mapped = BTreeMap::new();
+    for (index, entry) in rows.iter().enumerate() {
+        if let Some(source_row) = entry {
+            mapped.insert(*source_row, Some(index as u32 + 1));
+        }
+    }
+    for source_row in 1..=highest_placed {
+        mapped.entry(source_row).or_insert(None);
+    }
+    let beyond_shift = rows.len() as i64 - i64::from(highest_placed);
+    Ok(Some(PlanRowMap {
+        rows: mapped,
+        beyond_from: highest_placed + 1,
+        beyond_shift,
+    }))
 }
 
 fn style_is_modified_by_plan(
@@ -3208,11 +3321,20 @@ fn validate_preserved_values(
         let Some(new_sheet) = output.iter().find(|sheet| &sheet.name == output_name) else {
             continue;
         };
+        let row_map = plan_row_map(plan, &old_sheet.name)?;
         for (address, value) in &old_sheet.values {
-            if cell_value_is_modified(&old_sheet.name, address, &plan.operations) {
+            let output_address = match &row_map {
+                Some(map) => match map.map_address(address)? {
+                    Some(mapped) => mapped,
+                    // The plan deletes the row owning this source cell.
+                    None => continue,
+                },
+                None => address.clone(),
+            };
+            if cell_value_is_modified(&old_sheet.name, &output_address, &plan.operations) {
                 continue;
             }
-            let actual = new_sheet.values.get(address);
+            let actual = new_sheet.values.get(&output_address);
             anyhow::ensure!(
                 json_value_equal(value, actual),
                 "unmodified cell value changed at {}!{}: expected {:?}, got {:?}",
@@ -3246,12 +3368,29 @@ fn validate_preserved_formulas(
         let Some(new_sheet) = output.iter().find(|sheet| &sheet.name == output_name) else {
             continue;
         };
+        let row_map = plan_row_map(plan, &old_sheet.name)?;
         for (address, formula) in &old_sheet.formulas {
-            if cell_formula_is_modified(&old_sheet.name, address, &plan.operations) {
+            let output_address = match &row_map {
+                Some(map) => match map.map_address(address)? {
+                    Some(mapped) => mapped,
+                    // The plan deletes the row owning this source formula.
+                    None => continue,
+                },
+                None => address.clone(),
+            };
+            if output_address != *address {
+                // Row insertion/deletion rewrites the references inside
+                // shifted formulas; the engine-neutral validator cannot
+                // recompute that rewrite, so shifted formulas are not
+                // text-compared here. They stay covered by the engine's own
+                // formula adjustment plus the requesting side's readback.
+                continue;
+            }
+            if cell_formula_is_modified(&old_sheet.name, &output_address, &plan.operations) {
                 continue;
             }
             anyhow::ensure!(
-                new_sheet.formulas.get(address) == Some(formula),
+                new_sheet.formulas.get(&output_address) == Some(formula),
                 "unmodified formula changed at {}!{}",
                 old_sheet.name,
                 address
@@ -3281,12 +3420,21 @@ fn validate_preserved_comments(
         let Some(new_sheet) = output.iter().find(|sheet| &sheet.name == output_name) else {
             continue;
         };
+        let row_map = plan_row_map(plan, &old_sheet.name)?;
         for (address, text) in &old_sheet.comments {
-            if cell_comment_is_modified(&old_sheet.name, address, &plan.operations) {
+            let output_address = match &row_map {
+                Some(map) => match map.map_address(address)? {
+                    Some(mapped) => mapped,
+                    // The plan deletes the row owning this source comment.
+                    None => continue,
+                },
+                None => address.clone(),
+            };
+            if cell_comment_is_modified(&old_sheet.name, &output_address, &plan.operations) {
                 continue;
             }
             anyhow::ensure!(
-                new_sheet.comments.get(address) == Some(text),
+                new_sheet.comments.get(&output_address) == Some(text),
                 "unmodified comment moved or changed at {}!{}",
                 old_sheet.name,
                 address
