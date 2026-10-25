@@ -91,6 +91,7 @@ def make_input(
     cached_formula: bool = False,
     date_1904: bool = False,
     time_only: bool = False,
+    elapsed_duration: bool = False,
 ) -> None:
     workbook = Workbook()
     if date_1904:
@@ -110,7 +111,10 @@ def make_input(
     sheet["D4"] = "本息"
     sheet.append([])
     sheet["A5"] = "公司甲"
-    if cached_formula:
+    if elapsed_duration:
+        sheet["B5"] = 1.123456789
+        sheet["B5"].number_format = "[h]:mm:ss.000"
+    elif cached_formula:
         sheet["B5"] = "=8+2.25"
     elif time_only:
         sheet["B5"] = datetime_time(12, 34, 56, 123000)
@@ -925,8 +929,11 @@ def run_case(
     cached_formula: bool = False,
     date_1904: bool = False,
     time_only: bool = False,
+    elapsed_duration: bool = False,
 ) -> dict[str, object]:
-    if time_only:
+    if elapsed_duration:
+        case_name = f"elapsed_duration_{'row_suffix' if row_suffix else 'no_suffix'}"
+    elif time_only:
         case_name = (
             f"date_{'1904' if date_1904 else '1900'}_time_only_"
             f"{'row_suffix' if row_suffix else 'no_suffix'}"
@@ -945,6 +952,7 @@ def run_case(
         cached_formula=cached_formula,
         date_1904=date_1904,
         time_only=time_only,
+        elapsed_duration=elapsed_duration,
     )
     python_output = case / "python_output"
     rust_output = case / "rust_output"
@@ -1061,6 +1069,7 @@ def run_case(
     projection = normalized(actual)
     result = {
         "row_suffix": row_suffix,
+        "elapsed_duration": elapsed_duration,
         "cached_formula_value_projected": cached_formula,
         "time_only_value": time_only,
         "source_date_system": "1904" if date_1904 else "1900",
@@ -1090,11 +1099,13 @@ def run_case(
     return result
 
 
-def run_existing_target_case(root: Path, row_suffix: bool) -> dict[str, object]:
+def run_existing_target_case(
+    root: Path, row_suffix: bool, *, elapsed_duration: bool = False
+) -> dict[str, object]:
     case = root / ("existing_suffix" if row_suffix else "existing_no_suffix")
     case.mkdir()
     source = case / "sample_2024-06-30.xlsx"
-    make_input(source)
+    make_input(source, elapsed_duration=elapsed_duration)
     seed_output = case / "seed_output"
     _, full_target = python_baseline(source, seed_output, row_suffix)
     seed_target = case / "target_seed.xlsx"
@@ -1146,6 +1157,7 @@ def run_existing_target_case(root: Path, row_suffix: bool) -> dict[str, object]:
     candidate_rows = candidate_projection["rows"]
     result = {
         "row_suffix": row_suffix,
+        "elapsed_duration": elapsed_duration,
         "summary_status": "passed",
         "existing_target_replacement_status": "passed",
         "engine": execution["engine"],
@@ -1189,6 +1201,81 @@ def cleanup_probe_directory(path: Path) -> None:
 def main() -> int:
     if not PYTOOLS_SOURCE.is_dir():
         raise FileNotFoundError(f"PyCode source not found: {PYTOOLS_SOURCE}")
+    if sys.argv[1:] == ["--elapsed-duration"]:
+        with tempfile.TemporaryDirectory(
+            prefix="pytools-wide-elapsed-duration-probe-", ignore_cleanup_errors=True
+        ) as temp:
+            root = Path(temp)
+            summary_results = [
+                run_case(root, row_suffix, elapsed_duration=True)
+                for row_suffix in (False, True)
+            ]
+            existing_target_results = [
+                run_existing_target_case(root, row_suffix, elapsed_duration=True)
+                for row_suffix in (False, True)
+            ]
+            report = {
+                "schema_version": 1,
+                "suite": "pytools.timeline.wide_summary_elapsed_duration_parity",
+                "date": date.today().isoformat(),
+                "status": "passed_synthetic_python_rust_parity",
+                "baseline": "PyCode/core/wide_397_398.py::run_wide_summary",
+                "rust_entry": "pytools menu -> 1 timeline -> 3/4 wide summary -> confirm",
+                "input": {
+                    "format": "xlsx",
+                    "kind": "synthetic",
+                    "elapsed_number_format": "[h]:mm:ss.000",
+                    "cases": [
+                        "multi-day cumulative duration with sub-millisecond source precision",
+                        "row-suffix and no-suffix summary variants",
+                        "new target append and existing target replacement",
+                    ],
+                },
+                "comparison": {
+                    "summary_values_types_and_effective_styles": "exact",
+                    "new_target_values_types_and_effective_styles": "exact",
+                    "existing_target_values_types": "exact",
+                    "existing_target_style_differences": "reported_per_case",
+                    "source_and_configuration_unchanged": True,
+                },
+                "summary_results": summary_results,
+                "existing_target_results": existing_target_results,
+                "safety": {
+                    "source_unchanged": True,
+                    "configuration_unchanged": True,
+                    "outputs_temporary_only": True,
+                    "report_contains_input_filenames_or_cell_values": False,
+                },
+                "limitations": [
+                    "Synthetic input only; a sanitized real wide-summary workbook is still required for business acceptance.",
+                    "This case covers one elapsed format and does not validate other Excel formats or all duration styles.",
+                    "Linux targets and offline deb acceptance were not tested.",
+                ],
+            }
+            report_path = (
+                WORKSPACE
+                / "pytools-core"
+                / "probe"
+                / "reports"
+                / f"wide_summary_elapsed_duration_parity_{date.today():%Y%m%d}.json"
+            )
+            report_path.write_text(
+                json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+            )
+            print(
+                json.dumps(
+                    {
+                        "report": str(report_path),
+                        "summary_cases": len(summary_results),
+                        "existing_target_cases": len(existing_target_results),
+                        "status": report["status"],
+                    },
+                    ensure_ascii=False,
+                )
+            )
+            cleanup_probe_directory(root)
+        return 0
+
     if sys.argv[1:] == ["--1904-date-only"]:
         with tempfile.TemporaryDirectory(
             prefix="pytools-wide-1904-probe-", ignore_cleanup_errors=True

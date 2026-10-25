@@ -901,8 +901,7 @@ fn summarize_by_comments_inner(
     let (template, elapsed_time_cells) =
         match read_workbook(template_path).and_then(|mut template| {
             overlay_template_iso_dates(template_path, &mut template.sheets)?;
-            let elapsed_time_cells =
-                read_template_elapsed_time_cells(template_path, &template.sheets)?;
+            let elapsed_time_cells = read_elapsed_time_cells(template_path, &template.sheets)?;
             Ok((template, elapsed_time_cells))
         }) {
             Ok(template) => template,
@@ -2141,33 +2140,77 @@ fn overlay_template_iso_dates(path: &Path, sheets: &mut [SheetDump]) -> Result<(
 /// Read only the style metadata needed to distinguish elapsed-time headers from
 /// calendar dates. Calamine owns cell-value reading; this narrow OOXML adapter
 /// supplements number-format metadata that the shared reader does not expose.
-fn read_template_elapsed_time_cells(
+pub(crate) fn read_elapsed_time_cells(
     path: &Path,
     sheets: &[SheetDump],
 ) -> Result<BTreeMap<String, BTreeSet<String>>> {
     let file = fs::File::open(path).with_context(|| {
         format!(
-            "open summary template for elapsed-time metadata: {}",
+            "open workbook for elapsed-time metadata: {}",
             path.display()
         )
     })?;
-    let mut archive = ZipArchive::new(file).context("open summary template OOXML package")?;
+    let mut archive = ZipArchive::new(file).context("open workbook OOXML package")?;
     let Some(styles_part) = resolve_summary_styles_part(&mut archive)? else {
         return Ok(BTreeMap::new());
     };
     let styles_xml = read_zip_part(&mut archive, &styles_part)?;
     let styles_text =
-        std::str::from_utf8(&styles_xml).context("summary template styles.xml must be UTF-8")?;
+        std::str::from_utf8(&styles_xml).context("workbook styles.xml must be UTF-8")?;
     let duration_styles = parse_elapsed_time_cell_styles(styles_text)?;
+    if !duration_styles.iter().any(|is_elapsed| *is_elapsed) {
+        return Ok(BTreeMap::new());
+    }
+    read_cells_with_matching_styles(&mut archive, sheets, &duration_styles, "elapsed-time")
+}
+
+/// Read cells written with the plain integer number format. Wide-summary uses
+/// this format to preserve PyCode's numeric representation for elapsed values;
+/// the value reader does not expose number formats, so target-append planning
+/// needs this narrow local OOXML supplement to restore the duration marker.
+pub(crate) fn read_zero_number_format_cells(
+    path: &Path,
+    sheets: &[SheetDump],
+) -> Result<BTreeMap<String, BTreeSet<String>>> {
+    let file = fs::File::open(path).with_context(|| {
+        format!(
+            "open workbook for number-format metadata: {}",
+            path.display()
+        )
+    })?;
+    let mut archive = ZipArchive::new(file).context("open workbook OOXML package")?;
+    let Some(styles_part) = resolve_summary_styles_part(&mut archive)? else {
+        return Ok(BTreeMap::new());
+    };
+    let styles_xml = read_zip_part(&mut archive, &styles_part)?;
+    let styles_text =
+        std::str::from_utf8(&styles_xml).context("workbook styles.xml must be UTF-8")?;
+    let zero_styles = parse_zero_number_format_cell_styles(styles_text)?;
+    if !zero_styles.iter().any(|is_zero| *is_zero) {
+        return Ok(BTreeMap::new());
+    }
+    read_cells_with_matching_styles(&mut archive, sheets, &zero_styles, "zero number-format")
+}
+
+fn read_cells_with_matching_styles(
+    archive: &mut ZipArchive<fs::File>,
+    sheets: &[SheetDump],
+    matching_styles: &[bool],
+    format_description: &str,
+) -> Result<BTreeMap<String, BTreeSet<String>>> {
     let mut result = BTreeMap::new();
 
     for sheet in sheets {
-        let sheet_part = resolve_summary_worksheet_part(&mut archive, &sheet.name)?;
-        let worksheet_xml = read_zip_part(&mut archive, &sheet_part)?;
+        let sheet_part = resolve_summary_worksheet_part(archive, &sheet.name)?;
+        let worksheet_xml = read_zip_part(archive, &sheet_part)?;
         let worksheet_text = std::str::from_utf8(&worksheet_xml)
             .with_context(|| format!("worksheet {} must be UTF-8", sheet.name))?;
-        let worksheet = roxmltree::Document::parse(worksheet_text)
-            .with_context(|| format!("parse worksheet {} for elapsed-time metadata", sheet.name))?;
+        let worksheet = roxmltree::Document::parse(worksheet_text).with_context(|| {
+            format!(
+                "parse worksheet {} for {format_description} metadata",
+                sheet.name
+            )
+        })?;
         for cell in worksheet
             .root()
             .descendants()
@@ -2181,13 +2224,13 @@ fn read_template_elapsed_time_cells(
                 .unwrap_or("0")
                 .parse::<usize>()
                 .with_context(|| format!("invalid style index on {}!{address}", sheet.name))?;
-            let is_elapsed = duration_styles.get(style_index).with_context(|| {
+            let matches_format = matching_styles.get(style_index).with_context(|| {
                 format!(
                     "style index {style_index} on {}!{address} is missing from styles.xml",
                     sheet.name
                 )
             })?;
-            if *is_elapsed {
+            if *matches_format {
                 result
                     .entry(sheet.name.clone())
                     .or_insert_with(BTreeSet::new)
@@ -2271,6 +2314,51 @@ fn parse_elapsed_time_cell_styles(styles_xml: &str) -> Result<Vec<bool>> {
             .map(|code| is_openpyxl_timedelta_format(code))
             .unwrap_or(id == 46); // Built-in [h]:mm:ss.
         result.push(is_elapsed);
+    }
+    anyhow::ensure!(!result.is_empty(), "styles.xml cellXfs is empty");
+    Ok(result)
+}
+
+fn parse_zero_number_format_cell_styles(styles_xml: &str) -> Result<Vec<bool>> {
+    let document = roxmltree::Document::parse(styles_xml).context("parse styles.xml")?;
+    let mut custom_formats = BTreeMap::new();
+    if let Some(number_formats) = document
+        .root()
+        .descendants()
+        .find(|node| is_xml_element(*node, SPREADSHEET_MAIN_NS, "numFmts"))
+    {
+        for number_format in number_formats
+            .children()
+            .filter(|node| is_xml_element(*node, SPREADSHEET_MAIN_NS, "numFmt"))
+        {
+            let Some(id) = number_format.attribute("numFmtId") else {
+                continue;
+            };
+            let id = id
+                .parse::<u32>()
+                .context("invalid custom number format id")?;
+            let code = number_format
+                .attribute("formatCode")
+                .context("custom number format has no formatCode")?;
+            custom_formats.insert(id, code.to_owned());
+        }
+    }
+    let cell_formats = document
+        .root()
+        .descendants()
+        .find(|node| is_xml_element(*node, SPREADSHEET_MAIN_NS, "cellXfs"))
+        .context("styles.xml has no cellXfs collection")?;
+    let mut result = Vec::new();
+    for format in cell_formats
+        .children()
+        .filter(|node| is_xml_element(*node, SPREADSHEET_MAIN_NS, "xf"))
+    {
+        let id = format
+            .attribute("numFmtId")
+            .unwrap_or("0")
+            .parse::<u32>()
+            .context("invalid cell format number format id")?;
+        result.push(id == 1 || custom_formats.get(&id).is_some_and(|code| code == "0"));
     }
     anyhow::ensure!(!result.is_empty(), "styles.xml cellXfs is empty");
     Ok(result)
@@ -2547,7 +2635,38 @@ pub(crate) fn python_duration_iso_text(value: &str) -> Option<String> {
     python_duration_serial_text(serial)
 }
 
+pub(crate) fn python_duration_serial_value(serial: f64) -> Option<f64> {
+    Some(python_duration_microseconds(serial)? as f64 / 86_400_000_000.0)
+}
+
 pub(crate) fn python_duration_serial_text(serial: f64) -> Option<String> {
+    const DAY_MICROSECONDS: i128 = 86_400_000_000;
+    const SECOND_MICROSECONDS: i128 = 1_000_000;
+    let rounded_microseconds = python_duration_microseconds(serial)?;
+
+    let days = rounded_microseconds.div_euclid(DAY_MICROSECONDS);
+    let day_microseconds = rounded_microseconds.rem_euclid(DAY_MICROSECONDS);
+    let hours = day_microseconds / 3_600_000_000;
+    let minutes = day_microseconds % 3_600_000_000 / 60_000_000;
+    let seconds = day_microseconds % 60_000_000 / SECOND_MICROSECONDS;
+    let microseconds = day_microseconds % SECOND_MICROSECONDS;
+    let mut time = format!("{hours}:{minutes:02}:{seconds:02}");
+    if microseconds != 0 {
+        time.push_str(&format!(".{microseconds:06}"));
+    }
+    if days == 0 {
+        Some(time)
+    } else {
+        let unit = if days == 1 || days == -1 {
+            "day"
+        } else {
+            "days"
+        };
+        Some(format!("{days} {unit}, {time}"))
+    }
+}
+
+fn python_duration_microseconds(serial: f64) -> Option<i128> {
     const DAY_MICROSECONDS: i128 = 86_400_000_000;
     const SECOND_MICROSECONDS: i128 = 1_000_000;
     const MAX_TIMEDELTA_DAYS: i128 = 999_999_999;
@@ -2578,27 +2697,7 @@ pub(crate) fn python_duration_serial_text(serial: f64) -> Option<String> {
     if rounded_microseconds < minimum_microseconds || rounded_microseconds > maximum_microseconds {
         return None;
     }
-
-    let days = rounded_microseconds.div_euclid(DAY_MICROSECONDS);
-    let day_microseconds = rounded_microseconds.rem_euclid(DAY_MICROSECONDS);
-    let hours = day_microseconds / 3_600_000_000;
-    let minutes = day_microseconds % 3_600_000_000 / 60_000_000;
-    let seconds = day_microseconds % 60_000_000 / SECOND_MICROSECONDS;
-    let microseconds = day_microseconds % SECOND_MICROSECONDS;
-    let mut time = format!("{hours}:{minutes:02}:{seconds:02}");
-    if microseconds != 0 {
-        time.push_str(&format!(".{microseconds:06}"));
-    }
-    if days == 0 {
-        Some(time)
-    } else {
-        let unit = if days == 1 || days == -1 {
-            "day"
-        } else {
-            "days"
-        };
-        Some(format!("{days} {unit}, {time}"))
-    }
+    Some(rounded_microseconds)
 }
 
 pub(crate) fn python_datetime_iso_text(value: &str) -> String {
@@ -2952,6 +3051,15 @@ mod comment_region_tests {
                 Some(expected)
             );
         }
+    }
+
+    #[test]
+    fn duration_serial_value_matches_python_timedelta_days() {
+        let serial = 1.123_456_789;
+        let projected = python_duration_serial_value(serial).unwrap();
+        assert!((projected - 1.123_456_793_981_481).abs() < 1e-15);
+        assert_eq!(python_duration_serial_value(f64::INFINITY), None);
+        assert_eq!(python_duration_serial_value(1_000_000_000.0), None);
     }
 
     #[test]

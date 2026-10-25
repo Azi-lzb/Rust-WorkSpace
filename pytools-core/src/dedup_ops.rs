@@ -98,6 +98,10 @@ pub struct NewAppendSheet {
 pub enum AppendCell {
     Value(CellValue),
     Formula(String),
+    Number {
+        serial: String,
+        number_format: String,
+    },
     DateTime {
         serial: String,
         number_format: String,
@@ -861,6 +865,24 @@ pub fn write_append_workbook_payload(
                             worksheet.write_boolean(row_index, column_index, *value)?;
                         }
                     }
+                    AppendCell::Number {
+                        serial,
+                        number_format,
+                    } => {
+                        let number = serial.parse::<f64>().context("parse numeric serial")?;
+                        anyhow::ensure!(number.is_finite(), "numeric serial must be finite");
+                        let format = excel_writer::Format::new().set_num_format(if is_data_date {
+                            "yyyy/m/d"
+                        } else {
+                            number_format
+                        });
+                        worksheet.write_number_with_format(
+                            row_index,
+                            column_index,
+                            number,
+                            &format,
+                        )?;
+                    }
                     AppendCell::DateTime {
                         serial,
                         number_format,
@@ -940,6 +962,7 @@ pub fn write_append_workbook_payload(
                 .flatten()
                 .filter(|cell| match cell {
                     AppendCell::Formula(_) => true,
+                    AppendCell::Number { .. } => true,
                     AppendCell::DateTime { .. } => true,
                     AppendCell::Value(CellValue::Blank) => false,
                     AppendCell::Value(_) => true,
@@ -1141,7 +1164,11 @@ fn push_append_operation(
             cell,
             value,
         }),
-        AppendCell::DateTime {
+        AppendCell::Number {
+            serial,
+            number_format,
+        }
+        | AppendCell::DateTime {
             serial,
             number_format,
         } => operations.push(EditOperation::SetCellValue {

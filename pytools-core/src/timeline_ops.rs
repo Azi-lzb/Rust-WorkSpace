@@ -1342,14 +1342,73 @@ fn run_wide_summary_inner(
                 return Err(error).with_context(|| format!("read {}", path.display()));
             }
         };
+        let elapsed_metadata_started = Instant::now();
+        let elapsed_time_cells =
+            match crate::summary_ops::read_elapsed_time_cells(path, &workbook.sheets) {
+                Ok(cells) => cells,
+                Err(error) if global.error_policy == "continue" => {
+                    emitter.progress.failed_inputs += 1;
+                    emitter.emit(
+                        "elapsed_duration_metadata",
+                        "failed",
+                        format!(
+                            "第 {input_index}/{} 个工作簿无法读取累计时长格式，跳过该工作簿",
+                            sources.len()
+                        ),
+                        Some(input_index),
+                        Some(elapsed_metadata_started.elapsed()),
+                        &["pytools-core", "OOXML styles", "roxmltree"],
+                        Some("pytools-core OOXML adapter"),
+                        Some("elapsed_duration_metadata_error"),
+                    );
+                    let _ = error;
+                    continue;
+                }
+                Err(error) => {
+                    emitter.progress.failed_inputs += 1;
+                    emitter.emit(
+                        "elapsed_duration_metadata",
+                        "failed",
+                        format!(
+                            "第 {input_index}/{} 个工作簿累计时长格式读取失败",
+                            sources.len()
+                        ),
+                        Some(input_index),
+                        Some(elapsed_metadata_started.elapsed()),
+                        &["pytools-core", "OOXML styles", "roxmltree"],
+                        Some("pytools-core OOXML adapter"),
+                        Some("elapsed_duration_metadata_error"),
+                    );
+                    return Err(error).with_context(|| {
+                        format!("read elapsed-time formats from {}", path.display())
+                    });
+                }
+            };
+        let elapsed_duration_values =
+            overlay_wide_elapsed_duration_serials(&mut workbook.sheets, &elapsed_time_cells);
+        if elapsed_duration_values > 0 {
+            emitter.emit(
+                "elapsed_duration_normalization",
+                "completed",
+                format!("按 PyCode 语义规范化 {elapsed_duration_values} 个累计时长值"),
+                Some(input_index),
+                Some(elapsed_metadata_started.elapsed()),
+                &["pytools-core", "openpyxl timedelta projection"],
+                Some("pytools-core"),
+                None,
+            );
+        }
         let date_projection_started = Instant::now();
         let source_uses_1904_epoch;
-        match wide_calendar_date_values(path, &workbook.sheets) {
+        match wide_calendar_date_values(path, &workbook.sheets, &elapsed_time_cells) {
             Ok((uses_1904_epoch, values)) => {
                 source_uses_1904_epoch = uses_1904_epoch;
                 if uses_1904_epoch {
-                    let projected_dates =
-                        overlay_wide_calendar_date_values(&mut workbook.sheets, &values);
+                    let projected_dates = overlay_wide_calendar_date_values(
+                        &mut workbook.sheets,
+                        &values,
+                        &elapsed_time_cells,
+                    );
                     emitter.emit(
                         "calendar_date_projection",
                         "completed",
@@ -1810,14 +1869,27 @@ fn wide_rule_compatible(rule: &TimelineRule) -> bool {
 fn wide_calendar_date_values(
     path: &Path,
     sheets: &[SheetDump],
+    elapsed_time_cells: &BTreeMap<String, BTreeSet<String>>,
 ) -> Result<(bool, HashMap<(String, String), String>)> {
-    let has_datetime_serial = sheets.iter().any(|sheet| {
+    let has_serial_values = sheets.iter().any(|sheet| {
         sheet.values.values().any(|value| {
             value.get("type").and_then(serde_json::Value::as_str) == Some("datetime_serial")
         })
     });
-    if !has_datetime_serial || !uses_1904_date_system(path)? {
+    if !has_serial_values {
         return Ok((false, HashMap::new()));
+    }
+    let uses_1904_epoch = uses_1904_date_system(path)?;
+    let has_calendar_datetime_serial = sheets.iter().any(|sheet| {
+        sheet.values.iter().any(|(address, value)| {
+            value.get("type").and_then(serde_json::Value::as_str) == Some("datetime_serial")
+                && !elapsed_time_cells
+                    .get(&sheet.name)
+                    .is_some_and(|addresses| addresses.contains(address))
+        })
+    });
+    if !uses_1904_epoch || !has_calendar_datetime_serial {
+        return Ok((uses_1904_epoch, HashMap::new()));
     }
 
     let max_columns = sheets
@@ -1834,7 +1906,7 @@ fn wide_calendar_date_values(
             }
         }
     }
-    Ok((true, dates))
+    Ok((uses_1904_epoch, dates))
 }
 
 fn normalize_wide_subday_serials(sheets: &mut [SheetDump], date_1904: bool) -> usize {
@@ -1851,6 +1923,36 @@ fn normalize_wide_subday_serials(sheets: &mut [SheetDump], date_1904: bool) -> u
                 continue;
             };
             *cell = projected;
+            normalized += 1;
+        }
+    }
+    normalized
+}
+
+fn overlay_wide_elapsed_duration_serials(
+    sheets: &mut [SheetDump],
+    elapsed_time_cells: &BTreeMap<String, BTreeSet<String>>,
+) -> usize {
+    let mut normalized = 0;
+    for sheet in sheets {
+        let Some(addresses) = elapsed_time_cells.get(&sheet.name) else {
+            continue;
+        };
+        for address in addresses {
+            let Some(cell) = sheet.values.get_mut(address) else {
+                continue;
+            };
+            let kind = cell.get("type").and_then(serde_json::Value::as_str);
+            if !matches!(kind, Some("integer" | "number" | "datetime_serial")) {
+                continue;
+            }
+            let Some(serial) = cell.get("value").and_then(serde_json::Value::as_f64) else {
+                continue;
+            };
+            let Some(serial) = crate::summary_ops::python_duration_serial_value(serial) else {
+                continue;
+            };
+            *cell = serde_json::json!({"type": "duration_serial", "value": serial});
             normalized += 1;
         }
     }
@@ -1897,9 +1999,16 @@ fn wide_python_subday_value(serial: f64, date_1904: bool) -> Option<serde_json::
 fn overlay_wide_calendar_date_values(
     sheets: &mut [SheetDump],
     date_values: &HashMap<(String, String), String>,
+    elapsed_time_cells: &BTreeMap<String, BTreeSet<String>>,
 ) -> usize {
     let mut projected = 0;
     for ((name, address), value) in date_values {
+        if elapsed_time_cells
+            .get(name)
+            .is_some_and(|addresses| addresses.contains(address))
+        {
+            continue;
+        }
         let Some(sheet) = sheets.iter_mut().find(|sheet| sheet.name == *name) else {
             continue;
         };
@@ -2034,6 +2143,10 @@ fn write_wide_cell(
             let format = wide_date_format();
             sheet.write_number_with_format(row, column, *serial, &format)?;
         }
+        Cell::DurationSerial(serial) => {
+            let format = excel_writer::Format::new().set_num_format("0");
+            sheet.write_number_with_format(row, column, *serial, &format)?;
+        }
         Cell::DateTimeIso(text) => {
             if let Some(serial) = wide_datetime_serial(text) {
                 let format = wide_date_format();
@@ -2138,6 +2251,17 @@ pub fn build_wide_target_append_plans(
         }
         grouped.entry(target.clone()).or_default().push(rule);
     }
+    if grouped.is_empty() {
+        return Ok(Vec::new());
+    }
+    let zero_format_cells =
+        crate::summary_ops::read_zero_number_format_cells(summary_path, &summary.sheets)
+            .with_context(|| {
+                format!(
+                    "read wide-summary number formats from {}",
+                    summary_path.display()
+                )
+            })?;
 
     let mut reports = Vec::new();
     for (target, target_rules) in grouped {
@@ -2220,7 +2344,11 @@ pub fn build_wide_target_append_plans(
                 ));
                 continue;
             };
-            let (headers, data_rows) = wide_output_table(summary_sheet);
+            let zero_format_addresses = zero_format_cells
+                .get(&summary_sheet.name)
+                .cloned()
+                .unwrap_or_default();
+            let (headers, data_rows) = wide_output_table(summary_sheet, &zero_format_addresses);
             if headers.is_empty() || data_rows.is_empty() {
                 report.task_skipped += 1;
                 report.issues.push(format!(
@@ -2727,6 +2855,7 @@ fn ensure_sheet_dump_matches(
 
 fn wide_output_table(
     sheet: &excel_reader::SheetDump,
+    zero_format_addresses: &BTreeSet<String>,
 ) -> (Vec<String>, Vec<Vec<Option<WorkbookCell>>>) {
     let rows = wide_used_row_count(sheet);
     let columns = wide_used_column_count(sheet);
@@ -2743,7 +2872,22 @@ fn wide_output_table(
     let data = (2..=rows)
         .map(|row| {
             (1..=columns)
-                .map(|column| wide_dump_cell(sheet, row, column))
+                .map(|column| {
+                    let address = crate::rule_engine::cell_address(row, column);
+                    let value = wide_dump_cell(sheet, row, column);
+                    if !zero_format_addresses.contains(&address) {
+                        return value;
+                    }
+                    match value {
+                        Some(WorkbookCell::Integer(value)) => {
+                            Some(WorkbookCell::DurationSerial(value as f64))
+                        }
+                        Some(WorkbookCell::Number(value)) => {
+                            Some(WorkbookCell::DurationSerial(value))
+                        }
+                        other => other,
+                    }
+                })
                 .collect::<Vec<_>>()
         })
         .collect();
@@ -2945,6 +3089,7 @@ fn wide_cell_key(value: &WorkbookCell) -> String {
         }
         WorkbookCell::Boolean(value) => (if *value { "True" } else { "False" }).to_owned(),
         WorkbookCell::DateTimeSerial(value) => wide_serial_key(*value),
+        WorkbookCell::DurationSerial(value) => crate::summary_ops::python_float_text(*value),
         WorkbookCell::DateTimeIso(value) => wide_iso_datetime_key(value),
         WorkbookCell::DurationIso(value) => value.clone(),
     }
@@ -2974,6 +3119,10 @@ fn wide_append_cell(value: Option<&WorkbookCell>, header: &str) -> Result<Append
         Cell::DateTimeSerial(serial) => AppendCell::DateTime {
             serial: serial.to_string(),
             number_format: number_format(header),
+        },
+        Cell::DurationSerial(serial) => AppendCell::Number {
+            serial: serial.to_string(),
+            number_format: "0".to_owned(),
         },
         Cell::DateTimeIso(value) => {
             let serial = wide_datetime_serial(value)
@@ -3369,7 +3518,7 @@ fn value_text(value: &serde_json::Value) -> String {
             .and_then(serde_json::Value::as_str)
             .unwrap_or_default()
             .to_owned(),
-        Some("number") | Some("integer") => value
+        Some("number") | Some("integer") | Some("duration_serial") => value
             .get("value")
             .map(ToString::to_string)
             .unwrap_or_default(),
@@ -3456,11 +3605,11 @@ fn write_compare_summary_table(workbook: &mut Workbook, rows: &[Vec<String>]) ->
 mod keyword_match_tests {
     use super::{
         keyword_match, normalize_wide_subday_serials, overlay_wide_calendar_date_values,
-        wide_datetime_serial, wide_python_subday_value,
+        overlay_wide_elapsed_duration_serials, wide_datetime_serial, wide_python_subday_value,
     };
     use excel_reader::SheetDump;
     use serde_json::json;
-    use std::collections::{BTreeMap, HashMap};
+    use std::collections::{BTreeMap, BTreeSet, HashMap};
 
     #[test]
     fn sheet_keywords_match_python_case_and_delimiter_semantics() {
@@ -3506,7 +3655,10 @@ mod keyword_match_tests {
             ),
         ]);
 
-        assert_eq!(overlay_wide_calendar_date_values(&mut sheets, &dates), 1);
+        assert_eq!(
+            overlay_wide_calendar_date_values(&mut sheets, &dates, &BTreeMap::new()),
+            1
+        );
         assert_eq!(sheets[0].values["A1"]["type"], "datetime_iso");
         assert_eq!(sheets[0].values["A2"]["type"], "datetime_serial");
     }
@@ -3534,6 +3686,44 @@ mod keyword_match_tests {
 
         assert_eq!(wide_datetime_serial("1900-01-02T00:00:00.000"), Some(2.0));
         assert_eq!(wide_datetime_serial("1900-03-01T00:00:00.000"), Some(61.0));
+    }
+
+    #[test]
+    fn elapsed_serials_use_python_timedelta_projection_without_touching_dates() {
+        let mut values = BTreeMap::new();
+        values.insert(
+            "B5".to_owned(),
+            json!({"type":"datetime_serial", "value":1.123_456_789}),
+        );
+        values.insert(
+            "C5".to_owned(),
+            json!({"type":"datetime_serial", "value":45_000.0}),
+        );
+        let mut sheets = vec![SheetDump {
+            name: "Report".to_owned(),
+            values,
+            formulas: BTreeMap::new(),
+            formula_status: "not_applicable".to_owned(),
+            merges: Vec::new(),
+            merge_status: "not_applicable".to_owned(),
+            comments: BTreeMap::new(),
+            comments_status: "not_applicable".to_owned(),
+            conditional_formatting: Vec::new(),
+            conditional_formatting_status: "not_applicable".to_owned(),
+            data_validations: Vec::new(),
+            data_validations_status: "not_applicable".to_owned(),
+        }];
+        let elapsed_cells =
+            BTreeMap::from([("Report".to_owned(), BTreeSet::from(["B5".to_owned()]))]);
+
+        assert_eq!(
+            overlay_wide_elapsed_duration_serials(&mut sheets, &elapsed_cells),
+            1
+        );
+        assert_eq!(sheets[0].values["B5"]["type"], "duration_serial");
+        assert_eq!(sheets[0].values["C5"]["type"], "datetime_serial");
+        let projected = sheets[0].values["B5"]["value"].as_f64().unwrap();
+        assert!((projected - 1.123_456_793_981_481).abs() < 1e-15);
     }
 
     #[test]

@@ -14,6 +14,7 @@ pub enum WorkbookCell {
     Number(f64),
     Boolean(bool),
     DateTimeSerial(f64),
+    DurationSerial(f64),
     DateTimeIso(String),
     DurationIso(String),
     Error(String),
@@ -40,6 +41,7 @@ impl WorkbookCell {
             }
             "boolean" => Self::Boolean(data.as_bool()?),
             "datetime_serial" => Self::DateTimeSerial(data.as_f64()?),
+            "duration_serial" => Self::DurationSerial(data.as_f64()?),
             "datetime_iso" => Self::DateTimeIso(data.as_str()?.to_owned()),
             "duration_iso" => Self::DurationIso(data.as_str()?.to_owned()),
             "error" => Self::Error(data.as_str()?.to_owned()),
@@ -54,7 +56,7 @@ impl WorkbookCell {
             | Self::DurationIso(value)
             | Self::Error(value) => Value::String(value.clone()),
             Self::Integer(value) => Value::from(*value),
-            Self::Number(value) | Self::DateTimeSerial(value) => {
+            Self::Number(value) | Self::DateTimeSerial(value) | Self::DurationSerial(value) => {
                 serde_json::Number::from_f64(*value)
                     .map(Value::Number)
                     .unwrap_or(Value::Null)
@@ -72,7 +74,9 @@ impl SheetValue for WorkbookCell {
             | Self::DurationIso(value)
             | Self::Error(value) => value.clone(),
             Self::Integer(value) => value.to_string(),
-            Self::Number(value) | Self::DateTimeSerial(value) => format!("{value:?}"),
+            Self::Number(value) | Self::DateTimeSerial(value) | Self::DurationSerial(value) => {
+                format!("{value:?}")
+            }
             Self::Boolean(value) => (if *value { "True" } else { "False" }).to_owned(),
         }
     }

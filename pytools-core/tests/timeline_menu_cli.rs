@@ -204,6 +204,63 @@ fn wide_summary_cli_filters_missing_and_unconfigured_extensions_before_reading()
 }
 
 #[test]
+fn wide_summary_cli_projects_elapsed_duration_as_numeric_for_both_row_modes() -> Result<()> {
+    for command in ["wide-summary", "wide-summary-row-suffix"] {
+        let root = TestDirectory::new()?;
+        let config = create_timeline_config(root.path())?;
+        let source = root.path().join("sample elapsed duration.xlsx");
+        create_wide_source_with_elapsed_duration(&source, "累计时长", 1.123_456_789)?;
+
+        let output = Command::new(env!("CARGO_BIN_EXE_pytools"))
+            .arg(command)
+            .arg("--config")
+            .arg(&config)
+            .arg("--log-view")
+            .arg("developer")
+            .arg(&source)
+            .output()
+            .context("run elapsed-duration wide-summary CLI")?;
+        assert!(
+            output.status.success(),
+            "{command} did not process elapsed duration: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let report: Value = serde_json::from_slice(&output.stdout)?;
+        let summary_path = report["output"]
+            .as_str()
+            .map(PathBuf::from)
+            .context("elapsed-duration summary output path missing")?;
+        let dump = read_workbook(&summary_path)?;
+        let summary = dump
+            .sheets
+            .iter()
+            .find(|sheet| sheet.name == "WideRule")
+            .context("elapsed-duration summary sheet missing")?;
+        let cell = &summary.values["G2"];
+        assert_eq!(cell["type"], "number");
+        let actual = cell["value"]
+            .as_f64()
+            .context("duration serial is not numeric")?;
+        assert!((actual - 1.123_456_793_981_481).abs() < 1e-15);
+
+        let history_path = report["run_log_path"]
+            .as_str()
+            .map(PathBuf::from)
+            .context("elapsed-duration run history missing")?;
+        let history: Value = serde_json::from_slice(&fs::read(history_path)?)?;
+        assert!(history["events"].as_array().is_some_and(|events| {
+            events.iter().any(|event| {
+                event["phase"] == "elapsed_duration_normalization"
+                    && event["status"] == "completed"
+                    && event["actual_engine"] == "pytools-core"
+                    && event["stage_elapsed_ms"].as_u64().is_some()
+            })
+        }));
+    }
+    Ok(())
+}
+
+#[test]
 fn wide_summary_cli_discovers_default_sources_for_both_row_modes() -> Result<()> {
     let root = TestDirectory::new()?;
     let config = create_timeline_config(root.path())?;
@@ -1271,6 +1328,33 @@ fn create_wide_source(path: &Path, organization: &str, amount: f64) -> Result<()
     sheet.write_number(4, 2, amount + 1.0)?;
     sheet.write_number(4, 3, amount + 2.0)?;
     workbook.save(path).context("save timeline source workbook")
+}
+
+fn create_wide_source_with_elapsed_duration(
+    path: &Path,
+    organization: &str,
+    serial: f64,
+) -> Result<()> {
+    let mut workbook = rust_xlsxwriter::Workbook::new();
+    let sheet = workbook.add_worksheet();
+    sheet.set_name("Report")?;
+    sheet.write_string(0, 0, "报表")?;
+    sheet.merge_range(1, 0, 1, 1, "集团A", &rust_xlsxwriter::Format::new())?;
+    sheet.write_string(2, 0, "地区")?;
+    sheet.merge_range(2, 1, 2, 2, "存款", &rust_xlsxwriter::Format::new())?;
+    sheet.write_string(2, 3, "贷款")?;
+    sheet.write_string(3, 0, "名称")?;
+    sheet.write_string(3, 1, "余额")?;
+    sheet.write_string(3, 2, "余额")?;
+    sheet.write_string(3, 3, "本息")?;
+    sheet.write_string(4, 0, organization)?;
+    let elapsed_format = rust_xlsxwriter::Format::new().set_num_format("[h]:mm:ss.000");
+    sheet.write_number_with_format(4, 1, serial, &elapsed_format)?;
+    sheet.write_number(4, 2, 12.0)?;
+    sheet.write_number(4, 3, 23.0)?;
+    workbook
+        .save(path)
+        .context("save elapsed-duration timeline source workbook")
 }
 
 fn create_wide_source_with_negative_date(path: &Path, organization: &str) -> Result<()> {

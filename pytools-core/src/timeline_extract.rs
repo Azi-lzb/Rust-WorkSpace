@@ -977,6 +977,7 @@ fn timeline_existing_key_cell(value: &WorkbookCell) -> String {
                 .map(|value| timeline_datetime_dedup_key(&value))
                 .unwrap_or_else(|| crate::summary_ops::python_float_text(*value))
         }
+        WorkbookCell::DurationSerial(value) => crate::summary_ops::python_float_text(*value),
         WorkbookCell::DateTimeIso(value) => {
             timeline_datetime_dedup_key(&crate::summary_ops::python_datetime_iso_text(value))
         }
@@ -1070,6 +1071,10 @@ fn timeline_append_cell(value: Option<&WorkbookCell>, column: usize) -> Result<A
         WorkbookCell::DateTimeSerial(serial) => AppendCell::DateTime {
             serial: serial.to_string(),
             number_format: number_format.to_owned(),
+        },
+        WorkbookCell::DurationSerial(serial) => AppendCell::Number {
+            serial: serial.to_string(),
+            number_format: "0".to_owned(),
         },
         WorkbookCell::DateTimeIso(value) => {
             let serial = datetime_to_excel_serial(value)
@@ -1220,6 +1225,7 @@ fn python_value_text(value: &WorkbookCell) -> String {
         | WorkbookCell::DurationIso(value) => value.clone(),
         WorkbookCell::Integer(value) => value.to_string(),
         WorkbookCell::Number(value) => crate::summary_ops::python_float_text(*value),
+        WorkbookCell::DurationSerial(value) => crate::summary_ops::python_float_text(*value),
         WorkbookCell::Boolean(value) => if *value { "True" } else { "False" }.to_owned(),
         WorkbookCell::DateTimeSerial(serial) => {
             crate::summary_ops::python_datetime_serial_text(*serial)
@@ -1319,6 +1325,10 @@ fn write_value(
         }
         WorkbookCell::Number(value) => {
             worksheet.write_number(row, column, *value)?;
+        }
+        WorkbookCell::DurationSerial(value) => {
+            let format = Format::new().set_num_format("0");
+            worksheet.write_number_with_format(row, column, *value, &format)?;
         }
         WorkbookCell::Boolean(value) => {
             worksheet.write_boolean(row, column, *value)?;
