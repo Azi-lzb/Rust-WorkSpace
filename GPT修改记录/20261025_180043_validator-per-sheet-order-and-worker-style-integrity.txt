@@ -1,0 +1,43 @@
+时间：2026-10-25 18:00:43 Asia/Shanghai
+执行者：Codex main
+修改前 commit：becd3cd（main）
+修改后 commit：本轮两个独立提交承载（请求 #6 校验器顺序感知一个、请求 #5 worker 完整性断言一个）；SHA 见本轮汇报。
+WIP 情况：修改前 main 工作区干净；本轮修改与本记录一并提交。未触碰 audit-dev（有 S5/CLI 未提交 WIP）与 pytools-dev 工作树。
+
+目的：处理 audit-dev 第五、六项共享能力请求：
+- `20261025_validator_page_settings_order.md`（#6）：OpenpyxlXlsxValidator 的 OOXML 保留快照逐表比较（page_settings、header_footers、conditional_formatting、data_validations）按工作簿顺序做 Vec 整体相等，MoveSheet 合法重排后被误拒（真实 config-real 历史簿 5 表重排、逐表 pageSetup 属性一致仍被拒）。
+- `20261025_openpyxl_worker_style_table_oob.md`（#5）：openpyxl worker 写穿完整 60 操作公式复制计划后，sheet7 CJ2 引用 s=24 而 cellXfs 仅 24 项（0..23），umya/Excel 回退默认样式丢失 vertical=center 语义；值/公式两侧一致，纯样式表完整性缺陷。
+
+请求 #6 修改文件：
+- `crates/excel-editor/src/openpyxl_backend.rs`
+变化：
+- 新增 `per_sheet_entries_match`：按表名键控、顺序不敏感的逐表相等（每张源表必须以相同内容出现在输出中；表内内容保持严格逐项比较）。应用于 page_settings、header_footers、conditional_formatting、data_validations 四处检查；freeze_panes/auto_filters 本就按名匹配、relationships 快照构建时已排序，均不变。表顺序正确性仍由 validate_sheet_names 的 move-aware 检查独立承担（07196d5 语义）。
+- 新增单测 `per_sheet_snapshot_comparison_ignores_sheet_order_only`：重排匹配、内容变化拒绝、丢表拒绝三断言。
+
+请求 #5 修改文件：
+- `crates/excel-editor/python/openpyxl_worker.py`
+- `crates/excel-editor/tests/python/test_openpyxl_worker.py`
+变化与裁决：
+- worker 保存链路新增 `_verify_style_table_integrity`：保存后直接解析输出包的 styles.xml 与全部 worksheet part，要求 cellXfs count 属性与 xf 元素数一致、且全部 s= 引用（含行列维度样式）严格小于 xf 元素数；不一致即报 `style_table_corrupted`（Failed 而非 unsupported-before-write，按"不静默回退"原则该候选作废、修饰器停止）。该断言把已观测的静默样式损坏变成显式失败，满足请求"至少不产生越界引用"的最低契约；根治方向（重建映射或改赋值方式）在拿到真实样本材料前不动 _copy_style。
+- main 侧离线调查结论（写入记录供 Audit 参考）：openpyxl 3.1.5 源码显示 cellXfs 在保存时由 `wb._cell_styles`（IndexedList）整体重建、cell 的 s= 在写出时经 add() 现场注册，两者同源，逻辑上单靠 worker 的操作组合难以产生 count<元素数或越界 s=；用真实 worker 脚本对 150 组随机 styles.xml（xf0 非默认/重复 xf/行列样式/高索引引用）+ ImportRange(full)+SetComment+calcPr 的合成复现均未触发越界。因此真实样本上 count=24 与 s=24 并存的直接成因仍未知——不排除 audit 侧"cellXfs=24"读的是 count 属性而 xf 元素实际更多（该形态下 openpyxl reopen 正常、umya 按 count 截断回退，与"worker 写穿通过、umya 读回回退"的观测吻合）。worker 断言同时覆盖两种形态（count≠元素数、真越界），无论哪种都会显式拦截。
+- 新增 3 项 Python 直接单测：越界引用拒绝、count 不匹配拒绝、一致表通过；全 Python 套件 10 项通过（含子进程端到端，正常输出不被断言误伤）。
+
+配置及业务路由影响：#6 无 API 变化，仅消除 MoveSheet 计划的校验器误报；#5 不改任何既有成功路径，仅在产出损坏样式表时显式失败。两者均为合成证据，不构成生产 capability。
+
+组件版本：不升级。
+
+测试：
+- `cargo test --offline --locked -p excel-editor --lib`：33 项通过。
+- `python test_openpyxl_worker.py`（Windows 本机 openpyxl 3.1.5）：10 项通过。
+- 150 组模糊复现（临时脚本，未入库）：0 触发，记录于调查结论。
+- `cargo test --workspace --locked --offline -q`：除 pytools-core 既有 `config_task_loader_parity` Windows 路径失败（历轮已确认属 PyTools 业务 crate）外全部通过。
+- `cargo fmt -p excel-editor -- --check`、`git diff --check`：通过。
+
+未执行项：#5 未在真实 config-real 模板上复现/验证根治（真实样本与 AUDIT_S1_COPY_CANDIDATE_* 环境在 audit-dev 侧）；未改 _copy_style 赋值方式；未做 Linux/deb 验收。
+
+已知问题：
+- 若 audit 报告的 cellXfs=24 指的是 count 属性而实际元素更多，则缺陷不在 openpyxl 侧而在 umya 按 count 截断的读法；该形态由新断言的 count≠元素数分支拦截输出，umya 读法是否需要适配（按元素数而非 count）待 Audit 确认材料后单独评估。
+- pytools-core `task_config_loaders_match_python_baseline` Windows verbatim 路径失败仍未修（PyTools 业务 crate）。
+
+删除清单：无。
+回滚：回退两个提交即恢复顺序敏感比较与无完整性断言的 worker；不回滚既有提交，不修改输入工作簿。
