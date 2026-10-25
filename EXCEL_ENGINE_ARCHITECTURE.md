@@ -157,7 +157,7 @@ OOXML Patch 是狭窄的补丁工具，不是完整读写器。新建工作簿�
 
 所有候选都应先完成操作入口调用链和真实模板/合成夹具契约，再建立路由。样式、批注、合并、尺寸、行列结构和 sheet 结构属于需要比较 umya、Excelize、openpyxl 的操作族，不等于现在已确认“必须用”其中某个库。Go worker 是否加入取决于实测收益。
 
-### 4.2 操作级能力矩阵（2026-10-22 初始建立；2026-10-23 增补；2026-10-25 增补 MoveSheet）
+### 4.2 操作级能力矩阵（2026-10-22 初始建立；2026-10-23 增补；2026-10-25 增补 MoveSheet 与冻结窗格/AutoFilter）
 
 本矩阵只登记仓库已有代码和报告，作为后续补齐依据；不是完整操作覆盖声明。2026-10-23 增补外汇页眉与 openpyxl synthetic worker/进程测试证据。passed 仅限同一行明确写出的样本/操作；openpyxl 合成测试不产生生产 capability，也不代表真实模板或目标平台已验收。
 
@@ -166,10 +166,10 @@ OOXML Patch 是狭窄的补丁工具，不是完整读写器。新建工作簿�
 | 修改已有普通单元格值/文本，不插行、不改样式 | unsupported（尚无对应写入适配器） | unverified（合成混合探针修改成功，未隔离验证独立契约） | unsupported（无 worker/IPC） | implemented; synthetic Rust 跨进程集成通过 | 无真实模板/目标平台 capability；umya 混合探针也不能推导所有类型、共享字符串和模板保真。 |
 | 写入普通公式文本，不要求重算 | unsupported（尚无对应公式写入适配器） | unverified（合成混合探针保留公式文本） | unsupported（无 worker/IPC） | implemented; synthetic Rust 跨进程集成通过；非空公式缓存写前拒绝 | 公式写入不等于重算；公式类型、缓存、计算链和真实模板仍未验证。 |
 | 新增/编辑/删除批注及其位置、作者/外观 | unsupported（尚无 comments/VML 写入适配器） | unverified（探针只验证既有批注文本保留） | unsupported（无 worker/IPC） | implemented; synthetic worker 测试覆盖新增/替换与未修改批注保留 | 只断言文本/作者，不验证批注外观；真实 comments/VML/relationship 组合未验收。 |
-| 样式、合并、行高列宽、隐藏、页面设置的完整混合批次 | unverified（仅窄列定义补丁） | unverified（原始探针 17/18；补列定义后合成样本 18/18） | unsupported（无 worker/IPC） | implemented; synthetic worker/进程测试覆盖填充、合并导入、尺寸、页面设置；Rust 独立读回检查已覆盖样式语义、显式行列尺寸、填充色、页面设置及 OOXML Print_Area | openpyxl 会重写 package；ImportRange 的行列尺寸/隐藏/outline 复制标志仍写前拒绝；真实模板保留项、打印应用行为和目标平台未验证。 |
+| 样式、合并、行高列宽、隐藏、页面设置的完整混合批次 | unverified（仅窄列定义补丁） | unverified（原始探针 17/18；补列定义后合成样本 18/18；SetFreezePanes/SetAutoFilter 已实现并通过合成测试：冻结窗格按 openpyxl 语义设置/替换，AutoFilter 与 _FilterDatabase 联动更新/清除；清除已有冻结窗格写前拒绝，需其他引擎路由） | unsupported（无 worker/IPC） | implemented; synthetic worker/进程测试覆盖填充、合并导入、尺寸、页面设置；Rust 独立读回检查已覆盖样式语义、显式行列尺寸、填充色、页面设置及 OOXML Print_Area | openpyxl 会重写 package；ImportRange 的行列尺寸/隐藏/outline 复制标志仍写前拒绝；真实模板保留项、打印应用行为和目标平台未验证。冻结窗格/AutoFilter 合成证据见 crates/excel-editor/tests/freeze_panes_auto_filter.rs。 |
 | 设置目标列宽并保留样本中原有列定义 | passed（synthetic_probe.xlsx 定点补丁报告 3/3） | unsupported（同样本原始输出未保留列定义） | unsupported（无 worker/IPC） | unverified（非本 worker 的特定列定义契约） | OOXML 补丁只改 worksheet 的 cols 区域；不得扩展为通用编辑器能力。 |
 | 替换现有 worksheet 的 odd/even/first 页眉普通文本，并保留其余部件 | passed（仅 `fx_header` 合成 XLSX） | unverified（未评估） | unsupported（无 worker/IPC） | unsupported（Rust adapter 不开放 worker 的此操作） | `ReplaceHeaderText` 继续路由至窄 OOXML Patch；不能因 worker 有内部实现就绕过既有已验收窄路径。 |
-| 插删行列、改名/重排/删除 sheet、跨表/工作簿复制 | unsupported（通用结构适配器未实现） | unverified（MoveSheet 已实现并通过合成往返测试：顺序重排、sheet-scoped definedName localSheetId 重映射、activeTab 跟随、页面设置保留；CreateSheetAt/DeleteSheet 已同步修复 localSheetId/activeTab 滞留；真实模板与依赖对拍未做） | unsupported（无 worker/IPC） | partial: synthetic create/rename/delete sheet 与 ImportRange 进程测试通过；行插删 unsupported | 复制/导入和结构操作需核对公式、definedNames、relationships、条件格式/验证及未知部件；无真实 capability。MoveSheet 合成证据见 crates/excel-editor/tests/move_sheet.rs 与 tests/sheet_index_metadata.rs。 |
+| 插删行列、改名/重排/删除 sheet、跨表/工作簿复制 | unsupported（通用结构适配器未实现） | unverified（MoveSheet 已实现并通过合成往返测试：顺序重排、sheet-scoped definedName localSheetId 重映射、activeTab 跟随、页面设置保留；CreateSheetAt/DeleteSheet 已同步修复 localSheetId/activeTab 滞留；真实模板与依赖对拍未做） | unsupported（无 worker/IPC） | partial: synthetic create/rename/delete sheet 与 ImportRange 进程测试通过；行插删 unsupported；引擎无关校验器 validate_sheet_names 已支持 MoveSheet 顺序期望 | 复制/导入和结构操作需核对公式、definedNames、relationships、条件格式/验证及未知部件；无真实 capability。MoveSheet 合成证据见 crates/excel-editor/tests/move_sheet.rs 与 tests/sheet_index_metadata.rs。 |
 
 能力矩阵须继续拆到具体源操作与 ExcelEditPlan 操作序列；不能用上表代替 PYTHON_EXCEL_OPERATION_INVENTORY.md 的调用链核验。操作、样本或契约未确认时保持 unverified。引擎注册和合成测试不等于生产验收；不得据此自动改路由或创建 Passed capability。
 
