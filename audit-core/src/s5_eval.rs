@@ -6,7 +6,8 @@
 //! implementation:
 //!
 //! - `excel_binary64`: f64 arithmetic converged to Excel's 15 significant
-//!   digits through `excel_round15`;
+//!   digits through `excel_round15`, with Python 3.12-compatible compensated
+//!   summation for `SUM`;
 //! - `decimal`: a 28-significant-digit decimal context with banker's rounding
 //!   for `+`, `-`, `*`, `/` and ROUND_HALF_UP for `ROUND` quantization,
 //!   mirroring Python's default `decimal` context.
@@ -842,6 +843,7 @@ fn with_numeric_mode(value: EvalValue, rule_mode: &str) -> EvalValue {
         EvalScalar::Number(NumberValue::Binary64(raw)) => {
             let mut updated = value;
             updated.value = EvalScalar::Number(NumberValue::Binary64(excel_round15(raw)));
+            updated.numeric_mode = rule_mode.to_owned();
             updated
         }
         EvalScalar::Number(NumberValue::Decimal(_)) => {
@@ -853,6 +855,7 @@ fn with_numeric_mode(value: EvalValue, rule_mode: &str) -> EvalValue {
             };
             let mut updated = value;
             updated.value = EvalScalar::Number(converted);
+            updated.numeric_mode = rule_mode.to_owned();
             updated
         }
         EvalScalar::Blank => {
@@ -956,6 +959,26 @@ fn compare_values(operator: &str, left: &EvalValue, right: &EvalValue) -> Result
     Err(EvalError::evaluation(
         "TYPE_ERROR：字符串和布尔值只支持相等比较",
     ))
+}
+
+fn neumaier_sum(values: &[f64]) -> f64 {
+    let mut sum = 0.0;
+    let mut correction = 0.0;
+
+    for &value in values {
+        let next = sum + value;
+        if sum.abs() >= value.abs() {
+            correction += (sum - next) + value;
+        } else {
+            correction += (value - next) + sum;
+        }
+        sum = next;
+    }
+
+    if correction != 0.0 && correction.is_finite() {
+        sum += correction;
+    }
+    sum
 }
 
 fn arithmetic_number(
@@ -1370,11 +1393,27 @@ pub fn evaluate(
                             } else {
                                 "decimal"
                             };
-                            let mut total = NumberValue::zero_for(result_mode);
-                            for index in &numeric_positions {
-                                let number = require_number(&values[*index], "SUM")?;
-                                total = arithmetic_number("+", &total, &number)?;
-                            }
+                            let total = if result_mode == "excel_binary64" {
+                                let numbers = numeric_positions
+                                    .iter()
+                                    .map(|index| require_number(&values[*index], "SUM"))
+                                    .collect::<Result<Vec<_>, _>>()?;
+                                let numbers: Vec<f64> = numbers
+                                    .iter()
+                                    .map(|number| match number {
+                                        NumberValue::Binary64(value) => *value,
+                                        NumberValue::Decimal(value) => value.to_f64(),
+                                    })
+                                    .collect();
+                                NumberValue::Binary64(neumaier_sum(&numbers))
+                            } else {
+                                let mut total = NumberValue::zero_for(result_mode);
+                                for index in &numeric_positions {
+                                    let number = require_number(&values[*index], "SUM")?;
+                                    total = arithmetic_number("+", &total, &number)?;
+                                }
+                                total
+                            };
                             let metric_type = numeric_positions
                                 .first()
                                 .map(|index| values[*index].metric_type.clone())
@@ -1634,6 +1673,43 @@ mod eval_tests {
             recurring.quantize_half_up(5).to_canonical_string(),
             "0.33333"
         );
+    }
+
+    #[test]
+    fn with_numeric_mode_updates_converted_number_mode() {
+        let decimal = EvalValue::number_from_text("2.5", "decimal").expect("decimal");
+        let converted = with_numeric_mode(decimal, "excel_binary64");
+
+        assert_eq!(converted.numeric_mode, "excel_binary64");
+        assert_eq!(
+            converted.value,
+            EvalScalar::Number(NumberValue::Binary64(2.5))
+        );
+    }
+
+    #[test]
+    fn binary64_sum_handles_non_finite_values_like_python() {
+        assert_eq!(neumaier_sum(&[1e308, 1e308]), f64::INFINITY);
+        assert_eq!(neumaier_sum(&[f64::INFINITY, 1.0]), f64::INFINITY);
+        assert!(neumaier_sum(&[f64::INFINITY, f64::NEG_INFINITY]).is_nan());
+    }
+
+    #[test]
+    fn binary64_sum_uses_python_312_compensation() {
+        let node = parse_expression("SUM(10000000000000000, 1, -10000000000000000)")
+            .expect("parse cancellation expression");
+        let outcome = evaluate_with_maps(
+            &node,
+            &BTreeMap::new(),
+            &std::collections::BTreeMap::new(),
+            "excel_binary64",
+        )
+        .expect("evaluate compensated sum");
+
+        match outcome.value {
+            EvalScalar::Number(NumberValue::Binary64(value)) => assert_eq!(value, 1.0),
+            other => panic!("unexpected SUM result {other:?}"),
+        }
     }
 
     #[test]

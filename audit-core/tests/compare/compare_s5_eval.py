@@ -43,6 +43,7 @@ SYNTHETIC_CASES = (
     ("ROUND(2.675, 2)", "excel_binary64"),
     ("ROUND(2.5, 0)", "excel_binary64"),
     ("MAX(1, 2.5, 2)", "excel_binary64"),
+    ("SUM(10000000000000000, 1, -10000000000000000)", "excel_binary64"),
     ("1 < \"a\"", "decimal"),
 )
 
@@ -306,6 +307,7 @@ def main() -> int:
             "verification": {
                 "rust_runner": "audit-core/tests/s5_eval_parity.rs",
                 "python_baseline": "s1audit_configured.dsl.evaluate",
+                "python_baseline_version": sys.version.split()[0],
                 "inputs_unchanged": True,
                 "raw_expressions_or_messages_persisted": False,
                 "capability_status": "unverified",

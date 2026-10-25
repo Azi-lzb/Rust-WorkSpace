@@ -45,9 +45,16 @@ def rust_scalar(value):
     return value
 
 
-def python_run(config_copy: Path, source_copy: Path, snapshot_dir: Path):
+def python_run(
+    config_copy: Path,
+    source_copy: Path,
+    snapshot_dir: Path,
+    template_path: Path | None,
+    template_dir: Path | None,
+):
     from s1audit_configured.engine import AuditEngine
     from s1audit_configured.model import RuntimeContext, SourceBinding
+    from s1audit_configured.runtime import RuntimePaths
 
     engine = AuditEngine(config_copy)
     context = RuntimeContext(
@@ -69,6 +76,10 @@ def python_run(config_copy: Path, source_copy: Path, snapshot_dir: Path):
         businesses=["单位贷款"],
         schema_snapshot_dir=snapshot_dir,
         persist_schema_snapshots=False,
+        runtime_paths=RuntimePaths(
+            template_path=template_path,
+            template_dir=template_dir,
+        ),
     )
     return result
 
@@ -120,6 +131,8 @@ def main() -> int:
     parser.add_argument("--source-root", type=Path, required=True)
     parser.add_argument("--config-workbook", type=Path, required=True)
     parser.add_argument("--audit-copy", type=Path, required=True)
+    parser.add_argument("--template-path", type=Path)
+    parser.add_argument("--template-dir", type=Path)
     parser.add_argument("--workspace", type=Path, default=ROOT)
     parser.add_argument("--report", type=Path, required=True)
     args = parser.parse_args()
@@ -127,6 +140,8 @@ def main() -> int:
     source_root = args.source_root.resolve(strict=True)
     workspace = args.workspace.resolve(strict=True)
     report_path = args.report.resolve()
+    template_path = args.template_path.resolve(strict=True) if args.template_path else None
+    template_dir = args.template_dir.resolve(strict=True) if args.template_dir else None
     sys.path.insert(0, str(source_root / "core" / "src"))
 
     with tempfile.TemporaryDirectory(prefix="audit-s5-run-") as temporary:
@@ -136,7 +151,13 @@ def main() -> int:
         shutil.copy2(args.config_workbook.resolve(strict=True), config_copy)
         shutil.copy2(args.audit_copy.resolve(strict=True), source_copy)
 
-        run_result = python_run(config_copy, source_copy, directory / "snap")
+        run_result = python_run(
+            config_copy,
+            source_copy,
+            directory / "snap",
+            template_path,
+            template_dir,
+        )
         expected_rows = [
             {field: row.get(field) for field in COMPARE_FIELDS}
             for row in run_result.ledger["rules"]
@@ -151,6 +172,8 @@ def main() -> int:
             "institution_name": "PARITY",
             "source_id": "CURRENT",
             "businesses": ["单位贷款"],
+            "template_path": str(template_path) if template_path else None,
+            "template_dir": str(template_dir) if template_dir else None,
         }
         input_path = directory / "request.json"
         input_path.write_text(json.dumps(request, ensure_ascii=False), encoding="utf-8")
@@ -183,7 +206,7 @@ def main() -> int:
         rust_counts = payload.get("status_counts", {})
 
         matched = 0
-        mismatched: list[str] = []
+        mismatched: list[int] = []
         count_mismatch = expected_counts != rust_counts
         for index, expected in enumerate(expected_rows):
             actual_raw = rust_rows[index] if index < len(rust_rows) else {}
@@ -212,12 +235,11 @@ def main() -> int:
             diffs: list[str] = []
             diff(expected_normalized, actual, f"row[{index}]", diffs)
             if diffs:
-                mismatched.append(expected.get("rule_id", f"row{index}"))
+                mismatched.append(index)
                 if len(mismatched) <= 3:
                     print(json.dumps({
-                        "dbg_row": index,
-                        "rule": expected.get("rule_id"),
-                        "diffs": diffs[:10],
+                        "row_index": index,
+                        "mismatch_fields": diffs[:10],
                     }, ensure_ascii=False))
             else:
                 matched += 1
@@ -230,11 +252,13 @@ def main() -> int:
             "business": "单位贷款",
             "rules_executed": len(expected_rows),
             "files_copied_to_temporary": True,
+            "template_path_supplied": template_path is not None,
+            "template_dir_supplied": template_dir is not None,
         },
         "comparison": {
             "rows_matched": matched,
             "rows_mismatched": len(mismatched),
-            "mismatch_rule_sample": mismatched[:10],
+            "mismatch_row_indices": mismatched[:10],
             "status_counts_match": not count_mismatch,
             "python_status_counts": expected_counts,
             "rust_status_counts": rust_counts,
@@ -243,6 +267,7 @@ def main() -> int:
         "verification": {
             "rust_runner": "audit-core/tests/s5_run_parity.rs",
             "python_baseline": "s1audit_configured.engine.AuditEngine.run",
+            "python_baseline_version": sys.version.split()[0],
             "inputs_unchanged": True,
             "raw_values_persisted": False,
             "capability_status": "unverified",

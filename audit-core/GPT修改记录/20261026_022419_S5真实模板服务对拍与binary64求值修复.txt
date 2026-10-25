@@ -1,0 +1,21 @@
+# S5 真实模板服务对拍与 binary64 求值修复
+
+- 时间：2026-10-26 02:24:19 +08:00
+- 执行者：Codex
+- 修改前 HEAD：d042112b294954139856a565c6081a049459e00f；修改后待本地提交
+- WIP：保留 HANDOFF_ZCODE_TO_CODEX.md、.pytest-tmp-v3/、既有全量配置报告及本轮未跟踪诊断报告；未修改或提交这些文件。
+- 目的：为模板绑定的真实 S5 审核补齐完整规则服务对拍。首次对拍发现 377 条中 1 条差异；根因是 with_numeric_mode 将 Decimal 转为 f64 后没有同步 numeric_mode，导致下游 SUM/算术选择错误模式。另为 Python 3.12 的 binary64 SUM 补 Neumaier 求和。
+- 修改：
+  - audit-core/src/s5_eval.rs：数值模式转换时同步更新 numeric_mode；binary64 SUM 使用与 Python 3.12 一致的补偿求和，Decimal 路径不变。
+  - audit-core/tests/s5_run_parity.rs、audit-core/tests/compare/compare_s5_run.py：支持传入真实模板路径/目录；输入配置与审核簿复制到临时目录，Rust run_rules 对拍 Python AuditEngine.run；仅将不匹配行号和字段写入脱敏诊断。
+  - audit-core/tests/compare/compare_s5_eval.py：增加浮点抵消 SUM 用例，并记录 Python 基线版本。
+  - audit-core/MIGRATION_INVENTORY.md 及 probe/reports 下两份新机器报告：记录 80 个求值用例和真实模板运行结果，不保存业务值或本机路径。
+- 验证（Windows 原生环境，Python 3.12.10；Rust S5Retrieval 使用现有 excel-reader/Calamine 路由，模板命名区域由 namespace-aware 适配器解析）：
+  - cargo fmt --all -- --check：通过。
+  - cargo test --offline --locked -q -p audit-core --lib s5_eval::eval_tests::：8 passed。
+  - compare_s5_eval.py：80/80 Python/Rust 一致，3 个预期错误用例。
+  - compare_s5_run.py，显式同批真实模板：377/377 结果行一致，状态计数一致（PASSED 352、TRIGGERED 24、RETRIEVAL_FAILED 1）；样本与配置均只从临时副本读取，模板只读。Rust 侧经 s5_run_parity 测试入口执行 run_rules，不是 CLI 文件输出链。整次对拍约 15 秒；两侧引擎为 Python AuditEngine 与 Rust S5Retrieval/run_rules。
+  - Python 对拍脚本 py_compile 与 git diff --check：通过。
+- 未执行：显式模板真实 CLI 文件输出及 Excel 输出保真对拍；V_PRE/V_EXT 真实绑定、输入哈希完整性降级和结构快照验证；Linux 构建/运行；目标系统 deb 验收。
+- 状态：S5-F01 整体仍未验证；Audit #8 共享能力问题保持未解决。源 Python 项目、配置工作簿、模板和审核样本均未修改。没有共享 crate 或根 Cargo 文件变更，不涉及组件版本升级。
+- 回滚：撤回上述 Rust/测试/清单/记录及本轮两份机器报告；所有输入均为只读或临时副本，无需恢复用户工作簿。

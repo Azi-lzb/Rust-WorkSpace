@@ -4,7 +4,7 @@
 //! plus status counts (`AUDIT_S5_RUN_REPORT`). Manual parity harness only.
 
 use audit_core::s5_config::load_configuration;
-use audit_core::s5_retrieval::S5Retrieval;
+use audit_core::s5_retrieval::{S5Retrieval, S5SourceDescriptor};
 use audit_core::s5_service::run_rules;
 use serde::Deserialize;
 use serde_json::json;
@@ -14,6 +14,8 @@ use std::{fs, path::PathBuf};
 struct RunRequest {
     config: PathBuf,
     source: PathBuf,
+    template_path: Option<PathBuf>,
+    template_dir: Option<PathBuf>,
     period: String,
     institution_code: String,
     institution_name: String,
@@ -35,14 +37,20 @@ fn runs_s5_run_parity_item() {
         serde_json::from_str(&fs::read_to_string(&input_path).expect("read run request"))
             .expect("parse run request");
     let configuration = load_configuration(&request.config, false, "").expect("load configuration");
-    let mut retrieval = S5Retrieval::bind(
+    let mut retrieval = S5Retrieval::bind_with_sources_and_templates(
         configuration.clone(),
-        "current",
-        &request.source,
-        &request.source_id,
+        S5SourceDescriptor {
+            path: &request.source,
+            source_id: &request.source_id,
+            period: &request.period,
+            institution_code: &request.institution_code,
+            institution_name: &request.institution_name,
+        },
+        None,
+        None,
         &request.period,
-        &request.institution_code,
-        &request.period,
+        request.template_path.as_deref(),
+        request.template_dir.as_deref(),
     )
     .expect("bind source");
     let (outcomes, counts) = run_rules(
