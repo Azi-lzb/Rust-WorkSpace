@@ -1,0 +1,34 @@
+时间：2026-10-25 09:08（Asia/Shanghai）
+执行者：Codex Audit migration agent
+分支：audit-dev
+修改前 commit：3af9bfe
+修改后 commit：b6fc471
+WIP：开始时 worktree 干净。未修改 DEVELOPMENT_GOAL.md、真实工作簿、源 Python 项目、pytools-core、共享 crates、Cargo.lock 或根 Cargo 配置。
+
+## 目的
+
+让现有 S1 真实历史簿 candidate-only 测试能把非首位历史页识别为预期的写前拒绝，而不是直接 panic；用用户指定的真实非空历史簿验证计划预检不调用编辑器、不产生输出。未放宽既有拒绝或改变生产 capability。
+
+## 修改文件
+
+- `audit-core/src/s1_history.rs`：真实 workbook candidate-only 测试在历史页非首位时检查预期错误、无输出且源/临时副本不变后结束；其他错误仍失败。
+- `audit-core/probe/reports/s1_history_nonempty_config_real_update_preflight_windows_native_20261025.json`：记录预期写前拒绝，不含源路径、业务值或哈希。
+- `audit-core/MIGRATION_INVENTORY.md`：关联 9 行真实历史读对拍和写前拒绝证据，明确写后保留项未测。
+- 本记录。
+
+## 验证
+
+- Windows 原生对 `s1_history::tests::real_s1_history_workbook_engine_candidate_only` 执行 `--ignored --exact --nocapture`，使用 `AUDIT_S1_HISTORY_REAL_WORKBOOK` 指向用户提供的只读 config-real 样本：1 passed。输出为 `candidate_preflight=rejected reason=history_sheet_not_first editor_invoked=false`；临时输入不变、源文件不变、无候选输出。
+- 同一工作簿 9 行历史的 Python/Rust 读对拍已于前一提交通过，差异 0，执行前后输入 SHA-256 一致。
+- `cargo fmt --all -- --check` 未通过：报告包含多处先前存在的 Rust 格式差异，本轮未批量格式化不相关文件；新增分支已按 rustfmt 提示局部调整。
+- 该候选测试仅验证写前拒绝；未调用 Umya/OpenPyXL Editor，未对任何输出测 PageSettings、关系或其他对象保留。
+
+## 未执行项与已知问题
+
+- 共享 `MoveSheet` 与经验证的完整 Editor 批次尚未提供；此真实工作簿的历史页位于 index 1，更新计划继续 fail-closed，S1 历史写回保持 Unverified。
+- 完整非空历史簿写回、公式复制/显式重算、Linux/deb 和麒麟/UOS 验收未执行。
+
+## 删除清单与回滚
+
+- 未更改或覆盖任何真实工作簿。回滚时恢复测试分支、移除本 JSON 与本记录、恢复 inventory 对应句子即可。
+- 【组件版本】不升级。
