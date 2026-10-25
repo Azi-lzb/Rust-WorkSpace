@@ -5,12 +5,13 @@
     "mismatch.xlsx",
     "no_target.xlsx",
     "non_numeric_missing.xlsx",
+    "numeric_text_underscores.xlsx",
     "broken.xlsx"
   ],
   "expected_stats": {
-    "files": 4,
-    "sheets": 3,
-    "errors": 1,
+    "files": 5,
+    "sheets": 5,
+    "errors": 3,
     "failed_files": 1
   }
 }

@@ -113,6 +113,33 @@ def main() -> None:
             ]
         },
     )
+    save_book(
+        FIXTURE_DIR / "numeric_text_underscores.xlsx",
+        {
+            "本期分地区": [
+                ["地区总分校验"],
+                ["序号", "地区", "金额", "无效格式"],
+                [None, "惠州市", "1_000.25", "1__000"],
+                [1, "惠阳区", 500, 1],
+                [2, "博罗县", 499, 2],
+                [3, "惠东县", 0, 0],
+                [4, "龙门县", 0, 0],
+                [5, "惠州市本部", 0, 0],
+                [6, "大亚湾", 0, 0],
+            ],
+            "年度分地区": [
+                ["地区总分校验"],
+                ["序号", "地区", "金额", "无效格式"],
+                [None, "惠州市", "١_٠٠٠.٢٥", "١__٠٠٠"],
+                [1, "惠阳区", 500, 1],
+                [2, "博罗县", 499, 2],
+                [3, "惠东县", 0, 0],
+                [4, "龙门县", 0, 0],
+                [5, "惠州市本部", 0, 0],
+                [6, "大亚湾", 0, 0],
+            ],
+        },
+    )
     (FIXTURE_DIR / "broken.xlsx").write_bytes(b"not a workbook")
     cases = {
         "schema_version": 1,
@@ -121,9 +148,10 @@ def main() -> None:
             "mismatch.xlsx",
             "no_target.xlsx",
             "non_numeric_missing.xlsx",
+            "numeric_text_underscores.xlsx",
             "broken.xlsx",
         ],
-        "expected_stats": {"files": 4, "sheets": 3, "errors": 1, "failed_files": 1},
+        "expected_stats": {"files": 5, "sheets": 5, "errors": 3, "failed_files": 1},
     }
     (FIXTURE_DIR / "cases.json").write_text(
         json.dumps(cases, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"

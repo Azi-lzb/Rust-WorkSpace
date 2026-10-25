@@ -12,6 +12,7 @@
     "mismatch.xlsx",
     "no_target.xlsx",
     "non_numeric_missing.xlsx",
+    "numeric_text_underscores.xlsx",
     "broken.xlsx"
   ],
   "fixture_sha256": {
@@ -19,22 +20,23 @@
     "mismatch.xlsx": "75A5D2399D46DCF54608383F57BD633D775C9211FD603C2D3C876CB9969AFACC",
     "no_target.xlsx": "43300263EBF8E0175A8F7A582659363F95D6680AF63B48F81298589F82EB54B5",
     "non_numeric_missing.xlsx": "0DA87F8C4C1B37BE48BFBDDD3300BEFB27E1A6CE48935245064B84C2A437EBA8",
+    "numeric_text_underscores.xlsx": "CBB860A2169771EF27F85CE3298B4A1AF2FF8BE93B3F31C6E933C32AEDA9B2BA",
     "broken.xlsx": "2F66DC481A54C04E20E01BF7A084EB9F2B95F856219A0F1607B9DF45294CC47C"
   },
   "scope": "Synthetic XLSX inputs; normal non-COM implementation only.",
   "python_baseline": {
     "status": "保留",
-    "case_count": 5
+    "case_count": 6
   },
   "statistics": {
-    "files": 4,
-    "sheets": 3,
-    "errors": 1,
+    "files": 5,
+    "sheets": 5,
+    "errors": 3,
     "failed_files": 1
   },
   "output_workbook": {
     "sheet_name": "核对结果",
-    "max_row": 5,
+    "max_row": 7,
     "max_column": 6,
     "cells": {
       "A1": {
@@ -133,25 +135,73 @@
         "type": "string",
         "value": "核对通过"
       },
+      "A5": {
+        "type": "integer",
+        "value": 4
+      },
       "B5": {
         "type": "string",
-        "value": "已检查文件数: 4"
+        "value": "numeric_text_underscores.xlsx"
       },
       "C5": {
         "type": "string",
-        "value": "已检查工作表数: 3"
+        "value": "本期分地区"
       },
       "D5": {
         "type": "string",
-        "value": "发现错误总数: 1"
+        "value": "错误"
+      },
+      "E5": {
+        "type": "integer",
+        "value": 1
+      },
+      "F5": {
+        "type": "string",
+        "value": "金额: 1000.25 ≠ 999.00 (差1.25)"
+      },
+      "A6": {
+        "type": "integer",
+        "value": 5
+      },
+      "B6": {
+        "type": "string",
+        "value": "numeric_text_underscores.xlsx"
+      },
+      "C6": {
+        "type": "string",
+        "value": "年度分地区"
+      },
+      "D6": {
+        "type": "string",
+        "value": "错误"
+      },
+      "E6": {
+        "type": "integer",
+        "value": 1
+      },
+      "F6": {
+        "type": "string",
+        "value": "金额: 1000.25 ≠ 999.00 (差1.25)"
+      },
+      "B7": {
+        "type": "string",
+        "value": "已检查文件数: 5"
+      },
+      "C7": {
+        "type": "string",
+        "value": "已检查工作表数: 5"
+      },
+      "D7": {
+        "type": "string",
+        "value": "发现错误总数: 3"
       }
     },
     "formulas": {
-      "A5": "=== 统计汇总 ==="
+      "A7": "=== 统计汇总 ==="
     },
     "column_widths": {
       "A": 18.0,
-      "B": 26.0,
+      "B": 31.0,
       "C": 19.0,
       "D": 17.0,
       "E": 10.0,
@@ -302,19 +352,91 @@
         "fill_color": "C8FFC8",
         "horizontal_alignment": null
       },
+      "A5": {
+        "bold": false,
+        "font_color": "C00000",
+        "fill_color": "FFC8C8",
+        "horizontal_alignment": null
+      },
       "B5": {
         "bold": false,
-        "font_color": null,
-        "fill_color": null,
+        "font_color": "C00000",
+        "fill_color": "FFC8C8",
         "horizontal_alignment": null
       },
       "C5": {
         "bold": false,
+        "font_color": "C00000",
+        "fill_color": "FFC8C8",
+        "horizontal_alignment": null
+      },
+      "D5": {
+        "bold": false,
+        "font_color": "C00000",
+        "fill_color": "FFC8C8",
+        "horizontal_alignment": null
+      },
+      "E5": {
+        "bold": false,
+        "font_color": "C00000",
+        "fill_color": "FFC8C8",
+        "horizontal_alignment": null
+      },
+      "F5": {
+        "bold": false,
+        "font_color": "C00000",
+        "fill_color": "FFC8C8",
+        "horizontal_alignment": null
+      },
+      "A6": {
+        "bold": false,
+        "font_color": "C00000",
+        "fill_color": "FFC8C8",
+        "horizontal_alignment": null
+      },
+      "B6": {
+        "bold": false,
+        "font_color": "C00000",
+        "fill_color": "FFC8C8",
+        "horizontal_alignment": null
+      },
+      "C6": {
+        "bold": false,
+        "font_color": "C00000",
+        "fill_color": "FFC8C8",
+        "horizontal_alignment": null
+      },
+      "D6": {
+        "bold": false,
+        "font_color": "C00000",
+        "fill_color": "FFC8C8",
+        "horizontal_alignment": null
+      },
+      "E6": {
+        "bold": false,
+        "font_color": "C00000",
+        "fill_color": "FFC8C8",
+        "horizontal_alignment": null
+      },
+      "F6": {
+        "bold": false,
+        "font_color": "C00000",
+        "fill_color": "FFC8C8",
+        "horizontal_alignment": null
+      },
+      "B7": {
+        "bold": false,
         "font_color": null,
         "fill_color": null,
         "horizontal_alignment": null
       },
-      "D5": {
+      "C7": {
+        "bold": false,
+        "font_color": null,
+        "fill_color": null,
+        "horizontal_alignment": null
+      },
+      "D7": {
         "bold": false,
         "font_color": null,
         "fill_color": null,

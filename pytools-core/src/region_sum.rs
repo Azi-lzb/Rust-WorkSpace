@@ -803,7 +803,47 @@ fn parse_python_float(value: &str) -> Option<f64> {
     if value.is_empty() || value == "-" {
         return Some(0.0);
     }
-    value.parse::<f64>().ok()
+
+    // The Python 3.12 baseline accepts Unicode 15.0 decimal digits and
+    // underscores only between decimal digits. Normalize those digits and
+    // separators before delegating the numeric conversion to Rust.
+    let characters = value.chars().collect::<Vec<_>>();
+    let mut normalized = String::with_capacity(value.len());
+    for (index, character) in characters.iter().copied().enumerate() {
+        if character == '_' {
+            if index == 0
+                || index + 1 == characters.len()
+                || decimal_digit_value(characters[index - 1]).is_none()
+                || decimal_digit_value(characters[index + 1]).is_none()
+            {
+                return None;
+            }
+            continue;
+        }
+        if let Some(digit) = decimal_digit_value(character) {
+            normalized.push(char::from(b'0' + digit));
+        } else {
+            normalized.push(character);
+        }
+    }
+    normalized.parse::<f64>().ok()
+}
+
+const PYTHON_UNICODE_15_DECIMAL_ZEROES: [u32; 64] = [
+    0x0030, 0x0660, 0x06F0, 0x07C0, 0x0966, 0x09E6, 0x0A66, 0x0AE6, 0x0B66, 0x0BE6, 0x0C66, 0x0CE6,
+    0x0D66, 0x0DE6, 0x0E50, 0x0ED0, 0x0F20, 0x1040, 0x1090, 0x17E0, 0x1810, 0x1946, 0x19D0, 0x1A80,
+    0x1A90, 0x1B50, 0x1BB0, 0x1C40, 0x1C50, 0xA620, 0xA8D0, 0xA900, 0xA9D0, 0xA9F0, 0xAA50, 0xABF0,
+    0xFF10, 0x104A0, 0x10D30, 0x11066, 0x110F0, 0x11136, 0x111D0, 0x112F0, 0x11450, 0x114D0,
+    0x11650, 0x116C0, 0x11730, 0x118E0, 0x11950, 0x11C50, 0x11D50, 0x11DA0, 0x11F50, 0x16A60,
+    0x16AC0, 0x16B50, 0x1D7CE, 0x1E140, 0x1E2F0, 0x1E4F0, 0x1E950, 0x1FBF0,
+];
+
+fn decimal_digit_value(character: char) -> Option<u8> {
+    let codepoint = character as u32;
+    let index = PYTHON_UNICODE_15_DECIMAL_ZEROES.partition_point(|zero| *zero <= codepoint);
+    let zero = *PYTHON_UNICODE_15_DECIMAL_ZEROES.get(index.checked_sub(1)?)?;
+    let value = codepoint.checked_sub(zero)?;
+    (value < 10).then_some(value as u8)
 }
 
 fn fixed_2(value: f64) -> String {
@@ -1049,6 +1089,60 @@ mod tests {
             None
         );
         assert_eq!(parse_python_float(" Infinity "), Some(f64::INFINITY));
+    }
+
+    #[test]
+    fn numeric_text_underscores_match_python_float_grammar() {
+        assert_eq!(parse_python_float("1_000"), Some(1_000.0));
+        assert_eq!(parse_python_float("1_000.25"), Some(1_000.25));
+        assert_eq!(parse_python_float("1.25e1_0"), Some(12_500_000_000.0));
+        assert_eq!(parse_python_float("١٢"), Some(12.0));
+        assert_eq!(parse_python_float("١_٢"), Some(12.0));
+        assert_eq!(parse_python_float("１２３"), Some(123.0));
+        assert_eq!(parse_python_float("１_２"), Some(12.0));
+        assert_eq!(parse_python_float("1__000"), None);
+        assert_eq!(parse_python_float("1_.0"), None);
+        assert_eq!(parse_python_float("1._0"), None);
+        assert_eq!(parse_python_float("1e_10"), None);
+        assert_eq!(parse_python_float("١__٢"), None);
+    }
+
+    #[test]
+    fn sheet_check_parses_valid_numeric_separators_and_ignores_malformed_values() {
+        let input = sheet(
+            &[
+                ("B2", CellValue::Text("地区".to_owned())),
+                ("C2", CellValue::Text("金额".to_owned())),
+                ("D2", CellValue::Text("无效格式".to_owned())),
+                ("B3", CellValue::Text("惠州市".to_owned())),
+                ("C3", CellValue::Text("1_000.25".to_owned())),
+                ("D3", CellValue::Text("1__000".to_owned())),
+                ("B4", CellValue::Text("惠阳区".to_owned())),
+                ("C4", CellValue::Integer(500)),
+                ("D4", CellValue::Integer(1)),
+                ("B5", CellValue::Text("博罗县".to_owned())),
+                ("C5", CellValue::Integer(499)),
+                ("D5", CellValue::Integer(2)),
+                ("B6", CellValue::Text("惠东县".to_owned())),
+                ("C6", CellValue::Integer(0)),
+                ("D6", CellValue::Integer(0)),
+                ("B7", CellValue::Text("龙门县".to_owned())),
+                ("C7", CellValue::Integer(0)),
+                ("D7", CellValue::Integer(0)),
+                ("B8", CellValue::Text("惠州市本部".to_owned())),
+                ("C8", CellValue::Integer(0)),
+                ("D8", CellValue::Integer(0)),
+                ("B9", CellValue::Text("大亚湾".to_owned())),
+                ("C9", CellValue::Integer(0)),
+                ("D9", CellValue::Integer(0)),
+            ],
+            9,
+            4,
+        );
+
+        let result = check_one_sheet(&input);
+        assert_eq!(result.error_count, 1);
+        assert_eq!(result.detail, "金额: 1000.25 ≠ 999.00 (差1.25)");
     }
 
     #[test]
