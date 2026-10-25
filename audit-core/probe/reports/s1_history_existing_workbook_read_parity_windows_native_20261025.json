@@ -1,0 +1,33 @@
+{
+  "suite": "audit.s1_history_workbook",
+  "baseline": "Open-Data-Audit base_audit.native.history_io.read_history_xlsx",
+  "status": "passed",
+  "synthetic_cases": {
+    "standard_sheet": {
+      "history_rows": 2,
+      "current_issues": 1,
+      "resolved_issues": 1,
+      "python_rust_field_differences": 0
+    },
+    "requested_sheet": {
+      "sheet_name": "自定义历史",
+      "history_rows": 1,
+      "python_rust_field_differences": 0
+    },
+    "legacy_sheet": {
+      "sheet_name": "历史审核结果",
+      "history_rows": 1,
+      "python_rust_field_differences": 0
+    }
+  },
+  "user_log_engine_and_timing": true,
+  "developer_log_engine_and_timing": true,
+  "source_workbooks_modified": false,
+  "read_only_real_sample": {
+    "role": "read_only_real_history_workbook",
+    "history_rows": 0,
+    "reader": "calamine",
+    "sheet_name": "核查表校验结果",
+    "python_rust_field_differences": 0
+  }
+}

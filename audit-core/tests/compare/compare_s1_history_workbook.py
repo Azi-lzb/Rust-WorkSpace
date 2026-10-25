@@ -342,7 +342,7 @@ def main() -> int:
                     detail = first_difference(real_expected[field], normalize(real_output[field]), f"$.{field}")
                     raise AssertionError(f"Read-only real workbook parity difference: {detail}")
             real_sample = {
-                "role": "read_only_product_configuration_workbook",
+                "role": "read_only_real_history_workbook",
                 "history_rows": len(real_history),
                 "reader": real_output["history_workbook_read"]["reader"],
                 "sheet_name": real_output["history_workbook_read"]["sheet_name"],
