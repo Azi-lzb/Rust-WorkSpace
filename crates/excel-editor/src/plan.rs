@@ -84,6 +84,15 @@ pub enum PreservationRequirement {
     SheetIdentityAndOrder,
     FreezePanes,
     AutoFilter,
+    /// Allowance (used in `drop_allowed`, never in `preserve`): the openpyxl
+    /// rewrite drops payloads stored on non-anchor cells of merged ranges,
+    /// which sample evidence has shown to match the legacy Python baseline
+    /// for the declaring worksheet. Declaring it narrows the openpyxl
+    /// preflight to payloads intersecting operation target rectangles and
+    /// exempts the emptied non-anchor cells from unmodified-readback
+    /// comparison while their merged ranges stay intact. It never requires
+    /// a DeleteSheet operation and is not a production capability on its own.
+    MergedNonAnchorPayloads,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
@@ -685,10 +694,19 @@ impl ExcelEditPlan {
         {
             bail!("drop_allowed worksheet names must not be empty");
         }
-        for sheet in self.drop_allowed.keys() {
-            if !self.operations.iter().any(
-                |operation| matches!(operation, EditOperation::DeleteSheet { name } if name == sheet),
-            ) {
+        for (sheet, allowed) in &self.drop_allowed {
+            // Legacy allowances describe property loss on worksheets the plan
+            // deletes, so they keep requiring an explicit DeleteSheet. The
+            // merged non-anchor payload allowance covers engine rewrite loss
+            // on retained worksheets and stands alone.
+            let requires_delete_sheet = allowed.iter().any(|requirement| {
+                *requirement != PreservationRequirement::MergedNonAnchorPayloads
+            });
+            if requires_delete_sheet
+                && !self.operations.iter().any(
+                    |operation| matches!(operation, EditOperation::DeleteSheet { name } if name == sheet),
+                )
+            {
                 bail!("drop_allowed for worksheet {sheet:?} requires an explicit DeleteSheet operation");
             }
         }
@@ -1461,6 +1479,34 @@ mod tests {
             cell: "A1".to_owned(),
             value: CellValue::Text("new value".to_owned()),
         }
+    }
+
+    #[test]
+    fn merged_non_anchor_payload_allowance_stands_without_delete_sheet() {
+        let directory = TestDir::new();
+        let directory = directory.0.as_path();
+        let mut payload_plan = plan(directory, vec![set_value()]);
+        payload_plan.drop_allowed.insert(
+            "汇总".to_owned(),
+            [PreservationRequirement::MergedNonAnchorPayloads]
+                .into_iter()
+                .collect(),
+        );
+        assert!(payload_plan.validate().is_ok());
+
+        // Mixing a legacy allowance into the same key brings back the
+        // DeleteSheet requirement; existing semantics stay unchanged.
+        let mut mixed = plan(directory, vec![set_value()]);
+        mixed.drop_allowed.insert(
+            "汇总".to_owned(),
+            [
+                PreservationRequirement::MergedNonAnchorPayloads,
+                PreservationRequirement::DefinedNames,
+            ]
+            .into_iter()
+            .collect(),
+        );
+        assert!(mixed.validate().is_err());
     }
 
     #[test]

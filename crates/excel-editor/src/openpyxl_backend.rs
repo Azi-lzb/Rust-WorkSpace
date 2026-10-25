@@ -237,13 +237,14 @@ impl EditBackend for OpenpyxlXlsxBackend {
                 "ExcelEditPlan workbook profile differs from the source package inventory",
             ));
         }
-        match find_non_anchor_merged_payload(&plan.input, None) {
-            Ok(Some((sheet, cell))) => {
-                return Err(BackendFailure::unsupported_before_write(format!(
-                    "openpyxl cannot preserve stored content in merged non-anchor cell {sheet}!{cell}"
-                )))
+        match merged_non_anchor_payloads(&plan.input, None) {
+            Ok(payloads) => {
+                if let Some((sheet, cell)) = offending_target_merged_payload(plan, payloads) {
+                    return Err(BackendFailure::unsupported_before_write(format!(
+                        "openpyxl cannot preserve stored content in merged non-anchor cell {sheet}!{cell}"
+                    )));
+                }
             }
-            Ok(None) => {}
             Err(error) => {
                 return Err(BackendFailure::failed(format!(
                     "inspect merged-cell payloads before openpyxl: {error:#}"
@@ -279,16 +280,17 @@ impl EditBackend for OpenpyxlXlsxBackend {
                         "ImportRange source contains workbook features outside the openpyxl capability evidence",
                     ));
                 }
-                match find_non_anchor_merged_payload(
+                match merged_non_anchor_payloads(
                     source_workbook,
                     Some((source_sheet, source_range)),
                 ) {
-                    Ok(Some((sheet, cell))) => {
-                        return Err(BackendFailure::unsupported_before_write(format!(
-                            "openpyxl cannot preserve ImportRange source content in merged non-anchor cell {sheet}!{cell}"
-                        )))
+                    Ok(payloads) => {
+                        if let Some((sheet, cell)) = payloads.into_iter().next() {
+                            return Err(BackendFailure::unsupported_before_write(format!(
+                                "openpyxl cannot preserve ImportRange source content in merged non-anchor cell {sheet}!{cell}"
+                            )));
+                        }
                     }
-                    Ok(None) => {}
                     Err(error) => {
                         return Err(BackendFailure::failed(format!(
                             "inspect ImportRange merged-cell payloads before openpyxl: {error:#}"
@@ -2673,10 +2675,10 @@ fn worksheet_parts_by_name(source: &Path) -> Result<BTreeMap<String, String>> {
 /// Openpyxl's normal worksheet loader removes every non-anchor cell in a
 /// merged range. Check target workbooks globally; for ImportRange sources,
 /// check only the selected sheet and source range whose payload will be read.
-fn find_non_anchor_merged_payload(
+fn merged_non_anchor_payloads(
     source: &Path,
     scope: Option<(&str, &str)>,
-) -> Result<Option<(String, String)>> {
+) -> Result<Vec<(String, String)>> {
     let parts = worksheet_parts_by_name(source)?;
     if let Some((source_sheet, source_range)) = scope {
         anyhow::ensure!(
@@ -2706,12 +2708,13 @@ fn find_non_anchor_merged_payload(
         }
     }
     if candidates.is_empty() {
-        return Ok(None);
+        return Ok(Vec::new());
     }
 
     // Use the Rust reader to distinguish actual values from empty styled cells
     // that happen to contain an empty <v> or <is> element.
     let workbook = read_workbook(source).context("read cells identified in merged ranges")?;
+    let mut payloads = Vec::new();
     for (sheet_name, address) in candidates {
         let Some(sheet) = workbook
             .sheets
@@ -2722,10 +2725,65 @@ fn find_non_anchor_merged_payload(
         };
         let address = normalize_address(&address);
         if sheet.values.contains_key(&address) || sheet.formulas.contains_key(&address) {
-            return Ok(Some((sheet_name, address)));
+            payloads.push((sheet_name, address));
         }
     }
-    Ok(None)
+    Ok(payloads)
+}
+
+/// First merged non-anchor payload of the target workbook the plan still has
+/// to protect: worksheets with an explicit `MergedNonAnchorPayloads` allowance
+/// may drop payloads outside every operation target rectangle (openpyxl
+/// rewrite loss, baseline-equivalent), while payloads inside a rectangle the
+/// plan writes into stay protected, as do payloads on worksheets without the
+/// allowance.
+fn offending_target_merged_payload(
+    plan: &ExcelEditPlan,
+    payloads: Vec<(String, String)>,
+) -> Option<(String, String)> {
+    let target_rectangles: Vec<(&str, &str, &str)> = plan
+        .operations
+        .iter()
+        .filter_map(|operation| match operation {
+            EditOperation::CopyRange {
+                target_sheet,
+                source_range,
+                target_start,
+                ..
+            }
+            | EditOperation::ImportRange {
+                target_sheet,
+                source_range,
+                target_start,
+                ..
+            } => Some((
+                target_sheet.as_str(),
+                source_range.as_str(),
+                target_start.as_str(),
+            )),
+            _ => None,
+        })
+        .collect();
+    for (sheet, address) in payloads {
+        let allowance = plan.drop_allowed.get(&sheet).is_some_and(|allowed| {
+            allowed.contains(&PreservationRequirement::MergedNonAnchorPayloads)
+        });
+        if !allowance {
+            return Some((sheet, address));
+        }
+        let inside_operation_rectangle =
+            target_rectangles
+                .iter()
+                .any(|(target_sheet, source_range, target_start)| {
+                    *target_sheet == sheet.as_str()
+                        && target_range_contains(source_range, target_start, &address)
+                            .unwrap_or(false)
+                });
+        if inside_operation_rectangle {
+            return Some((sheet, address));
+        }
+    }
+    None
 }
 
 fn merged_payload_cells_in_range(
@@ -3284,6 +3342,44 @@ fn validate_value(expected: &crate::CellValue, actual: Option<&serde_json::Value
     Ok(())
 }
 
+/// The merge range covering a non-anchor cell, if any.
+fn non_anchor_merge_containing(sheet: &SheetDump, address: &str) -> Option<String> {
+    let (row, column) = parse_cell(address).ok()?;
+    sheet
+        .merges
+        .iter()
+        .find(|merge| {
+            let Ok((start_row, start_column, end_row, end_column)) = parse_range(merge) else {
+                return false;
+            };
+            row >= start_row
+                && row <= end_row
+                && column >= start_column
+                && column <= end_column
+                && (row != start_row || column != start_column)
+        })
+        .cloned()
+}
+
+/// Baseline-equivalence exemption for merged non-anchor payloads: on a
+/// worksheet with an explicit `MergedNonAnchorPayloads` allowance, a source
+/// cell hidden under a merged range whose range string is unchanged may
+/// surface as empty after the openpyxl rewrite, matching the legacy Python
+/// baseline. The strict whole-sheet merge comparison stays in
+/// `validate_preserved_merges`; this only exempts the emptied payload cells.
+fn merged_non_anchor_payload_loss_exempt(
+    plan: &ExcelEditPlan,
+    source_sheet: &SheetDump,
+    output_sheet: &SheetDump,
+    address: &str,
+) -> bool {
+    plan.drop_allowed
+        .get(&source_sheet.name)
+        .is_some_and(|allowed| allowed.contains(&PreservationRequirement::MergedNonAnchorPayloads))
+        && non_anchor_merge_containing(source_sheet, address)
+            .is_some_and(|range| output_sheet.merges.contains(&range))
+}
+
 fn validate_preserved_values(
     source: &[SheetDump],
     output: &[SheetDump],
@@ -3335,6 +3431,12 @@ fn validate_preserved_values(
                 continue;
             }
             let actual = new_sheet.values.get(&output_address);
+            if actual.is_none()
+                && output_address == *address
+                && merged_non_anchor_payload_loss_exempt(plan, old_sheet, new_sheet, address)
+            {
+                continue;
+            }
             anyhow::ensure!(
                 json_value_equal(value, actual),
                 "unmodified cell value changed at {}!{}: expected {:?}, got {:?}",
@@ -3387,6 +3489,12 @@ fn validate_preserved_formulas(
                 continue;
             }
             if cell_formula_is_modified(&old_sheet.name, &output_address, &plan.operations) {
+                continue;
+            }
+            if !new_sheet.formulas.contains_key(&output_address)
+                && output_address == *address
+                && merged_non_anchor_payload_loss_exempt(plan, old_sheet, new_sheet, address)
+            {
                 continue;
             }
             anyhow::ensure!(
@@ -4519,6 +4627,158 @@ mod tests {
         assert!(merged_payload_cells_in_range(cells.clone(), "Sheet1", "A5:A9")?.is_empty());
         assert!(merged_payload_cells_in_range(cells, "Other", "A5:A26")?.is_empty());
         Ok(())
+    }
+
+    fn sheet_dump(name: &str, merges: &[&str]) -> SheetDump {
+        SheetDump {
+            name: name.to_owned(),
+            values: BTreeMap::new(),
+            formulas: BTreeMap::new(),
+            formula_status: "ok".to_owned(),
+            merges: merges.iter().map(|merge| merge.to_string()).collect(),
+            merge_status: "ok".to_owned(),
+            comments: BTreeMap::new(),
+            comments_status: "ok".to_owned(),
+            conditional_formatting: Vec::new(),
+            conditional_formatting_status: "ok".to_owned(),
+            data_validations: Vec::new(),
+            data_validations_status: "ok".to_owned(),
+        }
+    }
+
+    fn exemption_plan(
+        directory: &Path,
+        operations: Vec<EditOperation>,
+        allowance_sheet: Option<&str>,
+    ) -> ExcelEditPlan {
+        let input = directory.join("input.xlsx");
+        std::fs::write(&input, b"original workbook bytes").unwrap();
+        let mut plan = ExcelEditPlan {
+            request_id: "payload-allowance-test".to_owned(),
+            input,
+            output: directory.join("output.xlsx"),
+            format: WorkbookFormat::Xlsx,
+            workbook: crate::WorkbookProfile {
+                format: WorkbookFormat::Xlsx,
+                inventory_complete: true,
+                features_present: BTreeSet::new(),
+            },
+            operations,
+            preserve: [PreservationRequirement::UnmodifiedPackageParts]
+                .into_iter()
+                .collect(),
+            drop_allowed: BTreeMap::new(),
+        };
+        if let Some(sheet) = allowance_sheet {
+            plan.drop_allowed.insert(
+                sheet.to_owned(),
+                [PreservationRequirement::MergedNonAnchorPayloads]
+                    .into_iter()
+                    .collect(),
+            );
+        }
+        plan
+    }
+
+    fn exemption_test_directory(label: &str) -> PathBuf {
+        let directory = std::env::temp_dir().join(format!(
+            "excel-editor-payload-allowance-{label}-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&directory).unwrap();
+        directory
+    }
+
+    #[test]
+    fn payload_allowance_exempts_only_outside_operation_rectangles() -> Result<()> {
+        let directory = exemption_test_directory("preflight");
+        let operations = vec![
+            EditOperation::ImportRange {
+                source_workbook: directory.join("source.xlsx"),
+                source_sheet: "模板".to_owned(),
+                source_range: "A1:M10".to_owned(),
+                target_sheet: "汇总".to_owned(),
+                target_start: "A1".to_owned(),
+                copy_values: true,
+                copy_formulas: true,
+                style_mode: RangeStyleMode::Basic,
+                copy_comments: false,
+                copy_merges: false,
+                copy_row_heights: false,
+                copy_column_widths: false,
+                copy_row_hidden: false,
+                copy_column_hidden: false,
+                copy_outline_levels: false,
+                copy_all_row_dimensions: false,
+                copy_all_column_dimensions: false,
+                materialize_blank_cells: false,
+                hide_zero: false,
+            },
+            EditOperation::SetCellValue {
+                sheet: "其他".to_owned(),
+                cell: "A1".to_owned(),
+                value: crate::CellValue::Text("unrelated".to_owned()),
+            },
+        ];
+        let plan = exemption_plan(&directory, operations, Some("汇总"));
+
+        // Payload on an allowed sheet outside the A1:M10 import rectangle.
+        assert_eq!(
+            offending_target_merged_payload(&plan, vec![("汇总".to_owned(), "B20".to_owned())]),
+            None
+        );
+        // The same payload one row inside the import rectangle stays protected.
+        assert_eq!(
+            offending_target_merged_payload(&plan, vec![("汇总".to_owned(), "M10".to_owned())]),
+            Some(("汇总".to_owned(), "M10".to_owned()))
+        );
+        // A payload on a worksheet without the allowance stays protected.
+        assert_eq!(
+            offending_target_merged_payload(&plan, vec![("其他".to_owned(), "B2".to_owned())]),
+            Some(("其他".to_owned(), "B2".to_owned()))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn readback_exemption_requires_allowance_and_unchanged_merge() {
+        let source = sheet_dump("汇总", &["A1:C1"]);
+        let output = sheet_dump("汇总", &["A1:C1"]);
+        let operations = vec![EditOperation::SetCellValue {
+            sheet: "汇总".to_owned(),
+            cell: "F5".to_owned(),
+            value: crate::CellValue::Text("unrelated".to_owned()),
+        }];
+        let directory = exemption_test_directory("readback");
+        let mut plan = exemption_plan(&directory, operations, None);
+
+        // Without the allowance nothing is exempt, even for merged members.
+        assert!(!merged_non_anchor_payload_loss_exempt(
+            &plan, &source, &output, "B1"
+        ));
+        assert_eq!(
+            non_anchor_merge_containing(&source, "B1"),
+            Some("A1:C1".to_owned())
+        );
+        assert_eq!(non_anchor_merge_containing(&source, "A1"), None);
+        assert_eq!(non_anchor_merge_containing(&source, "D4"), None);
+
+        plan.drop_allowed.insert(
+            "汇总".to_owned(),
+            [PreservationRequirement::MergedNonAnchorPayloads]
+                .into_iter()
+                .collect(),
+        );
+        assert!(merged_non_anchor_payload_loss_exempt(
+            &plan, &source, &output, "B1"
+        ));
+
+        // A changed merge set drops the exemption; the strict merge comparison
+        // reports that change separately.
+        let rewritten = sheet_dump("汇总", &["A1:D1"]);
+        assert!(!merged_non_anchor_payload_loss_exempt(
+            &plan, &source, &rewritten, "B1"
+        ));
     }
 
     fn add_test_row_and_column_styles(xml: &str) -> Result<String> {
