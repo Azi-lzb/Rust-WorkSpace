@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Compare the Rust S5 run orchestration with the Python AuditEngine.run.
+"""Compare Rust S5 run results with the Python AuditEngine.run baseline.
 
-Runs both sides over the full enabled 单位贷款 rule set against the same real
-configuration and audit copy (one temporary directory), then diffs every rule
-result row plus the status counts and run status. Aggregate counts only.
+Runs one configured business against the same configuration, current source,
+and optional layout template, comparing numeric results as exact Decimals.
+Only aggregate counts, mismatch row indexes, and field names are reported.
 """
 
 from __future__ import annotations
@@ -25,10 +25,7 @@ def normalize_scalar(value):
     if isinstance(value, bool) or value is None:
         return value
     if isinstance(value, (Decimal, float, int)):
-        number = float(value)
-        if number.is_integer() and abs(number) < 1e16:
-            return f"{number:.1f}"
-        return repr(number)
+        return Decimal(str(value))
     return value
 
 
@@ -39,8 +36,8 @@ def rust_scalar(value):
         return normalize_scalar(value)
     if isinstance(value, str):
         try:
-            return normalize_scalar(float(value))
-        except ValueError:
+            return Decimal(value)
+        except Exception:
             return value
     return value
 
@@ -51,6 +48,11 @@ def python_run(
     snapshot_dir: Path,
     template_path: Path | None,
     template_dir: Path | None,
+    period: str,
+    institution_code: str,
+    institution_name: str,
+    source_id: str,
+    business: str,
 ):
     from s1audit_configured.engine import AuditEngine
     from s1audit_configured.model import RuntimeContext, SourceBinding
@@ -58,22 +60,23 @@ def python_run(
 
     engine = AuditEngine(config_copy)
     context = RuntimeContext(
-        period="2026-07-31",
-        institution_code="PARITY",
-        institution_name="PARITY",
+        period=period,
+        institution_code=institution_code,
+        institution_name=institution_name,
         current_sources={
-            "CURRENT": SourceBinding(
-                "CURRENT",
+            source_id: SourceBinding(
+                source_id,
                 source_copy,
-                business="单位贷款",
-                period="2026-07-31",
-                institution_code="PARITY",
+                business=business,
+                period=period,
+                institution_code=institution_code,
+                institution_name=institution_name,
             )
         },
     )
     result = engine.run(
         context,
-        businesses=["单位贷款"],
+        businesses=[business],
         schema_snapshot_dir=snapshot_dir,
         persist_schema_snapshots=False,
         runtime_paths=RuntimePaths(
@@ -131,6 +134,11 @@ def main() -> int:
     parser.add_argument("--source-root", type=Path, required=True)
     parser.add_argument("--config-workbook", type=Path, required=True)
     parser.add_argument("--audit-copy", type=Path, required=True)
+    parser.add_argument("--period", default="2026-07-31")
+    parser.add_argument("--institution-code", default="PARITY")
+    parser.add_argument("--institution-name", default="PARITY")
+    parser.add_argument("--source-id", default="CURRENT")
+    parser.add_argument("--business", default="单位贷款")
     parser.add_argument("--template-path", type=Path)
     parser.add_argument("--template-dir", type=Path)
     parser.add_argument("--workspace", type=Path, default=ROOT)
@@ -157,6 +165,11 @@ def main() -> int:
             directory / "snap",
             template_path,
             template_dir,
+            args.period,
+            args.institution_code,
+            args.institution_name,
+            args.source_id,
+            args.business,
         )
         expected_rows = [
             {field: row.get(field) for field in COMPARE_FIELDS}
@@ -167,11 +180,11 @@ def main() -> int:
         request = {
             "config": str(config_copy),
             "source": str(source_copy),
-            "period": "2026-07-31",
-            "institution_code": "PARITY",
-            "institution_name": "PARITY",
-            "source_id": "CURRENT",
-            "businesses": ["单位贷款"],
+            "period": args.period,
+            "institution_code": args.institution_code,
+            "institution_name": args.institution_name,
+            "source_id": args.source_id,
+            "businesses": [args.business],
             "template_path": str(template_path) if template_path else None,
             "template_dir": str(template_dir) if template_dir else None,
         }
@@ -207,6 +220,7 @@ def main() -> int:
 
         matched = 0
         mismatched: list[int] = []
+        mismatch_fields: dict[int, list[str]] = {}
         count_mismatch = expected_counts != rust_counts
         for index, expected in enumerate(expected_rows):
             actual_raw = rust_rows[index] if index < len(rust_rows) else {}
@@ -236,10 +250,14 @@ def main() -> int:
             diff(expected_normalized, actual, f"row[{index}]", diffs)
             if diffs:
                 mismatched.append(index)
+                mismatch_fields[index] = sorted({
+                    field.rsplit(".", 1)[-1]
+                    for field in diffs
+                })
                 if len(mismatched) <= 3:
                     print(json.dumps({
                         "row_index": index,
-                        "mismatch_fields": diffs[:10],
+                        "mismatch_fields": mismatch_fields[index],
                     }, ensure_ascii=False))
             else:
                 matched += 1
@@ -249,7 +267,7 @@ def main() -> int:
         "suite": "audit.s5_run_orchestration_parity",
         "status": "completed" if not mismatched and not count_mismatch else "mismatch",
         "sample_scope": {
-            "business": "单位贷款",
+            "business": args.business,
             "rules_executed": len(expected_rows),
             "files_copied_to_temporary": True,
             "template_path_supplied": template_path is not None,
@@ -259,6 +277,9 @@ def main() -> int:
             "rows_matched": matched,
             "rows_mismatched": len(mismatched),
             "mismatch_row_indices": mismatched[:10],
+            "mismatch_fields": {
+                str(index): fields for index, fields in mismatch_fields.items()
+            },
             "status_counts_match": not count_mismatch,
             "python_status_counts": expected_counts,
             "rust_status_counts": rust_counts,

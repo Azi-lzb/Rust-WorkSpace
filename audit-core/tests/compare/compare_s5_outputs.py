@@ -14,6 +14,7 @@ counts only.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import shutil
@@ -26,6 +27,20 @@ from openpyxl.utils import column_index_from_string, get_column_letter
 
 ROOT = Path(__file__).resolve().parents[3]
 RUN_ID = "PARITYRUN"
+
+
+def input_fingerprints(config: Path, source: Path, template_path: Path | None, template_dir: Path | None):
+    inputs = {"config": config, "source": source}
+    if template_path:
+        inputs["template"] = template_path
+    if template_dir:
+        for path in sorted(template_dir.rglob("*.xlsx")):
+            if path.is_file():
+                inputs[f"template:{path.relative_to(template_dir).as_posix()}"] = path
+    return {
+        key: hashlib.sha256(path.read_bytes()).hexdigest()
+        for key, path in inputs.items()
+    }
 
 
 def normalize_link(target: str, root: Path) -> str:
@@ -184,13 +199,41 @@ def diff(left, right, path: str, diffs: list[str]) -> None:
         diffs.append(path)
 
 
+def cell_value_differences(left: dict, right: dict) -> list[dict]:
+    differences = []
+    for sheet in sorted(set(left) | set(right)):
+        left_cells = {cell["ref"]: cell for cell in left.get(sheet, {}).get("cells", [])}
+        right_cells = {cell["ref"]: cell for cell in right.get(sheet, {}).get("cells", [])}
+        for coordinate in sorted(set(left_cells) | set(right_cells)):
+            left_cell = left_cells.get(coordinate, {})
+            right_cell = right_cells.get(coordinate, {})
+            if left_cell.get("value") != right_cell.get("value"):
+                differences.append({
+                    "sheet": sheet,
+                    "cell": coordinate,
+                    "python_type": left_cell.get("type", "missing"),
+                    "rust_type": right_cell.get("type", "missing"),
+                })
+    return differences
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--source-root", type=Path, required=True)
     parser.add_argument("--config-workbook", type=Path, required=True)
     parser.add_argument("--audit-copy", type=Path, required=True)
+    parser.add_argument("--period", default="2026-07-31")
+    parser.add_argument("--institution-code", default="PARITY")
+    parser.add_argument("--institution-name", default="PARITY")
+    parser.add_argument("--source-id", default="CURRENT")
+    parser.add_argument("--business", default="单位贷款")
     parser.add_argument("--template-path", type=Path)
     parser.add_argument("--template-dir", type=Path)
+    parser.add_argument(
+        "--rust-cli",
+        action="store_true",
+        help="compare against the product s5-audit-run CLI rather than its service harness",
+    )
     parser.add_argument("--workspace", type=Path, default=ROOT)
     parser.add_argument("--report", type=Path, required=True)
     args = parser.parse_args()
@@ -200,6 +243,12 @@ def main() -> int:
     report_path = args.report.resolve()
     template_path = args.template_path.resolve(strict=True) if args.template_path else None
     template_dir = args.template_dir.resolve(strict=True) if args.template_dir else None
+    inputs_before = input_fingerprints(
+        args.config_workbook.resolve(strict=True),
+        args.audit_copy.resolve(strict=True),
+        template_path,
+        template_dir,
+    )
     sys.path.insert(0, str(source_root / "core" / "src"))
     os.environ["AUDIT3_WRITER_ENGINE"] = "openpyxl"
 
@@ -219,16 +268,17 @@ def main() -> int:
 
         engine = AuditEngine(config_copy)
         context = RuntimeContext(
-            period="2026-07-31",
-            institution_code="PARITY",
-            institution_name="PARITY",
+            period=args.period,
+            institution_code=args.institution_code,
+            institution_name=args.institution_name,
             current_sources={
-                "CURRENT": SourceBinding(
-                    "CURRENT",
+                args.source_id: SourceBinding(
+                    args.source_id,
                     source_copy,
-                    business="单位贷款",
-                    period="2026-07-31",
-                    institution_code="PARITY",
+                    business=args.business,
+                    period=args.period,
+                    institution_code=args.institution_code,
+                    institution_name=args.institution_name,
                 )
             },
         )
@@ -236,7 +286,7 @@ def main() -> int:
             context,
             output_dir=py_root,
             run_id=RUN_ID,
-            businesses=["单位贷款"],
+            businesses=[args.business],
             schema_snapshot_dir=directory / "snap",
             persist_schema_snapshots=False,
             runtime_paths=RuntimePaths(
@@ -252,10 +302,10 @@ def main() -> int:
             "source": str(source_copy),
             "template_path": str(template_path) if template_path else None,
             "template_dir": str(template_dir) if template_dir else None,
-            "period": "2026-07-31",
-            "institution_code": "PARITY",
-            "institution_name": "PARITY",
-            "source_id": "CURRENT",
+            "period": args.period,
+            "institution_code": args.institution_code,
+            "institution_name": args.institution_name,
+            "source_id": args.source_id,
             "run_id": RUN_ID,
             "output_root": str(rs_root),
         }
@@ -263,30 +313,66 @@ def main() -> int:
         input_path.write_text(json.dumps(request, ensure_ascii=False), encoding="utf-8")
         rust_report = directory / "rust_summary.json"
         environment = os.environ.copy()
-        environment["AUDIT_S5_OUTPUTS_INPUT"] = str(input_path)
-        environment["AUDIT_S5_OUTPUTS_REPORT"] = str(rust_report)
-        completed = subprocess.run(
-            [
-                "cargo", "test", "-p", "audit-core", "--test", "s5_outputs_parity",
-                "--locked", "--", "--ignored", "--nocapture",
-            ],
-            cwd=workspace,
-            env=environment,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            check=False,
-        )
-        if completed.returncode != 0 or not rust_report.is_file():
+        if args.rust_cli:
+            rust_command = [
+                "cargo", "run", "--offline", "--locked", "--quiet", "-p", "audit-core",
+                "--bin", "open-data-audit", "--", "s5-audit-run",
+                "--config", str(config_copy), "--source", str(source_copy),
+                "--source-id", args.source_id, "--period", args.period,
+                "--org-code", args.institution_code, "--org-name", args.institution_name,
+                "--business", args.business, "--output-dir", str(rs_root),
+                "--run-id", RUN_ID,
+            ]
+            if template_path:
+                rust_command.extend(["--template-path", str(template_path)])
+            if template_dir:
+                rust_command.extend(["--template-dir", str(template_dir)])
+            completed = subprocess.run(
+                rust_command,
+                cwd=workspace,
+                env=environment,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                check=False,
+            )
+            try:
+                summary = json.loads(completed.stdout) if completed.returncode == 0 else None
+            except json.JSONDecodeError:
+                summary = None
+            rs_run_dir = rs_root / RUN_ID
+        else:
+            environment["AUDIT_S5_OUTPUTS_INPUT"] = str(input_path)
+            environment["AUDIT_S5_OUTPUTS_REPORT"] = str(rust_report)
+            completed = subprocess.run(
+                [
+                    "cargo", "test", "-p", "audit-core", "--test", "s5_outputs_parity",
+                    "--locked", "--", "--ignored", "--nocapture",
+                ],
+                cwd=workspace,
+                env=environment,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                check=False,
+            )
+            summary = (
+                json.loads(rust_report.read_text(encoding="utf-8"))
+                if completed.returncode == 0 and rust_report.is_file()
+                else None
+            )
+            rs_run_dir = None
+        if completed.returncode != 0 or summary is None:
             print(json.dumps({
                 "status": "rust_runner_failed",
                 "exit_code": completed.returncode,
-                "stderr_tail": completed.stderr[-1500:],
+                "stderr_tail": completed.stderr[-1500:].replace(str(workspace), "[WORKSPACE]"),
             }))
             return 1
-        summary = json.loads(rust_report.read_text(encoding="utf-8"))
-        rs_run_dir = Path(summary["run_dir"])
+        if rs_run_dir is None:
+            rs_run_dir = Path(summary["run_dir"])
 
         # --- compare artifacts ---
         diffs: list[str] = []
@@ -306,6 +392,7 @@ def main() -> int:
         # 2. workbooks
         py_book = read_workbook_facts(py_run_dir / "审核结果.xlsx")
         rs_book = read_workbook_facts(rs_run_dir / "审核结果.xlsx")
+        value_differences = cell_value_differences(py_book, rs_book)
         diff(py_book, rs_book, "workbook", diffs)
 
         # 3. ledger stable fields
@@ -343,6 +430,15 @@ def main() -> int:
             diffs,
         )
 
+        inputs_unchanged = inputs_before == input_fingerprints(
+            args.config_workbook.resolve(strict=True),
+            args.audit_copy.resolve(strict=True),
+            template_path,
+            template_dir,
+        )
+        if not inputs_unchanged:
+            diffs.append("inputs.modified_during_run")
+
         triggered = summary.get("triggered_rows")
         failures = summary.get("failure_rows")
         print(json.dumps({
@@ -358,25 +454,31 @@ def main() -> int:
         "suite": "audit.s5_run_outputs_parity",
         "status": "completed" if not diffs else "mismatch",
         "sample_scope": {
-            "business": "单位贷款",
+            "business": args.business,
             "run_id": RUN_ID,
             "files_copied_to_temporary": True,
             "template_path_supplied": template_path is not None,
             "template_dir_supplied": template_dir is not None,
             "python_writer_engine": "openpyxl (styling baseline)",
+            "rust_entry": "s5-audit-run CLI" if args.rust_cli else "service test harness",
         },
         "comparison": {
             "diff_count": len(diffs),
             "diff_paths_sample": sorted(set(diffs))[:20],
+            "cell_value_differences": value_differences,
         },
         "verification": {
-            "rust_runner": "audit-core/tests/s5_outputs_parity.rs",
+            "rust_runner": (
+                "open-data-audit s5-audit-run CLI"
+                if args.rust_cli
+                else "audit-core/tests/s5_outputs_parity.rs"
+            ),
             "python_baseline": (
                 "s1audit_configured.engine.run(output_dir=...) with "
                 "AUDIT3_WRITER_ENGINE=openpyxl"
             ),
             "python_baseline_version": sys.version.split()[0],
-            "inputs_unchanged": True,
+            "inputs_unchanged": inputs_unchanged,
             "raw_values_persisted": False,
             "capability_status": "unverified",
             "production_route_eligible": False,

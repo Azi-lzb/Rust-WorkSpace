@@ -202,3 +202,12 @@ Windows 原生 Python/Rust 合成 CLI 对拍：同一临时 XLSX、真实 `s5-au
 Rust `s5_external_layout` 识别首个同时包含唯一“数据日期”和“行名称”的前 20 行表头，读取行标签、按审核报告期精确筛选目标记录，并排除日期/报表代码等元数据列；格式化 Excel 日期经共享 `read_value_columns_with_iso_dates` 读取，公式、空白或非法日期不参与匹配并产生与 Python 一致的数据质量提示。存在 `数据源契约` 时仅在识别到该时序表后转入同一动态布局路径，普通静态契约路径保持原样。布局告警的机构字段按 Python 基线留空。
 
 Windows 原生同一组合成 XLSX（含 prior-date 行、Excel 日期格式单元格的本期行及非法日期行）分别执行 Python `AuditEngine.run` 与 `open-data-audit s5-audit-run`；配置含外部来源契约，审核状态、当前/外部/差值、说明、告警数量/字段/结果表行一致，输入 SHA-256 前后不变。详细记录见 `probe/reports/s5_vext_time_series_synthetic_parity_windows_native_20261025.json`。Windows Python `test_s5_integration.py` 相关基线 15 passed；Rust `s5_previous_source_cli` 9 passed（包含无当前日期失败和配置契约下时序路由）。尚无真实外部时序工作簿验收；S5-F01 整体仍未验证，Audit 共享请求 #8 仍未解决，Linux/deb、glibc 2.28、麒麟 V10/UOS V20 未执行。
+
+
+### S5-F01 实际输出说明数值格式修复（Windows 真实单业务对拍）
+
+修复 `s5_service::python_g15` 对 binary64 结果说明的格式化：严格按 Python `format(value, ".15g")` 的 15 位有效数字、科学记数阈值、进位和负零语义生成描述，避免固定小数位暴露二进制尾差。比较器改用精确 Decimal 归一化，避免 float 比较掩盖数值差异；支持传入真实业务身份并直接运行 `open-data-audit s5-audit-run`，对比前后检查配置、源表和模板输入未变化。
+
+Windows 原生真实单位贷款审核副本、config-real 配置及模板目录对拍：Python `AuditEngine.run` 与 Rust 服务结果 377/377 行一致，差异 0；两侧状态计数一致（PASSED 80、TRIGGERED 296、RETRIEVAL_FAILED 1）。真实产品 CLI 与 Python 完整输出对比差异 0，输入未变化。证据：`probe/reports/s5_real_service_parity_windows_native_20261026.json`、`probe/reports/s5_real_cli_full_output_parity_windows_native_20261026.json`。
+
+该证据限于 Windows、单位贷款、单机构、当前来源和所选模板目录；条件格式/数据质量表为空，V_PRE/V_EXT、结构快照与哈希完整性降级未覆盖。S5-F01 整体仍未验收，生产 capability 仍为 unverified。Audit 共享能力请求 #8 保持未解决。

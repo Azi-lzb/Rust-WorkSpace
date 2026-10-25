@@ -1,0 +1,40 @@
+# S5 运行说明数值格式与真实输出对拍修复
+
+## 修改信息
+
+- 时间：2026-10-26 06:13（Asia/Shanghai）
+- 执行者：Codex
+- 修改前 HEAD：`4ecc6c006e69f1add3bdb47aebbecd75ebe6a844`
+- 修改后 commit：本记录随本次切片提交；SHA 由 Git 生成。
+- WIP：接续本轮开始前已存在的 S5 三个工作文件修改；保留交接报告、临时目录及先前未跟踪报告。只纳入本切片的两份脱敏对拍报告，不纳入其他未跟踪文件。
+
+## 目的与修改文件
+
+真实 S5 结果发现，Rust 说明中的 binary64 格式与 Python `.15g` 不一致：Rust 原固定小数位格式会在约 10^5 的值中暴露浮点尾差。改为 Python 兼容的 15 位有效数字格式，并补充负零、科学记数边界、舍入进位及非有限值测试。
+
+- `audit-core/src/s5_service.rs`：修复 `python_g15` 并新增定向单测。
+- `audit-core/tests/compare/compare_s5_run.py`：使用精确 Decimal 对拍，支持真实期间、机构、来源和业务参数。
+- `audit-core/tests/compare/compare_s5_outputs.py`：支持真实身份参数和实际产品 CLI；对比输出单元格并确认只读输入前后未变。
+- `audit-core/MIGRATION_INVENTORY.md`：记录真实单业务结果及未验收边界。
+- `audit-core/probe/reports/s5_real_service_parity_windows_native_20261026.json`、`audit-core/probe/reports/s5_real_cli_full_output_parity_windows_native_20261026.json`：脱敏聚合对拍报告，不保存原始单元格值或本机路径。
+- 本记录。
+
+未修改共享 crate、根 Cargo 配置、源 Python 项目或真实工作簿；未改变配置格式或 VBA 行为。
+
+## 验证
+
+- `cargo test --offline --locked -p audit-core --lib s5_service::tests::binary64_description_values_match_python_general_format`：1 passed。
+- `cargo test --offline --locked -p excel-reader`：13 个单测、2 个集成测试通过，doc tests 0。
+- Windows Python 3.12.10 基线与 Rust 服务对拍：真实单位贷款单业务 377 行全字段一致，状态计数一致（80 PASSED、296 TRIGGERED、1 RETRIEVAL_FAILED）。
+- 实际 `open-data-audit s5-audit-run` 与 Python 输出对拍：`diff_count=0`，输入未变化；capability 保持 unverified。
+- `rustfmt --check --edition 2021 audit-core/src/s5_service.rs`、比较器 `py_compile` 及 `git diff --check` 通过。
+- `cargo fmt --all -- --check` 仍会因未修改的 `audit-core/src/s3_explanation_export.rs` 现有格式差异失败；没有更改该文件。
+- 公共 XLSM 修复核实：main `3e53e7e` 的 reader 补丁已由祖先提交 `579155f` 等效包含；无需 cherry-pick。`cargo test --offline --locked -p excel-reader` 复验通过。
+
+## 未验证与已知限制
+
+真实样本只覆盖 Windows、单位贷款、单机构、当前来源和所选模板目录；没有覆盖条件格式/数据质量告警的非空表、V_PRE/V_EXT、结构快照、哈希完整性降级、目标 Linux/deb 或麒麟 V10/UOS V20。S5-F01 整体仍未验收。Audit 共享能力请求 #8 仍未解决且不受本修复影响。两份任务临时输出目录留在本机临时目录，清理操作被执行环境策略拒绝；原始输入未修改，目录未纳入 Git。
+
+## 回滚与版本
+
+回滚时仅 revert 本切片提交；不要覆盖其他 WIP。未升级组件版本（audit-core 0.1.0）。

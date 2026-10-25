@@ -123,22 +123,66 @@ pub fn display_value(value: &EvalValue) -> String {
     }
 }
 
-/// Python `format(value, ".15g")` with the lowercase `e` upper-cased.
+/// Python `format(value, ".15g")` with lowercase scientific `e` upper-cased.
 fn python_g15(raw: f64) -> String {
+    if raw.is_nan() {
+        return "nan".to_owned();
+    }
+    if raw.is_infinite() {
+        return if raw.is_sign_negative() {
+            "-inf".to_owned()
+        } else {
+            "inf".to_owned()
+        };
+    }
     let text = format!("{raw:.14e}");
     let (mantissa, exponent_text) = text.split_once('e').unwrap_or((text.as_str(), "0"));
     let exponent: i32 = exponent_text.parse().unwrap_or(0);
-    if (-5..15).contains(&exponent) {
-        let plain = format!("{raw:.15}");
-        let trimmed = plain.trim_end_matches('0').trim_end_matches('.');
-        if trimmed.is_empty() {
-            "0".to_owned()
+    let negative = mantissa.starts_with('-');
+    let digits: String = mantissa
+        .trim_start_matches('-')
+        .chars()
+        .filter(|character| *character != '.')
+        .collect();
+    let digits = digits.trim_end_matches('0');
+    let digits = if digits.is_empty() { "0" } else { digits };
+    if !(-4..15).contains(&exponent) {
+        let significant_digits = digits;
+        let scientific_mantissa = if significant_digits.len() == 1 {
+            significant_digits.to_owned()
         } else {
-            trimmed.to_owned()
-        }
-    } else {
+            format!("{}.{}", &significant_digits[..1], &significant_digits[1..])
+        };
         let sign = if exponent < 0 { "-" } else { "+" };
-        format!("{mantissa}E{}{abs}", sign, abs = exponent.abs())
+        format!(
+            "{}{}E{}{:02}",
+            if negative { "-" } else { "" },
+            scientific_mantissa,
+            sign,
+            exponent.abs()
+        )
+    } else {
+        let decimal_point = exponent + 1;
+        let plain = if decimal_point <= 0 {
+            format!("0.{}{digits}", "0".repeat((-decimal_point) as usize))
+        } else if decimal_point as usize >= digits.len() {
+            format!(
+                "{digits}{}",
+                "0".repeat(decimal_point as usize - digits.len())
+            )
+        } else {
+            format!(
+                "{}.{}",
+                &digits[..decimal_point as usize],
+                &digits[decimal_point as usize..]
+            )
+        };
+        let plain = if plain.contains('.') {
+            plain.trim_end_matches('0').trim_end_matches('.').to_owned()
+        } else {
+            plain
+        };
+        format!("{}{}", if negative { "-" } else { "" }, plain)
     }
 }
 
@@ -1048,7 +1092,28 @@ fn validate_business_selection<'a>(
 
 #[cfg(test)]
 mod tests {
-    use super::validate_business_selection;
+    use super::{python_g15, validate_business_selection};
+
+    #[test]
+    fn binary64_description_values_match_python_general_format() {
+        let cases = [
+            (100_000.12, "100000.12"),
+            (-100_000.12, "-100000.12"),
+            (0.0001, "0.0001"),
+            (0.00001, "1E-05"),
+            (1e14, "100000000000000"),
+            (1e15, "1E+15"),
+            (1_234_567_890_123_456.0, "1.23456789012346E+15"),
+            (999_999_999_999_999.9, "1E+15"),
+            (-0.0, "-0"),
+        ];
+        for (value, expected) in cases {
+            assert_eq!(python_g15(value), expected, "value {value:?}");
+        }
+        assert_eq!(python_g15(f64::INFINITY), "inf");
+        assert_eq!(python_g15(f64::NEG_INFINITY), "-inf");
+        assert_eq!(python_g15(f64::NAN), "nan");
+    }
 
     #[test]
     fn business_filter_accepts_configured_selection_and_all_businesses() {
