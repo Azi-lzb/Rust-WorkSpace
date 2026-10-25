@@ -115,10 +115,6 @@ def make_input(
     elif time_only:
         sheet["B5"] = datetime_time(12, 34, 56, 123000)
         sheet["B5"].number_format = "h:mm:ss"
-        sheet["B6"] = datetime_time(0, 0)
-        sheet["B6"].number_format = "h:mm:ss"
-        sheet["B7"] = 0.999999999
-        sheet["B7"].number_format = "yyyy/m/d h:mm:ss"
     elif date_1904:
         sheet["B5"] = datetime(2024, 6, 30)
         sheet["B5"].number_format = "yyyy/m/d"
@@ -134,9 +130,33 @@ def make_input(
     sheet["B7"] = 4
     sheet["C7"] = 5
     sheet["D7"] = 9
+    if time_only:
+        boundary_values = (
+            (8, "公司丙", datetime_time(0, 0), "h:mm:ss"),
+            (9, "公司丁", 0.999999999, "h:mm:ss"),
+        )
+        for row, company, value, number_format in boundary_values:
+            sheet.cell(row=row, column=1, value=company)
+            cell = sheet.cell(row=row, column=2, value=value)
+            cell.number_format = number_format
     workbook.save(path)
     if cached_formula:
         patch_cached_formula(path, "B5", "8+2.25", "10.25")
+    if time_only:
+        check = load_workbook(path, data_only=True, read_only=False)
+        try:
+            sheet = check["Report"]
+            expected_rollover = datetime(1904, 1, 2) if date_1904 else datetime(1900, 1, 1)
+            if sheet["B5"].value != datetime_time(12, 34, 56, 123000):
+                raise AssertionError("time-only fixture lost its millisecond value")
+            if sheet["B8"].value != datetime_time(0, 0):
+                raise AssertionError("time-only fixture lost its midnight value")
+            if sheet["B9"].value != expected_rollover:
+                raise AssertionError(
+                    f"time-only fixture rollover differs: {sheet['B9'].value!r}"
+                )
+        finally:
+            check.close()
 
 
 def patch_cached_formula(path: Path, address: str, formula_text: str, cached_value: str) -> None:
@@ -1230,7 +1250,7 @@ def main() -> int:
             ]
             report = {
                 "schema_version": 1,
-                "suite": "pytools.timeline.wide_summary_subday_time_only_parity",
+                "suite": "pytools.timeline.wide_summary_subday_time_boundary_parity",
                 "date": date.today().isoformat(),
                 "status": "passed_synthetic_python_rust_parity",
                 "baseline": "PyCode/core/wide_397_398.py::run_wide_summary",

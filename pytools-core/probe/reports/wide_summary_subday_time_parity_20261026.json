@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "suite": "pytools.timeline.wide_summary_subday_time_only_parity",
+  "suite": "pytools.timeline.wide_summary_subday_time_boundary_parity",
   "date": "2026-10-26",
   "status": "passed_synthetic_python_rust_parity",
   "baseline": "PyCode/core/wide_397_398.py::run_wide_summary",
@@ -85,11 +85,11 @@
       ],
       "summary_dimensions": [
         [
-          4,
+          6,
           9
         ]
       ],
-      "summary_cell_count": 36,
+      "summary_cell_count": 54,
       "summary_effective_styles": "exact",
       "entry_route": "pytools menu -> 1 timeline -> 3 row-suffix or 4 no-suffix -> confirm",
       "target_commit_operation": "created",
@@ -101,19 +101,19 @@
         "stage_elapsed_ms_recorded": true
       },
       "target_execution_summary": {
-        "appended_rows": 2,
+        "appended_rows": 4,
         "duplicate_rows_filtered": 1,
-        "elapsed_ms": 41,
+        "elapsed_ms": 43,
         "function": "append_target_execute",
         "stages": [
           {
-            "elapsed_ms": 23,
+            "elapsed_ms": 24,
             "engine": "rust_xlsxwriter",
             "name": "new_workbook_write_and_reopen",
             "status": "succeeded"
           },
           {
-            "elapsed_ms": 16,
+            "elapsed_ms": 17,
             "name": "target_commit",
             "status": "succeeded"
           }
@@ -143,11 +143,11 @@
       ],
       "summary_dimensions": [
         [
-          4,
+          6,
           9
         ]
       ],
-      "summary_cell_count": 36,
+      "summary_cell_count": 54,
       "summary_effective_styles": "exact",
       "entry_route": "pytools menu -> 1 timeline -> 3 row-suffix or 4 no-suffix -> confirm",
       "target_commit_operation": "created",
@@ -159,9 +159,9 @@
         "stage_elapsed_ms_recorded": true
       },
       "target_execution_summary": {
-        "appended_rows": 3,
+        "appended_rows": 5,
         "duplicate_rows_filtered": 0,
-        "elapsed_ms": 42,
+        "elapsed_ms": 46,
         "function": "append_target_execute",
         "stages": [
           {
@@ -171,7 +171,7 @@
             "status": "succeeded"
           },
           {
-            "elapsed_ms": 16,
+            "elapsed_ms": 20,
             "name": "target_commit",
             "status": "succeeded"
           }
@@ -206,11 +206,11 @@
       ],
       "summary_dimensions": [
         [
-          4,
+          6,
           9
         ]
       ],
-      "summary_cell_count": 36,
+      "summary_cell_count": 54,
       "summary_effective_styles": "exact",
       "entry_route": "pytools menu -> 1 timeline -> 3 row-suffix or 4 no-suffix -> confirm",
       "target_commit_operation": "created",
@@ -222,19 +222,19 @@
         "stage_elapsed_ms_recorded": true
       },
       "target_execution_summary": {
-        "appended_rows": 2,
+        "appended_rows": 4,
         "duplicate_rows_filtered": 1,
-        "elapsed_ms": 43,
+        "elapsed_ms": 42,
         "function": "append_target_execute",
         "stages": [
           {
-            "elapsed_ms": 25,
+            "elapsed_ms": 24,
             "engine": "rust_xlsxwriter",
             "name": "new_workbook_write_and_reopen",
             "status": "succeeded"
           },
           {
-            "elapsed_ms": 16,
+            "elapsed_ms": 17,
             "name": "target_commit",
             "status": "succeeded"
           }
@@ -269,11 +269,11 @@
       ],
       "summary_dimensions": [
         [
-          4,
+          6,
           9
         ]
       ],
-      "summary_cell_count": 36,
+      "summary_cell_count": 54,
       "summary_effective_styles": "exact",
       "entry_route": "pytools menu -> 1 timeline -> 3 row-suffix or 4 no-suffix -> confirm",
       "target_commit_operation": "created",
@@ -285,19 +285,19 @@
         "stage_elapsed_ms_recorded": true
       },
       "target_execution_summary": {
-        "appended_rows": 3,
+        "appended_rows": 5,
         "duplicate_rows_filtered": 0,
-        "elapsed_ms": 41,
+        "elapsed_ms": 54,
         "function": "append_target_execute",
         "stages": [
           {
-            "elapsed_ms": 23,
+            "elapsed_ms": 32,
             "engine": "rust_xlsxwriter",
             "name": "new_workbook_write_and_reopen",
             "status": "succeeded"
           },
           {
-            "elapsed_ms": 16,
+            "elapsed_ms": 20,
             "name": "target_commit",
             "status": "succeeded"
           }

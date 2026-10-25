@@ -1866,10 +1866,12 @@ fn wide_python_subday_value(serial: f64, date_1904: bool) -> Option<serde_json::
     // Python's ties-to-even round, then returns time for values still in-day.
     let rounded_milliseconds = (serial * 86_400.0 * 1000.0).round_ties_even();
     if rounded_milliseconds >= 86_400_000.0 {
+        // openpyxl's 1900 epoch maps a rounded serial 1 to 1900-01-01;
+        // serial 2 is the first day after its leap-year compatibility offset.
         let next_day = if date_1904 {
             "1904-01-02"
         } else {
-            "1900-01-02"
+            "1900-01-01"
         };
         return Some(serde_json::json!({
             "type": "datetime_iso",
@@ -3525,7 +3527,7 @@ mod keyword_match_tests {
         );
         assert_eq!(
             wide_python_subday_value(0.999_999_999, false).unwrap(),
-            json!({"type":"datetime_iso", "value":"1900-01-02T00:00:00.000"})
+            json!({"type":"datetime_iso", "value":"1900-01-01T00:00:00.000"})
         );
         assert!(wide_python_subday_value(-0.5, false).is_none());
         assert!(wide_python_subday_value(1.0, false).is_none());
