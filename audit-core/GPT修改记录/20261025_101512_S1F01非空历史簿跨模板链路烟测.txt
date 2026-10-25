@@ -1,0 +1,36 @@
+# S1-F01 非空历史簿跨模板链路烟测
+
+- 时间：2026-10-25 10:15（Asia/Shanghai）
+- 执行者：Codex Audit migration agent
+- 分支：audit-dev
+- 修改前 commit：`49353bf`
+- 修改后 commit：本记录随本轮提交，提交号由 Git 历史追溯。
+- WIP：开始时 worktree 干净。只新增脱敏对拍报告并更新迁移清单与本记录；未修改 `DEVELOPMENT_GOAL.md`、源 Python 项目、真实工作簿、`pytools-core/**`、共享 crates、`Cargo.lock` 或根 Cargo 配置。
+
+## 目的
+
+把用户指出的 `config-real` 非空历史簿接入 S1 目录审核链，补充真实 Python/Rust 历史读入、合流分类及独立结果簿写出的证据。历史簿只读，所有结果写到临时目录。
+
+## 修改文件
+
+- `audit-core/probe/reports/s1_f01_nonempty_history_real_batch_windows_native_20261025.json`：保存不含路径、文件名、业务值或哈希的 7 组汇总与单组计数。
+- `audit-core/MIGRATION_INVENTORY.md`：记录真实非空历史链路的覆盖范围和限制。
+- 本记录。
+
+## 验证
+
+- 使用 Windows Python 3.12.10 / openpyxl 3.1.5 作为只读旧 Python 基线，使用 Windows 原生 MSVC Rust `open-data-audit.exe` 执行 7 组匹配模板的源簿/既有公式结果副本对拍。Rust 模板推荐对 7 组均与 Python 基线一致。
+- 每组 Python 与 Rust 均读取 9 行真实历史；合计 159 条当前 Issue、63 次历史行读取和 222 行独立历史结果。当前 Issue、历史分类输入、当前结果簿和独立历史结果簿比较差异总计 0；7 组输入均未改变。`rust_xlsxwriter 0.101.0` 写出当前和独立历史结果；引擎和阶段耗时见脱敏报告。
+- 完整报告 `status=passed`；原始业务值、路径和文件名未写入报告；Python/Rust 与结果文件均位于临时目录，任务结束后清理。
+- 真实历史簿的模板推荐为 `matched=false`、confidence 0.63；本批合并行数为“9 行已有历史 + 当前 Issue”，没有观察到历史 ID 重叠。因此本次仅为真实非空历史读取与无重叠合流烟测，不是同业务连续性或重复归类验收。
+
+## 未执行项与已知问题
+
+- 输入使用已有公式结果审核副本；Rust 公式复制和公式重算未执行。
+- 只生成独立历史结果簿，没有改写真实历史簿；其 PageSettings、工作表顺序及其他对象的写回保留未验证。当前 `excel-editor` 缺少已协调的 `MoveSheet` 能力，原位写回仍 fail-closed。
+- 完整 S1-F01、Linux/deb、麒麟 V10 与统信 UOS V20 未验收；S1-F01 整体保持未验证。
+- 不改变生产 capability 或默认路由；不推送分支。当前待推送提交范围含既有 `DEVELOPMENT_GOAL.md` 差异，保持远程未同步。
+
+## 回滚
+
+可单独回退本报告、迁移清单段落和本记录；无业务代码、共享组件或用户文件变更。
