@@ -1877,19 +1877,100 @@ mod tests {
             evidence: None,
         };
         let backend = UmyaXlsxBackend::new(capability).expect("construct unverified candidate");
-        match backend.apply(plan) {
-            Ok(()) => match OpenpyxlXlsxValidator.validate(plan, &output) {
-                Ok(()) => println!(
-                    "candidate_validation=passed engine=umya_spreadsheet production_capability=unverified"
-                ),
-                Err(error) => println!(
-                    "candidate_validation=rejected engine=umya_spreadsheet production_capability=unverified reason={error:#}"
-                ),
-            },
-            Err(error) => println!(
-                "candidate_apply=rejected engine=umya_spreadsheet kind={:?} production_capability=unverified reason={}",
-                error.kind, error.message
-            ),
+        backend
+            .apply(plan)
+            .unwrap_or_else(|error| panic!("full-plan umya apply rejected: kind={:?} reason={}", error.kind, error.message));
+        match OpenpyxlXlsxValidator.validate(plan, &output) {
+            Ok(()) => println!("full_plan_validator=passed"),
+            Err(error) => {
+                // The engine-neutral validator has no DeleteRows/InsertRows
+                // coordinate mapping yet (shared request #4): old managed rows
+                // inside the deleted range are reported as unmodified-style
+                // changes. Tolerate exactly cells inside the planned deleted
+                // range and nothing else.
+                let message = format!("{error:#}");
+                let deleted_range = plan.operations.iter().find_map(|operation| match operation {
+                    EditOperation::DeleteRows { sheet, first_row, count }
+                        if sheet == HISTORY_AUDIT_SHEET =>
+                    {
+                        Some((*first_row, *first_row + *count - 1))
+                    }
+                    _ => None,
+                });
+                let within_deleted_range = deleted_range
+                    .map(|(first, last)| {
+                        message
+                            .split_at(message.find('!').map(|at| at + 1).unwrap_or(0))
+                            .1
+                            .trim_start_matches(|c: char| c.is_ascii_alphabetic())
+                            .chars()
+                            .take_while(|c| c.is_ascii_digit())
+                            .collect::<String>()
+                            .parse::<u32>()
+                            .map(|row| (first..=last).contains(&row))
+                            .unwrap_or(false)
+                    })
+                    .unwrap_or(false);
+                assert!(
+                    message.contains("unmodified-style readback mismatch") && within_deleted_range,
+                    "unexpected full-plan validation failure: {message}"
+                );
+                println!(
+                    "full_plan_validator=passed_with_deleted_row_style_gap shared_request=validator_row_operation_mapping"
+                );
+            }
+        }
+        println!(
+            "candidate_full_plan=passed engine=umya_spreadsheet production_capability=unverified"
+        );
+
+        // Real-template readback acceptance checks for the complete update.
+        let output_sheet_names = excel_reader::read_sheet_names(&output)
+            .expect("read full-plan output sheet names");
+        assert_eq!(output_sheet_names[0], HISTORY_AUDIT_SHEET);
+        let output_workbook = excel_reader::read_workbook(&output)
+            .expect("read full-plan output values");
+        let source_workbook = excel_reader::read_workbook(&input)
+            .expect("read full-plan source values");
+        let history_sheet = &output_workbook.sheets[0];
+        assert_eq!(
+            history_sheet.values.get("A1").and_then(|cell| cell.get("value")),
+            Some(&json!(S1_HISTORY_HEADERS[0]))
+        );
+        assert_eq!(
+            history_sheet.values.get("K2").and_then(|cell| cell.get("value")),
+            Some(&json!("CANDIDATE-ONLY"))
+        );
+        for (index, sheet) in output_workbook.sheets.iter().enumerate() {
+            if index == 0 {
+                continue;
+            }
+            let source_sheet = source_workbook
+                .sheets
+                .iter()
+                .find(|candidate| candidate.name == sheet.name)
+                .unwrap_or_else(|| panic!("output sheet {} missing in source", sheet.name));
+            assert_eq!(
+                sheet.values, source_sheet.values,
+                "untouched sheet {} must keep its values",
+                sheet.name
+            );
+        }
+        let output_print_areas: Vec<_> = excel_reader::read_defined_names(&output)
+            .expect("read full-plan output defined names")
+            .into_iter()
+            .filter(|defined_name| defined_name.name.eq_ignore_ascii_case("_xlnm.Print_Area"))
+            .collect();
+        for area in &output_print_areas {
+            if let excel_reader::DefinedNameScope::Worksheet {
+                sheet_name: Some(name),
+                ..
+            } = &area.scope
+            {
+                if name == HISTORY_AUDIT_SHEET {
+                    println!("full_plan_print_area_follows_moved_sheet=true");
+                }
+            }
         }
         assert_eq!(fs::read(&input).unwrap(), input_bytes);
         assert_eq!(fs::read(&source).unwrap(), source_bytes);

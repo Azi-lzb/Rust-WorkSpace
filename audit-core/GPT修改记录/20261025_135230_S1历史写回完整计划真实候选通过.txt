@@ -1,0 +1,35 @@
+# S1 历史写回：同步 main 冻结/筛选与校验器修复，完整计划真实候选通过
+
+- 时间：2026-10-25 13:52 (+08:00)
+- 执行者：Codex Audit migration agent
+- 分支：audit-dev
+- 修改前 commit：cde65f8
+- 修改后 commit：随本轮本地提交，提交 ID 见 Git 历史。
+- WIP：开始时 worktree 干净；本轮先 cherry-pick main 的两个共享提交，再升级真实候选测试为完整计划断言，最后更新报告、第四项共享请求、清单与本记录。未修改共享 crates 内容（cherry-pick 原样承接）、源 Python 项目、真实工作簿、pytools-core、根 Cargo 配置。
+
+## 目的
+
+main 已响应 audit-dev 登记的两项共享请求：`07196d5`（引擎无关校验器 MoveSheet 感知，缺口二）与 `7ac87d6`（umya SetFreezePanes/SetAutoFilter 实现，缺口一；含 `_FilterDatabase` 联动与 defined-name 引号归一化）。本轮同步后复验 S1 历史 38 操作完整计划的真实工作簿候选。
+
+## 修改文件
+
+- 共享同步：`git cherry-pick 07196d5` → `69dc834`、`git cherry-pick 7ac87d6` → `2f1a9ac`（内容原样：umya_backend.rs、openpyxl_backend.rs、freeze_panes_auto_filter.rs、架构文档、main 修改记录）。
+- `audit-core/src/s1_history.rs`：真实候选测试升级为完整计划断言——umya apply 必须成功、引擎无关校验器仅对删除区内带样式空格的样式读回误报按精确类别容忍（逐字校验错误类别与行号在 DeleteRows 范围内），并新增读回验收（管理页置首、新内容 K2=CANDIDATE-ONLY、其余 4 表逐格一致、输入未变）；原聚焦 MoveSheet 子计划段保留。
+- `audit-core/shared-capability-requests/20261025_validator_row_operation_mapping.md`：新增第四项共享请求（引擎无关校验器的 DeleteRows/InsertRows 坐标映射：删除区豁免 + 下移行映射，值/样式/公式三读回一致）。
+- `audit-core/probe/reports/s1_history_move_sheet_real_candidate_windows_native_20261025.json`：更新为完整计划通过版本（schema_version 2）。
+- `audit-core/MIGRATION_INVENTORY.md`：历史写回行更新。
+- 本记录。
+
+## 验证
+
+- cherry-pick 后：`cargo test --offline --locked -p excel-editor --test freeze_panes_auto_filter --test move_sheet --test sheet_index_metadata` 3+3+3 通过；`cargo test --offline --locked -p audit-core` 全量 195 通过、0 失败。
+- 真实候选（Windows 原生，config-real 非空历史簿）：完整 38 操作计划 umya apply 通过（含 MoveSheet 置首、SetFreezePanes A2、SetAutoFilter A1:M2 与 _FilterDatabase 恢复）；引擎无关校验器仅删除区内 M6/L3 两个带样式空格误报（已按精确类别容忍并登记共享请求 #4，期间修复了候选测试自身的行号解析缺陷）；审计侧读回验收全过；输入与源文件字节未变。
+- 对拍过程中候选测试自身的两处缺陷（i32/usize 行号类型、地址列字母解析）已修复；均为测试代码，不影响生产路径。
+
+## 未执行项、已知问题与回滚
+
+- S1-F01 历史写回仍为 Unverified：生产 capability 登记与 CLI 写回入口是独立验收步骤；校验器行操作映射（请求 #4）待 main。
+- 第三项共享请求（载荷基线等价）仍未响应。
+- 已知库级行为（umya 重编号 sheetId、丢 calcChain、无法清除既有冻结窗格——S1 计划只设 A2 不受影响）沿用 main 记录。
+- 回滚：revert 69dc834/2f1a9ac 与本提交即回到前状态；无用户工作簿恢复项。
+- 【组件版本】不升级。

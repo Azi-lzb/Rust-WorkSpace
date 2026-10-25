@@ -1,52 +1,47 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "suite": "audit.s1_history_move_sheet_real_candidate",
   "feature_id": "S1-F01",
-  "status": "candidate_partial_pass",
+  "status": "candidate_full_plan_passed_with_shared_validator_gap",
   "captured_platform": "Windows native Rust MSVC",
-  "shared_capability": {
-    "commit": "bbd922d (main) synced as db5f7e1 (audit-dev)",
-    "operation": "MoveSheet",
-    "main_evidence_scope": "synthetic only; real-template acceptance delegated to the S1 flow"
+  "shared_capability_sync": {
+    "main_commits": ["07196d5 validator move-aware sheet order", "7ac87d6 umya SetFreezePanes/SetAutoFilter"],
+    "audit_dev_sync": ["69dc834", "2f1a9ac"],
+    "response_to_requests": ["validator MoveSheet recognition: answered", "umya freeze/filter: answered", "payload baseline equivalence: still pending"]
   },
   "sample_scope": {
     "kind": "real_config_workbook_with_nonempty_history",
     "sheet_count": 5,
     "managed_history_sheet_index_1based": 2,
     "history_data_rows": 9,
-    "features_present": ["Comments", "DefinedNames", "Relationships", "FreezePanes", "AutoFilter"],
-    "nonempty_scoped_defined_names": ["_xlnm._FilterDatabase"]
+    "features_present": ["Comments", "DefinedNames", "Relationships", "FreezePanes", "AutoFilter"]
   },
   "full_plan_candidate": {
     "operation_count": 38,
     "plan_leads_with_move_sheet": true,
     "engine": "umya-spreadsheet",
-    "result": "rejected_during_apply",
-    "rejection": "apply SetFreezePanes: umya backend does not implement freeze-pane or AutoFilter edits",
-    "output_created": false
-  },
-  "move_sheet_only_candidate": {
-    "operations": ["MoveSheet{new_index=0}"],
-    "engine": "umya-spreadsheet",
     "apply": "passed",
-    "validator": "UmyaXlsxValidator (MoveSheet-aware order and defined-name semantics)",
-    "validation": "passed",
-    "sheet_order_after": "managed history sheet first, remaining order unchanged",
-    "managed_sheet_values_identical": true,
-    "quote_normalization_delta": "not present: the real workbook stores quoted sheet references",
+    "validator": "OpenpyxlXlsxValidator (engine-neutral, now move-aware)",
+    "validation": "passed_with_deleted_row_style_gap",
+    "validator_gap": "unmodified-style readback flags old managed cells inside the planned DeleteRows range (M6/L3); tolerantly recorded as shared request 20261025_validator_row_operation_mapping.md",
+    "readback_acceptance": {
+      "sheet_order_history_first": true,
+      "managed_content_replaced": true,
+      "untouched_sheets_identical": true,
+      "inputs_unchanged": true
+    },
     "production_capability": "unverified"
   },
   "synthetic_focused_candidate": {
-    "scope": "MoveSheet + row replacement + page settings, without FreezePanes/AutoFilter",
-    "engine": "umya-spreadsheet",
+    "scope": "MoveSheet + row replacement + page settings",
     "apply": "passed",
-    "validation": "order passed; defined-name comparison flagged one quote-normalization delta on a synthetic unquoted Print_Area reference (semantically equal; tolerated and recorded)",
-    "print_area_kept_reference_and_scope": true,
+    "validation": "passed",
     "production_capability": "unverified"
   },
-  "remaining_shared_gaps": [
-    "umya backend does not implement SetFreezePanes/SetAutoFilter, so the complete S1 history update plan cannot route; deleting history rows also shrinks the sheet-scoped _FilterDatabase that only SetAutoFilter can restore",
-    "the engine-neutral OpenpyxlXlsxValidator does not understand MoveSheet (its sheet-order expectation ignores move operations), so cross-engine readback validation of MoveSheet plans is unavailable"
+  "remaining_gaps": [
+    "validator row-operation coordinate mapping (shared request 4, this file's sibling request)",
+    "openpyxl worker lacks DeleteRows/InsertRows (alternative route)",
+    "production editor capability registration and CLI write-back entry remain separate acceptance steps"
   ],
   "input_safety": {
     "source_workbook_unchanged": true,
