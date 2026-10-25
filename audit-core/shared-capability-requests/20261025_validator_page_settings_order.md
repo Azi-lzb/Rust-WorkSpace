@@ -2,7 +2,7 @@
 
 - 提出方：Audit（audit-dev 分支）
 - 日期：2026-10-25
-- 状态：待 main 评估；Audit 不自行修改共享 crates
+- 状态：main 的逐表顺序无关比较已同步；真实样本复验发现另一个 MoveSheet 保真缺口，见共享请求 #7
 - 背景：请求 #4（e73bc1a）落地后，S1 历史 38 操作完整计划在真实 config-real 非空历史簿上的删除区样式误报已消失；候选在 umya apply 与读回验收全部通过后，仅剩 `OpenpyxlXlsxValidator` 的 page-settings 检查因顺序敏感而拒绝。
 
 ## 缺陷
@@ -42,3 +42,9 @@
 
 S1 历史完整计划维持"apply/读回通过、校验器顺序误拒"状态；MoveSheet 路线
 的引擎无关验收被此最后一个检查挡住。
+
+## 2026-10-25 同步后复验
+
+- main 的 `9f0cacf` 已以 `fc6b121` 同步至 `audit-dev`；逐表快照按工作表名比较，工作表顺序仍由独立检查验证。
+- Windows 原生真实样本复验中，`UmyaXlsxBackend::apply` 成功，但完整 `OpenpyxlXlsxValidator` 检出 `openpyxl changed worksheet page settings`；原临时副本与只读源 SHA-256 相同。原始的顺序误报已解除，当前内容差异转由共享请求 #7 跟进。
+- S1 生产能力仍为 Unverified；不能因同步本修复或 apply 成功而标记通过。

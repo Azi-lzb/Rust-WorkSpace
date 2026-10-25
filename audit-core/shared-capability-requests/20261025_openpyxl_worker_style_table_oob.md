@@ -2,7 +2,7 @@
 
 - 提出方：Audit（audit-dev 分支）
 - 日期：2026-10-25
-- 状态：待 main 评估；Audit 不自行修改共享 crates
+- 状态：main 的样式表完整性拒绝保护已同步；原 worker 缺陷未修复，候选仍不可路由
 - 背景：main 已落地请求 #3（becd3cd 载荷基线等价豁免）与 #4（e73bc1a 校验器行操作映射），audit-dev 已同步为 d5350f4/1d7c22c。S1 公式复制业务计划按请求 #3 的裁决对目标簿全部表声明 `MergedNonAnchorPayloads` 豁免后，openpyxl worker 首次写穿完整 60 操作计划。
 
 ## 缺陷
@@ -30,3 +30,9 @@ worker 输出中所有格的样式索引必须落在 cellXfs 范围内，且未�
 ## 若不采纳
 
 openpyxl worker 对该真实模板族不可路由（样式表完整性缺陷），S1-F01 公式复制维持无可用引擎；umya 路线已有 1,036 项对拍差异同样不可路由。请 main 明确裁决。
+
+## 2026-10-25 同步后复核
+
+- 交接报告中的 `d2da5a1` 不存在；实际相关 main 提交为 `d2da501866a4aca7d2a4132b5c2ed0d2116d4f42`，已以 `a5e0233` 同步至 `audit-dev`。
+- worker 现在会在样式索引超出 `cellXfs` 表时拒绝输出；这避免把损坏结果作为成功发布，但未修复索引/样式映射，公式复制能力继续阻塞。
+- Windows 隔离 openpyxl worker 回归：10 passed；这只验证 worker 现有协议和完整性检查，不代表真实 S1 公式复制通过。

@@ -337,8 +337,8 @@ fn read_s1_history_print_area(path: &Path, sheet_index: usize) -> Result<Option<
     Ok(print_area)
 }
 
-/// Per-sheet pageSetup attributes read straight from the worksheet XML parts,
-/// used to prove that a MoveSheet-only ordering delta keeps content intact.
+/// Per-sheet pageSetup attributes read from worksheet XML as a test cross-check.
+#[cfg(test)]
 fn per_sheet_page_setup(
     path: &Path,
 ) -> std::collections::BTreeMap<String, std::collections::BTreeMap<String, String>> {
@@ -1962,40 +1962,21 @@ mod tests {
                 error.kind, error.message
             )
         });
-        // Request #4 (1d7c22c) mapped row operations in the engine-neutral
-        // validator, so the deleted-range style misreport is gone. The one
-        // remaining gap is the page-settings check: it compares a
-        // workbook-order-sensitive Vec, and MoveSheet legitimately reorders
-        // sheets while per-sheet pageSetup content is preserved (verified
-        // below with Python). Exact per-sheet content equality means the only
-        // delta is ordering, which shared request #6 covers.
-        match OpenpyxlXlsxValidator.validate(plan, &output) {
-            Ok(()) => println!("full_plan_validator=passed"),
-            Err(error) => {
-                let message = format!("{error:#}");
-                assert!(
-                    message.contains("openpyxl changed worksheet page settings"),
-                    "unexpected full-plan validation failure: {message}"
-                );
-                let source_pages = per_sheet_page_setup(&input);
-                let output_pages = per_sheet_page_setup(&output);
-                assert_eq!(
-                    source_pages.len(),
-                    output_pages.len(),
-                    "page-settings sheet count changed"
-                );
-                for (sheet, settings) in &source_pages {
-                    assert_eq!(
-                        output_pages.get(sheet),
-                        Some(settings),
-                        "per-sheet pageSetup content changed for {sheet}"
-                    );
-                }
-                println!(
-                    "full_plan_validator=passed_with_page_settings_order_gap shared_request=validator_page_settings_order"
-                );
-            }
-        }
+        // Shared request #6 (9f0cacf / audit-dev fc6b121) made per-sheet
+        // OOXML snapshots order-blind while retaining sheet order checks in
+        // validate_sheet_names. The full plan must now pass the strict shared
+        // validator, and this independent readback confirms each sheet kept
+        // its page setup through MoveSheet.
+        OpenpyxlXlsxValidator
+            .validate(plan, &output)
+            .unwrap_or_else(|error| panic!("full-plan validator rejected candidate: {error:#}"));
+        let source_pages = per_sheet_page_setup(&input);
+        let output_pages = per_sheet_page_setup(&output);
+        assert_eq!(
+            source_pages, output_pages,
+            "per-sheet pageSetup content changed during MoveSheet"
+        );
+        println!("full_plan_validator=passed");
         println!(
             "candidate_full_plan=passed engine=umya_spreadsheet production_capability=unverified"
         );

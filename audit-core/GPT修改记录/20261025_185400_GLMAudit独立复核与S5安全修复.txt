@@ -1,0 +1,37 @@
+# GLM 阶段 Audit 独立审计复核与 S5 输出安全修复
+
+- 时间：2026-10-25 18:54（+08:00）
+- 执行者：Codex Audit 审计 Agent
+- 分支：`audit-dev`
+- 修改前 HEAD：`a5e02333f766797be3813ce56c69f41f00e70a7c`
+- 修改后业务代码提交：`715634b`（S5 输出安全检查）；审计记录和证据另随本轮审计提交。
+- WIP：开始时已核对 `audit-dev`；唯一既有未跟踪文件为 `HANDOFF_ZCODE_TO_CODEX.md`，保留且未暂存。未修改 main/pytools-dev、源 Python 项目或真实样本；共享 Excel-Core 只同步 main 提交，未自行编辑。
+
+## 目的和变更
+
+- `audit-core/src/s5_service.rs`：拒绝无启用规则配置、空业务名及未配置业务，避免无效筛选返回空的成功结果。
+- `audit-core/src/s5_retrieval.rs`、`audit-core/src/bin/open-data-audit.rs`：CLI 使用绑定时捕获的源 SHA-256，不再在审核后重读并静默返回空哈希。
+- `audit-core/src/s5_outputs.rs`：源和配置在创建运行目录前必须可读且与审核快照一致；复制后再次校验源和副本哈希，不匹配时停止并删除未验证运行目录。输出不再静默跳过缺失源/配置，也不再把哈希失败写成 `COMPLETED`。
+- `audit-core/src/s1_history.rs`：真实候选测试在同步请求 #6 后改为严格要求完整共享保留校验通过；真实样本失败暴露新的共享 `pageSetUpPr` 丢失问题。测试 helper 限定为 `cfg(test)`。
+- 更新迁移清单、请求 #5/#6 状态并新增共享请求 #7；增加本记录。无配置/VBA/组件版本变更；【组件版本】不升级。
+
+## 验证
+
+- `cargo test --offline --locked -p audit-core --lib business_filter`：2 passed。
+- `cargo test --offline --locked -p audit-core --lib s5_outputs::tests::output_writer_rejects_changed_inputs_before_creating_run_outputs`：1 passed。
+- `cargo test --offline --locked -p audit-core --lib s1_history::tests::`：10 passed、4 ignored。
+- `cargo test --offline --locked -p excel-editor --lib`：33 passed；Windows 隔离 openpyxl worker 测试：10 passed（Python 3.12.10 / openpyxl 3.1.5）。
+- `cargo check --offline --locked -p audit-core --bin open-data-audit`：通过。
+- 真实 S1 历史候选（Windows 原生，忽略测试显式启用）：Umya apply 通过，完整 validator 失败，错误 `openpyxl changed worksheet page settings`；只读 XML 复核确认输入 5 个工作表均含空 `pageSetUpPr`，输出均缺失；源 SHA-256 未变。真实候选不通过，能力仍 Unverified；证据见共享请求 #7。
+- `cargo fmt -p audit-core -- --check` 仍有大量未改基线格式差异，本轮未批量重排无关代码。
+
+## 未执行项和已知问题
+
+- 未重跑完整 S5 CLI 与 Python 文件级对拍；新增逻辑以定向测试和 CLI 编译验证。此前 377 行/输出 0 差异只覆盖单位贷款单业务样本。
+- S1 公式复制的 openpyxl worker 仍因真实样式表越界被完整性守卫拒绝；Umya 对拍差异仍阻塞生产路由。历史表单写回由共享 `MoveSheet` 保真缺口阻塞。
+- S2/S3 完整验收、Linux/WSL、glibc 2.28、deb、麒麟 V10/UOS V20 均未验证。
+- 真实候选测试失败后留下本机临时输入副本和候选输出目录；原始样本不变，未将其复制到仓库。
+
+## 回滚
+
+- S5 安全修复可用 `git revert 715634b` 撤销；共享能力请求和迁移证据应保留。不要删除或覆盖 `HANDOFF_ZCODE_TO_CODEX.md`，不要对真实样本做写入。
