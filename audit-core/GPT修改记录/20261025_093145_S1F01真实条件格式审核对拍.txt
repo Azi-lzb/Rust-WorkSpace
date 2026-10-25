@@ -1,0 +1,35 @@
+# S1-F01 真实配置条件格式审核对拍
+
+- 时间：2026-10-25 09:31（Asia/Shanghai）
+- 执行者：Codex Audit migration agent
+- 分支：audit-dev
+- 修改前 commit：`e070525`
+- 修改后 commit：本记录随本轮提交，提交号由 Git 历史追溯。
+- WIP：开始时只有本轮生成的脱敏对拍报告未提交；此前工作区干净。未修改 `DEVELOPMENT_GOAL.md`、源 Python 项目、真实工作簿、`pytools-core/**`、共享 crates、`Cargo.lock` 或根 Cargo 配置。
+
+## 目的
+
+使用用户提供的真实 `config-real` 映射配置，在匹配的真实 S1 输入上验证 Rust 条件格式 Issue 提取链，并与原 Python `ConditionalFormatService` 对拍。只验证条件格式审核切片，不将其扩大解释为完整 S1-F01。
+
+## 修改文件
+
+- `audit-core/probe/reports/s1_conditional_audit_config_real_windows_native_20261025.json`：保存脱敏汇总，不记录输入/模板路径、Issue 原始值或 Issue 行。
+- `audit-core/MIGRATION_INVENTORY.md`：补充这次真实条件审核的边界和报告链接。
+- 本记录。
+
+## 验证
+
+- 在 25 个具有映射工作表的真实样本中，用 Windows 原生 Rust CLI 筛选出 10 个具备实际条件格式规则/评估格的候选之一；最终样本使用 4 个命名区域。
+- Python 与 Rust 均评估 4 条规则、602 个单元格并生成 2 条 Issue；Issue 字段差异 0，Python 不支持格 0，Rust 诊断 0。
+- Rust 引擎：`calamine+namespace_aware_ooxml`；Python 基线：`PythonConditionalRuleEvaluator + Direct OOXML reader`。
+- 本样本 Python 总耗时 281 ms，Rust 总耗时 261 ms；仅记录单样本，不作为性能基准或默认路由依据。
+- 全流程只读输入/模板；对拍报告不包含绝对路径或原始 Issue 行。Rust CLI 真实入口为 `open-data-audit conditional-audit --template-workbook --mapping-config`。
+- `git diff --check` 待提交前执行。
+
+## 未执行项、已知问题与回滚
+
+- 公式复制真实写回及公式缓存重算未完成；非首位 S1 历史页排序需 main 协调共享 `MoveSheet`，现有写回继续 fail-closed。
+- 完整 S1-F01、目标 Linux 与独立 deb 验收未执行；S1-F01 整体仍为未验证。
+- 本地提交后不推送：远程待推送差异仍含 `DEVELOPMENT_GOAL.md` 既有改动，按用户要求保持远程未同步。
+- 回滚：可单独回退本报告、迁移清单补充及本记录；无代码或用户文件改动。
+- 组件版本：不升级。
