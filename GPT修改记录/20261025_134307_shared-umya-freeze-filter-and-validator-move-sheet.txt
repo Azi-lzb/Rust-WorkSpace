@@ -1,0 +1,43 @@
+时间：2026-10-25 13:43:07 Asia/Shanghai
+执行者：Codex main
+修改前 commit：bbd922d（main）
+修改后 commit：本轮两个独立提交承载（umya 冻结窗格/AutoFilter 一个、引擎无关校验器 MoveSheet 一个）；具体 SHA 见本轮汇报。
+WIP 情况：修改前 main 含本轮未提交的 excel-editor 变更；随本记录一并提交。未触碰 audit-dev 与 pytools-dev 工作树。
+
+目的：处理 audit-dev `audit-core/shared-capability-requests/` 两项已登记的共享能力请求——
+1. `20261025_s1_history_complete_writeback_remaining_gaps.md`：umya 后端缺 SetFreezePanes/SetAutoFilter，阻塞 S1 历史 38 操作完整计划；行删除还会收缩 `_xlnm._FilterDatabase` 而只有 SetAutoFilter 能恢复新范围。
+2. 同文件缺口二：引擎无关的 `OpenpyxlXlsxValidator::validate_sheet_names` 不识别 MoveSheet，任何含 MoveSheet 的计划经该校验器被误拒；另建议 defined-name 引用比较对 umya 的非 ASCII 表名加引号差异做归一化。
+
+修改文件：
+- `crates/excel-editor/src/umya_backend.rs`
+- `crates/excel-editor/src/openpyxl_backend.rs`
+- `crates/excel-editor/tests/freeze_panes_auto_filter.rs`（新增）
+- `EXCEL_ENGINE_ARCHITECTURE.md`
+- 本记录
+
+变化：
+- umya 后端实现 `SetFreezePanes`（Some 单元格按 openpyxl 语义计算 xSplit/ySplit/activePane/topLeftCell，`set_pane` 整体替换旧窗格；None 与 A1 视为清除）与 `SetAutoFilter`（Some 设范围并同步 `_xlnm._FilterDatabase`，None 清除范围并删除该名称）。`_FilterDatabase` 更新采用整体重建 DefinedName——umya 的 `set_address` 是向已解析地址列表追加且无公开清空 API，原值 hidden 标记仅在原文件携带时保留。
+- 清除已有冻结窗格在 umya 对象模型中不可实现（无移除 pane 的 API），计划含此类操作且目标表确有窗格时在写前返回 `UnsupportedBeforeWrite`，不静默跳过、不写入。
+- UmyaXlsxValidator 对含 SetFreezePanes/SetAutoFilter 的计划新增读回校验：umya 重开断言窗格状态/分割/活动窗格/左上角单元格与 AutoFilter 范围；`_FilterDatabase` 经共享 excel-reader 独立读回，比较作用域工作表与引号归一化后的引用。
+- defined-name 引用比较统一做引号归一化（去除单引号后比较）：umya 重发 definedName 时会给非 ASCII 表名加引号，语义等价引用不再误报；含撇号的表名按去引号文本比较。
+- `OpenpyxlXlsxValidator::validate_sheet_names` 增加 MoveSheet 分支，按"源顺序 + 移动序列"计算期望顺序，与 UmyaXlsxValidator 语义一致。
+- EXCEL_ENGINE_ARCHITECTURE.md §4.2 同步登记；全部仍为 unverified（合成证据），不产生生产 capability。
+
+配置及业务路由影响：SetFreezePanes/SetAutoFilter 现在可进入 umya capability 的操作集合（此前必然拒绝）；无默认路由变化。S1 历史完整计划的真实模板对拍仍由 Audit 流程执行，未验收前不得登记生产 Passed。
+
+组件版本：不升级。
+
+测试：
+- `cargo test --offline --locked -p excel-editor --test freeze_panes_auto_filter`：3 项通过（非 ASCII 表名设置窗格/筛选并生成 _FilterDatabase；替换既有窗格并把 _FilterDatabase 恢复为新范围；清除 AutoFilter、无窗格清除为 no-op、有窗格清除写前拒绝）。
+- `cargo test --workspace --locked --offline -q`：42 个测试二进制通过；唯一失败为 pytools-core 既有 Windows 路径问题（见已知问题），经 stash 验证与本轮修改无关。
+- `cargo fmt -p excel-editor -- --check`：通过。
+
+未执行项：未做真实模板对拍、Python 基线对拍、Linux/glibc 2.28 构建与 deb 验收；未修复 pytools-core 既有失败（不在 main 共享 crate 范围）；未评估第三项请求（S1 公式复制目标簿合并非锚载荷基线等价豁免），该项为 ExcelEditPlan 契约级变更，留待单独一轮设计。
+
+已知问题：
+- pytools-core 测试 `config_task_loader_parity::task_config_loaders_match_python_baseline` 在 Windows 上因 `config_path_base` 对 base 做 `fs::canonicalize` 产生 `\\?\` verbatim 前缀、测试 `strip_prefix` 用普通路径而失败；属 PyTools 业务 crate 的既有问题，与共享 crate 无关，须由 PyTools Agent 处理。
+- umya 无法清除既有冻结窗格：相关计划写前拒绝并提示改走其他已验证引擎；S1 历史计划只设置 A2，不受影响。
+- umya 保存重编号 sheetId/r:id、丢弃 calcChain、`set_address` 追加语义等库级行为不变，仍须真实模板核验。
+
+删除清单：无。
+回滚：分别回退本轮两个提交即恢复原行为（冻结/筛选操作回到显式拒绝、引擎无关校验器回到无 MoveSheet 分支、引用比较回到逐字比较）；不回滚既有提交，不修改输入工作簿。
