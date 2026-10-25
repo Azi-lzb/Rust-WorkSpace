@@ -814,3 +814,9 @@ Windows 原生 `cargo test --offline --locked -p pytools-core` 全量通过（42
 按用户"以合成数据继续"的指示构造真实 CDF 输入（合成 xlsx 经 WSL LibreOffice 转出 `source.xls`、中文 txt 转出 `notes.doc`，均为 Composite Document File V2 真实格式），以 2.28 release `pytools`（HEAD `328532c`）+ WSL 构建 lo-convert 运行 `convert-excel`/`convert-word` 端到端。结果：LibreOffice 报 `WrappedTargetRuntimeException`，转换失败——**共享 sidecar 缺陷**，非业务层问题：`sidecar/lo-convert/src/main.rs::run_libreoffice` 把 `-env:UserInstallation` 拼成裸 POSIX 路径且未预建 profile 目录，同文件 `run_libreoffice_recalculate` 的写法（`create_dir_all` + `file_uri`）正确。最小复现与修复方向已按规则登记为共享能力请求（`pytools-core/GPT修改记录/共享能力请求_20261025_lo-convert的UserInstallation路径形态.txt`），sidecar 归 main 治理，pytools-dev 未修改共享代码。
 
 已验证的周边事实：转换失败被逐文件记录、写入运行历史、CLI 退出码 2，无静默回退；以正确 profile 形态手动调用同一 soffice 时 `.xls→.xlsx` 与 `.doc→.docx` 均成功且保真（xlsx→xls→xlsx roundtrip sheet 名与全部非空值含日期完全一致，docx 保留全部中文文本）——目标环境可行，等待 sidecar 修复后即可补端到端证据。另记录：WSL 空闲回收会清空 /tmp，跨调用的转换实验须用持久目录。PT-4-2/4-3 真实输入端到端维持未完成状态。
+
+### 2026-10-25 目标机一键验收脚本与 WSL 暂定通过
+
+按用户指示（WSL 通过即暂定通过、实机由用户复核，并提供一键脚本）新增 `pytools-core/packaging/verify_target.sh`：自包含 POSIX sh（内嵌 5 个合成夹具 base64，宽表夹具用相对目录语义控制落点），目标机零依赖运行（无 Python/网络/Office/binutils 要求）。自动定位二进制（`PYTOOLS_BIN` > 脚本同目录/当前目录/`/usr/bin/pytools`），打印宿主内核与 glibc、`ldd` 依赖检查（缺失库即停），依次执行 T1 config-view、T2 summary-used-range（错误值夹具 + 运行历史 succeeded 断言）、T3 summary-comments、T4 wide-summary（规则命中 + 输出文件断言）、T5 交互菜单冒烟；逐项 PASS/FAIL、失败附输出尾部，结果与工作目录保留供查看，退出码反映整体结果，并显式标注"暂定通过、终验仍需实机与真实业务簿"。夹具源文件入库于 `packaging/target_fixtures/`。
+
+WSL 验证：`x86_64-unknown-linux-gnu.2.28` release（HEAD `328532c`）与 deb 制品解包二进制（`pytools_0.1.0-20261025_amd64.deb`）各运行一轮，均 5/5 PASS（RESULT=PROVISIONAL_PASS）。该结果按用户口径登记为麒麟 V10/UOS V20 的**暂定通过**；实机运行 `sh verify_target.sh`（deb 安装后自动探测 `/usr/bin/pytools`）由用户复核。开发中发现并修正脚本断言一处（紧凑 JSON 无空格），非产品缺陷。
