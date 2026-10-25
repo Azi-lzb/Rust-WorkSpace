@@ -1,7 +1,7 @@
 # 共享能力请求 #7：Umya MoveSheet 丢失 pageSetUpPr
 
 - 提出方：Audit（audit-dev）
-- 状态：待 main 评估；Audit 未修改共享 Excel-Core
+- 状态：空 `pageSetUpPr` 默认值归一已由 main 修复并同步；真实候选现推进到 Relationships 检查后仍失败，见共享请求 #8
 - 关联：请求 #6 的逐表顺序无关比较已由 `fc6b121` 同步；该修复使完整保留校验继续检查逐表内容。
 
 ## 真实复现
@@ -17,3 +17,9 @@ Windows 原生将 `AUDIT_S1_HISTORY_REAL_WORKBOOK` 设为用户提供的只读 `
 ## 验收边界
 
 完整 EditPlan 必须通过共享保留校验，并确认逐表页面设置、工作表顺序、历史写入、其他工作表和输入不可变。当前失败发生在共享保留校验；S1-F01 历史写回仍为 Unverified。
+
+## 2026-10-25 main 修复后复验
+
+- main 提交 `0bb17c7` 已以 `cc64e15` 同步；校验器仅把无属性且无子元素的空 `pageSetUpPr` 视为默认值归一，显式页面设置仍严格比较。
+- 同一真实候选已通过 PageSettings 检查，但继续失败于 `openpyxl changed OOXML relationships`。观察到工作簿新增 `sharedStrings` 关系；被更新的管理历史表原有 9 个外链关系、输出为 0；批注/VML 关系 ID 也被重新编号。Python `write_history_xlsx` 会删除并重建该管理表，因此目标表关系移除可能是预期业务语义；需按编辑计划有限处理关系差异，不能全局放宽。
+- 源样本保持不变。完整计划仍未通过；S1 历史写回仍 Unverified。详见共享请求 #8。

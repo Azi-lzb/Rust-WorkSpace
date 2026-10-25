@@ -1,0 +1,26 @@
+# GLM 阶段 Audit 真实 MoveSheet 二次复验
+
+- 时间：2026-10-25 19:08（+08:00）
+- 执行者：Codex Audit 审计 Agent
+- 分支：`audit-dev`
+- 修改前 HEAD：`3d87c991326533f5769e78667900f78609bf4810`
+- 同步 main 提交：`0bb17c7` → 本分支 `cc64e15`（`-x` cherry-pick）
+- WIP：开始前分支仅有未跟踪 `HANDOFF_ZCODE_TO_CODEX.md`；保留且未提交。源 Python 与真实工作簿均只读。
+
+## 复验结果
+
+- 使用原只读 config-real 样本运行 `cargo test --offline --locked -p audit-core --lib s1_history::tests::real_s1_history_workbook_engine_candidate_only -- --ignored --exact --nocapture`。
+- main 的空 `pageSetUpPr` 默认归一生效；真实计划越过 PageSettings，随后因 `openpyxl changed OOXML relationships` 失败。源样本 SHA-256 前后相同。
+- ZIP/XML 复核：workbook relationships 新增 sharedStrings；被更新的管理历史表原有 9 个外链关系、输出为 0；批注/VML 关系 ID 重编号。原 Python 的 `write_history_xlsx` 删除并重建管理历史表，因此需将预期目标表关系变化与未修改表保留区分，不能全局放宽。
+- 已更新请求 #7、迁移清单并登记共享请求 #8；未修改共享代码、未登记生产 capability。
+- main 报告其 `cargo test --offline --locked -p excel-editor` 通过 34 个单测及集成测试（4 个隔离 Python runtime 测试 ignored）；本轮未重跑该套件。
+
+## 未执行项和已知问题
+
+- S1 历史完整编辑计划仍未通过；S1-F01 写回继续 Unverified。公式复制引擎仍阻塞。
+- 本轮仅 Windows 原生复验；未执行 Linux/WSL、deb、glibc 2.28 或目标发行版测试。
+- 【组件版本】不升级。
+
+## 回滚
+
+- 共享归一修复通过 `cc64e15` 同步；按 main 后续协调处理。只回滚本轮新增的 Audit 请求/记录时保留请求 #7 历史和既有交接文件；不得删除或覆盖 `HANDOFF_ZCODE_TO_CODEX.md`，不得修改真实样本。

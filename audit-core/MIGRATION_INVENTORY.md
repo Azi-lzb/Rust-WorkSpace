@@ -175,7 +175,7 @@ main 落地请求 #3/#4 后，S1 公式复制业务计划（`s1_formula_copy`）
 ## 2026-10-25 GLM 阶段 Codex 独立审计复核
 
 - main 公共修复：`9f0cacf` 已同步为 `fc6b121`，逐表 OOXML 快照按工作表名比较；交接报告中的 `d2da5a1` 不存在，实际修复为 `d2da501866a4aca7d2a4132b5c2ed0d2116d4f42`，已同步为 `a5e0233`。Worker 越界样式索引现在会被拒绝，未修复其样式映射。
-- S1-F01 历史写回：真实 config-real 样本 5 表、9 行历史；`UmyaXlsxBackend::apply` 通过，但完整共享保留校验失败。候选输出丢失 5 张表上的空 `pageSetUpPr` 子项，输入源 SHA-256 不变。该共享缺口登记为 `shared-capability-requests/20261025_umya_movesheet_page_setup_properties.md`；历史写回仍 Unverified。
+- S1-F01 历史写回：真实 config-real 样本 5 表、9 行历史；`UmyaXlsxBackend::apply` 通过。同步 main 的空 `pageSetUpPr` 默认归一修复 `cc64e15` 后，完整计划继续失败于关系快照：工作簿新增 `sharedStrings`，管理历史表原有 9 个超链接关系消失（原 Python 会删除并重建该表），批注/VML 关系 ID 重编号。不得全局忽略关系差异；共享请求 #7 的页面设置问题已解决，剩余差异登记于 `shared-capability-requests/20261025_umya_movesheet_relationship_validation.md`。源 SHA-256 不变；历史写回仍 Unverified。
 - S1-F01 公式复制：worker 样式表守卫已同步且 worker 定向回归 10 passed；真实 worker 输出仍可能因 `cellXfs` 引用越界被拒绝，Umya 路线仍有 1,036 项真实对拍差异；没有可用生产编辑引擎，整项未验收。
 - S5-F01：此前 Windows CLI 与 Python `AuditEngine.run` 377 条结果及输出文件对拍差异 0 的证据仍仅覆盖单位贷款单业务切片。新增业务筛选拒绝未知/无启用规则业务，输出 writer 在写出前后验证源与配置快照，防止空业务或输入变化生成完成态输出；定向测试通过、CLI check 通过。V_EXT、上期绑定、结构快照、数据质量告警及全配置/多业务验收仍缺。
 - 平台：本轮仅完成 Windows 原生编译/测试及 Windows 隔离 openpyxl worker 回归；WSL Python、Linux 目标、glibc 2.28、deb、麒麟 V10/UOS V20 均未验证。
