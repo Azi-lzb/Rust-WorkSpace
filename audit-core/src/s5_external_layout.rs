@@ -1,10 +1,10 @@
 //! S5 external-workbook layout discovery for the Python `external_layout` path.
 //!
-//! This first slice handles ordinary report layouts. Time-series layouts and
-//! warning-bearing workbooks are surfaced as unsupported by the retrieval
-//! caller until their result-ledger contract is migrated.
+//! Ordinary and date-keyed external report layouts, institution mapping, and
+//! source-layout quality warnings for the S5 V_EXT retrieval path.
 
 use crate::s5_scan::ScanBook;
+use excel_reader::{read_value_columns_with_iso_dates, CellValue};
 use std::collections::{BTreeMap, BTreeSet};
 
 const MAPPING_SHEETS: [&str; 2] = ["机构参照表", "机构参照"];
@@ -22,6 +22,16 @@ const NAME_LABELS: [&str; 4] = ["法人机构名称", "机构名称", "机构全
 const TARGET_LABELS: [&str; 5] = ["报表项目", "报表名称", "项目名称", "项目编码", "行项目"];
 const PLACEHOLDER_HEADERS: [&str; 7] = ["null", "none", "nan", "n/a", "#n/a", "-", "--"];
 const LEGACY_MAPPING_SHEET: &str = "参照表";
+const EXTERNAL_METADATA_HEADERS: [&str; 8] = [
+    "数据日期",
+    "报表名称",
+    "报表代码",
+    "版本号",
+    "锁定信息",
+    "报表组",
+    "行顺序号",
+    "行名称",
+];
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ExternalLayoutFailure {
@@ -56,6 +66,8 @@ struct ExternalColumn {
     column: usize,
     header: String,
     rows: BTreeMap<String, Vec<usize>>,
+    data_date_column: Option<usize>,
+    row_dates: BTreeMap<usize, String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -96,6 +108,14 @@ pub fn normalize_external_label(value: &str) -> String {
 }
 
 impl ExternalLayout {
+    pub fn has_time_series_header(book: &ScanBook) -> bool {
+        book.sheet_names().iter().any(|sheet| {
+            !MAPPING_SHEETS.contains(&sheet.as_str())
+                && sheet != LEGACY_MAPPING_SHEET
+                && time_series_header(book, sheet).is_some()
+        })
+    }
+
     pub fn discover(book: &ScanBook) -> Result<Self, ExternalLayoutFailure> {
         let (mapping_sheet, mapping_rows) = discover_institution_mapping(book)?;
         let targets: BTreeSet<String> = mapping_rows
@@ -111,60 +131,108 @@ impl ExternalLayout {
         }
 
         let mapping_sheets: BTreeSet<&str> = MAPPING_SHEETS.into_iter().collect();
+        let time_series_headers: BTreeMap<String, (usize, usize, usize)> = book
+            .sheet_names()
+            .iter()
+            .filter(|sheet| {
+                !mapping_sheets.contains(sheet.as_str()) && sheet.as_str() != LEGACY_MAPPING_SHEET
+            })
+            .filter_map(|sheet| {
+                time_series_header(book, sheet).map(|header| (sheet.clone(), header))
+            })
+            .collect();
+        let iso_dates = if time_series_headers.is_empty() {
+            BTreeMap::new()
+        } else {
+            read_value_columns_with_iso_dates(book.path(), usize::MAX)
+                .map_err(|error| {
+                    ExternalLayoutFailure::new(
+                        "EXTERNAL_DATE_READ_FAILED",
+                        format!("无法读取外部时序数据的 Excel 日期值：{error}"),
+                    )
+                })?
+                .into_iter()
+                .map(|sheet| {
+                    let values = sheet
+                        .values
+                        .into_iter()
+                        .filter_map(|(address, value)| match value {
+                            CellValue::DateTimeIso(value) => Some((address, value)),
+                            _ => None,
+                        })
+                        .collect();
+                    (sheet.name, values)
+                })
+                .collect()
+        };
         let mut columns = Vec::new();
         let mut warnings = Vec::new();
         for sheet in book.sheet_names() {
             if mapping_sheets.contains(sheet.as_str()) || sheet == LEGACY_MAPPING_SHEET {
                 continue;
             }
-            if has_time_series_header(book, sheet) {
-                return Err(ExternalLayoutFailure::new(
-                    "EXTERNAL_TIME_SERIES_UNMIGRATED",
-                    format!("工作表“{sheet}”包含数据日期和行名称表头，外部时序布局尚未迁移"),
-                ));
-            }
             let mut key_rows: BTreeMap<usize, BTreeMap<String, Vec<usize>>> = BTreeMap::new();
-            for row in 1..=book.sheet_max_row(sheet) {
-                for column in 1..=book.sheet_max_col(sheet) {
-                    let (kind, raw) = book.stored_value(sheet, row, column);
-                    if kind != "string" || book.sheet_has_formula(sheet, row, column) {
+            let time_series = time_series_headers.get(sheet).copied();
+            let mut explicit_header_rows = BTreeMap::new();
+            if let Some((header_row, _date_column, key_column)) = time_series {
+                explicit_header_rows.insert(key_column, header_row);
+                let rows = key_rows.entry(key_column).or_default();
+                for row in header_row + 1..=book.sheet_max_row(sheet) {
+                    if book.sheet_has_formula(sheet, row, key_column) {
                         continue;
                     }
-                    let label = normalize_external_label(&raw);
-                    if targets.contains(&label) {
-                        key_rows
-                            .entry(column)
-                            .or_default()
-                            .entry(label)
-                            .or_default()
-                            .push(row);
+                    let (kind, raw) = book.stored_value(sheet, row, key_column);
+                    if kind == "string" {
+                        let label = normalize_external_label(&raw);
+                        if targets.contains(&label) {
+                            rows.entry(label).or_default().push(row);
+                        }
                     }
                 }
-            }
+            } else {
+                for row in 1..=book.sheet_max_row(sheet) {
+                    for column in 1..=book.sheet_max_col(sheet) {
+                        let (kind, raw) = book.stored_value(sheet, row, column);
+                        if kind != "string" || book.sheet_has_formula(sheet, row, column) {
+                            continue;
+                        }
+                        let label = normalize_external_label(&raw);
+                        if targets.contains(&label) {
+                            key_rows
+                                .entry(column)
+                                .or_default()
+                                .entry(label)
+                                .or_default()
+                                .push(row);
+                        }
+                    }
+                }
 
-            let mut explicit_header_rows = BTreeMap::new();
-            for row in 1..=book.sheet_max_row(sheet).min(30) {
-                let headers: Vec<String> = (1..=book.sheet_max_col(sheet))
-                    .map(|column| normalize_external_label(&book.cell_raw_text(sheet, row, column)))
-                    .collect();
-                let label_columns: Vec<usize> = headers
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(index, header)| {
-                        ["行名称", "报表项目"]
-                            .contains(&header.as_str())
-                            .then_some(index + 1)
-                    })
-                    .collect();
-                if label_columns.len() == 1 {
-                    let key_column = label_columns[0];
-                    if headers
+                for row in 1..=book.sheet_max_row(sheet).min(30) {
+                    let headers: Vec<String> = (1..=book.sheet_max_col(sheet))
+                        .map(|column| {
+                            normalize_external_label(&book.cell_raw_text(sheet, row, column))
+                        })
+                        .collect();
+                    let label_columns: Vec<usize> = headers
                         .iter()
-                        .skip(key_column)
-                        .any(|header| !header.is_empty())
-                    {
-                        explicit_header_rows.entry(key_column).or_insert(row);
-                        key_rows.entry(key_column).or_default();
+                        .enumerate()
+                        .filter_map(|(index, header)| {
+                            ["行名称", "报表项目"]
+                                .contains(&header.as_str())
+                                .then_some(index + 1)
+                        })
+                        .collect();
+                    if label_columns.len() == 1 {
+                        let key_column = label_columns[0];
+                        if headers
+                            .iter()
+                            .skip(key_column)
+                            .any(|header| !header.is_empty())
+                        {
+                            explicit_header_rows.entry(key_column).or_insert(row);
+                            key_rows.entry(key_column).or_default();
+                        }
                     }
                 }
             }
@@ -201,6 +269,17 @@ impl ExternalLayout {
                     continue;
                 };
 
+                let date_column = time_series.map(|(_, date_column, _)| date_column);
+                let mut row_dates = BTreeMap::new();
+                if let Some(date_column) = date_column {
+                    for row in item_rows.values().flatten() {
+                        row_dates.insert(
+                            *row,
+                            external_date_value(book, &iso_dates, sheet, *row, date_column),
+                        );
+                    }
+                }
+
                 let mut metric_columns = Vec::new();
                 for column in (key_column + 1)..=book.sheet_max_col(sheet) {
                     if book.sheet_has_formula(sheet, header_row, column) {
@@ -211,6 +290,11 @@ impl ExternalLayout {
                         continue;
                     }
                     let normalized = normalize_external_label(&raw);
+                    if date_column.is_some()
+                        && EXTERNAL_METADATA_HEADERS.contains(&normalized.as_str())
+                    {
+                        continue;
+                    }
                     if PLACEHOLDER_HEADERS.contains(&normalized.as_str()) {
                         continue;
                     }
@@ -221,6 +305,8 @@ impl ExternalLayout {
                         column,
                         header,
                         rows: item_rows.clone(),
+                        data_date_column: date_column,
+                        row_dates: row_dates.clone(),
                     });
                 }
                 if metric_columns.is_empty() {
@@ -273,6 +359,27 @@ impl ExternalLayout {
                             );
                         }
                     }
+                    if let Some(date_column) = date_column {
+                        if targets.contains(&label)
+                            && row_dates.get(&row).map_or(true, String::is_empty)
+                        {
+                            let raw_date = book.cell_raw_text(sheet, row, date_column);
+                            let date_display = if raw_date.trim().is_empty() {
+                                "空白".to_owned()
+                            } else {
+                                format!("“{}”", raw_date.trim())
+                            };
+                            push_warning(
+                                &mut warnings,
+                                sheet,
+                                row,
+                                format!(
+                                    "行名称“{}”对应的数据日期{}为空或无效，本行未参与时序匹配；请检查数据日期是否误删或格式错误。",
+                                    raw_label.trim(), date_display
+                                ),
+                            );
+                        }
+                    }
                 }
             }
         }
@@ -296,6 +403,7 @@ impl ExternalLayout {
         institution_name: &str,
         metric_header: &str,
         sheet_filter: &str,
+        data_date: &str,
     ) -> Result<ExternalLookup, ExternalLayoutFailure> {
         let (entry, mapping_method) = self.institution_entry(institution_code, institution_name)?;
         let metric = normalize_external_label(metric_header);
@@ -320,11 +428,35 @@ impl ExternalLayout {
             ));
         }
         let column = metric_columns[0];
-        let row_matches = column
+        let mut row_matches = column
             .rows
             .get(&normalize_external_label(&entry.report_item))
             .cloned()
             .unwrap_or_default();
+        if column.data_date_column.is_some() {
+            let selected_date = crate::s2_external::normalize_external_date(data_date);
+            if selected_date.is_empty() {
+                return Err(ExternalLayoutFailure::new(
+                    "EXTERNAL_DATE_INVALID",
+                    "本期报告期不是有效的完整日期，无法匹配外部时序数据",
+                ));
+            }
+            row_matches.retain(|row| {
+                column
+                    .row_dates
+                    .get(row)
+                    .is_some_and(|row_date| row_date == &selected_date)
+            });
+            if row_matches.is_empty() {
+                return Err(ExternalLayoutFailure::new(
+                    "EXTERNAL_DATE_NOT_FOUND",
+                    format!(
+                        "外部时序数据中，报表项目“{}”没有本期日期 {} 的记录",
+                        entry.report_item, selected_date
+                    ),
+                ));
+            }
+        }
         if row_matches.is_empty() {
             return Err(ExternalLayoutFailure::new(
                 "REPORT_ITEM_NOT_FOUND",
@@ -598,24 +730,54 @@ fn has_value(book: &ScanBook, sheet: &str, row: usize, column: usize) -> bool {
     kind != "empty" && (kind != "string" || !value.trim().is_empty())
 }
 
-fn has_time_series_header(book: &ScanBook, sheet: &str) -> bool {
+fn time_series_header(book: &ScanBook, sheet: &str) -> Option<(usize, usize, usize)> {
     for row in 1..=book.sheet_max_row(sheet).min(20) {
         let headers: Vec<String> = (1..=book.sheet_max_col(sheet))
             .map(|column| normalize_external_label(&book.cell_raw_text(sheet, row, column)))
             .collect();
-        let date_columns = headers
+        let date_columns: Vec<usize> = headers
             .iter()
-            .filter(|header| header.as_str() == "数据日期")
-            .count();
-        let label_columns = headers
+            .enumerate()
+            .filter_map(|(index, header)| (header == "数据日期").then_some(index + 1))
+            .collect();
+        let label_columns: Vec<usize> = headers
             .iter()
-            .filter(|header| header.as_str() == "行名称")
-            .count();
-        if date_columns == 1 && label_columns == 1 {
-            return true;
+            .enumerate()
+            .filter_map(|(index, header)| (header == "行名称").then_some(index + 1))
+            .collect();
+        if date_columns.len() == 1 && label_columns.len() == 1 {
+            return Some((row, date_columns[0], label_columns[0]));
         }
     }
-    false
+    None
+}
+
+fn external_date_value(
+    book: &ScanBook,
+    iso_dates: &BTreeMap<String, BTreeMap<String, String>>,
+    sheet: &str,
+    row: usize,
+    column: usize,
+) -> String {
+    if book.sheet_has_formula(sheet, row, column) {
+        return String::new();
+    }
+    let (kind, raw) = book.stored_value(sheet, row, column);
+    if kind == "datetime_serial" {
+        let address = format!("{}{row}", column_letter(column));
+        return iso_dates
+            .get(sheet)
+            .and_then(|values| values.get(&address))
+            .map(|value| crate::s2_external::normalize_external_date(value))
+            .unwrap_or_default();
+    }
+    if matches!(
+        kind.as_str(),
+        "string" | "datetime_iso" | "integer" | "number"
+    ) {
+        return crate::s2_external::normalize_external_date(&raw);
+    }
+    String::new()
 }
 
 fn push_warning(

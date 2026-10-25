@@ -1,0 +1,14 @@
+【时间】2026-10-25 22:46:46（Asia/Shanghai）
+【执行者】Codex
+【修改前提交】8785153
+【修改后提交】本记录与功能一起提交；SHA 提交后补记
+【WIP】开始时仅有未跟踪 HANDOFF_ZCODE_TO_CODEX.md 与 .pytest-tmp-v3/；均未修改、未暂存
+【目的】继续 S5-F01 中不受共享请求 #8 阻塞的 V_EXT 时序布局迁移；按报告期选择行，保持 Python 日期与告警语义，并接入 s5-audit-run。
+【修改/新增文件】audit-core/src/s5_external_layout.rs；audit-core/src/s5_retrieval.rs；audit-core/tests/s5_previous_source_cli.rs；audit-core/MIGRATION_INVENTORY.md；audit-core/probe/reports/s5_vext_time_series_synthetic_parity_windows_native_20261025.json；本修改记录。
+【逻辑变化】识别唯一“数据日期”+“行名称”表头；按本次审核期选取报表项目记录；过滤时序元数据列；日期格式单元格调用共享 excel-reader 的 ISO 日期读取接口；日期无效/缺失时继续跳过该行并记录质量提示；缺少本期日期时返回 EXTERNAL_DATE_NOT_FOUND。配置中存在外部契约时，仅检测到时序布局才走动态布局路径，普通静态契约路径保持原样。布局告警机构身份字段按 Python 源行为留空。未改共享 crates、根 Cargo 配置或 PyTools。
+【组件版本】audit-core 0.1.0（以 audit-core/Cargo.toml 为准；不采用旧组件编号制度）。
+【测试】cargo fmt --all -- --check 通过；cargo build --offline --locked -q -p audit-core --bin open-data-audit 通过；cargo test --offline --locked -p audit-core --test s5_previous_source_cli -- --nocapture：9 passed。Windows Python 3.12.10 / openpyxl 3.1.5 对应 test_s5_integration.py 选定基线：15 passed。Python AuditEngine.run 与 Rust s5-audit-run 使用同一组临时 XLSX 的状态、数值、说明、质量告警字段及结果表行对拍通过，三份输入 SHA-256 前后不变；报告见 audit-core/probe/reports/s5_vext_time_series_synthetic_parity_windows_native_20261025.json。
+【未执行】真实 V_EXT 时序业务文件、Linux/WSL 目标平台、glibc 2.28、deb、麒麟 V10/UOS V20。Excel 1904 日期系统未单独构造验证。合成对拍不等于真实验收；S5-F01 整体仍未验证，Audit 共享能力请求 #8 仍未解决。
+【数据与风险】原 Python 项目及 config-real/真实业务文件只读且未修改。时序日期读取仅对已识别时序工作簿执行额外的 ISO 日期读取；该读取路径性能未测量。
+【删除】无。
+【回滚】回滚本功能提交即可；新增测试、报告、清单和本记录应与实现一并回退。

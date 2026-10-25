@@ -72,7 +72,69 @@ fn write_external_source_with_invalid_numeric(path: &Path) {
 }
 
 fn write_external_time_series_source(path: &Path, value: f64) {
-    write_external_source_variant(path, value, false, false, true);
+    write_external_time_series_source_variant(path, value, true);
+}
+
+fn write_external_time_series_source_without_current_date(path: &Path, value: f64) {
+    write_external_time_series_source_variant(path, value, false);
+}
+
+fn write_external_time_series_source_variant(path: &Path, value: f64, include_current_date: bool) {
+    let mut workbook = excel_writer::Workbook::new();
+    let mapping = workbook
+        .add_worksheet()
+        .set_name("机构参照表")
+        .expect("name external mapping sheet");
+    for (column, header) in ["机构代码", "报表项目"].iter().enumerate() {
+        mapping
+            .write_string(0, column as u16, *header)
+            .expect("write mapping header");
+    }
+    mapping
+        .write_string(1, 0, "I001")
+        .expect("write mapping identity");
+    mapping
+        .write_string(1, 1, "单位贷款")
+        .expect("write mapping report item");
+
+    let data = workbook
+        .add_worksheet()
+        .set_name("集中系统数据")
+        .expect("name external data sheet");
+    for (column, header) in ["数据日期", "行名称", "贷款余额(亿元)", "备用指标"]
+        .iter()
+        .enumerate()
+    {
+        data.write_string(1, column as u16, *header)
+            .expect("write time-series header");
+    }
+    data.write_string(2, 0, "2026-07-31")
+        .expect("write prior report date");
+    data.write_string(2, 1, "单位贷款")
+        .expect("write prior report item");
+    data.write_number(2, 2, value / 2.0)
+        .expect("write prior metric value");
+    if include_current_date {
+        let current_date = excel_writer::ExcelDateTime::parse_from_str("2026-08-31")
+            .expect("parse current report date");
+        let date_format = excel_writer::Format::new().set_num_format("yyyy-mm-dd");
+        data.write_datetime_with_format(3, 0, current_date, &date_format)
+            .expect("write Excel date-formatted current report date");
+        data.write_string(3, 1, "单位贷款")
+            .expect("write current report item");
+        data.write_number(3, 2, value)
+            .expect("write current metric value");
+    }
+    let invalid_row = if include_current_date { 4 } else { 3 };
+    data.write_string(invalid_row, 0, "not-a-date")
+        .expect("write invalid report date");
+    data.write_string(invalid_row, 1, "单位贷款")
+        .expect("write invalid report item");
+    data.write_number(invalid_row, 2, value * 2.0)
+        .expect("write invalid-date metric value");
+    workbook
+        .save(path)
+        .expect("save time-series source workbook");
 }
 
 fn write_external_source_variant(
@@ -781,7 +843,7 @@ fn s5_audit_cli_records_dynamic_external_layout_warnings() {
 }
 
 #[test]
-fn s5_audit_cli_rejects_unmigrated_dynamic_external_time_series_layout() {
+fn s5_audit_cli_retrieves_dynamic_external_time_series_for_current_period() {
     let directory = temporary_directory();
     let current = directory.join("current.xlsx");
     let external = directory.join("external.xlsx");
@@ -792,25 +854,127 @@ fn s5_audit_cli_rejects_unmigrated_dynamic_external_time_series_layout() {
     write_config(&config, true, false);
 
     let output = run_cli(&config, &current, None, Some(&external), &output_dir, true);
-    assert!(output.status.success());
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let summary: Value = serde_json::from_slice(&output.stdout).expect("valid CLI JSON");
-    assert_eq!(summary["status_counts"]["RETRIEVAL_FAILED"], 1);
+    assert_eq!(summary["status"], "completed");
+    assert_eq!(summary["status_counts"]["TRIGGERED"], 1);
+    assert_eq!(summary["data_quality_warning_count"], 1);
     let result_path = PathBuf::from(
         summary["output_files"]["result_workbook"]
             .as_str()
             .expect("result workbook path"),
     );
-    let result_workbook = read_workbook(&result_path).expect("read time-series rejection result");
+    let result_workbook = read_workbook(&result_path).expect("read time-series result");
     let result_sheet = result_workbook
         .sheets
         .iter()
         .find(|sheet| sheet.name == "审核结果")
         .expect("result sheet");
-    let description = CellValue::from_probe_json(&result_sheet.values["I2"])
-        .expect("time-series rejection message");
-    assert!(matches!(description, CellValue::Text(text) if text.contains("时序布局尚未迁移")));
+    assert_eq!(
+        CellValue::from_probe_json(&result_sheet.values["K2"]).expect("selected external value"),
+        CellValue::Number(1500.0)
+    );
+    assert_eq!(
+        CellValue::from_probe_json(&result_sheet.values["L2"]).expect("difference value"),
+        CellValue::Number(0.0)
+    );
+    let warning_sheet = result_workbook
+        .sheets
+        .iter()
+        .find(|sheet| sheet.name == "数据质量提示")
+        .expect("invalid-date warning sheet");
+    assert!(matches!(
+        CellValue::from_probe_json(&warning_sheet.values["F2"]).expect("warning message"),
+        CellValue::Text(message) if message.contains("数据日期“not-a-date”为空或无效")
+    ));
+    let ledger_path = PathBuf::from(
+        summary["output_files"]["run_ledger"]
+            .as_str()
+            .expect("run ledger path"),
+    );
+    let ledger: Value =
+        serde_json::from_slice(&fs::read(ledger_path).expect("read time-series ledger"))
+            .expect("valid time-series ledger");
+    assert_eq!(ledger["data_quality_warnings"][0]["institution_name"], "");
+    assert_eq!(ledger["data_quality_warnings"][0]["institution_code"], "");
 
     fs::remove_dir_all(directory).expect("remove synthetic time-series files");
+}
+
+#[test]
+fn s5_audit_cli_uses_dynamic_external_time_series_when_contract_exists() {
+    let directory = temporary_directory();
+    let current = directory.join("current.xlsx");
+    let external = directory.join("external.xlsx");
+    let config = directory.join("config.xlsx");
+    let output_dir = directory.join("out");
+    write_source(&current, 1500.0);
+    write_external_time_series_source(&external, 0.15);
+    write_config(&config, true, true);
+
+    let output = run_cli(&config, &current, None, Some(&external), &output_dir, true);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let summary: Value = serde_json::from_slice(&output.stdout).expect("valid CLI JSON");
+    assert_eq!(summary["status"], "completed");
+    assert_eq!(summary["status_counts"]["TRIGGERED"], 1);
+    let result_path = PathBuf::from(
+        summary["output_files"]["result_workbook"]
+            .as_str()
+            .expect("result workbook path"),
+    );
+    let result_workbook = read_workbook(&result_path).expect("read contract time-series result");
+    let result_sheet = result_workbook
+        .sheets
+        .iter()
+        .find(|sheet| sheet.name == "审核结果")
+        .expect("result sheet");
+    assert_eq!(
+        CellValue::from_probe_json(&result_sheet.values["K2"]).expect("selected external value"),
+        CellValue::Number(1500.0)
+    );
+    fs::remove_dir_all(directory).expect("remove contract time-series files");
+}
+
+#[test]
+fn s5_audit_cli_reports_missing_current_external_time_series_date() {
+    let directory = temporary_directory();
+    let current = directory.join("current.xlsx");
+    let external = directory.join("external.xlsx");
+    let config = directory.join("config.xlsx");
+    let output_dir = directory.join("out");
+    write_source(&current, 1500.0);
+    write_external_time_series_source_without_current_date(&external, 0.15);
+    write_config(&config, true, false);
+
+    let output = run_cli(&config, &current, None, Some(&external), &output_dir, true);
+    assert!(output.status.success());
+    let summary: Value = serde_json::from_slice(&output.stdout).expect("valid CLI JSON");
+    assert_eq!(summary["status_counts"]["RETRIEVAL_FAILED"], 1);
+    assert_eq!(summary["data_quality_warning_count"], 1);
+    let result_path = PathBuf::from(
+        summary["output_files"]["result_workbook"]
+            .as_str()
+            .expect("result workbook path"),
+    );
+    let result_workbook = read_workbook(&result_path).expect("read missing-date result");
+    let result_sheet = result_workbook
+        .sheets
+        .iter()
+        .find(|sheet| sheet.name == "审核结果")
+        .expect("result sheet");
+    assert!(matches!(
+        CellValue::from_probe_json(&result_sheet.values["I2"]).expect("error message"),
+        CellValue::Text(message) if message.contains("没有本期日期 2026-08-31 的记录")
+    ));
+    fs::remove_dir_all(directory).expect("remove missing-date files");
 }
 
 #[test]

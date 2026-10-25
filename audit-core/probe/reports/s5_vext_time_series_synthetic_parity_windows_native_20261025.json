@@ -1,0 +1,95 @@
+{
+  "feature": "S5-F01 V_EXT date-keyed time-series layout",
+  "platform": "Windows 11 native x86_64",
+  "python": {
+    "entry": "s1audit_configured.AuditEngine.run",
+    "runtime": "3.12.10",
+    "excel_engine": "openpyxl 3.1.5"
+  },
+  "rust": {
+    "entry": "open-data-audit s5-audit-run",
+    "toolchain": "rustc 1.99.1",
+    "reader": "Calamine through excel-reader; Excel date-formatted cells through read_value_columns_with_iso_dates"
+  },
+  "input": {
+    "kind": "synthetic XLSX",
+    "same_files_for_both_runtimes": true,
+    "external_contract_present": true,
+    "external_rows": [
+      {
+        "date": "2026-07-31",
+        "value_亿元": 0.075
+      },
+      {
+        "date": "2026-08-31",
+        "cell_type": "Excel formatted date",
+        "value_亿元": 0.15
+      },
+      {
+        "date": "not-a-date",
+        "value_亿元": 0.3
+      }
+    ]
+  },
+  "python_result": {
+    "status": "TRIGGERED",
+    "current": "1500",
+    "external": "1500.00",
+    "difference": "0.00",
+    "description": "差异=0.00",
+    "selected_external_cell": "C3",
+    "warnings": [
+      {
+        "institution_name": "",
+        "institution_code": "",
+        "source_file": "external.xlsx",
+        "sheet": "集中系统数据",
+        "location": "第4行",
+        "message": "行名称“单位贷款”对应的数据日期“not-a-date”为空或无效，本行未参与时序匹配；请检查数据日期是否误删或格式错误。"
+      }
+    ]
+  },
+  "rust_cli_result": {
+    "status_counts": {
+      "TRIGGERED": 1
+    },
+    "current": "1500",
+    "external": "1500",
+    "difference": "0",
+    "description": "差异=0.00",
+    "warning_count": 1
+  },
+  "parity": {
+    "status": "PASS",
+    "numeric_values": "equal after decimal normalization",
+    "description": "equal",
+    "date_formatted_cell": "current-period row selected; prior and invalid date rows did not participate",
+    "warning_message_location_and_ledger_fields": "equal",
+    "warning_sheet_row": "equal",
+    "input_sha256": "unchanged"
+  },
+  "additional_rust_regression": {
+    "test": "s5_previous_source_cli",
+    "passed": 9,
+    "failed": 0,
+    "coverage": [
+      "time-series current-date selection",
+      "date-formatted Excel cell",
+      "invalid-date warning",
+      "missing current date",
+      "dynamic route with SourceContract",
+      "ordinary static contract and V_PRE regressions"
+    ]
+  },
+  "python_baseline_regression": {
+    "test": "selected test_s5_integration.py cases",
+    "passed": 15,
+    "failed": 0
+  },
+  "limits": [
+    "Synthetic sample only; no real V_EXT time-series workbook validation.",
+    "S5-F01 remains unverified overall; shared capability request #8 remains unresolved.",
+    "No Linux, glibc 2.28, deb, Kylin V10, or UOS V20 validation."
+  ],
+  "result": "PASS"
+}

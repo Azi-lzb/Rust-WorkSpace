@@ -176,6 +176,7 @@ pub struct S5Retrieval {
     previous: Option<BoundSource>,
     external: Option<BoundSource>,
     external_layout: Option<ExternalLayout>,
+    external_has_time_series: Option<bool>,
     data_quality_warnings: Vec<JsonValue>,
 }
 
@@ -207,6 +208,7 @@ impl S5Retrieval {
             previous: None,
             external: None,
             external_layout: None,
+            external_has_time_series: None,
             data_quality_warnings: Vec::new(),
         })
     }
@@ -253,6 +255,7 @@ impl S5Retrieval {
             previous,
             external,
             external_layout: None,
+            external_has_time_series: None,
             data_quality_warnings: Vec::new(),
         })
     }
@@ -536,7 +539,17 @@ impl S5Retrieval {
             .iter()
             .find(|contract| contract.source_id == source_id)
             .cloned();
-        let Some(contract) = contract else {
+        let has_time_series_layout = if let Some(value) = self.external_has_time_series {
+            value
+        } else {
+            let value = self
+                .external
+                .as_ref()
+                .is_some_and(|source| ExternalLayout::has_time_series_header(&source.book));
+            self.external_has_time_series = Some(value);
+            value
+        };
+        let Some(contract) = contract.filter(|_| !has_time_series_layout) else {
             let sheet_filter = keywords.get("sheet").map(String::as_str).unwrap_or("");
             return self.retrieve_external_from_layout(&metric, metric_header, sheet_filter);
         };
@@ -743,20 +756,19 @@ impl S5Retrieval {
             .external
             .as_ref()
             .expect("external source checked above");
+        let source_period = source.source_period.clone();
         if self.external_layout.is_none() {
             let layout = ExternalLayout::discover(&source.book)
                 .map_err(|failure| RetrievalFailure::new(&failure.code, failure.message))?;
             let source_path = source.source_path.clone();
-            let institution_name = self.current.institution_name.clone();
-            let institution_code = self.current.institution_code.clone();
             let warnings: Vec<JsonValue> = layout
                 .warnings
                 .iter()
                 .map(|warning| {
                     external_data_warning(
                         &source_path,
-                        &institution_name,
-                        &institution_code,
+                        "",
+                        "",
                         &warning.sheet,
                         &warning.location,
                         &warning.message,
@@ -778,6 +790,7 @@ impl S5Retrieval {
                 &self.current.institution_name,
                 metric_header,
                 sheet_filter,
+                &source_period,
             )
             .map_err(|failure| RetrievalFailure::new(&failure.code, failure.message))?;
         let source = self
