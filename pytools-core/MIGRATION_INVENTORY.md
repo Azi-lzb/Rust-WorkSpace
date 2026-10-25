@@ -684,6 +684,8 @@ Windows 原生验证：`cargo fmt --manifest-path pytools-core/Cargo.toml -- --c
 
 使用 Windows 原生 `x86_64-pc-windows-msvc`（Cargo/rustc 1.99.1）构建当前分支 `pytools` CLI；`summary_menu_cli` 与 `summary_comments_cli` 回归 7/7 通过。以该 MSVC 二进制直接运行现有 `compare_real_used_range_sample()`：原 PyTools 只读 `xlsx/` 目录 13 份真实 XLSX，按四批共 96 个工作表、203,580 行与 PyCode 对拍；值/类型、非空单元格样式、工作表名称与维度、冻结窗格/表头粗体、公式/合并/定义名称/页面属性均精确一致，输入前后指纹相同，输出仅写入临时目录。机器报告仍为 `probe/reports/summary_used_range_real_parity_20261025.json`，现标出 Windows MSVC 执行环境。
 
+另经 Windows 原生 `pytools menu → 6 → 1` 与原生文件对话框选择 1 个合成错误值矩阵 XLSX；PyCode/Rust 完整输出投影 exact（2×18），8 个扩展错误 token 按文本兼容，7 个标准错误值由 OOXML Patch 保留。14 条运行历史事件记录了 Calamine、窄化错误 token 兼容、OOXML Patch 和 `rust_xlsxwriter`；输入夹具未变，输出/历史仅在 TEMP。机器证据并入 `probe/reports/summary_used_range_real_menu_parity_20261025.json`。该项仅补菜单入口的合成错误值矩阵，不扩大 PT-6-1 生产验收。
+
 本轮没有修改 PT-6-1 业务逻辑或默认引擎；这补齐的是 Windows 原生 Cargo 阶段验证，不覆盖 VBA-bearing 原业务 XLSM、NoComPyTools 独有格式、麒麟 V10/UOS V20、glibc 2.28 或离线 deb，PT-6-1 整体仍为未完成最终验收。完整 NoCom 对拍仍因 Python venv 缺少 `python_calamine` 未执行。
 
 ### 2026-10-25 PT-7-6 显式追加既有输出簿
