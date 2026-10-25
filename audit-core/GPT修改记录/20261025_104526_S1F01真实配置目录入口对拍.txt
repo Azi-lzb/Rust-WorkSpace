@@ -1,0 +1,32 @@
+# S1-F01 真实配置目录入口对拍
+
+- 时间：2026-10-25 10:45（Asia/Shanghai）
+- 执行者：Codex Audit migration agent
+- 分支：audit-dev
+- 修改前 commit：`89c9b67`
+- 修改后 commit：由本轮提交追溯。
+- WIP：开始时 worktree 干净。仅新增脱敏对拍报告及迁移清单记录；未修改 `DEVELOPMENT_GOAL.md`、源 Python 项目、真实工作簿、`pytools-core/**`、共享 crates、`Cargo.lock` 或根 Cargo 配置。
+
+## 目的与结果
+
+核实用户提供的 `config-real` 是否能通过 Rust S1-F01 真实目录入口加载映射，并完成一个真实工作簿的 Python/Rust 条件格式 Issue 对拍。
+
+- `open-data-audit conditional-audit-directory` 运行 1 个根目录工作簿；Python/Rust 各 2 条 Issue，字段差异为 0，模板推荐一致。
+- Rust 映射解析加载 2 条功能映射、12 个命名区域，扫描 4 个区域；条件格式规则数为 1，Rust 诊断为 0。
+- 同一模板的 `s1-template-rules` 配置/内置映射定义对比均为 1,072 条，定义完全一致且模板体检通过。
+- Rust/Python 计时分别为 982 ms/375 ms，只记录样本观测，不作为性能结论；双方各评估 602 个单元格，模板包含 8 个结构区域。
+- 真实配置以 `.xlsx.bak` 保存；只读复制相同字节到系统临时 `.xlsx` 供 Rust 与 openpyxl Python 基线共同读取。全部临时报告和配置副本已删除，未写业务工作簿。
+- 对 2026-07-31 目录递归运行时，184 个 XLSX 包含多个模板类型，Rust 按设计拒绝唯一模板推荐；不将其记为功能失败，后续需按业务模板/报表类型分目录验证。
+
+## 文件与验证
+
+- `audit-core/probe/reports/s1_conditional_audit_config_real_directory_windows_native_20261025.json`：新增脱敏机器报告。
+- `audit-core/MIGRATION_INVENTORY.md`：补记真实配置目录入口证据及范围。
+- `git diff --check`、JSON 解析校验、`rustfmt --check`（本轮无 Rust 源码变更）。
+- 对拍入口：Windows 原生 `open-data-audit conditional-audit-directory` 与 `audit-core/tests/compare/compare_s1_conditional_audit.py`。
+
+## 未执行项、问题与回滚
+
+- 本轮未改 Rust 业务源码；未运行 Cargo 测试。
+- S1-F01 公式复制/重算、既有历史簿写回、递归混合目录的分组处理及完整业务验收仍未完成。共享 Editor 能力由 main 协调；main 确认目前没有已验收、可安全同步的完整公式复制/缓存保持提交。
+- 回滚：删除新增报告与本记录，并移除迁移清单新增小节；真实配置和工作簿未变。

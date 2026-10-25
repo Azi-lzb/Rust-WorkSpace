@@ -91,6 +91,10 @@
 
 用户提供的真实逐笔配置与个人贷款命名区域模板，经 Windows 原生 Python/Rust 完整规则定义和模板健康检查对拍，差异为 0（895 条规则、4 个公式复制区、8 个结构区）；模板未改变。另以同一真实配置的条件格式模板和匹配输入完成 S1 条件审核对拍：4 条规则、602 个评估格、2 条 Issue，字段差异 0，见 `probe/reports/s1_conditional_audit_config_real_windows_native_20261025.json`。该样本 Python 总耗时 281 ms，Rust `calamine+namespace_aware_ooxml` 总耗时 261 ms；仅为本样本观测，不用于路由决策。使用 `s1-audit-directory` 在真实源簿/既有审核副本上执行配置化 S1 链：当前公式 Issue 297 条、条件格式 Issue 0 条，Python/Rust 当前集及合流历史分类字段差异均 0；模板验证扫描 1,072 个公式、0 个错误，全部输入未改变。该链使用已有审核副本值，未执行公式复制或重算，报告见 `probe/reports/s1_audit_directory_config_real_windows_native_20261025.json`。模板规则报告：`probe/reports/s1_template_rule_discovery_config_real_windows_native_20261025.json`。以上证据只覆盖真实配置加载/模板规则发现、条件格式 Issue 切片和已有审核副本上的 S1 计算/分类链；公式复制、历史簿写回、公式重算及完整 S1-F01 仍未验证。
 
+### S1-F01 配置目录入口真实对拍
+
+使用 `config-real` 的 `2.报表采集系统` 配置备份和单位贷款命名区域模板，经 Windows 原生 `open-data-audit conditional-audit-directory` 目录入口运行 1 个根目录工作簿；Python/Rust 各 2 条条件格式 Issue，字段差异 0，模板推荐一致，双方各评估 602 个单元格。Rust 读取 2 条 S1 映射、12 个命名区域并扫描 4 个条件区域、8 个结构区域；该模板规则发现中，真实配置与内置映射的 1,072 条规则定义完全一致。Rust 982 ms、Python 375 ms 仅为该样本观测。原配置为 `.xlsx.bak`，为满足 Python 对拍读取，将相同字节复制至系统临时 `.xlsx`，测试结束已删除；真实输入只读，未写工作簿。用户批次目录递归包含 184 个 XLSX 且混有多个模板类型，整目录推荐按设计拒绝，故本证据仅覆盖根目录单簿；详见 `probe/reports/s1_conditional_audit_config_real_directory_windows_native_20261025.json`。S1-F01 公式复制/重算、既有历史簿写回和整体流程仍未验证。
+
 ### S1-F01 非空历史簿真实链路烟测（跨模板）
 
 Windows 原生 Python/Rust 对拍将 `config-real` 的非空历史簿接入 2026-07 S1 审核 CLI：7 组源簿/既有公式结果副本均由模板推荐器匹配同一当前模板；每组读取 9 行历史，7 组共 159 条当前 Issue，Python/Rust 当前 Issue、历史分类输入、当前结果簿与独立历史结果簿差异均为 0，历史输出共 222 行，所有输入均未改变。脱敏汇总见 `probe/reports/s1_f01_nonempty_history_real_batch_windows_native_20261025.json`。该历史簿未匹配当前模板（推荐 `matched=false`，confidence 0.63），且本批未观察到历史 Issue ID 重叠；因此只证明真实非空历史读取和无重叠合流路径，不证明同业务连续性/重复归类。使用已有公式结果副本，未运行 Rust 公式复制/重算；只新建独立历史结果簿，没有改写既有历史簿，既有 PageSettings 保留未验证。S1-F01 整体仍未验证。

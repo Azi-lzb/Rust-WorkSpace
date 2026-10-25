@@ -1,0 +1,65 @@
+{
+  "schema_version": 1,
+  "suite": "audit.s1_f01_conditional_directory_entry_config_real",
+  "status": "passed",
+  "scope": {
+    "platform": "Windows 11 x86_64-pc-windows-msvc",
+    "period": "2026-07",
+    "entrypoint": "open-data-audit conditional-audit-directory",
+    "recursive": false,
+    "workbooks_run": 1,
+    "mapping_config": "config-real/2.报表采集系统_配置.xlsx.bak",
+    "template_name_redacted": true
+  },
+  "comparison": {
+    "python_engine": "PythonConditionalRuleEvaluator + Direct OOXML reader",
+    "rust_engine": "calamine+namespace_aware_ooxml",
+    "python_issue_count": 2,
+    "rust_issue_count": 2,
+    "missing_in_rust": 0,
+    "missing_in_python": 0,
+    "field_difference_counts": {},
+    "mismatch_count": 0,
+    "python_rules_total": 1,
+    "rust_rules_total": 1,
+    "python_evaluated_cells": 602,
+    "rust_evaluated_cells": 602,
+    "python_scan_areas": 4,
+    "python_structure_areas": 8,
+    "template_recommendation_matches_python": true,
+    "rust_diagnostics": 0,
+    "area_source": "template_defined_names"
+  },
+  "mapping": {
+    "mappings_loaded": 2,
+    "mapped_named_areas": 12,
+    "scan_areas": 4,
+    "structure_areas": 8
+  },
+  "formula_mapping_cross_check": {
+    "template_health_passed": true,
+    "built_in_rule_count": 1072,
+    "config_rule_count": 1072,
+    "definitions_identical": true
+  },
+  "execution": {
+    "python_runtime": "Windows source-project venv, tests/compare only",
+    "python_total_ms": 375,
+    "rust_total_ms": 982,
+    "timings_are_performance_evidence": false,
+    "mapping_config_copy_used_for_extension_compatibility": true,
+    "temporary_artifacts_removed": true
+  },
+  "verification": {
+    "source_and_template_opened_read_only": true,
+    "workbooks_written_or_modified": false,
+    "raw_business_values_or_source_paths_persisted": false,
+    "recursive_mixed_directory_xlsx_count": 184,
+    "recursive_mixed_directory_status": "rejected_ambiguous_multiple_templates",
+    "limitations": [
+      "This comparison covers one root-level workbook only; the recursive directory contains multiple template families and was rejected for automatic template selection.",
+      "Formula copying, formula recalculation, existing history-workbook writeback, and complete S1-F01 remain unverified.",
+      "The original config-real backup and business workbooks were not modified; Windows openpyxl parity used a temporary .xlsx copy of the same config bytes because openpyxl rejects the .bak extension."
+    ]
+  }
+}
