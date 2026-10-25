@@ -58,6 +58,10 @@ def create_template(path: Path) -> None:
         sheet[f"{column}1"] = value
         sheet[f"{column}1"].comment = Comment(f"列区域{marker}", "probe")
         sheet[f"{column}2"].comment = Comment(f"列区域#{marker}", "probe")
+    sheet["J1"] = dt.timedelta(days=1, hours=3, minutes=15, seconds=20, microseconds=123000)
+    sheet["J1"].number_format = "[h]:mm:ss.000"
+    sheet["J1"].comment = Comment("列区域8", "probe")
+    sheet["J2"].comment = Comment("列区域#8", "probe")
     case_variant = workbook.create_sheet("branch_a")
     case_variant["A2"].comment = Comment("行区域1", "probe")
     case_variant["A4"].comment = Comment("行区域#1", "probe")
@@ -132,6 +136,18 @@ def main() -> int:
         rust_result = json.loads(completed.stdout)
         python_output = Path(python_result["path"])
         rust_output = Path(rust_result["path"])
+        python_header_book = load_workbook(python_output, data_only=False)
+        rust_header_book = load_workbook(rust_output, data_only=False)
+        try:
+            python_duration_header = python_header_book["Branch_A"]["K1"].value
+            rust_duration_header = rust_header_book["Branch_A"]["K1"].value
+            if python_duration_header != rust_duration_header:
+                raise AssertionError(
+                    f"duration header differs: Python={python_duration_header!r}; Rust={rust_duration_header!r}"
+                )
+        finally:
+            python_header_book.close()
+            rust_header_book.close()
         python_dimensions, rust_dimensions = assert_equivalent(
             python_output,
             rust_output,
@@ -158,6 +174,7 @@ def main() -> int:
                 or output_sheet["H1"].value != "1e-05"
                 or output_sheet["I1"].value != "1e+20"
                 or output_sheet["J1"].value != "0.0001"
+                or output_sheet["K1"].value != "1 day, 3:15:20.123000"
             ):
                 raise AssertionError("Rust template header semantics changed")
         finally:
@@ -197,6 +214,7 @@ def main() -> int:
                 "boolean template header uses Python string capitalization",
                 "numeric and date template headers use Python string conversion",
                 "numeric headers match Python scientific-notation thresholds, exponent signs, and padding",
+                "duration headers use Python timedelta string conversion",
                 "template sheet output names trim surrounding whitespace like PyCode",
                 "case-insensitive output sheet collisions use openpyxl numeric suffix behavior",
             ],
