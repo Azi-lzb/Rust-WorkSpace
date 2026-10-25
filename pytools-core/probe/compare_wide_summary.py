@@ -94,6 +94,7 @@ def make_input(
     time_only: bool = False,
     elapsed_duration: bool = False,
     elapsed_formula: bool = False,
+    elapsed_formula_serial: float = 1.123456789,
     elapsed_number_format: str | None = None,
     elapsed_duration_serial: float = 1.123456789,
     include_calendar_value: bool = False,
@@ -116,11 +117,16 @@ def make_input(
     sheet["D4"] = "本息"
     sheet.append([])
     sheet["A5"] = "公司甲"
+    elapsed_formula_text = (
+        f"0-{abs(elapsed_formula_serial)}"
+        if elapsed_formula_serial < 0
+        else "0.75+0.373456789"
+    )
     if elapsed_duration:
         sheet["B5"] = elapsed_duration_serial
         sheet["B5"].number_format = elapsed_number_format or "[h]:mm:ss.000"
     elif elapsed_formula:
-        sheet["B5"] = "=0.75+0.373456789"
+        sheet["B5"] = f"={elapsed_formula_text}"
         sheet["B5"].number_format = elapsed_number_format or "[h]:mm:ss.000"
     elif cached_formula:
         sheet["B5"] = "=8+2.25"
@@ -163,9 +169,9 @@ def make_input(
         patch_cached_formula(
             path,
             "B5",
-            "0.75+0.373456789",
-            "1.123456789",
-            expected_value=elapsed_formula_source_value(),
+            elapsed_formula_text,
+            str(elapsed_formula_serial),
+            expected_value=elapsed_formula_source_value(elapsed_formula_serial),
         )
     if time_only:
         check = load_workbook(path, data_only=True, read_only=False)
@@ -209,14 +215,14 @@ def mark_macro_enabled_workbook_type(path: Path) -> None:
     temporary.replace(path)
 
 
-def elapsed_formula_source_value() -> timedelta:
+def elapsed_formula_source_value(serial: float = 1.123456789) -> timedelta:
     # The synthetic [h]:mm:ss.000 cell is read back by openpyxl at millisecond precision.
-    return timedelta(milliseconds=round(1.123456789 * 86_400_000))
+    return timedelta(milliseconds=round(serial * 86_400_000))
 
 
-def elapsed_formula_projected_serial() -> float:
+def elapsed_formula_projected_serial(serial: float = 1.123456789) -> float:
     # PyCode emits the rounded source timedelta as an Excel duration serial.
-    return elapsed_formula_source_value().total_seconds() / 86_400
+    return elapsed_formula_source_value(serial).total_seconds() / 86_400
 
 
 def patch_cached_formula(
@@ -1010,6 +1016,7 @@ def run_case(
     time_only: bool = False,
     elapsed_duration: bool = False,
     elapsed_formula: bool = False,
+    elapsed_formula_serial: float = 1.123456789,
     elapsed_number_format: str | None = None,
     elapsed_duration_serial: float = 1.123456789,
     include_calendar_value: bool = False,
@@ -1039,6 +1046,7 @@ def run_case(
         time_only=time_only,
         elapsed_duration=elapsed_duration,
         elapsed_formula=elapsed_formula,
+        elapsed_formula_serial=elapsed_formula_serial,
         elapsed_number_format=elapsed_number_format,
         elapsed_duration_serial=elapsed_duration_serial,
         include_calendar_value=include_calendar_value,
@@ -1192,7 +1200,9 @@ def run_case(
     assert_parity(python_target, committed_target)
     if cached_formula or elapsed_formula:
         cached_result: float = (
-            elapsed_formula_projected_serial() if elapsed_formula else 10.25
+            elapsed_formula_projected_serial(elapsed_formula_serial)
+            if elapsed_formula
+            else 10.25
         )
         assert_cached_value_projected(
             [baseline, actual, python_target, candidate, committed_target], cached_result
@@ -1252,6 +1262,7 @@ def run_existing_target_case(
     *,
     elapsed_duration: bool = False,
     elapsed_formula: bool = False,
+    elapsed_formula_serial: float = 1.123456789,
     elapsed_number_format: str | None = None,
     source_filename: str = "sample_2024-06-30.xlsx",
 ) -> dict[str, object]:
@@ -1262,6 +1273,7 @@ def run_existing_target_case(
         source,
         elapsed_duration=elapsed_duration,
         elapsed_formula=elapsed_formula,
+        elapsed_formula_serial=elapsed_formula_serial,
         elapsed_number_format=elapsed_number_format,
     )
     seed_output = case / "seed_output"
@@ -1303,7 +1315,7 @@ def run_existing_target_case(
     if elapsed_formula:
         assert_cached_value_projected(
             [python_summary, actual_summary, expected, candidate, rust_target],
-            elapsed_formula_projected_serial(),
+            elapsed_formula_projected_serial(elapsed_formula_serial),
         )
     style_differences = effective_style_differences(expected, candidate)
     assert_sheet_sentinels(expected, candidate, ("Before", "After"))
@@ -1776,6 +1788,113 @@ def main() -> int:
                 / "probe"
                 / "reports"
                 / f"wide_summary_cached_elapsed_formula_parity_{date.today():%Y%m%d}.json"
+            )
+            if report_path.exists():
+                raise FileExistsError(
+                    f"refusing to overwrite existing parity report: {report_path}"
+                )
+            report_path.write_text(
+                json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+            )
+            print(
+                json.dumps(
+                    {
+                        "report": str(report_path),
+                        "summary_cases": len(summary_results),
+                        "existing_target_cases": len(existing_target_results),
+                        "status": report["status"],
+                    },
+                    ensure_ascii=False,
+                )
+            )
+            cleanup_probe_directory(root)
+        return 0
+
+    if sys.argv[1:] == ["--negative-elapsed-duration-formula"]:
+        cases = [
+            ("negative_multiday_formula", -1.123456789),
+            ("negative_half_day_formula", -0.5),
+            ("negative_half_millisecond_tie_formula", -5.787037037037037e-9),
+            ("negative_one_and_half_millisecond_tie_formula", -1.736111111111111e-8),
+        ]
+        with tempfile.TemporaryDirectory(
+            prefix="pytools-wide-negative-elapsed-formula-probe-",
+            ignore_cleanup_errors=True,
+        ) as temp:
+            root = Path(temp)
+            summary_results = []
+            existing_target_results = []
+            for index, (case_name, serial) in enumerate(cases):
+                summary_root = root / f"summary_{index}"
+                summary_root.mkdir()
+                for row_suffix in (False, True):
+                    result = run_case(
+                        summary_root,
+                        row_suffix,
+                        elapsed_formula=True,
+                        elapsed_formula_serial=serial,
+                    )
+                    result["negative_elapsed_formula_case"] = case_name
+                    summary_results.append(result)
+
+                existing_root = root / f"existing_{index}"
+                existing_root.mkdir()
+                for row_suffix in (False, True):
+                    result = run_existing_target_case(
+                        existing_root,
+                        row_suffix,
+                        elapsed_formula=True,
+                        elapsed_formula_serial=serial,
+                    )
+                    result["negative_elapsed_formula_case"] = case_name
+                    existing_target_results.append(result)
+
+            report = {
+                "schema_version": 1,
+                "suite": "pytools.timeline.wide_summary_negative_cached_elapsed_formula_parity",
+                "date": date.today().isoformat(),
+                "status": "passed_synthetic_python_rust_parity",
+                "baseline": "PyCode/core/wide_397_398.py::run_wide_summary",
+                "rust_entry": "pytools menu -> 1 timeline -> 3/4 wide summary -> confirm",
+                "input": {
+                    "format": "xlsx",
+                    "kind": "synthetic",
+                    "formula_cell": "elapsed-formatted formula with a negative cached numeric result",
+                    "number_format": "[h]:mm:ss.000",
+                    "formula_recalculation": "not performed; existing negative cached result is projected",
+                    "cases": [case_name for case_name, _ in cases],
+                    "row_modes": ["no_suffix", "row_suffix"],
+                    "target_modes": ["new_target_append", "existing_target_replacement"],
+                },
+                "comparison": {
+                    "summary_values_types_and_effective_styles": "exact",
+                    "new_target_values_types_and_effective_styles": "exact",
+                    "existing_target_values_types": "exact",
+                    "existing_target_style_differences": "reported_per_case",
+                    "source_and_configuration_unchanged": True,
+                },
+                "summary_results": summary_results,
+                "existing_target_results": existing_target_results,
+                "safety": {
+                    "source_unchanged": True,
+                    "configuration_unchanged": True,
+                    "outputs_temporary_only": True,
+                    "report_contains_input_filenames_or_cell_values": False,
+                    "existing_target_capability": "temporary test-only capability",
+                },
+                "limitations": [
+                    "Synthetic XLSX only; no sanitized real wide-summary workbook was available.",
+                    "The fixture carries a pre-populated formula cache; this does not test formula recalculation.",
+                    "This does not register a production edit capability.",
+                    "Linux targets and offline deb acceptance were not tested.",
+                ],
+            }
+            report_path = (
+                WORKSPACE
+                / "pytools-core"
+                / "probe"
+                / "reports"
+                / f"wide_summary_negative_cached_elapsed_formula_parity_{date.today():%Y%m%d}.json"
             )
             if report_path.exists():
                 raise FileExistsError(
