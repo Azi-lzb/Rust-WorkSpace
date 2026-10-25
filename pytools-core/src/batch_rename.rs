@@ -2,7 +2,7 @@
 
 use anyhow::{bail, Context, Result};
 use chrono::Local;
-use excel_reader::{read_workbook, SheetDump};
+use excel_reader::{read_workbook, uses_1904_date_system, SheetDump};
 use serde::Serialize;
 use serde_json::Value;
 use std::path::{Path, PathBuf};
@@ -104,7 +104,8 @@ where
             .iter()
             .find(|sheet| sheet.name == RENAME_SHEET)
             .with_context(|| format!("configuration workbook has no {RENAME_SHEET:?} sheet"))?;
-        let maps = load_rename_maps(sheet)?;
+        let date_1904 = uses_1904_date_system(config_path)?;
+        let maps = load_rename_maps(sheet, date_1904)?;
 
         let date_text = setting(&maps.settings, "数据日期");
         let report_name = setting(&maps.settings, "报表名称");
@@ -383,7 +384,7 @@ fn same_resolved_path(left: &Path, right: &Path) -> bool {
     }
 }
 
-fn load_rename_maps(sheet: &SheetDump) -> Result<RenameMaps> {
+fn load_rename_maps(sheet: &SheetDump, date_1904: bool) -> Result<RenameMaps> {
     let mut columns = std::collections::BTreeMap::<String, usize>::new();
     for (address, value) in &sheet.values {
         let Some((column, row)) = parse_cell_address(address) else {
@@ -392,7 +393,7 @@ fn load_rename_maps(sheet: &SheetDump) -> Result<RenameMaps> {
         if row != 1 {
             continue;
         }
-        let header = cell_raw_text(Some(value));
+        let header = cell_raw_text(Some(value), date_1904);
         if !header.is_empty() {
             // pandas keeps the first duplicate header's meaning and disambiguates
             // later duplicate labels; all required labels are looked up by name.
@@ -412,7 +413,7 @@ fn load_rename_maps(sheet: &SheetDump) -> Result<RenameMaps> {
             columns
                 .get(header)
                 .and_then(|column| sheet.values.get(&cell_address(*column, row)))
-                .map(|value| cell_text(Some(value)))
+                .map(|value| cell_text(Some(value), date_1904))
                 .unwrap_or_default()
                 .trim()
                 .to_owned()
@@ -452,11 +453,11 @@ fn setting(settings: &[(String, String)], key: &str) -> String {
         .unwrap_or_default()
 }
 
-fn cell_text(value: Option<&Value>) -> String {
-    cell_raw_text(value).trim().to_owned()
+fn cell_text(value: Option<&Value>, date_1904: bool) -> String {
+    cell_raw_text(value, date_1904).trim().to_owned()
 }
 
-fn cell_raw_text(value: Option<&Value>) -> String {
+fn cell_raw_text(value: Option<&Value>, date_1904: bool) -> String {
     let Some(value) = value else {
         return String::new();
     };
@@ -478,7 +479,19 @@ fn cell_raw_text(value: Option<&Value>) -> String {
             .as_i64()
             .map(|number| number.to_string())
             .unwrap_or_default(),
-        "number" | "datetime_serial" => data
+        "datetime_serial" => data
+            .as_f64()
+            .and_then(|serial| {
+                const DAYS_1904_TO_1900: f64 = 1462.0;
+                let serial = if date_1904 && serial >= 1.0 {
+                    serial + DAYS_1904_TO_1900
+                } else {
+                    serial
+                };
+                crate::summary_ops::python_datetime_serial_text(serial)
+            })
+            .unwrap_or_default(),
+        "number" => data
             .as_f64()
             .filter(|number| number.is_finite())
             .map(|number| {
@@ -551,6 +564,20 @@ mod tests {
             let address = cell_address(column, 12);
             assert_eq!(parse_cell_address(&address), Some((column, 12)));
         }
+    }
+
+    #[test]
+    fn date_serial_config_values_match_python_datetime_text_for_both_epochs() {
+        let date_1900 = serde_json::json!({"type": "datetime_serial", "value": 46053.0});
+        let date_1904 = serde_json::json!({"type": "datetime_serial", "value": 44591.0});
+        let ordinary_number = serde_json::json!({"type": "number", "value": 46053.0});
+
+        assert_eq!(
+            cell_raw_text(Some(&date_1900), false),
+            "2026-01-31 00:00:00"
+        );
+        assert_eq!(cell_raw_text(Some(&date_1904), true), "2026-01-31 00:00:00");
+        assert_eq!(cell_raw_text(Some(&ordinary_number), false), "46053.0");
     }
 }
 

@@ -1,4 +1,5 @@
 use pytools_core::batch_rename::{run_batch_rename, run_batch_rename_with_progress};
+use rust_xlsxwriter::{ExcelDateTime, Format, Workbook};
 use serde_json::Value;
 use std::{
     fs,
@@ -208,4 +209,62 @@ fn missing_rename_sheet_is_rejected_before_touching_inputs() {
     assert_eq!(events[1].status, "failed");
     assert_eq!(events[1].actual_engine.as_deref(), Some("Calamine"));
     assert_eq!(events[1].error_type.as_deref(), Some("configuration_error"));
+}
+
+#[test]
+fn date_serial_configuration_uses_python_datetime_text() -> anyhow::Result<()> {
+    let root = TestDirectory::new("datetime-setting");
+    let config_path = root.0.join("config.xlsx");
+    let mut workbook = Workbook::new();
+    let sheet = workbook.add_worksheet();
+    sheet.set_name("重命名配置")?;
+    for (column, header) in [
+        (0, "简称"),
+        (1, "全称"),
+        (3, "代码"),
+        (4, "全称(代码映射)"),
+        (6, "键"),
+        (7, "值"),
+    ] {
+        sheet.write_string(0, column, header)?;
+    }
+    sheet.write_string(1, 0, "测试")?;
+    sheet.write_string(1, 1, "测试银行")?;
+    sheet.write_string(1, 3, "0008")?;
+    sheet.write_string(1, 4, "测试银行")?;
+    sheet.write_string(1, 6, "数据日期")?;
+    let date = ExcelDateTime::from_ymd(2026, 1, 31)?;
+    let date_format = Format::new().set_num_format("yyyy-mm-dd");
+    sheet.write_datetime_with_format(1, 7, &date, &date_format)?;
+    sheet.write_string(2, 6, "报表名称")?;
+    sheet.write_string(2, 7, "存款表")?;
+    workbook.save(&config_path)?;
+
+    let input_path = root.0.join("测试.xlsx");
+    fs::write(&input_path, b"preserve file payload")?;
+    let original_payload = fs::read(&input_path)?;
+    let result = run_batch_rename(&config_path, &[input_path.clone()])?;
+
+    if cfg!(windows) {
+        assert_eq!(result.ok, 0);
+        assert_eq!(result.skip, 1);
+        assert_eq!(
+            result.rows[0].reason.split_whitespace().next(),
+            Some("rename_failed")
+        );
+        assert_eq!(input_path.file_name().unwrap(), "测试.xlsx");
+        assert_eq!(fs::read(&input_path)?, original_payload);
+    } else {
+        assert_eq!(result.ok, 1);
+        assert_eq!(result.skip, 0);
+        assert_eq!(
+            result.rows[0].new_name,
+            "2026-01-31 00:00:00 0008 测试银行 存款表.xlsx"
+        );
+        assert_eq!(
+            fs::read(root.0.join(&result.rows[0].new_name))?,
+            original_payload
+        );
+    }
+    Ok(())
 }

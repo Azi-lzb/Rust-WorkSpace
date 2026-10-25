@@ -922,3 +922,8 @@ Windows 原生 cargo test --offline --locked -p lo-convert -j 1：4 个单测通
 按本轮 XLSM 元数据缺口核实并同步 main 提交 3e53e7e（本地 cherry-pick 为 a469e41）：read_xlsx_sheet_names_ooxml 的格式门从仅 .xlsx 放宽到 .xlsx/.xlsm，仍在格式门拒绝 BIFF .xls，不增加值读取、VBA 读取/保留或修改路由。父提交对应 shared reader 文件与当前 pytools-dev 完全一致，补丁无冲突。
 
 Windows cargo test --offline --locked -p excel-reader -j 1：13 个单测 + 2 个集成测试全部通过，包含合成 OOXML .xlsm 工作表元数据 fixture 与 .xls 拒绝测试。该 API 在当前 PyTools/workspace 无生产调用点；此同步提供受限的共享元数据能力，不改变 PT-6-1 当前路由，也不构成真实 XLSM 元数据或宏保留验收。既有 PT-6-1 VBA 工具簿对拍是值汇总到新建 XLSX，输出按合同不含 VBA；不能据此推断任意 XLSM 的 OOXML 部件保真。真实 XLSM 对此 API 的独立调用仍未验证。
+### 2026-10-26 PT-4-1 配置日期序列对拍修复
+
+用原项目只读重命名配置及临时复制的源工作簿发现：当“数据日期”是 Excel 日期单元格时，Calamine 提供 `datetime_serial`，Rust 此前把底层序列值直接写入文件名并成功改名；PyCode/pandas 则转成日期时间文本，在 Windows 因冒号非法而记录 `rename_failed` 并保留源名。Rust 现按原工作簿 1900/1904 日期系统把日期序列投影为 PyCode 日期时间文本；普通数值仍按原数值格式。新增日期序列格式化单测及端到端生成配置回归。
+
+Windows 原生验证：`cargo fmt --manifest-path pytools-core/Cargo.toml -- --check`、`cargo test --offline --locked -p pytools-core --lib batch_rename::tests -j 1`（3/3）、`cargo test --offline --locked -p pytools-core --test batch_rename_parity -j 1`（4/4）通过。原项目真实配置 + 临时合成文件名 CLI 对拍现为 Python/Rust 均 `ok=0, skip=1`、保留原名和内容；失败原因符合 PyCode 的既有 Windows 路径语义。PT-4-1 实际配置没有匹配源文件名的原始工作簿，本次不构成真实文件样本验收；真实运行仍需文件名安全的日期配置。配置/源工作簿只读，输入副本仅在临时目录处理。
