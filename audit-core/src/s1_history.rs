@@ -157,7 +157,7 @@ pub fn build_s1_history_workbook_edit_plan(
         .map(|index| read_s1_history_print_area(&input_path, index))
         .transpose()?
         .flatten();
-    let existing_history_max_row = if let Some(index) = existing_history_index {
+    let existing_history_max_row = if existing_history_index.is_some() {
         excel_reader::read_xlsx_worksheet_extents(&input_path)
             .context("读取 S1 历史工作表范围")?
             .into_iter()

@@ -133,7 +133,7 @@ pub fn match_s5_template_from_sheet_sets(
     Ok(selected.remove(0))
 }
 
-fn sheet_score(template_sheets: &[String], source_sheets: &[String]) -> f64 {
+pub(crate) fn sheet_score(template_sheets: &[String], source_sheets: &[String]) -> f64 {
     let expected = template_sheets
         .iter()
         .filter(|name| name.as_str() != "审核规则")
@@ -148,7 +148,10 @@ fn sheet_score(template_sheets: &[String], source_sheets: &[String]) -> f64 {
     0.8 * source_coverage + 0.2 * template_precision
 }
 
-fn all_source_sheets_in_template(template_sheets: &[String], source_sheets: &[String]) -> bool {
+pub(crate) fn all_source_sheets_in_template(
+    template_sheets: &[String],
+    source_sheets: &[String],
+) -> bool {
     let template_data = template_sheets
         .iter()
         .filter(|name| !matches!(name.as_str(), "审核规则" | "兜底模板"))

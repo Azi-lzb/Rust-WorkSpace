@@ -1,0 +1,71 @@
+{
+  "schema_version": 1,
+  "suite": "audit.s5_classify_parity",
+  "status": "completed",
+  "sample_scope": {
+    "file_count": 120,
+    "template_dir_copied_to_temporary": true,
+    "config_copied_to_temporary": true,
+    "template_dir_source": "sample subtree 模板文件_命名区域",
+    "selected_files": 0,
+    "business_filter": "",
+    "period_hint": ""
+  },
+  "comparison": {
+    "python_rows": 120,
+    "rust_rows": 120,
+    "mismatch_row_count": 0,
+    "mismatch_ordinal_sample": [],
+    "field_diff_counts": {},
+    "compared_fields": [
+      "name",
+      "template",
+      "match_status",
+      "business",
+      "period",
+      "match_detail",
+      "matched_sheets",
+      "source_sheet_count",
+      "template_sheet_count"
+    ],
+    "python_match_status_distribution": {
+      "matched": 87,
+      "partial": 14,
+      "unmatched": 19
+    },
+    "python_business_distribution": {
+      "个人贷款": 29,
+      "互联网金融业务信息（季度）": 1,
+      "互联网金融业务信息（月度）": 1,
+      "代发工资": 1,
+      "债券业务": 1,
+      "养老产业贷款信息": 1,
+      "单位存款": 1,
+      "单位贷款": 22,
+      "同业业务": 1,
+      "委托贷款": 1,
+      "存量专项贷款一批报文": 2,
+      "存量专项贷款二批报文": 1,
+      "存量个人存款": 1,
+      "数字经济产业贷款信息": 1,
+      "普惠贷款信息": 1,
+      "票据业务": 1,
+      "科技贷款信息": 1,
+      "绿色贷款信息": 1,
+      "股权和特定目的载体投资": 1,
+      "（空）": 51
+    }
+  },
+  "verification": {
+    "rust_runner": "audit-core/tests/s5_classify_parity.rs",
+    "python_baseline": "systems.s5_configured_statistics.recognition.classify_s5_files",
+    "inputs_unchanged": true,
+    "raw_paths_or_sheet_names_persisted": false,
+    "capability_status": "unverified",
+    "production_route_eligible": false
+  },
+  "limitations": [
+    "TemplateCatalog index persistence is not ported; the Python baseline writes its index beside the temporary template copy.",
+    "match_s5_business propagates workbook XML parse errors in Python; the Rust port maps read failures to an empty sheet set."
+  ]
+}

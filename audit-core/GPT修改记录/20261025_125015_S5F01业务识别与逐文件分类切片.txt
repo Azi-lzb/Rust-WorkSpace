@@ -1,0 +1,38 @@
+# S5-F01 业务识别与逐文件分类切片
+
+- 时间：2026-10-25 12:50 (+08:00)
+- 执行者：Codex Audit migration agent
+- 分支：audit-dev
+- 修改前 commit：ffb77cc
+- 修改后 commit：随本轮本地提交，提交 ID 见 Git 历史。
+- WIP：开始时 worktree 干净；验证结束时仅新增业务识别模块、对拍测试、Python 比较器、脱敏报告、清单更新和本记录；另将 s5_template_matching 两个内部评分 helper 放宽为 pub(crate)。未修改共享 crates、源 Python 项目、真实工作簿、pytools-core、Cargo.toml 或 Cargo.lock。
+
+## 目的
+
+承接配置加载切片，移植 `recognition.match_s5_business` 与 `classify_s5_files`（业务识别与 S5 文件清单的分类/业务/期间提示行），并在真实 120 文件样本子树上完成 Python/Rust 逐行对拍。
+
+## 修改文件
+
+- `audit-core/src/s5_business.rs`：新增业务识别与分类模块（错误消息逐字对齐；显式模板优先于模板目录；目录 profiles 按路径升序、评分排序保持稳定序以复刻 Python `sorted(key=score, reverse=True)`；分类状态/明细字符串逐字一致）。
+- `audit-core/src/s5_template_matching.rs`：`sheet_score` 与 `all_source_sheets_in_template` 放宽为 `pub(crate)`（无行为变化）。
+- `audit-core/tests/s5_classify_parity.rs`：env 驱动的 `#[ignore]` 对拍运行器（JSON 请求 → 分类行 JSON）。
+- `audit-core/tests/compare/compare_s5_classify.py`：Python 比较器；模板目录与配置复制到临时目录参与（源树只读；Python TemplateCatalog 的索引写落在临时副本旁），逐行全字段比较，报告仅聚合计数。
+- `audit-core/probe/reports/s5_classify_business_windows_real_20261025.json`：新增脱敏机器报告。
+- `audit-core/src/lib.rs`：注册 `s5_business`。
+- `audit-core/MIGRATION_INVENTORY.md`：S5-F01 行更新并新增切片小节。
+- 本记录。
+
+## 验证
+
+- 编译与测试：`cargo build --offline -p audit-core` 通过；`cargo test --offline --locked -p audit-core` 全量 192 通过、0 失败。
+- 真实对拍（Windows 原生）：2026-07-31 逐笔统计系统子树 120 个 XLSX/XLSM；模板目录（模板文件_命名区域）与生效配置（config-real 5.逐笔统计系统_审核配置.xlsx）字节级临时副本；Python/Rust 分类行 120/120 全字段（name/template/match_status/business/period/match_detail/matched_sheets/source_sheet_count/template_sheet_count）差异 0；匹配状态 87 matched/14 partial/19 unmatched；业务识别覆盖 18 个业务（单位贷款 22、个人贷款 29、其余各 1-2）。
+- 输入未变；报告不含路径、文件名或工作表名。
+
+## 未执行项、已知问题与回滚
+
+- 未迁移：规则执行（`evaluate` 运行时）、配置校验入口（validate_s5_config）、S5 审核结果输出与 CLI 接线；S5-F01 整体仍未验证。
+- 已知差：Python 在 match_s5_business 内传播工作簿 XML 解析错误，Rust 端读取失败一律映射为空表集合（真实语料均可读）；TemplateCatalog 索引持久化未移植（仅性能缓存，不影响输出行）。
+- XLSM 源文件的工作表名读取在本切片经 OOXML 直读完成；共享 reader 的 XLSM 支持仍待 main 协调（读取规则执行阶段仍受限）。
+- S1-F01 公式复制共享请求与历史写回剩余共享缺口（umya 冻结/筛选、引擎无关校验器 MoveSheet 识别）均等 main。
+- 回滚：删除新增模块/测试/比较器/报告，还原 s5_template_matching.rs 可见性、清单与本记录即可；无用户工作簿恢复项。
+- 【组件版本】不升级。
