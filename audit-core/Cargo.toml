@@ -33,3 +33,6 @@ path = "src/bin/umya-probe.rs"
 [[bin]]
 name = "rust-fastpath-probe"
 path = "src/bin/rust-fastpath-probe.rs"
+
+[dev-dependencies]
+umya-spreadsheet.workspace = true

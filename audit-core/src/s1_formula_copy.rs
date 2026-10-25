@@ -148,6 +148,22 @@ pub fn build_s1_formula_copy_edit_plan(
         force_full_calc: Some(true),
     });
 
+    // The Python baseline (openpyxl load + save) drops every merged
+    // non-anchor payload in the whole workbook — proven cell-for-cell on the
+    // real target batch (7/7 samples, 855 payloads, merges unchanged). The
+    // plan declares that baseline equivalence for every target sheet so the
+    // openpyxl worker can reproduce the accepted Python behavior; without the
+    // declaration the shared preflight rejects the workbook outright.
+    let mut drop_allowed: BTreeMap<String, BTreeSet<PreservationRequirement>> = BTreeMap::new();
+    for sheet_name in &target_sheet_names {
+        drop_allowed.insert(
+            sheet_name.clone(),
+            [PreservationRequirement::MergedNonAnchorPayloads]
+                .into_iter()
+                .collect(),
+        );
+    }
+
     let edit_plan = ExcelEditPlan {
         request_id: "audit-s1-formula-copy".to_owned(),
         input: target_workbook.to_owned(),
@@ -173,7 +189,7 @@ pub fn build_s1_formula_copy_edit_plan(
         ]
         .into_iter()
         .collect(),
-        drop_allowed: BTreeMap::new(),
+        drop_allowed,
     };
     edit_plan
         .validate()

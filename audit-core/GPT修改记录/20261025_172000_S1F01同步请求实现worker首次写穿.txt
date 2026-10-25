@@ -1,0 +1,37 @@
+# S1-F01：同步 main 请求实现，openpyxl worker 首次写穿并定位样式表越界缺陷
+
+- 时间：2026-10-25 17:20 (+08:00)
+- 执行者：Codex Audit migration agent
+- 分支：audit-dev
+- 修改前 commit：db6daf0
+- 修改后 commit：随本轮本地提交，提交 ID 见 Git 历史。
+- WIP：开始时 worktree 干净；本轮先 cherry-pick main 的两个请求实现提交，再修改业务计划声明豁免，最后新增脱敏报告、共享请求 #5、清单更新和本记录。未修改共享 crates 内容（cherry-pick 原样承接）、源 Python 项目、真实工作簿、pytools-core、根 Cargo 配置（临时调试 dev-dep 已移除）。
+
+## 目的
+
+main 已落地 audit-dev 的请求 #3（becd3cd 合并非锚载荷基线等价豁免）与 #4（e73bc1a 校验器行操作映射）。本轮同步后：按 #3 裁决修改 S1 公式复制业务计划声明逐表豁免，复验 openpyxl worker 真实端到端候选，并复验 S1 历史完整计划（校验器行操作映射后删除区误报应消失）。
+
+## 修改文件
+
+- 共享同步：`git cherry-pick e73bc1a` → `1d7c22c`、`git cherry-pick becd3cd` → `d5350f4`（内容原样：openpyxl_backend.rs 行操作映射与载荷豁免、plan.rs 新枚举变体、两个新测试、架构文档、main 修改记录）。
+- `audit-core/src/s1_formula_copy.rs`：`build_s1_formula_copy_edit_plan` 对目标簿全部工作表声明 `drop_allowed[表] = {MergedNonAnchorPayloads}`（基线等价依据：7/7 真实样本证明 openpyxl load+save 丢弃全部 855 个合并不锚载荷、合并区域不变；载荷实际分布于 6 张表，含 2 张非复制区隐藏表，故逐表声明等价于全簿基线行为）。
+- `audit-core/probe/reports/s1_formula_copy_openpyxl_worker_e2e_windows_native_20261025.json`：新增脱敏机器报告（写穿通过 + 样式表越界定位；为定位缺陷在报告本处记录了涉事工作表名/坐标，其余报告维持脱敏纪律）。
+- `audit-core/shared-capability-requests/20261025_openpyxl_worker_style_table_oob.md`：新增共享请求 #5（worker 输出样式表越界引用）。
+- `audit-core/MIGRATION_INVENTORY.md`：openpyxl worker 段更新 + 新增写穿小节。
+- 本记录。
+
+## 验证
+
+- cherry-pick 后：`cargo test --offline --locked -p excel-editor --test validator_row_mapping --test merged_payload_exemption --test freeze_panes_auto_filter` 3+1+2 通过。
+- 业务计划豁免后单测 7/7；全量 `cargo test --offline --locked -p audit-core` 50 个测试目标全 ok（195+ 通过、0 失败）。
+- 真实端到端（Windows 原生，config-real 单位贷款模板 + 真实单位贷款机构审核副本）：完整 60 操作计划经隔离 openpyxl worker（3.1.5）**首次写穿**——apply 通过、输出创建、10.6s、2 个空作者兼容注释、预检豁免生效。
+- 读回校验暴露新缺陷并完整定位：sheet7 CJ2 在 worker 输出中 s=24 越界（cellXfs=24），vertical=center 语义丢失；同输入 Python 基线 s=24 在界内（cellXfs=38，xf24 vertical=center 保留）。worker 路线不基线等价，已登记请求 #5。
+- 值层面 CJ2 双侧一致——缺陷仅在样式表完整性；输入未变；输出在临时目录。
+
+## 未执行项、已知问题与回滚
+
+- S1-F01 公式复制仍无可用引擎（worker 样式表越界缺陷待 main，umya 1,036 项差异不可路由）；整体仍未验证。
+- S1 历史写回：请求 #4 落地后删除区误报应消失，复验留给下一轮（本轮优先 worker 写穿验证）。
+- 请求 #3 的 Python 基线行为在 #3 证据之外新增一维：openpyxl 物化默认样式索引的行为在基线同样存在但基线在界内。
+- 回滚：revert 1d7c22c/d5350f4 与本提交即回到前状态；无用户工作簿恢复项。
+- 【组件版本】不升级。

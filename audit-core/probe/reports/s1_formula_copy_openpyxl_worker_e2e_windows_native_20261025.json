@@ -1,0 +1,54 @@
+{
+  "schema_version": 1,
+  "suite": "audit.s1_formula_copy_openpyxl_worker_e2e",
+  "feature_id": "S1-F01",
+  "status": "worker_write_through_passed_with_new_style_table_defect",
+  "captured_platform": "Windows native Rust MSVC + isolated Python 3.12.10 / openpyxl 3.1.5 / et_xmlfile 2.0.0",
+  "shared_capability_sync": {
+    "main_commits": [
+      "e73bc1a validator row-operation mapping (request #4)",
+      "becd3cd merged non-anchor payload baseline allowance (request #3)"
+    ],
+    "audit_dev_sync": ["1d7c22c", "d5350f4"],
+    "business_plan_change": "s1_formula_copy plan declares MergedNonAnchorPayloads per target sheet (baseline equivalence proven in request #3)"
+  },
+  "sample_scope": {
+    "kind": "real_config_template_plus_real_audit_copy",
+    "template": "config-real 单位贷款 named-range template (4 copy ranges)",
+    "target": "real 单位贷款 institution audit copy",
+    "operation_count": 60,
+    "range_import_count": 4,
+    "set_comment_count": 55,
+    "calculation_properties_operation_present": true
+  },
+  "preflight": {
+    "before_allowance": "target_merged_non_anchor_payload rejection 7/7 (855 payloads outside copy ranges across 6 sheets)",
+    "after_allowance": "passed; per-sheet MergedNonAnchorPayloads declaration covers the baseline-equivalent drop"
+  },
+  "worker_run": {
+    "apply": "passed",
+    "output_created": true,
+    "elapsed_ms": 10586,
+    "legacy_empty_author_compat_count": 2,
+    "readback_validation": "rejected with unmodified_style_semantic_mismatch"
+  },
+  "style_table_defect": {
+    "sheet": "集中系统数据 (sheet ordinal 7)",
+    "cell": "CJ2",
+    "original": "s=0, cellXfs=23, xf0 carries <alignment vertical=center/> (non-default xf 0)",
+    "worker_output": "s=24, cellXfs=24 (indices 0..23) -> OUT-OF-RANGE reference; umya/openpyxl fall back to default style and the vertical=center semantics are lost",
+    "python_baseline_same_input": "s=24, cellXfs=38, in-range, xf24 = fontId=9 + <alignment vertical=center/> -> semantics preserved",
+    "interpretation": "Both paths are openpyxl load+save; the worker route (ImportRange component style assignment + SetComment + calc properties) produces a styles table where cellXfs has fewer entries than the highest referenced style index. The vertical=center semantic is lost only on the worker route, so the worker output is NOT baseline-equivalent at this cell."
+  },
+  "verification": {
+    "values_and_formulas": "CJ2 value identical on both routes; the defect is style-table integrity only",
+    "inputs_unchanged": true,
+    "output_written_to_temporary_directory": true,
+    "production_capability": "unverified"
+  },
+  "data_safety": {
+    "file_paths_recorded": false,
+    "workbook_or_sheet_names_recorded_here_only_for_defect_localization": true,
+    "business_values_recorded": false
+  }
+}
