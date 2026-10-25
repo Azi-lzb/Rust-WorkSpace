@@ -866,3 +866,9 @@ WSL 验证：`x86_64-unknown-linux-gnu.2.28` release（HEAD `328532c`）与 deb 
 WSL Ubuntu/LibreOffice 24.2.7.2，使用既有合成内容生成的真实 CDF 样本（source.xls、notes.doc），在独立输出目录通过真实 PyTools CLI 复验。PT-4-2 convert-excel --engine lo 成功，实际引擎 LibreOffice；sidecar/Rust 独立 Calamine 校验工作表顺序与名称、数据坐标和值、公式文本，数值容差 1e-15；开发者运行历史 status=succeeded、converted=1，源 SHA-256 未变。PT-4-3 convert-word --engine lo 成功；sidecar 检查 DOCX 包并比较源/输出规范化文本，额外与既有正确 DOCX 参考文本逐项拼接对比为精确一致（26 字符）；运行历史 status=succeeded、actual_engines=[LibreOffice]，源 SHA-256 未变。修复前 PT-4-3 首次运行仍因 extract_word_text_lo 裸 profile 参数失败，main 后续提交 857fcad 补齐后同一入口重跑成功。
 
 Windows 原生 cargo test --offline --locked -p lo-convert -j 1：4 个单测通过；集成测试因 Windows 无 soffice 按测试逻辑未执行（test harness 提前返回）。WSL cargo test --offline --locked --target-dir target/pt4-linux-audit -p lo-convert -j 1：4 个单测及实际 LibreOffice 重算集成 1 项通过。WSL 当前代码构建和两条真实产品 CLI 转换均成功。XLS 保真比对覆盖范围不包含样式或所有 OOXML 部件；DOC 输入和 XLS 源均为合成业务内容的真实 CDF 文件，不构成真实用户业务模板验收。PT-4-2/4-3 对业务来源文件、麒麟/UOS、deb/离线交付仍未验收。
+
+### 2026-10-25 Excel reader XLSM sheet-name metadata gate sync
+
+按本轮 XLSM 元数据缺口核实并同步 main 提交 3e53e7e（本地 cherry-pick 为 a469e41）：read_xlsx_sheet_names_ooxml 的格式门从仅 .xlsx 放宽到 .xlsx/.xlsm，仍在格式门拒绝 BIFF .xls，不增加值读取、VBA 读取/保留或修改路由。父提交对应 shared reader 文件与当前 pytools-dev 完全一致，补丁无冲突。
+
+Windows cargo test --offline --locked -p excel-reader -j 1：13 个单测 + 2 个集成测试全部通过，包含合成 OOXML .xlsm 工作表元数据 fixture 与 .xls 拒绝测试。该 API 在当前 PyTools/workspace 无生产调用点；此同步提供受限的共享元数据能力，不改变 PT-6-1 当前路由，也不构成真实 XLSM 元数据或宏保留验收。既有 PT-6-1 VBA 工具簿对拍是值汇总到新建 XLSX，输出按合同不含 VBA；不能据此推断任意 XLSM 的 OOXML 部件保真。真实 XLSM 对此 API 的独立调用仍未验证。
