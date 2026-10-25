@@ -275,6 +275,11 @@ Windows 原生 `cargo fmt --manifest-path pytools-core/Cargo.toml -- --check`、
 
 证据仍为合成 XLSX；只验证读取已保存公式缓存，不触发公式重算。没有脱敏真实业务样本或生产 capability；Windows 原生文件弹窗操作、完整真实模板保真、麒麟/UOS glibc 2.28 和离线 deb 未验收，PT-1-3/1-4 整体仍为**未验证**。
 
+### 2026-10-26 PT-1-3/PT-1-4 宽表负日期序列写入兼容
+
+PyCode/openpyxl 可保留日期格式单元格中的负 Excel 序列；Rust 新目标写入原先因 `ExcelDateTime` 拒绝小于 1900 epoch 的序列。PyTools 追加载荷现对有限负序列按原数值和日期格式写入，非负序列保持原转换。Windows 原生真实交互菜单 `pytools menu → 1 → 3 → 确认新目标` 与只读 PyCode 基线对拍，合成 `-0.5` 日期序列的完整工作簿投影通过，输出均读为 `1899-12-29 12:00`，源与配置未变；既有目标替换的 Rust 菜单回归也覆盖该序列。报告：`probe/reports/wide_summary_negative_serial_parity_20261026.json`；`timeline_menu_cli` 15/15、格式检查与 diff 检查通过。
+
+该证据仅为合成 XLSX；没有可用脱敏真实样本，PT-1-3/PT-1-4 整体仍未验收。既有目标仍需要已验收的生产 capability；真实模板、Windows 文件弹窗、麒麟/UOS、glibc 2.28 和离线 deb 未验证。
 ### 2026-10-25 PT-1-3/PT-1-4 输入路径筛选对齐
 
 对照 PyCode `run_wide_summary` 后，Rust 汇总入口现只读取已存在、扩展名在全局 `源文件扩展名` 中或为 `.xls` 的路径；其他扩展名与不存在路径在 reader 调用前忽略。user/developer 运行历史中的 `total_inputs` 同步按实际纳入处理的路径计数。Windows 原生 `timeline_menu_cli` 9/9 通过；新增 Python/Rust CLI 对拍以 3 个输入路径验证 `.xlsb` 和不存在的 `.xlsx` 被过滤、输出工作簿投影一致、源和配置未改变。机器报告：`probe/reports/wide_summary_input_filter_parity_20261025.json`。

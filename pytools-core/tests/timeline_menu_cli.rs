@@ -718,6 +718,51 @@ fn interactive_wide_summary_menu_commits_new_target_after_confirmation() -> Resu
 }
 
 #[test]
+fn interactive_wide_summary_menu_preserves_negative_date_serial_in_new_target() -> Result<()> {
+    let root = TestDirectory::new()?;
+    let target = root.path().join("configured target.xlsx");
+    let config = create_timeline_config_with_target(root.path(), Some(&target))?;
+    let source = root.path().join("sample negative date source.xlsx");
+    create_wide_source_with_negative_date(&source, "负序列分行")?;
+    let source_before = fs::read(&source)?;
+
+    let completed = run_menu(&config, &format!("1\n3\n{}\ny\n0\n", source.display()))?;
+    assert!(
+        completed.status.success(),
+        "wide-summary negative serial target write failed: {}",
+        String::from_utf8_lossy(&completed.stderr)
+    );
+    assert!(target.is_file(), "negative serial target was not published");
+    assert_eq!(fs::read(&source)?, source_before);
+
+    let target_dump = read_workbook(&target)?;
+    let target_sheet = target_dump
+        .sheets
+        .iter()
+        .find(|sheet| sheet.name == "Append")
+        .context("negative serial target worksheet missing")?;
+    let negative_serial = target_sheet.values.iter().find(|(_, value)| {
+        value.get("type").and_then(Value::as_str) == Some("datetime_serial")
+            && value
+                .get("value")
+                .and_then(Value::as_f64)
+                .is_some_and(|serial| (serial + 0.5).abs() < 1e-9)
+    });
+    assert!(
+        negative_serial.is_some(),
+        "negative cached Excel serial was not preserved: {:?}",
+        target_sheet.values
+    );
+    let report = latest_menu_json_report(&completed)?;
+    assert_eq!(report["target_append_status"], "succeeded");
+    assert_eq!(
+        report["target_append_executions"][0]["operation"],
+        "created"
+    );
+    Ok(())
+}
+
+#[test]
 fn interactive_wide_summary_menu_does_not_commit_without_confirmation() -> Result<()> {
     let root = TestDirectory::new()?;
     let target = root.path().join("configured target.xlsx");
@@ -745,7 +790,7 @@ fn interactive_wide_summary_existing_target_requires_capability_and_commits_safe
     let config = create_timeline_config_with_target(root.path(), Some(&target))?;
     let first_source = root.path().join("sample first source.xlsx");
     let second_source = root.path().join("sample second source.xlsx");
-    create_wide_source(&first_source, "交互汇总甲", 23.5)?;
+    create_wide_source_with_negative_date(&first_source, "交互汇总甲")?;
     create_wide_source(&second_source, "交互汇总乙", 31.5)?;
 
     let created = run_menu(
@@ -1207,6 +1252,29 @@ fn create_wide_source(path: &Path, organization: &str, amount: f64) -> Result<()
     sheet.write_number(4, 2, amount + 1.0)?;
     sheet.write_number(4, 3, amount + 2.0)?;
     workbook.save(path).context("save timeline source workbook")
+}
+
+fn create_wide_source_with_negative_date(path: &Path, organization: &str) -> Result<()> {
+    let mut workbook = rust_xlsxwriter::Workbook::new();
+    let sheet = workbook.add_worksheet();
+    sheet.set_name("Report")?;
+    sheet.write_string(0, 0, "报表")?;
+    sheet.merge_range(1, 0, 1, 1, "集团A", &rust_xlsxwriter::Format::new())?;
+    sheet.write_string(2, 0, "地区")?;
+    sheet.merge_range(2, 1, 2, 2, "存款", &rust_xlsxwriter::Format::new())?;
+    sheet.write_string(2, 3, "贷款")?;
+    sheet.write_string(3, 0, "名称")?;
+    sheet.write_string(3, 1, "余额")?;
+    sheet.write_string(3, 2, "余额")?;
+    sheet.write_string(3, 3, "本息")?;
+    sheet.write_string(4, 0, organization)?;
+    let date_format = rust_xlsxwriter::Format::new().set_num_format("yyyy-mm-dd");
+    sheet.write_number_with_format(4, 1, -0.5, &date_format)?;
+    sheet.write_number(4, 2, 24.5)?;
+    sheet.write_number(4, 3, 25.5)?;
+    workbook
+        .save(path)
+        .context("save negative-date timeline source workbook")
 }
 
 fn create_date_header_source(path: &Path, year: u16, month: u8, day: u8) -> Result<()> {

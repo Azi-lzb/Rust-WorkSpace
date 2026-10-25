@@ -864,38 +864,38 @@ pub fn write_append_workbook_payload(
                     AppendCell::DateTime {
                         serial,
                         number_format,
-                    } => {
-                        let serial = serial.parse::<f64>().context("parse date/time serial")?;
-                        let datetime = excel_writer::ExcelDateTime::from_serial_datetime(serial)?;
-                        let format = excel_writer::Format::new().set_num_format(if is_data_date {
-                            "yyyy/m/d"
-                        } else {
-                            number_format
-                        });
-                        worksheet.write_datetime_with_format(
-                            row_index,
-                            column_index,
-                            &datetime,
-                            &format,
-                        )?;
                     }
-                    AppendCell::Value(CellValue::DateTime {
+                    | AppendCell::Value(CellValue::DateTime {
                         serial,
                         number_format,
                     }) => {
                         let serial = serial.parse::<f64>().context("parse date/time serial")?;
-                        let datetime = excel_writer::ExcelDateTime::from_serial_datetime(serial)?;
+                        anyhow::ensure!(serial.is_finite(), "date/time serial must be finite");
                         let format = excel_writer::Format::new().set_num_format(if is_data_date {
                             "yyyy/m/d"
                         } else {
                             number_format
                         });
-                        worksheet.write_datetime_with_format(
-                            row_index,
-                            column_index,
-                            &datetime,
-                            &format,
-                        )?;
+                        if serial < 0.0 {
+                            // Keep pre-1900 values as their stored Excel serial. Python/openpyxl
+                            // preserves these numbers with a date number format, while
+                            // ExcelDateTime rejects them before rust_xlsxwriter can write them.
+                            worksheet.write_number_with_format(
+                                row_index,
+                                column_index,
+                                serial,
+                                &format,
+                            )?;
+                        } else {
+                            let datetime =
+                                excel_writer::ExcelDateTime::from_serial_datetime(serial)?;
+                            worksheet.write_datetime_with_format(
+                                row_index,
+                                column_index,
+                                &datetime,
+                                &format,
+                            )?;
+                        }
                     }
                     AppendCell::Value(CellValue::Error(_)) => {
                         unreachable!("typed error values were rejected above")
