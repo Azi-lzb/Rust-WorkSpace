@@ -4,9 +4,9 @@ use pytools_core::region_sum::run_region_sum_check_with_timestamp;
 use roxmltree::{Document, Node};
 use serde_json::{json, Map, Value};
 use std::fs::{self, File};
-use std::io::Read;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use zip::ZipArchive;
 
@@ -199,6 +199,133 @@ fn region_sum_cli_runs_python_baseline_workflow() -> Result<()> {
             path.display()
         );
     }
+    fs::remove_dir_all(test_dir)?;
+    Ok(())
+}
+
+#[test]
+fn interactive_region_sum_menu_matches_python_baseline_workbook() -> Result<()> {
+    let cases: Value = serde_json::from_str(include_str!("fixtures/region_sum/cases.json"))?;
+    let baseline: Value = serde_json::from_str(include_str!(
+        "../probe/reports/region_sum_python_baseline.json"
+    ))?;
+    let fixture_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/region_sum");
+    let input_paths = cases["run_files"]
+        .as_array()
+        .context("run_files must be an array")?
+        .iter()
+        .map(|name| Ok(fixture_dir.join(name.as_str().context("fixture names must be strings")?)))
+        .collect::<Result<Vec<_>>>()?;
+    let input_bytes = input_paths
+        .iter()
+        .map(|path| Ok((path.clone(), fs::read(path)?)))
+        .collect::<Result<Vec<_>>>()?;
+
+    let test_dir = unique_test_dir();
+    let config_dir = test_dir.join("PyCode");
+    fs::create_dir_all(&config_dir)?;
+    let config_path = config_dir.join("config.xlsx");
+    fs::copy(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/config_loader.xlsx"),
+        &config_path,
+    )?;
+    let global = load_global(&config_path)?;
+    let paths = input_paths
+        .iter()
+        .map(|path| path.to_string_lossy())
+        .collect::<Vec<_>>()
+        .join(";");
+    let input = format!("7\n5\n1\n{paths}\n0\n0\n");
+    let mut child = Command::new(env!("CARGO_BIN_EXE_pytools"))
+        .arg("menu")
+        .arg("--config")
+        .arg(&config_path)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .context("start PyTools interactive menu")?;
+    child
+        .stdin
+        .take()
+        .context("menu stdin missing")?
+        .write_all(input.as_bytes())?;
+    let output = child
+        .wait_with_output()
+        .context("wait for PyTools interactive menu")?;
+    assert!(
+        output.status.success(),
+        "interactive PT-7-5 menu failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    for (field, expected) in [
+        ("files", &baseline["statistics"]["files"]),
+        ("sheets", &baseline["statistics"]["sheets"]),
+        ("errors", &baseline["statistics"]["errors"]),
+        ("failed_files", &baseline["statistics"]["failed_files"]),
+    ] {
+        assert!(
+            stdout.contains(&format!("\"{field}\": {expected}")),
+            "menu result did not report Python baseline {field}={expected}: {stdout}"
+        );
+    }
+
+    let report_path = fs::read_dir(&global.output_dir)?
+        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+        .find(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| {
+                    name.starts_with("地区数值核对结果_") && name.ends_with(".xlsx")
+                })
+        })
+        .context("interactive PT-7-5 result workbook missing")?;
+    let workbook = excel_reader::read_workbook(&report_path)?;
+    assert_eq!(workbook.sheets.len(), 1);
+    let sheet = &workbook.sheets[0];
+    assert_eq!(sheet.name, baseline["output_workbook"]["sheet_name"]);
+    assert_eq!(
+        normalize_cell_map(&serde_json::to_value(&sheet.values)?)?,
+        normalize_cell_map(&baseline["output_workbook"]["cells"])?
+    );
+    assert_eq!(
+        serde_json::to_value(&sheet.formulas)?,
+        normalize_openpyxl_formula_map(&baseline["output_workbook"]["formulas"])?
+    );
+    let layout = inspect_layout(&report_path)?;
+    let expected = &baseline["output_workbook"];
+    assert_eq!(layout["max_row"], expected["max_row"]);
+    assert_eq!(layout["max_column"], expected["max_column"]);
+    assert_eq!(layout["styles"], expected["styles"]);
+    let expected_widths = expected["column_widths"]
+        .as_object()
+        .context("Python baseline column widths missing")?;
+    let actual_widths = layout["column_widths"]
+        .as_object()
+        .context("interactive result column widths missing")?;
+    assert_eq!(actual_widths.len(), expected_widths.len());
+    for (column, expected_width) in expected_widths {
+        let expected_width = expected_width
+            .as_f64()
+            .context("expected width must be numeric")?;
+        let actual_width = actual_widths[column]
+            .as_f64()
+            .context("actual width must be numeric")?;
+        assert!(
+            (expected_width - actual_width).abs() <= 0.01,
+            "interactive column {column}: Python width {expected_width}, Rust width {actual_width}"
+        );
+    }
+    for (path, original) in input_bytes {
+        assert_eq!(
+            fs::read(&path)?,
+            original,
+            "input changed: {}",
+            path.display()
+        );
+    }
+
     fs::remove_dir_all(test_dir)?;
     Ok(())
 }
