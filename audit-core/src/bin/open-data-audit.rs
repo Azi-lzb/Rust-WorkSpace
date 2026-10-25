@@ -36,6 +36,7 @@ use audit_core::{
     s2_service::{run_s2_audit, s2_engine_for_stage, S2ProgressEvent, S2RunRequest},
     s2_summary::S2AuditSummary,
     s3_explanation_export::export_selected_explanations,
+    s3_explanation_feedback::plan_explanation_feedback_import,
     s5_config::load_configuration,
     s5_config_check::validate_s5_config,
     s5_outputs::{write_run_outputs, S5OutputRequest, S5OutputSource},
@@ -82,6 +83,9 @@ enum Command {
     S2(S2Args),
     /// Export S3-F02 comparison rows selected for institution explanation.
     S3ExportExplanations(S3ExportExplanationsArgs),
+    /// Match S3-F03 institution feedback and write a read-only ExcelEditPlan.
+    #[command(name = "s3-plan-explanation-feedback-import")]
+    S3PlanExplanationFeedbackImport(S3PlanExplanationFeedbackImportArgs),
     /// Recommend an S1 template from source and template workbook sheet names.
     TemplateSuggest(TemplateSuggestArgs),
     /// Evaluate the Rust-supported static conditional-format rules in an XLSX workbook.
@@ -731,6 +735,29 @@ struct S3ExportExplanationsArgs {
     developer_view: bool,
 }
 
+#[derive(Debug, Args)]
+struct S3PlanExplanationFeedbackImportArgs {
+    /// Existing .xlsx institution explanation workbook. It is read-only in this command.
+    #[arg(long)]
+    target_workbook: PathBuf,
+
+    /// Institution feedback workbook; repeat this option for multiple files.
+    #[arg(long = "feedback-workbook", required = true)]
+    feedback_workbooks: Vec<PathBuf>,
+
+    /// New .xlsx path reserved in the plan for a later capability-validated edit.
+    #[arg(long)]
+    candidate_output_workbook: PathBuf,
+
+    /// New .json path where the ExcelEditPlan and source hashes will be written.
+    #[arg(long)]
+    plan_output: PathBuf,
+
+    /// Emit developer-view progress with the reader, writer and stage timings.
+    #[arg(long, default_value_t = false)]
+    developer_view: bool,
+}
+
 #[derive(Debug, Serialize)]
 struct S2CliOutput {
     status: &'static str,
@@ -806,6 +833,9 @@ fn run() -> Result<()> {
         }
         Command::S3ExportExplanations(arguments) => {
             run_s3_export_explanations(arguments)?;
+        }
+        Command::S3PlanExplanationFeedbackImport(arguments) => {
+            run_s3_plan_explanation_feedback_import(arguments)?;
         }
         Command::TemplateSuggest(arguments) => {
             let depth = if arguments.recursive {
@@ -1380,6 +1410,123 @@ fn run_s3_export_explanations(arguments: S3ExportExplanationsArgs) -> Result<()>
                 "comparison_read_time_ms",
                 "config_read_time_ms",
                 "workbook_write_time_ms",
+                "total_time_ms",
+            ] {
+                object.remove(key);
+            }
+        }
+    }
+    println!("{}", serde_json::to_string_pretty(&output)?);
+    Ok(())
+}
+
+fn run_s3_plan_explanation_feedback_import(
+    arguments: S3PlanExplanationFeedbackImportArgs,
+) -> Result<()> {
+    let started = Instant::now();
+    let started_at = chrono::Local::now().to_rfc3339();
+    if arguments.developer_view {
+        eprintln!(
+            "{}",
+            serde_json::to_string(&json!({
+                "type": "progress",
+                "product": "open-data-audit",
+                "feature": "S3-F03",
+                "step": "feedback_matching_and_plan",
+                "status": "started",
+                "started_at": started_at
+            }))?
+        );
+    } else {
+        eprintln!("正在读取机构反馈并生成匹配计划；目标说明工作簿保持不变…");
+    }
+
+    let report = match plan_explanation_feedback_import(
+        &arguments.target_workbook,
+        &arguments.feedback_workbooks,
+        &arguments.candidate_output_workbook,
+        &arguments.plan_output,
+    ) {
+        Ok(report) => report,
+        Err(error) => {
+            if arguments.developer_view {
+                eprintln!(
+                    "{}",
+                    serde_json::to_string(&json!({
+                        "type": "progress",
+                        "product": "open-data-audit",
+                        "feature": "S3-F03",
+                        "step": "feedback_matching_and_plan",
+                        "status": "failed",
+                        "finished_at": chrono::Local::now().to_rfc3339(),
+                        "elapsed_ms": started.elapsed().as_millis(),
+                        "error": format!("{error:#}")
+                    }))?
+                );
+            } else {
+                eprintln!(
+                    "机构反馈导入计划生成失败（{} ms），未报告成功结果。",
+                    started.elapsed().as_millis()
+                );
+            }
+            return Err(error);
+        }
+    };
+
+    if arguments.developer_view {
+        eprintln!(
+            "{}",
+            serde_json::to_string(&json!({
+                "type": "progress",
+                "product": "open-data-audit",
+                "feature": "S3-F03",
+                "step": "feedback_matching_and_plan",
+                "status": "completed",
+                "started_at": started_at,
+                "finished_at": chrono::Local::now().to_rfc3339(),
+                "reader": report.reader,
+                "business_engine": report.business_engine,
+                "conflict_writer": report.conflict_writer,
+                "imported": report.imported,
+                "unmatched": report.unmatched,
+                "conflicts": report.conflicts,
+                "target_read_time_ms": report.target_read_time_ms,
+                "feedback_read_time_ms": report.feedback_read_time_ms,
+                "conflict_write_time_ms": report.conflict_write_time_ms,
+                "plan_write_time_ms": report.plan_write_time_ms,
+                "elapsed_ms": started.elapsed().as_millis()
+            }))?
+        );
+    } else {
+        let conflict_writer = report.conflict_writer.unwrap_or("无需生成冲突清单");
+        eprintln!(
+            "导入匹配计划已生成：拟写入 {} 行，未匹配 {} 项，冲突 {} 项。目标工作簿未修改；读取器 {}，业务引擎 {}，冲突清单写入器 {}。目标读取 {} ms、反馈读取 {} ms、冲突表写入 {} ms、计划写入 {} ms；总耗时 {} ms。计划：{}。",
+            report.imported,
+            report.unmatched,
+            report.conflicts,
+            report.reader,
+            report.business_engine,
+            conflict_writer,
+            report.target_read_time_ms,
+            report.feedback_read_time_ms,
+            report.conflict_write_time_ms,
+            report.plan_write_time_ms,
+            started.elapsed().as_millis(),
+            report.plan_file.display(),
+        );
+    }
+
+    let mut output = serde_json::to_value(&report)?;
+    if !arguments.developer_view {
+        if let Some(object) = output.as_object_mut() {
+            for key in [
+                "reader",
+                "business_engine",
+                "conflict_writer",
+                "target_read_time_ms",
+                "feedback_read_time_ms",
+                "conflict_write_time_ms",
+                "plan_write_time_ms",
                 "total_time_ms",
             ] {
                 object.remove(key);

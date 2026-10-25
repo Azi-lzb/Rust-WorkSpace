@@ -1,0 +1,28 @@
+{
+  "status": "passed",
+  "feature": "S3-F03 read-only import planning slice",
+  "baseline": "Open-Data-Audit import_explanation_feedback",
+  "source_baseline": "core/src/base_audit/systems/s3_central_statistics/explanation_exporter.py",
+  "platform": "Windows native",
+  "python": "3.12.10",
+  "openpyxl": "3.1.5",
+  "rust_cli": "open-data-audit.exe",
+  "reader": "calamine",
+  "business_engine": "audit-core (Rust)",
+  "conflict_writer": "rust_xlsxwriter",
+  "counts": {
+    "imported": 1,
+    "unmatched": 1,
+    "conflicts": 2,
+    "planned_cell_updates": 1,
+    "python_imported": 1,
+    "python_unmatched": 1,
+    "python_conflicts": 2
+  },
+  "planned_cell_comparison": "0 differences after applying Rust SetCellValue operations to a temporary comparison copy",
+  "conflict_rows": 2,
+  "conflict_report_layout_comparison": "matched: sheet, values, freeze panes, filter, widths, header font/fill",
+  "target_and_feedback_sha256_before_after": "unchanged",
+  "excel_modifier_execution": "not run; target stays read-only and no S3-specific passed edit capability exists",
+  "real_feedback_sample": "not available in this synthetic probe; S3-F03 remains unverified"
+}

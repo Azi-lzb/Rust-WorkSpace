@@ -1,0 +1,35 @@
+# 2026-10-26 S3-F03 机构反馈导入只读计划切片
+
+## 目的与版本
+
+在不触碰未验收 Excel 写入路径的前提下，将 S3-F03 的身份匹配、冲突归类、冲突清单和 ExcelEditPlan 生成接入 Windows Rust CLI。组件版本：audit-core 0.1.0（不升级）。修改前 HEAD：`a7a5b7fba23aad3df42211e68d57cb7cf99e57a9`；本记录与代码随本功能提交，提交 SHA 由 Git 历史确定。
+
+## 涉及文件
+
+- `audit-core/src/s3_explanation_feedback.rs`：实现只读读取、Python 兼容身份键与冲突规则、源文件哈希快照、EditPlan 和冲突 XLSX 生成；修正冲突清单按目标说明工作簿名命名。
+- `audit-core/src/bin/open-data-audit.rs`、`audit-core/src/lib.rs`：接入 `s3-plan-explanation-feedback-import` CLI 和双视图阶段日志；普通用户日志也记录实际 reader、业务引擎、冲突 writer 和分阶段耗时。
+- `audit-core/tests/s3_explanation_feedback_plan.rs`：覆盖计划内容、冲突工作簿名、输出占用、失败路径及输入不变。
+- `audit-core/tests/compare/compare_s3_feedback_import_plan.py`：以合成工作簿对照只读原 Python 基线；按 OOXML 列范围展开列宽，避免把 Rust 合并列定义误读成宽度差异。
+- `audit-core/probe/reports/s3_f03_feedback_plan_synthetic_parity_windows_native_20261026.json`：保存合成对拍摘要，不包含业务工作簿值或输入哈希。
+- `audit-core/MIGRATION_INVENTORY.md`：记录部分实现和未验收边界；S3-F03 整体仍未验证。
+- `audit-core/GPT修改记录/20261026_051332_S3F03机构反馈导入只读计划切片.txt`：本记录。
+
+## 验证
+
+- `cargo test -j 1 --quiet --offline --locked -p audit-core --test s3_explanation_feedback_plan`：3 项通过，含普通用户视图日志字段。
+- `cargo test -j 1 --quiet --offline --locked -p audit-core --lib s3_explanation_feedback::tests`：2 项通过。
+- `cargo build -j 1 --quiet --offline --locked -p audit-core --bin open-data-audit`：通过。
+- Windows 原生 Python 3.12.10 / openpyxl 3.1.5 对照原 Python 函数：1 条计划导入、1 项未匹配、2 项冲突；临时应用 Rust 计划后单元格结果及冲突报告布局差异 0，目标与反馈输入 SHA-256 前后不变。
+- 共享 XLSM 修复核实：Audit 已含与 main `3e53e7e` 在 `crates/excel-reader/src/lib.rs` 完全相同的补丁（本分支提交 `579155f`），该提交在当前分支祖先链内；读取器测试 1 项通过，S5 模板匹配 XLSM CLI 回归 1 项通过，无需重复 cherry-pick。
+- `git diff --check` 通过。一次包级过滤构建曾因 Windows 内存映射/栈缓冲资源错误中止；之后使用单目标、单任务命令完成上述回归，没有重跑全包测试。
+
+## 未验证项与限制
+
+- 没有可用的真实多机构 S3-F03 反馈样本；公式键行为和真实模板对象保真未验证。
+- CLI 只生成计划和冲突清单，不修改目标工作簿、不创建候选工作簿，也未执行 ExcelModifier。S3-F03 整体保持未验证；Audit #8 仍未解决，本切片不关闭该请求。
+- 未运行 Linux、glibc 2.28、deb、麒麟 V10/UOS V20 验收。
+- 未修改共享 crate、根 Cargo 配置、main 或源 Python 项目；交接文件和其他既有未跟踪文件未纳入本次改动。
+
+## 回滚
+
+回滚本切片时只撤回本记录、对应报告、迁移清单增补、CLI/module 接线及 S3-F03 新增源码和测试；保留已存在的 `579155f` 公共读取器修复、交接报告和其他既有 WIP。
