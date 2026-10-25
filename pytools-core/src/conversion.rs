@@ -2,6 +2,7 @@
 //! sidecar executable. This module does not link the sidecar crate.
 
 use anyhow::{anyhow, bail, Context, Result};
+use chrono::Local;
 use encoding_rs::GBK;
 use excel_reader::{read_workbook, CellValue};
 use excel_writer::Workbook;
@@ -11,6 +12,7 @@ use std::{
     env, fs,
     path::{Path, PathBuf},
     process::{Command, Stdio},
+    time::Instant,
 };
 
 #[derive(Clone, Debug, Serialize)]
@@ -28,6 +30,31 @@ pub struct ConversionRun {
     pub items: Vec<ConversionItem>,
 }
 
+#[derive(Clone, Debug, Serialize)]
+pub struct ConversionProgressEvent {
+    pub sequence: usize,
+    pub timestamp: String,
+    pub feature_id: String,
+    pub function: String,
+    pub phase: String,
+    pub status: String,
+    pub completed_files: usize,
+    pub total_files: usize,
+    pub converted_files: usize,
+    pub failed_files: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub input_index: Option<usize>,
+    pub total_elapsed_ms: u128,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stage_elapsed_ms: Option<u128>,
+    pub components: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub actual_engine: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_type: Option<String>,
+    pub user_message: String,
+}
+
 pub fn convert_excel_files(
     inputs: &[PathBuf],
     output_dir: &Path,
@@ -41,6 +68,19 @@ pub fn convert_excel_files_to(
     target: &str,
     engine: &str,
 ) -> Result<ConversionRun> {
+    convert_excel_files_with_progress(inputs, Some(output_dir), target, engine, |_| {})
+}
+
+pub fn convert_excel_files_with_progress<F>(
+    inputs: &[PathBuf],
+    output_dir: Option<&Path>,
+    target: &str,
+    engine: &str,
+    on_event: F,
+) -> Result<ConversionRun>
+where
+    F: FnMut(&ConversionProgressEvent),
+{
     anyhow::ensure!(
         target
             .trim()
@@ -50,10 +90,11 @@ pub fn convert_excel_files_to(
     );
     convert_files(
         inputs,
-        Some(output_dir),
+        output_dir,
         target,
         engine,
         ConversionCategory::Excel,
+        on_event,
     )
 }
 pub fn convert_excel_files_in_source_folders(
@@ -61,7 +102,7 @@ pub fn convert_excel_files_in_source_folders(
     target: &str,
     engine: &str,
 ) -> Result<ConversionRun> {
-    convert_files(inputs, None, target, engine, ConversionCategory::Excel)
+    convert_excel_files_with_progress(inputs, None, target, engine, |_| {})
 }
 pub fn convert_word_files(
     inputs: &[PathBuf],
@@ -76,6 +117,19 @@ pub fn convert_word_files_to(
     target: &str,
     engine: &str,
 ) -> Result<ConversionRun> {
+    convert_word_files_with_progress(inputs, Some(output_dir), target, engine, |_| {})
+}
+
+pub fn convert_word_files_with_progress<F>(
+    inputs: &[PathBuf],
+    output_dir: Option<&Path>,
+    target: &str,
+    engine: &str,
+    on_event: F,
+) -> Result<ConversionRun>
+where
+    F: FnMut(&ConversionProgressEvent),
+{
     anyhow::ensure!(
         target
             .trim()
@@ -85,10 +139,11 @@ pub fn convert_word_files_to(
     );
     convert_files(
         inputs,
-        Some(output_dir),
+        output_dir,
         target,
         engine,
         ConversionCategory::Word,
+        on_event,
     )
 }
 pub fn convert_word_files_in_source_folders(
@@ -96,7 +151,7 @@ pub fn convert_word_files_in_source_folders(
     target: &str,
     engine: &str,
 ) -> Result<ConversionRun> {
-    convert_files(inputs, None, target, engine, ConversionCategory::Word)
+    convert_word_files_with_progress(inputs, None, target, engine, |_| {})
 }
 pub fn convert_one(input: &Path, output: &Path, target: &str, engine: &str) -> Result<String> {
     anyhow::ensure!(
@@ -204,13 +259,18 @@ enum ConversionCategory {
     Word,
 }
 
-fn convert_files(
+fn convert_files<F>(
     inputs: &[PathBuf],
     output_dir: Option<&Path>,
     target: &str,
     engine: &str,
     category: ConversionCategory,
-) -> Result<ConversionRun> {
+    mut on_event: F,
+) -> Result<ConversionRun>
+where
+    F: FnMut(&ConversionProgressEvent),
+{
+    let run_started = Instant::now();
     let target = target.trim().trim_start_matches('.').to_ascii_lowercase();
     anyhow::ensure!(
         matches!(target.as_str(), "xlsx" | "docx"),
@@ -225,8 +285,53 @@ fn convert_files(
         failed: 0,
         items: Vec::new(),
     };
+    let expansion_started = Instant::now();
     let inputs = expand_conversion_inputs(inputs, category)?;
-    for input in &inputs {
+    let (feature_id, function) = match category {
+        ConversionCategory::Excel => ("PT-4-2", "convert-excel"),
+        ConversionCategory::Word => ("PT-4-3", "convert-word"),
+    };
+    let mut sequence = 0usize;
+    emit_conversion_event(
+        &mut on_event,
+        &mut sequence,
+        run_started,
+        feature_id,
+        function,
+        "input_expansion",
+        "completed",
+        0,
+        inputs.len(),
+        &run,
+        None,
+        Some(expansion_started.elapsed().as_millis()),
+        Vec::new(),
+        None,
+        None,
+        format!("已发现 {} 个待处理文件。", inputs.len()),
+    );
+    for (index, input) in inputs.iter().enumerate() {
+        let input_index = index + 1;
+        let item_started = Instant::now();
+        let initial_components = vec!["Rust".to_owned(), "pytools-core::conversion".to_owned()];
+        emit_conversion_event(
+            &mut on_event,
+            &mut sequence,
+            run_started,
+            feature_id,
+            function,
+            "convert_file",
+            "started",
+            index,
+            inputs.len(),
+            &run,
+            Some(input_index),
+            None,
+            initial_components.clone(),
+            None,
+            None,
+            format!("正在处理第 {input_index}/{} 个文件。", inputs.len()),
+        );
         if !input.is_file() {
             run.failed += 1;
             run.items.push(ConversionItem {
@@ -235,6 +340,27 @@ fn convert_files(
                 status: "failed".into(),
                 detail: "input file does not exist".into(),
             });
+            emit_conversion_event(
+                &mut on_event,
+                &mut sequence,
+                run_started,
+                feature_id,
+                function,
+                "convert_file",
+                "failed",
+                input_index,
+                inputs.len(),
+                &run,
+                Some(input_index),
+                Some(item_started.elapsed().as_millis()),
+                initial_components,
+                None,
+                Some("input_not_found".to_owned()),
+                format!(
+                    "第 {input_index}/{} 个文件失败：输入文件不存在。",
+                    inputs.len()
+                ),
+            );
             continue;
         }
         let ext = input
@@ -259,6 +385,27 @@ fn convert_files(
                 status: "failed".into(),
                 detail: format!("unsupported same-category conversion source: .{ext}"),
             });
+            emit_conversion_event(
+                &mut on_event,
+                &mut sequence,
+                run_started,
+                feature_id,
+                function,
+                "convert_file",
+                "failed",
+                input_index,
+                inputs.len(),
+                &run,
+                Some(input_index),
+                Some(item_started.elapsed().as_millis()),
+                initial_components,
+                None,
+                Some("unsupported_format".to_owned()),
+                format!(
+                    "第 {input_index}/{} 个文件失败：不支持的文件格式。",
+                    inputs.len()
+                ),
+            );
             continue;
         }
         let stem = input
@@ -281,6 +428,7 @@ fn convert_files(
             output = file_output_dir.join(format!("{stem}_{i}.{target}"));
             i += 1;
         }
+        let components = conversion_components(&ext, &target, engine);
         let result = if ext == target {
             fs::copy(input, &output)
                 .map(|_| "same-format copy; source bytes retained".to_owned())
@@ -288,9 +436,20 @@ fn convert_files(
         } else {
             convert_one(input, &output, &target, engine)
         };
-        match result {
+        let (actual_engine, error_type, user_message, event_status) = match result {
             Ok(detail) => {
                 run.converted += 1;
+                let actual_engine = if ext == target {
+                    Some("Rust std::fs::copy".to_owned())
+                } else if engine == "native" {
+                    Some(if ext == "csv" {
+                        "csv + rust_xlsxwriter".to_owned()
+                    } else {
+                        "calamine + rust_xlsxwriter".to_owned()
+                    })
+                } else {
+                    sidecar_engine(&detail)
+                };
                 run.items.push(ConversionItem {
                     input: input.clone(),
                     output: Some(output),
@@ -301,19 +460,190 @@ fn convert_files(
                     },
                     detail,
                 });
+                (
+                    actual_engine,
+                    None,
+                    format!("第 {input_index}/{} 个文件处理完成。", inputs.len()),
+                    "completed",
+                )
             }
             Err(error) => {
                 run.failed += 1;
+                let detail = error.to_string();
+                let error_type = conversion_error_type(&detail);
+                let message = match error_type {
+                    "external_engine_required" => "需要外部引擎",
+                    "unsupported_format" => "不支持的文件格式",
+                    "output_exists" => "输出文件已存在",
+                    _ => "转换失败",
+                };
                 run.items.push(ConversionItem {
                     input: input.clone(),
                     output: None,
                     status: "failed".into(),
-                    detail: error.to_string(),
+                    detail,
                 });
+                (
+                    native_engine_for_attempt(&ext, &target, engine),
+                    Some(error_type.to_owned()),
+                    format!("第 {input_index}/{} 个文件失败：{message}。", inputs.len()),
+                    "failed",
+                )
             }
-        }
+        };
+        emit_conversion_event(
+            &mut on_event,
+            &mut sequence,
+            run_started,
+            feature_id,
+            function,
+            "convert_file",
+            event_status,
+            input_index,
+            inputs.len(),
+            &run,
+            Some(input_index),
+            Some(item_started.elapsed().as_millis()),
+            components,
+            actual_engine,
+            error_type,
+            user_message,
+        );
     }
+    emit_conversion_event(
+        &mut on_event,
+        &mut sequence,
+        run_started,
+        feature_id,
+        function,
+        "conversion_batch",
+        if run.failed == 0 {
+            "completed"
+        } else {
+            "partial_failure"
+        },
+        inputs.len(),
+        inputs.len(),
+        &run,
+        None,
+        Some(run_started.elapsed().as_millis()),
+        Vec::new(),
+        None,
+        if run.failed == 0 {
+            None
+        } else {
+            Some("conversion_failed".to_owned())
+        },
+        format!("转换结束：成功 {}，失败 {}。", run.converted, run.failed),
+    );
     Ok(run)
+}
+
+fn emit_conversion_event<F>(
+    on_event: &mut F,
+    sequence: &mut usize,
+    run_started: Instant,
+    feature_id: &str,
+    function: &str,
+    phase: &str,
+    status: &str,
+    completed_files: usize,
+    total_files: usize,
+    run: &ConversionRun,
+    input_index: Option<usize>,
+    stage_elapsed_ms: Option<u128>,
+    components: Vec<String>,
+    actual_engine: Option<String>,
+    error_type: Option<String>,
+    user_message: String,
+) where
+    F: FnMut(&ConversionProgressEvent),
+{
+    *sequence += 1;
+    on_event(&ConversionProgressEvent {
+        sequence: *sequence,
+        timestamp: Local::now().to_rfc3339(),
+        feature_id: feature_id.to_owned(),
+        function: function.to_owned(),
+        phase: phase.to_owned(),
+        status: status.to_owned(),
+        completed_files,
+        total_files,
+        converted_files: run.converted,
+        failed_files: run.failed,
+        input_index,
+        total_elapsed_ms: run_started.elapsed().as_millis(),
+        stage_elapsed_ms,
+        components,
+        actual_engine,
+        error_type,
+        user_message,
+    });
+}
+
+fn conversion_components(ext: &str, target: &str, engine: &str) -> Vec<String> {
+    if ext == target {
+        return vec!["Rust".to_owned(), "std::fs::copy".to_owned()];
+    }
+    if engine == "native" {
+        if ext == "csv" {
+            return vec![
+                "Rust".to_owned(),
+                "pytools-core::conversion".to_owned(),
+                "csv".to_owned(),
+                "rust_xlsxwriter".to_owned(),
+            ];
+        }
+        return vec![
+            "Rust".to_owned(),
+            "pytools-core::conversion".to_owned(),
+            "excel-reader/calamine".to_owned(),
+            "excel-writer/rust_xlsxwriter".to_owned(),
+        ];
+    }
+    vec![
+        "Rust".to_owned(),
+        "pytools-core::conversion".to_owned(),
+        "sidecar/lo-convert".to_owned(),
+    ]
+}
+
+fn sidecar_engine(detail: &str) -> Option<String> {
+    serde_json::from_str::<serde_json::Value>(detail)
+        .ok()?
+        .get("engine")?
+        .as_str()
+        .map(|engine| match engine {
+            "lo" => "LibreOffice".to_owned(),
+            "com" => "Windows Office/WPS COM".to_owned(),
+            other => other.to_owned(),
+        })
+}
+
+fn native_engine_for_attempt(ext: &str, target: &str, engine: &str) -> Option<String> {
+    if engine != "native" || target != "xlsx" {
+        return None;
+    }
+    match ext {
+        "csv" => Some("csv".to_owned()),
+        "xls" | "xlsm" | "xlsb" => Some("calamine".to_owned()),
+        _ => None,
+    }
+}
+
+fn conversion_error_type(detail: &str) -> &'static str {
+    if detail.contains("该功能需要外部引擎")
+        || detail.contains("external fidelity engine")
+        || detail.contains("sidecar is unavailable")
+    {
+        "external_engine_required"
+    } else if detail.contains("unsupported") || detail.contains("only .xlsx and .docx") {
+        "unsupported_format"
+    } else if detail.contains("refusing to overwrite") {
+        "output_exists"
+    } else {
+        "conversion_failed"
+    }
 }
 
 fn expand_conversion_inputs(

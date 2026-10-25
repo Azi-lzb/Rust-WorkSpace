@@ -17,8 +17,9 @@ use pytools_core::config::{
 };
 use pytools_core::config_admin::{build_config_repair_plan, initialize_new_config, view_config};
 use pytools_core::conversion::{
-    convert_excel_files_in_source_folders, convert_excel_files_to, convert_one,
-    convert_word_files_in_source_folders, convert_word_files_to,
+    convert_excel_files_in_source_folders, convert_excel_files_to,
+    convert_excel_files_with_progress, convert_one, convert_word_files_in_source_folders,
+    convert_word_files_to, convert_word_files_with_progress, ConversionProgressEvent,
 };
 use pytools_core::dedup_ops::{
     build_append_by_config_plans, build_comment_duplicate_plan, build_config_duplicate_plan,
@@ -1806,6 +1807,10 @@ where
                 run_batch_rename(arguments)?;
             }
             "2" => {
+                arguments.push("--log-dir".to_owned());
+                arguments.push(global.log_dir.to_string_lossy().into_owned());
+                arguments.push("--log-view".to_owned());
+                arguments.push(log_view.to_owned());
                 arguments.extend(
                     paths
                         .into_iter()
@@ -1814,6 +1819,10 @@ where
                 run_convert_batch_cli(arguments, true)?;
             }
             "3" => {
+                arguments.push("--log-dir".to_owned());
+                arguments.push(global.log_dir.to_string_lossy().into_owned());
+                arguments.push("--log-view".to_owned());
+                arguments.push(log_view.to_owned());
                 arguments.extend(
                     paths
                         .into_iter()
@@ -6507,25 +6516,162 @@ fn run_convert_batch_cli(arguments: Vec<String>, excel: bool) -> Result<()> {
         )
         .unwrap_or_else(|_| if excel { "xlsx".into() } else { "docx".into() })
     });
-    let result = match (excel, options.values.get("output-dir")) {
-        (true, Some(output)) => {
-            convert_excel_files_to(&options.positional, Path::new(output), &target, engine)?
-        }
-        (false, Some(output)) => {
-            convert_word_files_to(&options.positional, Path::new(output), &target, engine)?
-        }
-        (true, None) => {
-            convert_excel_files_in_source_folders(&options.positional, &target, engine)?
-        }
-        (false, None) => {
-            convert_word_files_in_source_folders(&options.positional, &target, engine)?
-        }
+    let log_view = options
+        .values
+        .get("log-view")
+        .map(String::as_str)
+        .unwrap_or("user");
+    anyhow::ensure!(
+        matches!(log_view, "user" | "developer" | "off"),
+        "--log-view must be user, developer, or off"
+    );
+    let log_dir = options
+        .values
+        .get("log-dir")
+        .map(PathBuf::from)
+        .or_else(|| load_global(&config).ok().map(|global| global.log_dir))
+        .unwrap_or_else(|| PathBuf::from("logs"));
+    let output_dir = options.values.get("output-dir").map(Path::new);
+    let feature_id = if excel { "PT-4-2" } else { "PT-4-3" };
+    let function = if excel {
+        "convert-excel"
+    } else {
+        "convert-word"
     };
-    println!("{}", serde_json::to_string_pretty(&result)?);
+    let mut events = Vec::<serde_json::Value>::new();
+    let result = if log_view == "off" {
+        match (excel, output_dir) {
+            (true, Some(output)) => {
+                convert_excel_files_to(&options.positional, output, &target, engine)?
+            }
+            (false, Some(output)) => {
+                convert_word_files_to(&options.positional, output, &target, engine)?
+            }
+            (true, None) => {
+                convert_excel_files_in_source_folders(&options.positional, &target, engine)?
+            }
+            (false, None) => {
+                convert_word_files_in_source_folders(&options.positional, &target, engine)?
+            }
+        }
+    } else if excel {
+        convert_excel_files_with_progress(
+            &options.positional,
+            output_dir,
+            &target,
+            engine,
+            |event| {
+                let value = serde_json::to_value(event).unwrap_or(serde_json::Value::Null);
+                emit_conversion_event_view(log_view, event, &value);
+                if log_view == "developer" {
+                    events.push(value);
+                }
+            },
+        )?
+    } else {
+        convert_word_files_with_progress(
+            &options.positional,
+            output_dir,
+            &target,
+            engine,
+            |event| {
+                let value = serde_json::to_value(event).unwrap_or(serde_json::Value::Null);
+                emit_conversion_event_view(log_view, event, &value);
+                if log_view == "developer" {
+                    events.push(value);
+                }
+            },
+        )?
+    };
+    let run_history_path = if log_view == "developer" {
+        Some(write_conversion_run_history(
+            &log_dir, feature_id, function, engine, &result, &events,
+        )?)
+    } else {
+        None
+    };
+    let mut output = serde_json::to_value(&result)?;
+    if let Some(path) = run_history_path {
+        output["run_history_path"] = serde_json::Value::String(path.to_string_lossy().into_owned());
+    }
+    println!("{}", serde_json::to_string_pretty(&output)?);
     if result.failed > 0 {
         bail!("{} conversion(s) failed", result.failed);
     }
     Ok(())
+}
+
+fn emit_conversion_event_view(
+    log_view: &str,
+    event: &ConversionProgressEvent,
+    event_value: &serde_json::Value,
+) {
+    match log_view {
+        "user" => {
+            if let Some(stage_elapsed_ms) = event.stage_elapsed_ms {
+                eprintln!("{} 阶段用时 {}ms。", event.user_message, stage_elapsed_ms);
+            } else {
+                eprintln!("{}", event.user_message);
+            }
+        }
+        "developer" => {
+            if let Ok(line) = serde_json::to_string(event_value) {
+                eprintln!("{line}");
+            }
+        }
+        "off" => {}
+        _ => unreachable!("conversion log view is validated before execution"),
+    }
+}
+
+fn write_conversion_run_history(
+    log_dir: &Path,
+    feature_id: &str,
+    function: &str,
+    requested_engine: &str,
+    result: &pytools_core::conversion::ConversionRun,
+    events: &[serde_json::Value],
+) -> Result<PathBuf> {
+    fs::create_dir_all(log_dir)
+        .with_context(|| format!("create conversion log directory {}", log_dir.display()))?;
+    let timestamp = Local::now().format("%Y%m%d_%H%M%S");
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .context("system clock before Unix epoch")?
+        .as_nanos();
+    let path = log_dir.join(format!("{feature_id}_conversion_{timestamp}_{nonce}.json"));
+    let mut actual_engines = Vec::<String>::new();
+    for event in events {
+        if let Some(engine) = event["actual_engine"].as_str() {
+            if !actual_engines.iter().any(|existing| existing == engine) {
+                actual_engines.push(engine.to_owned());
+            }
+        }
+    }
+    let status = if result.failed == 0 {
+        "succeeded"
+    } else if result.converted > 0 {
+        "partial_failure"
+    } else {
+        "failed"
+    };
+    let history = serde_json::json!({
+        "schema_version": 1,
+        "product": "pytools",
+        "feature_id": feature_id,
+        "function": function,
+        "status": status,
+        "requested_engine": requested_engine,
+        "converted": result.converted,
+        "skipped": result.skipped,
+        "failed": result.failed,
+        "actual_engines": actual_engines,
+        "total_elapsed_ms": events.last().map(|event| event["total_elapsed_ms"].clone()),
+        "events": events,
+    });
+    fs::write(&path, serde_json::to_vec_pretty(&history)?)
+        .with_context(|| format!("write conversion run history {}", path.display()))?;
+    Ok(path)
 }
 
 fn run_convert_file_cli(arguments: Vec<String>) -> Result<()> {
@@ -9917,8 +10063,8 @@ fn print_usage() {
          archive-date-copy --target-root <dir> [--config <config.xlsx>] [--output-dir <dir>] <file-or-directory>...\n\
          archive-type-copy --config <config.xlsx> --target-root <dir> [--output-dir <dir>] <file-or-directory>...\n\
          archive-execute-plan --plan <archive-plan.xlsx> [--output-dir <dir>]\n\
-         convert-excel --config <config.xlsx> [--to xlsx] [--engine auto|lo|native] [--output-dir <dir>] <file>...\n\
-         convert-word --config <config.xlsx> [--to docx] [--engine auto|lo] [--output-dir <dir>] <file>...\n\
+         convert-excel --config <config.xlsx> [--to xlsx] [--engine auto|lo|native] [--output-dir <dir>] [--log-dir <dir>] [--log-view user|developer|off] <file>...\n\
+         convert-word --config <config.xlsx> [--to docx] [--engine auto|lo] [--output-dir <dir>] [--log-dir <dir>] [--log-view user|developer|off] <file>...\n\
          convert-file --input <file> --to <extension> [--output <file>] [--engine auto|lo|native]\n\
          native = 按值重建（C01，丢弃样式/公式缓存）；Excel 公式文本保留但不重算，CSV 按文本写入\n\
          pytools extract-sheets --config <workbook.xlsx> [--output-dir <dir>] [--log-dir <dir>] [--log-view user|developer|off] [--append-existing] [--capabilities <json> --platform <id>] <source.xlsx>...\n\

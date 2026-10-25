@@ -237,6 +237,168 @@ fn interactive_conversion_menu_routes_all_ten_file_workflows() -> Result<()> {
 }
 
 #[test]
+fn conversion_menu_and_cli_emit_redacted_dual_view_progress() -> Result<()> {
+    let root = TestDirectory::new()?;
+    let config = create_config(root.path())?;
+    let sources = root.path().join("sources");
+    let log_dir = root.path().join("logs");
+    fs::create_dir_all(&sources)?;
+
+    let user_dir = sources.join("user");
+    fs::create_dir_all(&user_dir)?;
+    let user_source = user_dir.join("user-private-report.xlsx");
+    create_source_workbook(&user_source, "Other")?;
+    let user = run_action_with_log_view(&config, 2, 1, &user_source, "user")?;
+    assert!(
+        user.status.success(),
+        "user conversion failed: {}",
+        stderr(&user)
+    );
+    assert!(user_dir
+        .join("xlsx")
+        .join("user-private-report.xlsx")
+        .is_file());
+    let user_stderr = stderr(&user);
+    assert!(user_stderr.contains("已发现 1 个待处理文件"));
+    assert!(user_stderr.contains("正在处理第 1/1 个文件"));
+    assert!(user_stderr.contains("转换结束：成功 1，失败 0"));
+    assert!(!user_stderr.contains("user-private-report"));
+    assert_eq!(fs::read_dir(&log_dir)?.count(), 0);
+
+    let word_source = sources.join("word-private-copy.docx");
+    fs::write(&word_source, b"synthetic same-format Word copy")?;
+    let word = run_action_with_log_view(&config, 3, 1, &word_source, "developer")?;
+    assert!(
+        word.status.success(),
+        "Word conversion failed: {}",
+        stderr(&word)
+    );
+    assert_eq!(
+        fs::read(sources.join("docx").join("word-private-copy.docx"))?,
+        fs::read(&word_source)?
+    );
+    let word_report = output_json(&word)?;
+    let word_history_path = PathBuf::from(
+        word_report["run_history_path"]
+            .as_str()
+            .context("Word conversion history path missing")?,
+    );
+    let word_history_bytes = fs::read(word_history_path)?;
+    let word_history_text = String::from_utf8_lossy(&word_history_bytes);
+    assert!(!word_history_text.contains(&word_source.display().to_string()));
+    assert!(!word_history_text.contains("word-private-copy.docx"));
+    let word_history: Value = serde_json::from_slice(&word_history_bytes)?;
+    assert_eq!(word_history["feature_id"], "PT-4-3");
+    assert!(word_history["actual_engines"]
+        .as_array()
+        .is_some_and(|engines| engines.iter().any(|engine| engine == "Rust std::fs::copy")));
+
+    let native_source = sources.join("native-private.csv");
+    fs::write(&native_source, "Region,Value\nNorth,17\n")?;
+    let native_output_dir = root.path().join("native-output");
+    let native = run_convert_excel_cli(
+        &config,
+        &native_source,
+        &native_output_dir,
+        "native",
+        "developer",
+    )?;
+    assert!(
+        native.status.success(),
+        "native conversion failed: {}",
+        stderr(&native)
+    );
+    let native_report = output_json(&native)?;
+    assert_eq!(native_report["converted"], 1);
+    let native_history_path = PathBuf::from(
+        native_report["run_history_path"]
+            .as_str()
+            .context("native conversion history path missing")?,
+    );
+    assert!(native_output_dir.join("native-private.xlsx").is_file());
+    let native_history_bytes = fs::read(&native_history_path)?;
+    let native_history_text = String::from_utf8_lossy(&native_history_bytes);
+    assert!(!native_history_text.contains(&native_source.display().to_string()));
+    assert!(!native_history_text.contains("native-private.csv"));
+    let native_history: Value = serde_json::from_slice(&native_history_bytes)?;
+    assert_eq!(native_history["feature_id"], "PT-4-2");
+    assert!(native_history["actual_engines"]
+        .as_array()
+        .context("actual engine list missing")?
+        .iter()
+        .any(|engine| engine == "csv + rust_xlsxwriter"));
+    let native_events = native_history["events"]
+        .as_array()
+        .context("events missing")?;
+    assert!(native_events.iter().any(|event| {
+        event["phase"] == "convert_file"
+            && event["status"] == "completed"
+            && event["actual_engine"] == "csv + rust_xlsxwriter"
+            && event["components"].as_array().is_some_and(|components| {
+                components
+                    .iter()
+                    .any(|component| component == "rust_xlsxwriter")
+            })
+            && event["stage_elapsed_ms"].is_number()
+            && event["total_elapsed_ms"].is_number()
+    }));
+    assert!(stderr(&native).contains("\"feature_id\":\"PT-4-2\""));
+
+    let off_dir = sources.join("off");
+    fs::create_dir_all(&off_dir)?;
+    let off_source = off_dir.join("off-private.xlsx");
+    create_source_workbook(&off_source, "Other")?;
+    let history_count = fs::read_dir(&log_dir)?.count();
+    let off = run_action_with_log_view(&config, 2, 1, &off_source, "off")?;
+    assert!(
+        off.status.success(),
+        "off conversion failed: {}",
+        stderr(&off)
+    );
+    assert!(off_dir.join("xlsx").join("off-private.xlsx").is_file());
+    assert!(stderr(&off).is_empty());
+    assert_eq!(fs::read_dir(&log_dir)?.count(), history_count);
+
+    let failed_source = sources.join("private-needs-sidecar.xls");
+    fs::write(&failed_source, b"synthetic legacy workbook")?;
+    let before = fs::read(&failed_source)?;
+    let missing_sidecar = root.path().join("missing-lo-convert.exe");
+    let failed = run_action_with_sidecar_and_log_view(
+        &config,
+        2,
+        1,
+        &failed_source,
+        &missing_sidecar,
+        "developer",
+    )?;
+    assert!(!failed.status.success());
+    assert_eq!(fs::read(&failed_source)?, before);
+    let failed_report = output_json(&failed)?;
+    assert_eq!(failed_report["failed"], 1);
+    let failed_history_path = PathBuf::from(
+        failed_report["run_history_path"]
+            .as_str()
+            .context("failed conversion history path missing")?,
+    );
+    let failed_history_bytes = fs::read(&failed_history_path)?;
+    let failed_history_text = String::from_utf8_lossy(&failed_history_bytes);
+    assert!(!failed_history_text.contains(&failed_source.display().to_string()));
+    assert!(!failed_history_text.contains("private-needs-sidecar.xls"));
+    let failed_history: Value = serde_json::from_slice(&failed_history_bytes)?;
+    assert_eq!(failed_history["status"], "failed");
+    assert!(failed_history["events"].as_array().is_some_and(|events| {
+        events.iter().any(|event| {
+            event["status"] == "failed"
+                && event["error_type"] == "external_engine_required"
+                && event["actual_engine"].is_null()
+                && event["input_index"] == 1
+        })
+    }));
+
+    Ok(())
+}
+
+#[test]
 fn sheet_rename_menu_executes_only_after_capability_and_confirmation() -> Result<()> {
     let root = TestDirectory::new()?;
     let config = create_config(root.path())?;
@@ -863,6 +1025,47 @@ fn run_action_with_sidecar(
     let mut child = menu_command(config);
     child.env("PYTOOLS_LO_CONVERT", sidecar);
     finish_menu(child, &input)
+}
+
+fn run_action_with_sidecar_and_log_view(
+    config: &Path,
+    action: u8,
+    mode: u8,
+    selected: &Path,
+    sidecar: &Path,
+    log_view: &str,
+) -> Result<Output> {
+    let input = format!("4\n{action}\n{mode}\n{}\n0\n", selected.display());
+    let mut child = menu_command(config);
+    child
+        .env("PYTOOLS_LO_CONVERT", sidecar)
+        .arg("--log-view")
+        .arg(log_view);
+    finish_menu(child, &input)
+}
+
+fn run_convert_excel_cli(
+    config: &Path,
+    input: &Path,
+    output_dir: &Path,
+    engine: &str,
+    log_view: &str,
+) -> Result<Output> {
+    Command::new(env!("CARGO_BIN_EXE_pytools"))
+        .arg("convert-excel")
+        .arg("--config")
+        .arg(config)
+        .arg("--to")
+        .arg("xlsx")
+        .arg("--engine")
+        .arg(engine)
+        .arg("--output-dir")
+        .arg(output_dir)
+        .arg("--log-view")
+        .arg(log_view)
+        .arg(input)
+        .output()
+        .context("run direct Excel conversion CLI")
 }
 
 fn run_menu(config: &Path, input: &str) -> Result<Output> {

@@ -643,6 +643,12 @@ Windows 原生 `cargo fmt --manifest-path pytools-core/Cargo.toml -- --check` �
 
 Windows 原生验证：`cargo fmt --manifest-path pytools-core/Cargo.toml` 通过；`cargo test --offline --locked -p pytools-core --test conversion_menu_cli --test file_sort_prefix_operation_parity --test file_sort_prefix_remove_parity -q` 中 2/2、3/3、6/6 通过；`pytools --help` 显示两条命令的三种视图选项。对拍使用既有只读 PyCode 机器基线，4-9 八个文件案例及 4-10 内容前缀/冲突/跳过案例的统计、目录结果和 XLSX 报表检查无业务差异；新增菜单三视图测试、Calamine 实际调用标记及输出目录失败阶段测试。结构化历史不含输入文件名或路径。没有重新运行 Python 解释器，也没有可用真实业务目录样本；手工桌面文件选择器、目标 Linux/glibc 2.28、麒麟/UOS 与 deb 未验证，PT-4-9/PT-4-10 整体迁移状态仍未验证。日志性能开销未测量。
 
+### 2026-10-25 PT-4-2/PT-4-3 转换批处理双视图进度日志
+
+Excel/Word 批量转换 Rust API 新增可选进度回调；直接 `convert-excel`/`convert-word` CLI 和 `pytools menu` → 4→2/3 现支持 `--log-view user|developer|off` 并沿用全局日志目录。user 视图提供发现数量、逐文件进度、阶段耗时和脱敏错误摘要；developer 视图输出事件流并保存 JSON 历史，记录实际组件/引擎、计数、阶段和总耗时；off 不输出事件或写入历史。历史不包含输入路径、文件名或错误明细。same-format 文件复制标记 `Rust std::fs::copy`；native CSV 标记 `csv + rust_xlsxwriter`；native Excel 标记 Calamine 与 rust_xlsxwriter；sidecar 成功时从其结果读取真实 LibreOffice/COM 引擎。转换业务路由和输出行为未改变。
+
+Windows 原生验证：`cargo fmt --manifest-path pytools-core/Cargo.toml -- --check` 通过；`cargo test --offline --locked -p pytools-core --test conversion_menu_cli -j 1` 8/8 通过；`cargo test --offline --locked -p pytools-core --lib conversion::tests -j 1` 6/6 通过。新增真实菜单测试覆盖 user/developer/off、直接 native CSV CLI、实际引擎与耗时字段、历史脱敏、缺失 sidecar 错误及源文件不变。native CSV 输出通过既有 Rust 候选自校验。Windows 未发现已安装 LibreOffice，故无成功 `.xls`/`.et`/`.doc` sidecar 样本，未作该类 Python/Rust 结果对拍；PT-4-2/PT-4-3、手工桌面文件选择器、目标平台和 deb 仍未验收。
+
 ### 2026-10-25 PT-7-5 地区总分校验双视图运行事件
 
 既有 pytools region-sum-check CLI 增加可选 --log-view user|developer|off，主菜单 7→5 将全局视图传入真实 CLI。Rust 地区核对核心提供阶段进度事件，记录处理计数、失败类型、阶段/总耗时及实际调用的 Calamine、rust_xlsxwriter；产生核对结果行时同时标记 ooxml-patch。user 输出简明进度，developer 输出结构化事件并保存 JSON 运行历史，off 不输出结构化事件或新增历史。未指定 --log-view 时保留原 CLI JSON 输出；既有详细 .log 保持兼容。新运行历史不保存输入路径、文件名或单元格值，核对业务与 Excel 引擎路由未改。
