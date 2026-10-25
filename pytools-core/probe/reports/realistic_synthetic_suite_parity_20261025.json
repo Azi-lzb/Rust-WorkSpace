@@ -66,6 +66,58 @@
       ]
     }
   ],
+  "wide_summary_rule_match_modes": [
+    {
+      "mode": "all_match",
+      "python_rust_summary": "exact",
+      "sheet_names": [
+        "WideAll",
+        "WideRep"
+      ],
+      "dimensions": [
+        [
+          39,
+          11
+        ],
+        [
+          35,
+          8
+        ]
+      ],
+      "python_summary_dimensions": [
+        {
+          "name": "WideAll",
+          "rows": 39,
+          "columns": 11
+        },
+        {
+          "name": "WideRep",
+          "rows": 35,
+          "columns": 8
+        }
+      ]
+    },
+    {
+      "mode": "first_match",
+      "python_rust_summary": "exact",
+      "sheet_names": [
+        "WideAll"
+      ],
+      "dimensions": [
+        [
+          39,
+          11
+        ]
+      ],
+      "python_summary_dimensions": [
+        {
+          "name": "WideAll",
+          "rows": 39,
+          "columns": 11
+        }
+      ]
+    }
+  ],
   "comment_summary_multi_sheet": {
     "python_rust_output": "exact",
     "sheet_names": [

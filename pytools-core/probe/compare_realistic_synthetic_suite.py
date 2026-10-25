@@ -291,6 +291,70 @@ def run_comment_case(root: Path, sources: list[Path]) -> dict[str, object]:
     }
 
 
+def make_mode_config(path: Path, output: Path, mode: str) -> None:
+    workbook = Workbook()
+    global_sheet = workbook.active
+    global_sheet.title = "全局配置"
+    global_sheet.append(["配置项", "值"])
+    for key, value in (
+        ("输入目录", cws.rust_path_argument(output / "unused_input")),
+        ("输出目录", cws.rust_path_argument(output)),
+        ("日志目录", cws.rust_path_argument(output / "logs")),
+        ("错误策略", "fail_fast"),
+        ("源文件扩展名", ".xlsx"),
+        ("时序规则命中策略", mode),
+    ):
+        global_sheet.append([key, value])
+
+    timeline = workbook.create_sheet("时序提取规则")
+    timeline.append([
+        "是否启用", "规则名称", "工作簿关键字", "工作表关键字", "行头列", "列表头行",
+        "必含列头", "必含行头", "数据起始行", "数据结束行", "数据起始列", "数据结束列",
+        "跳过关键字", "目标工作簿路径", "目标工作表", "启用目标写入", "set区域", "目标去重列",
+        "是否输出行序号",
+    ])
+    timeline.append([
+        "是", "WideAll", "sample", "Report", "A", "3,4", "", "", 5, "", "B", "F",
+        "小计;合计", "", "", "否", "集团@B2", "", "是",
+    ])
+    timeline.append([
+        "是", "WideRep", "sample", "Rep", "A", "3", "", "甲分行;乙分行", 4, 20, "B", "D",
+        "", "", "", "否", "", "", "是",
+    ])
+    maps = workbook.create_sheet("路径标准化映射")
+    maps.append([
+        "是否启用", "映射名称", "适用规则名", "工作簿关键字", "工作表关键字", "作用对象",
+        "匹配方式", "原始路径", "标准路径", "备注",
+    ])
+    maps.append(["是", "标准化甲", "WideAll", "sample", "Report", "行头", "包含", "甲分行", "甲标准化分行", ""])
+    path.parent.mkdir(parents=True, exist_ok=True)
+    workbook.save(path)
+
+
+def run_rule_mode_case(root: Path, mode: str, workbooks: list[Path]) -> dict[str, object]:
+    case = root / f"rule_mode_{mode}"
+    output = case / "output"
+    config = case / "config.xlsx"
+    make_mode_config(config, output, mode)
+    python_output = python_wide_baseline(config, workbooks, row_suffix=True)
+    rust_output, plans = cws.run_rust_sources(config, workbooks, row_suffix=True)
+    if python_output is None or rust_output is None:
+        raise AssertionError(
+            f"wide summary ({mode}) did not save: python={python_output}, rust={rust_output}"
+        )
+    if plans:
+        raise AssertionError(f"target writes must be disabled in this suite, got plans: {plans}")
+    cws.assert_parity(python_output, rust_output)
+    projection = cws.normalized(rust_output)
+    return {
+        "mode": mode,
+        "python_rust_summary": "exact",
+        "sheet_names": projection["sheet_names"],
+        "dimensions": projection["dimensions"],
+        "python_summary_dimensions": _sheet_dimensions(python_output),
+    }
+
+
 def main() -> int:
     with tempfile.TemporaryDirectory(
         prefix="pytools-realistic-suite-", ignore_cleanup_errors=True
@@ -306,6 +370,10 @@ def main() -> int:
 
         wide_results = [
             run_wide_case(root, row_suffix, workbooks) for row_suffix in (False, True)
+        ]
+
+        rule_mode_results = [
+            run_rule_mode_case(root, mode, workbooks) for mode in ("all_match", "first_match")
         ]
 
         comment_sources = []
@@ -325,6 +393,7 @@ def main() -> int:
                 "config-driven both sides for wide summary. Not real-sample acceptance."
             ),
             "wide_summary_multi_rule": wide_results,
+            "wide_summary_rule_match_modes": rule_mode_results,
             "comment_summary_multi_sheet": comment_result,
             "rust_runtime": {
                 "host": "Windows 11 x64, native MSVC target",
@@ -344,6 +413,7 @@ def main() -> int:
         print("SUITE_RESULT=" + json.dumps({
             "status": report["status"],
             "wide_cases": [result["dimensions"] for result in wide_results],
+            "rule_modes": [result["dimensions"] for result in rule_mode_results],
             "comment_sheets": comment_result["dimensions"],
             "report": str(report_path),
         }, ensure_ascii=False))
