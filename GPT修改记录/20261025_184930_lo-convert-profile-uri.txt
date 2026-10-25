@@ -1,0 +1,22 @@
+时间：2026-10-25（本机时间）；执行者：Codex
+修改前 commit：7fce332；修改后 commit：本记录提交时生成
+WIP：保留未跟踪 HANDOFF_ZCODE_TO_CODEX.md；未修改 Audit/PyTools 工作树。
+
+修改目的：处理 PyTools 提交给 main 的共享 sidecar 缺陷：LibreOffice 转换路径向 UserInstallation 传裸路径且未预建 profile 目录；同文件重算路径已使用预建目录和 file URI。PyTools 交接记录包含 WSL 上相同 soffice 输入下裸路径失败、file URI 成功的复现和数据保真结果。Windows 本轮环境没有 soffice，未独立重跑 LibreOffice 端到端。
+
+修改文件：sidecar/lo-convert/src/main.rs。
+
+变化：提取 libreoffice_user_installation_arg，共用方式创建 profile 目录并以 file_uri 编码 UserInstallation；转换和重算都调用该 helper。添加回归测试，验证目录创建及含空格/井号路径采用编码 file URI。未更改引擎选择、输出路由或格式转换契约。
+
+测试：
+- cargo test --offline --locked -p lo-convert：通过（4 个单元测试；LibreOffice CLI 集成测试因本机没有 soffice 而按测试逻辑提前跳过）。
+- cargo fmt --manifest-path sidecar/lo-convert/Cargo.toml -- --check：通过。
+- git diff --check：通过。
+
+未执行：Windows/WSL LibreOffice 实际转换复测、麒麟/UOS/glibc 2.28/deb 验收。PyTools 应在同步本提交后重跑 PT-4-2 `.xls→.xlsx`、PT-4-3 `.doc→.docx` 的真实 sidecar 端到端保真对拍。
+
+已知问题：LibreOffice CLI 在当前本机不可用；本提交不能单凭 helper 单测记为转换功能验收通过。
+
+配置/VBA/组件版本：无配置或 VBA 影响；组件版本不升级（共享 sidecar 缺陷修复）。
+
+回滚：提交后如兼容性回归，用 git revert 回退本记录对应提交；保留原始输入，不覆盖源文件。
