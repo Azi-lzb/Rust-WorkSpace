@@ -2,7 +2,7 @@
 
 use anyhow::{Context, Result};
 use chrono::Local;
-use excel_reader::{read_workbook, SheetDump};
+use excel_reader::{read_value_columns_with_iso_dates, read_workbook, CellValue, SheetDump};
 use excel_writer::{Format, Workbook};
 use serde::Serialize;
 use std::{
@@ -204,6 +204,7 @@ fn load_rules(path: &Path) -> Result<Vec<Rule>> {
         .find(|sheet| sheet.name == "提交检查配置")
         .context("提交检查配置 缺少工作表")?;
     let headers = header_index(sheet);
+    let date_keyword_overrides = date_keyword_overrides(path, sheet, &headers)?;
     let mut rules = Vec::new();
     for row in 2..=used_rows(sheet) {
         let enabled = field(sheet, &headers, row, "是否启用");
@@ -213,7 +214,14 @@ fn load_rules(path: &Path) -> Result<Vec<Rule>> {
         ) {
             continue;
         }
-        let date = field(sheet, &headers, row, "日期关键词");
+        let date_address = headers
+            .get("日期关键词")
+            .map(|column| format!("{}{}", column_letters(*column), row));
+        let date = date_address
+            .as_ref()
+            .and_then(|address| date_keyword_overrides.get(address))
+            .cloned()
+            .unwrap_or_else(|| field(sheet, &headers, row, "日期关键词"));
         let area = field(sheet, &headers, row, "县区关键词");
         let institution = field(sheet, &headers, row, "机构关键词");
         let extra = field(sheet, &headers, row, "备用关键词");
@@ -233,6 +241,47 @@ fn load_rules(path: &Path) -> Result<Vec<Rule>> {
         });
     }
     Ok(rules)
+}
+
+fn date_keyword_overrides(
+    path: &Path,
+    sheet: &SheetDump,
+    headers: &HashMap<String, usize>,
+) -> Result<HashMap<String, String>> {
+    let Some(max_column) = headers.get("日期关键词").copied() else {
+        return Ok(HashMap::new());
+    };
+    let has_serial_dates = sheet.values.iter().any(|(address, value)| {
+        parse_a1(address).is_some_and(|(_, column)| column == max_column)
+            && value.get("type").and_then(serde_json::Value::as_str) == Some("datetime_serial")
+    });
+    if !has_serial_dates {
+        return Ok(HashMap::new());
+    }
+    let date_values = read_value_columns_with_iso_dates(path, max_column)?
+        .into_iter()
+        .find(|candidate| candidate.name == sheet.name)
+        .with_context(|| format!("{} sheet disappeared during date projection", sheet.name))?;
+    let mut overrides = HashMap::new();
+    for (address, value) in date_values.values {
+        if let CellValue::DateTimeIso(iso) = value {
+            let text = python_datetime_text(&iso)
+                .with_context(|| format!("format date keyword cell {}!{address}", sheet.name))?;
+            overrides.insert(address, text);
+        }
+    }
+    Ok(overrides)
+}
+
+fn python_datetime_text(iso: &str) -> Option<String> {
+    let value = chrono::NaiveDateTime::parse_from_str(iso, "%Y-%m-%dT%H:%M:%S%.f").ok()?;
+    let whole_seconds = value.format("%Y-%m-%d %H:%M:%S").to_string();
+    let microseconds = value.and_utc().timestamp_subsec_micros();
+    if microseconds == 0 {
+        Some(whole_seconds)
+    } else {
+        Some(format!("{whole_seconds}.{microseconds:06}"))
+    }
 }
 fn matches_rule(file_name: &str, rule: &Rule) -> bool {
     let name = file_name.to_lowercase();

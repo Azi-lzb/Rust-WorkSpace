@@ -163,6 +163,14 @@ fn submission_check_cli_matches_python_workbook_and_statistics() -> Result<()> {
             expected_bold
         );
     }
+    assert_eq!(
+        actual.sheets[0].values.get("B5"),
+        Some(&json!({
+            "type": "string",
+            "value": "2026-06-30 01:02:03.123000"
+        })),
+        "Excel date config values must match Python's string form"
+    );
 
     assert_eq!(fs::read(&config)?, original_config);
     for (path, bytes) in original_files {
@@ -200,6 +208,14 @@ fn create_config(root: &Path) -> Result<PathBuf> {
             sheet.write_string((row + 1) as u32, column as u16, *value)?;
         }
     }
+    sheet.write_string(5, 0, "是")?;
+    let date =
+        rust_xlsxwriter::ExcelDateTime::from_ymd(2026, 6, 30)?.and_hms_milli(1, 2, 3, 123)?;
+    let date_format = rust_xlsxwriter::Format::new().set_num_format("yyyy-mm-dd");
+    sheet.write_datetime_with_format(5, 1, &date, &date_format)?;
+    sheet.write_string(5, 2, "Area")?;
+    sheet.write_string(5, 3, "Bank")?;
+    sheet.write_string(5, 5, "date keyword")?;
     workbook.save(&config)?;
     Ok(config)
 }

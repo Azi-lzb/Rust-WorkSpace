@@ -2,10 +2,10 @@
   "baseline": "PyCode.run_submission_check_48 synthetic contract",
   "python": "3.12.10",
   "statistics": {
-    "rules": 3,
+    "rules": 4,
     "files": 3,
     "submitted": 2,
-    "missing": 1,
+    "missing": 2,
     "unmatched": 1,
     "multi": 1
   },
@@ -13,7 +13,7 @@
     "sheets": [
       {
         "name": "检查结果",
-        "max_row": 4,
+        "max_row": 5,
         "max_column": 9,
         "cells": {
           "A1": {
@@ -147,6 +147,34 @@
           "I4": {
             "type": "number",
             "value": 4
+          },
+          "A5": {
+            "type": "string",
+            "value": "是"
+          },
+          "B5": {
+            "type": "string",
+            "value": "2026-06-30 01:02:03.123000"
+          },
+          "C5": {
+            "type": "string",
+            "value": "Area"
+          },
+          "D5": {
+            "type": "string",
+            "value": "Bank"
+          },
+          "F5": {
+            "type": "number",
+            "value": 0
+          },
+          "H5": {
+            "type": "string",
+            "value": "date keyword"
+          },
+          "I5": {
+            "type": "number",
+            "value": 6
           }
         },
         "header_bold": [
@@ -163,7 +191,7 @@
       },
       {
         "name": "缺失清单",
-        "max_row": 2,
+        "max_row": 3,
         "max_column": 9,
         "cells": {
           "A1": {
@@ -229,6 +257,34 @@
           "I2": {
             "type": "number",
             "value": 4
+          },
+          "A3": {
+            "type": "string",
+            "value": "是"
+          },
+          "B3": {
+            "type": "string",
+            "value": "2026-06-30 01:02:03.123000"
+          },
+          "C3": {
+            "type": "string",
+            "value": "Area"
+          },
+          "D3": {
+            "type": "string",
+            "value": "Bank"
+          },
+          "F3": {
+            "type": "number",
+            "value": 0
+          },
+          "H3": {
+            "type": "string",
+            "value": "date keyword"
+          },
+          "I3": {
+            "type": "number",
+            "value": 6
           }
         },
         "header_bold": [

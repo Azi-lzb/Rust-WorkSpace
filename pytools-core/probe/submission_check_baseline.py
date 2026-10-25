@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime as dt
 import json
 import sys
 from pathlib import Path
@@ -38,6 +39,9 @@ def main() -> None:
     sheet.append(["是", "2026", "Area", "Bank", "multi", "second rule"])
     sheet.append(["是", "2026", "Missing", "Bank", "", "missing rule"])
     sheet.append(["否", "disabled", "Area", "Bank", "", "ignored rule"])
+    sheet.append(
+        ["是", dt.datetime(2026, 6, 30, 1, 2, 3, 123000), "Area", "Bank", "", "date keyword"]
+    )
     config_book.save(config)
 
     sources = work_root / "sources"

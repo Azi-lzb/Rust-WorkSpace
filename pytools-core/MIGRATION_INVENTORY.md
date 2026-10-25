@@ -565,6 +565,8 @@ PyTools 主菜单类别 4 已通过真实 `menu` 交互入口接入 4-1 至 4-10
 
 `submission_check.rs` 对只读 PyCode `run_submission_check_48` 建立了合成基线及真实 Rust CLI 对拍，报告四张表的顺序、单元格值/类型、维度、表头加粗和统计均一致（3 条启用规则、3 个文件、提交 2、缺失规则 1、未识别文件 1、多重命中 1）。对拍发现并修正了多重命中描述缺少关键词，以及命中次数/配置行被写为文本的问题。报告与基线位于 `probe/reports/submission_check_python_baseline.json`，基线生成器位于 `probe/submission_check_baseline.py`；输入、配置和路径均为合成内容。
 
+新增真实 Excel 日期类型的日期关键词对拍，修复前 Rust 将 `datetime_serial` 当作空配置值，跳过日期匹配组并多计已提交规则。PyTools 现仅在该配置列包含日期序列时使用共享 reader 的 ISO 日期投影，并按 Pandas/Python 日期文本输出。原 PyCode 的合成配置、Rust CLI 与四张结果表完整投影一致（4 条启用规则、3 个文件、提交 2、缺失 2、未识别 1、多重命中 1），覆盖毫秒转 Python 六位微秒显示；真实用户配置仍未验证。机器基线更新于 `probe/reports/submission_check_python_baseline.json`。
+
 本轮将 3-3/4-6 至 4-10 的 Rust API 改为语义名称，CLI 和 Rust 测试使用新名称；原数字名称保留为弃用兼容别名，未更改 CLI 命令、交互菜单序号或 Excel 配置字段。相关 Python/Rust 函数级对拍继续保留其历史操作号，便于定位基线。
 
 Windows 原生验证：`cargo fmt --manifest-path pytools-core/Cargo.toml -- --check`、`cargo check --offline --locked -p pytools-core --bin pytools` 通过；12 个关联集成测试目标 28/28 通过，`cargo test --offline --locked -p pytools-core --lib conversion::tests` 4/4 通过。未运行 PyTools 全量测试或 Linux/目标系统验证。
