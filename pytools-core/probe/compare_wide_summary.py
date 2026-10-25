@@ -19,7 +19,7 @@ import sys
 import tempfile
 import time
 import xml.etree.ElementTree as ET
-from datetime import date, datetime
+from datetime import date, datetime, time as datetime_time
 from importlib.metadata import version
 from pathlib import Path
 from zipfile import ZipFile
@@ -87,7 +87,10 @@ def run_rust_command(
 
 
 def make_input(
-    path: Path, cached_formula: bool = False, date_1904: bool = False
+    path: Path,
+    cached_formula: bool = False,
+    date_1904: bool = False,
+    time_only: bool = False,
 ) -> None:
     workbook = Workbook()
     if date_1904:
@@ -107,15 +110,20 @@ def make_input(
     sheet["D4"] = "本息"
     sheet.append([])
     sheet["A5"] = "公司甲"
-    sheet["B5"] = (
-        "=8+2.25"
-        if cached_formula
-        else datetime(2024, 6, 30)
-        if date_1904
-        else 10.25
-    )
-    if date_1904:
+    if cached_formula:
+        sheet["B5"] = "=8+2.25"
+    elif time_only:
+        sheet["B5"] = datetime_time(12, 34, 56, 123000)
+        sheet["B5"].number_format = "h:mm:ss"
+        sheet["B6"] = datetime_time(0, 0)
+        sheet["B6"].number_format = "h:mm:ss"
+        sheet["B7"] = 0.999999999
+        sheet["B7"].number_format = "yyyy/m/d h:mm:ss"
+    elif date_1904:
+        sheet["B5"] = datetime(2024, 6, 30)
         sheet["B5"].number_format = "yyyy/m/d"
+    else:
+        sheet["B5"] = 10.25
     sheet["C5"] = 12
     sheet["D5"] = 23
     sheet["A6"] = "公司甲"
@@ -896,20 +904,28 @@ def run_case(
     source_filename: str = "sample_2024-06-30.xlsx",
     cached_formula: bool = False,
     date_1904: bool = False,
+    time_only: bool = False,
 ) -> dict[str, object]:
-    case_name = (
-        "date_1904_calendar_value"
-        if date_1904
-        else "no_date_formula_cache"
-        if cached_formula
-        else "suffix"
-        if row_suffix
-        else "no_suffix"
-    )
+    if time_only:
+        case_name = (
+            f"date_{'1904' if date_1904 else '1900'}_time_only_"
+            f"{'row_suffix' if row_suffix else 'no_suffix'}"
+        )
+    elif date_1904:
+        case_name = "date_1904_calendar_value"
+    elif cached_formula:
+        case_name = "no_date_formula_cache"
+    else:
+        case_name = "suffix" if row_suffix else "no_suffix"
     case = root / case_name
     case.mkdir()
     source = case / source_filename
-    make_input(source, cached_formula=cached_formula, date_1904=date_1904)
+    make_input(
+        source,
+        cached_formula=cached_formula,
+        date_1904=date_1904,
+        time_only=time_only,
+    )
     python_output = case / "python_output"
     rust_output = case / "rust_output"
     config = case / "config.xlsx"
@@ -984,6 +1000,32 @@ def run_case(
             "actual_engine": date_projection_event["actual_engine"],
             "stage_elapsed_ms_recorded": True,
         }
+    time_normalization = None
+    if time_only:
+        time_normalization_events = [
+            event
+            for event in history.get("events", [])
+            if event.get("phase") == "subday_time_normalization"
+        ]
+        if len(time_normalization_events) != 1:
+            raise AssertionError(
+                f"expected one sub-day time normalization event: {time_normalization_events}"
+            )
+        time_normalization_event = time_normalization_events[0]
+        if (
+            time_normalization_event.get("status") != "completed"
+            or time_normalization_event.get("actual_engine") != "pytools-core"
+            or not isinstance(time_normalization_event.get("stage_elapsed_ms"), int)
+        ):
+            raise AssertionError(
+                f"unexpected sub-day time normalization event: {time_normalization_event}"
+            )
+        time_normalization = {
+            "phase": time_normalization_event["phase"],
+            "status": time_normalization_event["status"],
+            "actual_engine": time_normalization_event["actual_engine"],
+            "stage_elapsed_ms_recorded": True,
+        }
     assert_parity(python_target, candidate)
     assert_parity(python_target, committed_target)
     if cached_formula:
@@ -1000,8 +1042,10 @@ def run_case(
     result = {
         "row_suffix": row_suffix,
         "cached_formula_value_projected": cached_formula,
+        "time_only_value": time_only,
         "source_date_system": "1904" if date_1904 else "1900",
         "calendar_date_projection": date_projection,
+        "subday_time_normalization": time_normalization,
         "blank_data_date_format": "yyyy/m/d" if cached_formula else "not_applicable",
         "summary_status": "passed",
         "target_append_status": "passed",
@@ -1173,6 +1217,72 @@ def main() -> int:
                 json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
             )
             print(json.dumps({"report": str(report_path), "result": result}, ensure_ascii=False))
+        return 0
+
+    if sys.argv[1:] == ["--subday-time-only"]:
+        with tempfile.TemporaryDirectory(
+            prefix="pytools-wide-subday-time-probe-", ignore_cleanup_errors=True
+        ) as temp:
+            results = [
+                run_case(Path(temp), row_suffix, date_1904=date_1904, time_only=True)
+                for date_1904 in (False, True)
+                for row_suffix in (False, True)
+            ]
+            report = {
+                "schema_version": 1,
+                "suite": "pytools.timeline.wide_summary_subday_time_only_parity",
+                "date": date.today().isoformat(),
+                "status": "passed_synthetic_python_rust_parity",
+                "baseline": "PyCode/core/wide_397_398.py::run_wide_summary",
+                "rust_entry": "pytools menu -> timeline -> wide summary (row suffix and no suffix)",
+                "input": {
+                    "format": "xlsx",
+                    "kind": "synthetic",
+                    "date_systems": ["1900", "1904"],
+                    "cases": [
+                        "time-only values below one day in metric cells",
+                        "midnight and millisecond precision",
+                        "subday serial rounded into the following calendar day",
+                        "row-suffix and no-suffix summary variants",
+                    ],
+                },
+                "comparison": {
+                    "all_four_workbook_projections": "exact",
+                    "calendar_date_projection_events": [
+                        result["calendar_date_projection"]
+                        for result in results
+                        if result["calendar_date_projection"] is not None
+                    ],
+                    "subday_time_normalization_events": [
+                        result["subday_time_normalization"] for result in results
+                    ],
+                    "source_and_configuration_unchanged": True,
+                    "all_candidates_and_committed_targets": "exact",
+                },
+                "results": results,
+                "safety": {
+                    "source_unchanged": True,
+                    "configuration_unchanged": True,
+                    "outputs_temporary_only": True,
+                    "report_contains_input_filenames_or_cell_values": False,
+                },
+                "limitations": [
+                    "Synthetic input only; a sanitized real wide-summary workbook is still required for business acceptance.",
+                    "Other input formats and elapsed durations remain separately scoped.",
+                    "Linux targets and offline deb acceptance were not tested.",
+                ],
+            }
+            report_path = (
+                WORKSPACE
+                / "pytools-core"
+                / "probe"
+                / "reports"
+                / f"wide_summary_subday_time_parity_{date.today():%Y%m%d}.json"
+            )
+            report_path.write_text(
+                json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+            )
+            print(json.dumps({"report": str(report_path), "results": results}, ensure_ascii=False))
         return 0
 
     summary_report_path = WORKSPACE / "pytools-core" / "probe" / "reports" / "wide_summary_parity_20261023.json"

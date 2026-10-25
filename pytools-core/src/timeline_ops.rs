@@ -1343,26 +1343,29 @@ fn run_wide_summary_inner(
             }
         };
         let date_projection_started = Instant::now();
+        let source_uses_1904_epoch;
         match wide_calendar_date_values(path, &workbook.sheets) {
-            Ok(Some(values)) => {
-                let projected_dates =
-                    overlay_wide_calendar_date_values(&mut workbook.sheets, &values);
-                emitter.emit(
-                    "calendar_date_projection",
-                    "completed",
-                    format!("已按工作簿日期系统归一化 {projected_dates} 个日历日期"),
-                    Some(input_index),
-                    Some(date_projection_started.elapsed()),
-                    &[
-                        "pytools-core",
-                        "excel-reader",
-                        "calamine ISO date projection",
-                    ],
-                    Some("calamine"),
-                    None,
-                );
+            Ok((uses_1904_epoch, values)) => {
+                source_uses_1904_epoch = uses_1904_epoch;
+                if uses_1904_epoch {
+                    let projected_dates =
+                        overlay_wide_calendar_date_values(&mut workbook.sheets, &values);
+                    emitter.emit(
+                        "calendar_date_projection",
+                        "completed",
+                        format!("已按工作簿日期系统归一化 {projected_dates} 个日历日期"),
+                        Some(input_index),
+                        Some(date_projection_started.elapsed()),
+                        &[
+                            "pytools-core",
+                            "excel-reader",
+                            "calamine ISO date projection",
+                        ],
+                        Some("calamine"),
+                        None,
+                    );
+                }
             }
-            Ok(None) => {}
             Err(error) if global.error_policy == "continue" => {
                 emitter.progress.failed_inputs += 1;
                 emitter.emit(
@@ -1408,6 +1411,21 @@ fn run_wide_summary_inner(
                     .with_context(|| format!("project calendar dates from {}", path.display()));
             }
         };
+        let time_normalization_started = Instant::now();
+        let normalized_subday_values =
+            normalize_wide_subday_serials(&mut workbook.sheets, source_uses_1904_epoch);
+        if normalized_subday_values > 0 {
+            emitter.emit(
+                "subday_time_normalization",
+                "completed",
+                format!("按 PyCode 语义规范化 {normalized_subday_values} 个小于一天的日期时间值"),
+                Some(input_index),
+                Some(time_normalization_started.elapsed()),
+                &["pytools-core", "Calamine serial values"],
+                Some("pytools-core"),
+                None,
+            );
+        }
         let aggregation_started = Instant::now();
         emitter.emit(
             "rule_aggregation",
@@ -1792,14 +1810,14 @@ fn wide_rule_compatible(rule: &TimelineRule) -> bool {
 fn wide_calendar_date_values(
     path: &Path,
     sheets: &[SheetDump],
-) -> Result<Option<HashMap<(String, String), String>>> {
+) -> Result<(bool, HashMap<(String, String), String>)> {
     let has_datetime_serial = sheets.iter().any(|sheet| {
         sheet.values.values().any(|value| {
             value.get("type").and_then(serde_json::Value::as_str) == Some("datetime_serial")
         })
     });
     if !has_datetime_serial || !uses_1904_date_system(path)? {
-        return Ok(None);
+        return Ok((false, HashMap::new()));
     }
 
     let max_columns = sheets
@@ -1816,7 +1834,62 @@ fn wide_calendar_date_values(
             }
         }
     }
-    Ok(Some(dates))
+    Ok((true, dates))
+}
+
+fn normalize_wide_subday_serials(sheets: &mut [SheetDump], date_1904: bool) -> usize {
+    let mut normalized = 0;
+    for sheet in sheets {
+        for cell in sheet.values.values_mut() {
+            if cell.get("type").and_then(serde_json::Value::as_str) != Some("datetime_serial") {
+                continue;
+            }
+            let Some(serial) = cell.get("value").and_then(serde_json::Value::as_f64) else {
+                continue;
+            };
+            let Some(projected) = wide_python_subday_value(serial, date_1904) else {
+                continue;
+            };
+            *cell = projected;
+            normalized += 1;
+        }
+    }
+    normalized
+}
+
+fn wide_python_subday_value(serial: f64, date_1904: bool) -> Option<serde_json::Value> {
+    if !serial.is_finite() || !(0.0..1.0).contains(&serial) {
+        return None;
+    }
+
+    // openpyxl rounds Excel day fractions to the nearest millisecond using
+    // Python's ties-to-even round, then returns time for values still in-day.
+    let rounded_milliseconds = (serial * 86_400.0 * 1000.0).round_ties_even();
+    if rounded_milliseconds >= 86_400_000.0 {
+        let next_day = if date_1904 {
+            "1904-01-02"
+        } else {
+            "1900-01-02"
+        };
+        return Some(serde_json::json!({
+            "type": "datetime_iso",
+            "value": format!("{next_day}T00:00:00.000")
+        }));
+    }
+
+    let milliseconds = rounded_milliseconds as u64;
+    let hours = milliseconds / 3_600_000;
+    let minutes = milliseconds / 60_000 % 60;
+    let seconds = milliseconds / 1_000 % 60;
+    let millis = milliseconds % 1_000;
+    let value = if millis == 0 {
+        format!("{hours:02}:{minutes:02}:{seconds:02}")
+    } else {
+        // datetime.time.__str__ prints a nonzero microsecond component using
+        // six digits; openpyxl's millisecond precision supplies three zeros.
+        format!("{hours:02}:{minutes:02}:{seconds:02}.{millis:03}000")
+    };
+    Some(serde_json::json!({"type": "string", "value": value}))
 }
 
 fn overlay_wide_calendar_date_values(
@@ -1998,7 +2071,17 @@ fn wide_datetime_serial(text: &str) -> Option<f64> {
         })
         .ok()?;
     let epoch = NaiveDate::from_ymd_opt(1899, 12, 30)?.and_hms_opt(0, 0, 0)?;
-    Some(datetime.signed_duration_since(epoch).num_milliseconds() as f64 / 86_400_000.0)
+    let serial = datetime.signed_duration_since(epoch).num_milliseconds() as f64 / 86_400_000.0;
+    let days_from_epoch = datetime
+        .date()
+        .signed_duration_since(epoch.date())
+        .num_days();
+    // Match openpyxl's 1900 calendar correction for serial days 1 through 60.
+    Some(if (1..=60).contains(&days_from_epoch) {
+        serial - 1.0
+    } else {
+        serial
+    })
 }
 
 fn wide_duration_serial(text: &str) -> Option<f64> {
@@ -3369,7 +3452,10 @@ fn write_compare_summary_table(workbook: &mut Workbook, rows: &[Vec<String>]) ->
 
 #[cfg(test)]
 mod keyword_match_tests {
-    use super::{keyword_match, overlay_wide_calendar_date_values};
+    use super::{
+        keyword_match, normalize_wide_subday_serials, overlay_wide_calendar_date_values,
+        wide_datetime_serial, wide_python_subday_value,
+    };
     use excel_reader::SheetDump;
     use serde_json::json;
     use std::collections::{BTreeMap, HashMap};
@@ -3421,5 +3507,61 @@ mod keyword_match_tests {
         assert_eq!(overlay_wide_calendar_date_values(&mut sheets, &dates), 1);
         assert_eq!(sheets[0].values["A1"]["type"], "datetime_iso");
         assert_eq!(sheets[0].values["A2"]["type"], "datetime_serial");
+    }
+
+    #[test]
+    fn wide_subday_values_match_openpyxl_time_and_rounding_semantics() {
+        assert_eq!(
+            wide_python_subday_value(0.0, true).unwrap(),
+            json!({"type":"string", "value":"00:00:00"})
+        );
+        assert_eq!(
+            wide_python_subday_value(0.5, false).unwrap(),
+            json!({"type":"string", "value":"12:00:00"})
+        );
+        assert_eq!(
+            wide_python_subday_value(0.999_999_999, true).unwrap(),
+            json!({"type":"datetime_iso", "value":"1904-01-02T00:00:00.000"})
+        );
+        assert_eq!(
+            wide_python_subday_value(0.999_999_999, false).unwrap(),
+            json!({"type":"datetime_iso", "value":"1900-01-02T00:00:00.000"})
+        );
+        assert!(wide_python_subday_value(-0.5, false).is_none());
+        assert!(wide_python_subday_value(1.0, false).is_none());
+
+        assert_eq!(wide_datetime_serial("1900-01-02T00:00:00.000"), Some(2.0));
+        assert_eq!(wide_datetime_serial("1900-03-01T00:00:00.000"), Some(61.0));
+    }
+
+    #[test]
+    fn wide_subday_normalization_only_changes_typed_datetime_serials() {
+        let mut values = BTreeMap::new();
+        values.insert(
+            "A1".to_owned(),
+            json!({"type":"datetime_serial", "value":0.5}),
+        );
+        values.insert("A2".to_owned(), json!({"type":"number", "value":0.5}));
+        let mut sheets = vec![SheetDump {
+            name: "Report".to_owned(),
+            values,
+            formulas: BTreeMap::new(),
+            formula_status: "not_applicable".to_owned(),
+            merges: Vec::new(),
+            merge_status: "not_applicable".to_owned(),
+            comments: BTreeMap::new(),
+            comments_status: "not_applicable".to_owned(),
+            conditional_formatting: Vec::new(),
+            conditional_formatting_status: "not_applicable".to_owned(),
+            data_validations: Vec::new(),
+            data_validations_status: "not_applicable".to_owned(),
+        }];
+
+        assert_eq!(normalize_wide_subday_serials(&mut sheets, false), 1);
+        assert_eq!(
+            sheets[0].values["A1"],
+            json!({"type":"string", "value":"12:00:00"})
+        );
+        assert_eq!(sheets[0].values["A2"]["type"], "number");
     }
 }
