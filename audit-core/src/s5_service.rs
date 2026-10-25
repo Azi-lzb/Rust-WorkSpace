@@ -40,6 +40,8 @@ pub struct S5RuleOutcome {
     pub triggered: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error_code: Option<String>,
+    #[serde(skip_serializing_if = "serde_json::Value::is_null", default)]
+    pub error_evidence: serde_json::Value,
     #[serde(skip_serializing_if = "String::is_empty", default)]
     pub error_message: String,
     #[serde(default)]
@@ -739,6 +741,7 @@ pub fn evaluate_rule(
             };
             outcome.status = status;
             outcome.error_code = Some(code);
+            outcome.error_evidence = error.evidence.clone();
             outcome.error_message = error.message;
             let cache_snapshot: Vec<EvalValue> =
                 hooks.variable_cache.borrow().values().cloned().collect();

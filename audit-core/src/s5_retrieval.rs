@@ -41,11 +41,46 @@ impl RetrievalFailure {
         self
     }
 
+    /// Mirror of `SourceRepository.retrieve`'s failure enrichment: the
+    /// function name and the resolved sheet (explicit argument, keyword, or
+    /// rule default) are added unless already present.
+    pub fn enriched_for(
+        mut self,
+        function_name: &str,
+        args: &[EvalArgument],
+        keywords: &BTreeMap<String, String>,
+        rule_default_sheet: &str,
+    ) -> Self {
+        let evidence = self.evidence.take();
+        let mut object = match evidence {
+            JsonValue::Object(map) => map,
+            _ => serde_json::Map::new(),
+        };
+        object
+            .entry("function".to_owned())
+            .or_insert_with(|| json!(function_name));
+        if matches!(function_name, "V_CUR" | "V_PRE") {
+            let explicit = args.first().and_then(|argument| match argument {
+                EvalArgument::Text(text) if args.len() == 3 => Some(text.clone()),
+                _ => None,
+            });
+            let sheet = explicit
+                .or_else(|| keywords.get("sheet").cloned())
+                .unwrap_or_else(|| rule_default_sheet.to_owned());
+            object
+                .entry("sheet".to_owned())
+                .or_insert_with(|| json!(sheet));
+        }
+        self.evidence = JsonValue::Object(object);
+        self
+    }
+
     pub fn to_eval_error(self) -> crate::s5_eval::EvalError {
         crate::s5_eval::EvalError {
             kind: EvalErrorKind::Evaluation,
             message: self.message,
             code: Some(self.code),
+            evidence: self.evidence,
         }
     }
 }
@@ -148,6 +183,26 @@ impl S5Retrieval {
 
     /// Mirror of `_retrieve_template` for `V_CUR`/`V_PRE` without contracts.
     pub fn retrieve(
+        &mut self,
+        function_name: &str,
+        args: &[EvalArgument],
+        keywords: &BTreeMap<String, String>,
+        rule_business: &str,
+        rule_default_sheet: &str,
+        rule_default_source: &str,
+    ) -> Result<EvalValue, RetrievalFailure> {
+        self.retrieve_inner(
+            function_name,
+            args,
+            keywords,
+            rule_business,
+            rule_default_sheet,
+            rule_default_source,
+        )
+        .map_err(|failure| failure.enriched_for(function_name, args, keywords, rule_default_sheet))
+    }
+
+    fn retrieve_inner(
         &mut self,
         function_name: &str,
         args: &[EvalArgument],

@@ -29,14 +29,18 @@ pub enum EvalErrorKind {
     Configuration,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct EvalError {
     pub kind: EvalErrorKind,
     pub message: String,
     /// Optional retrieval error code (e.g. SHEET_NOT_FOUND) carried through
     /// the call_value hook for service-level status classification.
     pub code: Option<String>,
+    /// Optional retrieval failure evidence carried alongside the code.
+    pub evidence: serde_json::Value,
 }
+
+impl Eq for EvalError {}
 
 impl EvalError {
     pub fn evaluation(message: impl Into<String>) -> Self {
@@ -44,6 +48,7 @@ impl EvalError {
             kind: EvalErrorKind::Evaluation,
             message: message.into(),
             code: None,
+            evidence: serde_json::Value::Null,
         }
     }
 
@@ -52,11 +57,17 @@ impl EvalError {
             kind: EvalErrorKind::Configuration,
             message: message.into(),
             code: None,
+            evidence: serde_json::Value::Null,
         }
     }
 
     pub fn with_code(mut self, code: impl Into<String>) -> Self {
         self.code = Some(code.into());
+        self
+    }
+
+    pub fn with_evidence(mut self, evidence: serde_json::Value) -> Self {
+        self.evidence = evidence;
         self
     }
 }
@@ -808,8 +819,8 @@ fn require_boolean(value: &EvalValue, function: &str) -> Result<bool, EvalError>
     }
 }
 
-fn with_numeric_mode(value: EvalValue) -> EvalValue {
-    if value.numeric_mode != "excel_binary64" {
+fn with_numeric_mode(value: EvalValue, rule_mode: &str) -> EvalValue {
+    if rule_mode != "excel_binary64" {
         return value;
     }
     match value.value {
@@ -818,9 +829,21 @@ fn with_numeric_mode(value: EvalValue) -> EvalValue {
             updated.value = EvalScalar::Number(NumberValue::Binary64(excel_round15(raw)));
             updated
         }
-        EvalScalar::Blank => {
+        EvalScalar::Number(NumberValue::Decimal(_)) => {
+            let converted = match &value.value {
+                EvalScalar::Number(NumberValue::Decimal(decimal)) => {
+                    NumberValue::Binary64(excel_round15(decimal.to_f64()))
+                }
+                _ => unreachable!("matched decimal above"),
+            };
             let mut updated = value;
-            updated.value = EvalScalar::Number(NumberValue::Binary64(0.0));
+            updated.value = EvalScalar::Number(converted);
+            updated
+        }
+        EvalScalar::Blank => {
+            // Python keeps the blank kind and only nulls the stored value.
+            let mut updated = value;
+            updated.numeric_mode = rule_mode.to_owned();
             updated
         }
         _ => value,
@@ -1032,7 +1055,10 @@ pub fn evaluate(
                 Ok(EvalValue::boolean(*value, Vec::new(), true))
             }
         },
-        Node::Variable(variable) => Ok(with_numeric_mode(hooks.resolve_variable(&variable.name)?)),
+        Node::Variable(variable) => Ok(with_numeric_mode(
+            hooks.resolve_variable(&variable.name)?,
+            numeric_mode,
+        )),
         Node::Tuple(tuple) => Ok(EvalValue {
             value: EvalScalar::Tuple(tuple.values.clone()),
             kind: "tuple",
@@ -1266,6 +1292,7 @@ pub fn evaluate(
                         call.keywords.iter().cloned().collect();
                     Ok(with_numeric_mode(
                         hooks.call_value(name, &arguments, &keywords)?,
+                        numeric_mode,
                     ))
                 }
                 _ => {

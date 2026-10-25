@@ -1,0 +1,41 @@
+# S5-F01 结果输出切片（真实运行文件级对拍）
+
+- 时间：2026-10-25 16:46 (+08:00)
+- 执行者：Codex Audit migration agent
+- 分支：audit-dev
+- 修改前 commit：9016897
+- 修改后 commit：随本轮本地提交，提交 ID 见 Git 历史。
+- WIP：开始时 worktree 干净；验证结束时仅新增输出模块、对拍测试与比较器、脱敏报告、清单更新、求值/取数侧三处保真修复和本记录。未修改共享 crates、源 Python 项目、真实工作簿、pytools-core、Cargo.toml 或 Cargo.lock。
+
+## 目的
+
+承接 run 编排切片，移植 `outputs.write_run_outputs` 的单业务形态（审核副本、审核结果工作簿、运行总账），使 S5 运行的完整产出在 Rust 侧复现，并以文件级对拍验收。
+
+## 修改文件
+
+- `audit-core/src/s5_outputs.rs`：新增输出模块（run 目录结构、副本复制与 sha256 三方清单、审核结果工作簿写入（excel_writer/rust_xlsxwriter：表头/正文/J-K-L 专用格式、超链接、precision 数字格式、冻结/筛选/列宽像素接口/横向 A3 fitToPage/重复标题行、恒建空条件格式触发表）、运行总账稳定字段、safe_name/sha256/相对链接辅助）。
+- `audit-core/src/s5_eval.rs`：`with_numeric_mode` 改按规则模式参数（Python 语义：excel_binary64 时 Decimal→round15 f64、blank 仅置 None 保种类）；`EvalError` 增加 evidence 字段与 `with_evidence`；Decimal28 增加 `is_integral`；新增 `parse_decimal28`。
+- `audit-core/src/s5_retrieval.rs`：`retrieve` 拆出 `retrieve_inner` 并在失败时按 Python `retrieve` except 分支富化 evidence（function/sheet setdefault，不覆盖 cells）；`to_eval_error` 携带 evidence。
+- `audit-core/src/s5_service.rs`：错误路径把 `error.evidence` 写入 outcome `error_evidence`；取数失败错误码直取（STRUCTURE/CONFIG 集合定状态，其余 RETRIEVAL_FAILED）。
+- `audit-core/tests/s5_outputs_parity.rs`：env 驱动的 `#[ignore]` 输出对拍运行器。
+- `audit-core/tests/compare/compare_s5_outputs.py`：Python 比较器（AUDIT3_WRITER_ENGINE=openpyxl 为样式基线；副本字节比较；工作簿值/类型/格式/超链接/列宽 span 展开/行高/冻结/筛选/网格线/页面设置/表头与正文样式逐项比较；总账稳定字段与清单比较；颜色 6 位 RGB 归一、fitToWidth=1 与省略等价；报告仅聚合计数与路径样本）。
+- `audit-core/probe/reports/s5_run_outputs_windows_real_20261025.json`：新增脱敏机器报告。
+- `audit-core/src/lib.rs`：注册 `s5_outputs`。
+- `audit-core/MIGRATION_INVENTORY.md`：S5-F01 行更新并新增切片小节。
+- 本记录。
+
+## 验证
+
+- 编译与测试：`cargo build --offline -p audit-core` 通过；`cargo test --offline --locked -p audit-core` 全量 195 通过、0 失败。
+- 跨语言文件级对拍（Windows 原生）：真实 config-real 配置 + 真实单位贷款机构审核副本（同一临时目录），整业务 377 规则运行后双侧输出——审核副本集合与字节一致；审核结果.xlsx（2411 个非空格）表清单、值/类型、数字格式、超链接、列宽、冻结/筛选/网格线/页面设置/标题行、行高、表头与正文样式、J/K/L 右对齐差异 0；运行总账 run_id/status_counts/run_status 与副本清单（角色/顺序/快照标记/三哈希）一致，总差异 0。
+- 文件级对拍暴露并修复三处求值/取数保真缺陷（此前值级对拍被归一化掩盖）：blank 经 `_with_numeric_mode` 误转数值 0（现保空值种类）；Decimal 值在 excel_binary64 规则下漏收敛（现 round15 f64）；取数失败缺 function/sheet evidence（现按 Python setdefault 富化，STRUCTURE_ERROR 行的错误工作表随之对齐）。
+- 序列化表示差如实记录：颜色 6 位 RGB 归一（rust 6 位/openpyxl 8 位前缀）、fitToWidth=1 与属性省略等价、分组列宽按 min/max 展开；三者 Excel 语义一致。
+- 输入未变；报告不含路径、工作表名或业务值。
+
+## 未执行项、已知问题与回滚
+
+- 未迁移：CLI 接线（run_rules+write_run_outputs 的产品入口）、V_EXT 外部取数与 external_layout、外部文件地址扫描、数字区域模板投影（绑定模板）、上期绑定、输入哈希完整性降级（INPUT_CHANGED_DURING_RUN 改写结果）、结构快照比较与持久化、数据质量告警、适用范围批量展开的 schema 快照；S5-F01 整体仍未验证。
+- 已知边界：二进制模式数值经 round15 后以 f64 写出（openpyxl 基线 Decimal 亦为数值格，读回一致）；decimal 模式规则的值按 canonical 字符串转 f64 写数值格（真实业务值均在 f64 精确范围）。
+- 共享请求状态：请求 #3（载荷基线等价）与 #4（校验器行操作映射）已由用户转交 main，本轮未收到实现。
+- 回滚：还原本提交即可；无用户工作簿恢复项。
+- 【组件版本】不升级。
