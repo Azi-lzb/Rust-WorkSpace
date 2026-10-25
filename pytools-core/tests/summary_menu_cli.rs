@@ -208,6 +208,65 @@ fn interactive_summary_menu_routes_comment_summary_with_template_and_sources() -
 }
 
 #[test]
+fn interactive_comment_summary_formats_elapsed_duration_header_as_python_timedelta() -> Result<()> {
+    let root = TestDirectory::new()?;
+    let config = create_app_config(root.path())?;
+    let template = root.path().join("duration template.xlsx");
+    let source = root.path().join("duration source.xlsx");
+    create_elapsed_duration_template(&template)?;
+    create_elapsed_duration_source(&source)?;
+    let template_before = fs::read(&template)?;
+    let source_before = fs::read(&source)?;
+
+    let input = format!("6\n2\n{}\n{}\n0\n", template.display(), source.display());
+    let output = run_menu(&config, &input)?;
+    assert!(
+        output.status.success(),
+        "interactive PT-6-2 duration summary failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let logs = root.path().join("app").join("logs");
+    let (_history_path, history, _) = read_single_history(&logs, "PT-6-2_")?;
+    assert_eq!(history["status"], "succeeded");
+    assert_eq!(history["summary"]["rows"], 3);
+    assert!(history["events"].as_array().is_some_and(|events| {
+        events.iter().any(|event| {
+            event["phase"] == "template_read"
+                && event["status"] == "succeeded"
+                && event["actual_engine"] == "calamine + namespace-aware OOXML supplement"
+        }) && events.iter().any(|event| {
+            event["phase"] == "output_save"
+                && event["status"] == "succeeded"
+                && event["actual_engine"] == "rust_xlsxwriter"
+        })
+    }));
+
+    let summary_path = PathBuf::from(
+        history["summary"]["path"]
+            .as_str()
+            .context("duration summary path is missing from history")?,
+    );
+    let summary = read_workbook(&summary_path)?;
+    let sheet = summary
+        .sheets
+        .iter()
+        .find(|sheet| sheet.name == "Branch_A")
+        .context("duration summary output sheet is missing")?;
+    assert_eq!(
+        sheet.values.get("C1"),
+        Some(&serde_json::json!({
+            "type": "string",
+            "value": "1 day, 3:15:20.123000"
+        })),
+        "interactive summary must format elapsed header values like Python timedelta"
+    );
+    assert_eq!(fs::read(&template)?, template_before, "template changed");
+    assert_eq!(fs::read(&source)?, source_before, "source workbook changed");
+    Ok(())
+}
+
+#[test]
 fn summary_comments_cli_matches_python_missing_region_error() -> Result<()> {
     let root = TestDirectory::new()?;
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -299,6 +358,35 @@ fn create_used_range_source(path: &Path, area: &str, amount: f64) -> Result<()> 
     workbook
         .save(path)
         .context("save interactive used-range workbook")
+}
+
+fn create_elapsed_duration_template(path: &Path) -> Result<()> {
+    let mut workbook = rust_xlsxwriter::Workbook::new();
+    let worksheet = workbook.add_worksheet();
+    worksheet.set_name("Branch_A")?;
+    worksheet.write_string(1, 0, "row start")?;
+    worksheet.insert_note(1, 0, &rust_xlsxwriter::Note::new("行区域1"))?;
+    worksheet.write_string(3, 0, "row end")?;
+    worksheet.insert_note(3, 0, &rust_xlsxwriter::Note::new("行区域#1"))?;
+    let elapsed_format = rust_xlsxwriter::Format::new().set_num_format("[h]:mm:ss.000");
+    worksheet.write_number_with_format(0, 1, 1.1356495717592594, &elapsed_format)?;
+    worksheet.insert_note(0, 1, &rust_xlsxwriter::Note::new("列区域1"))?;
+    worksheet.insert_note(1, 1, &rust_xlsxwriter::Note::new("列区域#1"))?;
+    workbook
+        .save(path)
+        .context("save interactive elapsed duration template")
+}
+
+fn create_elapsed_duration_source(path: &Path) -> Result<()> {
+    let mut workbook = rust_xlsxwriter::Workbook::new();
+    let worksheet = workbook.add_worksheet();
+    worksheet.set_name("Branch_A")?;
+    for (row, amount) in [(1, 10.5), (2, 20.0), (3, 0.0)] {
+        worksheet.write_number(row, 1, amount)?;
+    }
+    workbook
+        .save(path)
+        .context("save interactive elapsed duration source")
 }
 
 fn run_menu(config: &Path, input: &str) -> Result<Output> {
