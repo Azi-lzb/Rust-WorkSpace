@@ -44,6 +44,7 @@ pub mod s5_config_check;
 pub mod s5_config_dsl;
 pub mod s5_eval;
 pub mod s5_layout;
+pub mod s5_retrieval;
 pub mod s5_scan;
 pub mod s5_period_recognition;
 pub mod s5_template_matching;

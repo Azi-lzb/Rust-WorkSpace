@@ -15,7 +15,7 @@ use crate::s5_layout::{NamedRegion, STRUCTURE_PREFIXES};
 use excel_reader::{read_workbook, WorkbookDump};
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct ScanPairLocation {
@@ -41,6 +41,7 @@ pub struct ScanResult {
 }
 
 pub struct ScanBook {
+    path: PathBuf,
     dump: WorkbookDump,
     /// (sheet, row) -> merged spans (min_col, max_col, anchor_row, anchor_col).
     merged_by_row: BTreeMap<(String, usize), Vec<(usize, usize, usize, usize)>>,
@@ -111,6 +112,7 @@ impl ScanBook {
             }
         }
         Ok(Self {
+            path: path.to_path_buf(),
             dump,
             merged_by_row,
             sheet_names,
@@ -119,6 +121,61 @@ impl ScanBook {
 
     pub fn sheet_names(&self) -> &[String] {
         &self.sheet_names
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    /// Whether the cell carries a formula (Python `data_type == "f"`).
+    pub fn sheet_has_formula(&self, sheet: &str, row: usize, column: usize) -> bool {
+        self.dump
+            .sheets
+            .iter()
+            .find(|candidate| candidate.name == sheet)
+            .map(|sheet_dump| sheet_dump.formulas.contains_key(&address_of(row, column)))
+            .unwrap_or(false)
+    }
+
+    /// Stored (cached) cell content as `(type, text)`; numeric cells render
+    /// through their shortest JSON text.
+    pub fn stored_value(&self, sheet: &str, row: usize, column: usize) -> (String, String) {
+        self.dump
+            .sheets
+            .iter()
+            .find(|candidate| candidate.name == sheet)
+            .and_then(|sheet_dump| sheet_dump.values.get(&address_of(row, column)))
+            .map(|value| {
+                let kind = value
+                    .get("type")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default()
+                    .to_owned();
+                let text = match value.get("value") {
+                    Some(serde_json::Value::String(text)) => text.trim().to_owned(),
+                    Some(serde_json::Value::Number(number)) => number.to_string(),
+                    Some(serde_json::Value::Bool(flag)) => {
+                        if *flag {
+                            "True".to_owned()
+                        } else {
+                            "False".to_owned()
+                        }
+                    }
+                    _ => String::new(),
+                };
+                (kind, text)
+            })
+            .unwrap_or_else(|| ("empty".to_owned(), String::new()))
+    }
+
+    /// Cell count probe for diagnostics.
+    pub fn sheet_value_count(&self, sheet: &str) -> usize {
+        self.dump
+            .sheets
+            .iter()
+            .find(|candidate| candidate.name == sheet)
+            .map(|sheet_dump| sheet_dump.values.len())
+            .unwrap_or(0)
     }
 
     pub fn sheet_max_row(&self, sheet: &str) -> usize {
@@ -141,7 +198,7 @@ impl ScanBook {
         let mut max_row = 0usize;
         let mut max_col = 0usize;
         for address in sheet_dump.values.keys().chain(sheet_dump.formulas.keys()) {
-            if let Some((row, column)) = parse_cell(address) {
+            if let Some((column, row)) = parse_cell(address) {
                 max_row = max_row.max(row);
                 max_col = max_col.max(column);
             }

@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "suite": "audit.s5_retrieve_parity",
+  "status": "completed",
+  "sample_scope": {
+    "rule_call_samples": 8,
+    "business": "单位贷款",
+    "audit_period": "2026-07-31",
+    "files_copied_to_temporary": true
+  },
+  "comparison": {
+    "matched": 8,
+    "mismatch_indexes": [],
+    "mismatch_count": 0,
+    "error_cases": 0
+  },
+  "verification": {
+    "rust_runner": "audit-core/tests/s5_retrieve_parity.rs",
+    "python_baseline": "s1audit_configured.sources.SourceRepository.retrieve",
+    "inputs_unchanged": true,
+    "raw_values_persisted": false,
+    "capability_status": "unverified",
+    "production_route_eligible": false
+  },
+  "limitations": [
+    "Single-binding current-source retrieval without 数据源契约; the contract identity/period branches are not exercised by the real configuration (no contract sheet).",
+    "V_EXT external retrieval and the numeric-region template projection for bound templates remain separate slices."
+  ]
+}

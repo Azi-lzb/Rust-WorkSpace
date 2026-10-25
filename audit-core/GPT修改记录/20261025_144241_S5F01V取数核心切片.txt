@@ -1,0 +1,38 @@
+# S5-F01 V 取数核心切片
+
+- 时间：2026-10-25 14:42 (+08:00)
+- 执行者：Codex Audit migration agent
+- 分支：audit-dev
+- 修改前 commit：4cd3154
+- 修改后 commit：随本轮本地提交，提交 ID 见 Git 历史。
+- WIP：开始时 worktree 干净；验证结束时仅新增取数模块、对拍测试、Python 比较器、脱敏报告、清单更新和本记录。未修改共享 crates、源 Python 项目、真实工作簿、pytools-core、Cargo.toml 或 Cargo.lock。
+
+## 目的
+
+承接地址扫描切片，移植 `sources.SourceRepository._retrieve_template` 的无契约单绑定路径（真实配置形态：派生指标目录、无数据源契约表、`_template_index_from_paths` 直索引），使 V_CUR/V_PRE 真实取数在 Rust 侧复现，为求值 call_value 接线打通主链路。
+
+## 修改文件
+
+- `audit-core/src/s5_retrieval.rs`：新增取数模块。`RetrievalFailure`（code/message/evidence）、`S5Retrieval::bind`（期间/机构门控）、`retrieve`（参数解析、工作表解析、指标候选与全部错误门、索引缓存）、`locate_template_value`（ROW_PATH_NOT_FOUND/COLUMN_PATH_NOT_FOUND/STRUCTURE_ERROR/METRIC_AMBIGUOUS + `value()` 公式/错误值拒绝）、`convert_value`（空值门、文本/数值/整数检查、金额/比例/计数/普通数值单位换算、Evidence 22 字段构造）。取数产出 decimal 存储的 EvalValue（Python `_convert_value` 默认模式），由求值 `_with_numeric_mode` 收敛。
+- `audit-core/src/s5_scan.rs`：新增 `path` 字段与 `path()`/`sheet_has_formula`/`stored_value`（数值文本渲染）/`sheet_value_count`；修复 `sheet_extent` 的 parse_cell 解构交换缺陷（row/column 颠倒曾致整表区域 11×190 截断）。
+- `audit-core/tests/s5_retrieve_parity.rs`：env 驱动的 `#[ignore]` 对拍运行器（JSONL 取数请求 → 结果 JSONL）。
+- `audit-core/tests/compare/compare_s5_retrieve.py`：Python 比较器（SourceRepository + RuntimeContext 单绑定，采样启用规则的 V_CUR 字典调用，值/单位/证据归一化后逐字段比较，报告仅聚合计数）。
+- `audit-core/probe/reports/s5_retrieve_windows_real_20261025.json`：新增脱敏机器报告。
+- `audit-core/src/lib.rs`：注册 `s5_retrieval`。
+- `audit-core/MIGRATION_INVENTORY.md`：S5-F01 行更新并新增切片小节。
+- 本记录。
+
+## 验证
+
+- 编译与测试：`cargo build --offline -p audit-core` 通过；`cargo test --offline --locked -p audit-core` 全量 195 通过、0 失败。
+- 跨语言对拍（Windows 原生）：真实 config-real 生效配置 + 真实单位贷款机构审核副本（字节级临时副本），采样 8 条启用规则的 V_CUR 字典调用；Python SourceRepository.retrieve 与 Rust S5Retrieval::retrieve 的状态、值、种类、单位、指标类型、precision、Evidence 全字段（含 conversion 注记；raw_type 因双读取器单元类型差异在对拍中略去）与错误 code/message 差异 0（8/8 匹配，含正常取值与换算路径）。
+- 对拍中发现并修复 `sheet_extent` 的解构交换缺陷（该缺陷曾使未绑定回退区域截断为 11 行）。
+- 输入未变；报告不含路径、工作表名或取数值。
+
+## 未执行项、已知问题与回滚
+
+- 未迁移：数据源契约身份/期间校验分支（真实配置无契约表）、V_EXT 外部取数与 `external_layout`、`numeric_scope` 数字区域模板投影（绑定模板的数字区域解析）、检索缓存/`retrieval_trace`、S5 审核服务主流程与结果输出、CLI 接线；S5-F01 整体仍未验证。
+- 已知边界：`stored_value` 的数值文本经共享 reader 的 JSON 数值渲染（整数/int、小数/float 的 Python 原生类型差在对拍中按文本对齐）；源读取经共享 calamine（Python 侧 openpyxl 回退，双读取器对纯文本/数值单元格一致）。
+- 共享请求状态：main 已响应请求 #1/#2（已同步）；请求 #3（载荷基线等价，main 表态单独设计）与 #4（校验器行操作映射）未响应。
+- 回滚：删除新增模块/测试/比较器/报告，还原 s5_scan.rs、lib.rs、清单与本记录即可；无用户工作簿恢复项。
+- 【组件版本】不升级。
