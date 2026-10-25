@@ -701,3 +701,13 @@ Python 只读基线测试 test_extract_sheets_append_existing_output_keeps_previ
 Windows 原生 Rust CLI 与只读 PyCode 基线的合成对拍通过：2 个有效 XLSX、4 个匹配工作表、20 行输出，并包含重复规则、行头后缀、路径映射、数值/文本/布尔/日期值和 1 个损坏输入；工作表名、全部单元格值/类型、表头粗体、数值格式、工作表尺寸及冻结窗格完整投影一致。真实菜单 1→2 分号路径回退的输出与 PyCode 相同；开发者事件流与持久化历史一致。continue 策略保留成功结果并记录损坏输入；fail_fast 策略在首个损坏输入停止且不生成输出。另以启用目标追加的合成配置验证 CLI 明确报告 deferred，既有目标工作簿保持不变。机器报告：`probe/reports/timeline_extract_parity_20261025.json`；可重跑入口：`probe/compare_timeline_extract.py`。
 
 PT-1-2 可选目标簿追加未纳入已确认的 D01 目标写入合同，本轮未执行该操作，不能据此声明完整迁移。证据仅覆盖合成 XLSX 与菜单手工路径回退；原项目真实工作簿、Windows 原生文件对话框、本轮目标簿追加语义、其他格式以及麒麟 V10/UOS V20、glibc 2.28 与 deb 离线验收仍未完成；PT-1-2 状态为未验证。
+
+### 2026-10-25 PT-1-3/PT-1-4 Windows 原生文件对话框实测
+
+Windows 原生 `pytools.exe menu --config ... --log-view developer` 分别经 `pytools menu → 1 → 3`（行头加后缀）和 `→ 1 → 4`（行头不加后缀）打开系统文件选择对话框。每种模式选择一份隔离的合成 XLSX，确认在临时目录新建目标；只读原 PyCode 基线与 Rust 汇总、追加候选及提交后目标均通过现有完整投影/有效样式对拍。
+
+- PT-1-3：汇总 3 行（4×9），新目标追加 3 行、过滤重复 0 行；PyCode/Rust 投影精确一致，开发者历史记录 Calamine、`rust_xlsxwriter` 和目标执行 40 ms。
+- PT-1-4：汇总 3 行（4×9），新目标追加 2 行、过滤重复 1 行；PyCode/Rust 投影精确一致，开发者历史记录 Calamine、`rust_xlsxwriter` 和目标执行 42 ms。
+- 两种模式的源簿语义投影及配置单元格值均未改变；目标仅为隔离临时目录中的新文件。Windows 原生 `cargo test --offline --locked -p pytools-core --test timeline_menu_cli` 9/9 通过。机器证据追加至 `probe/reports/wide_summary_parity_20261023.json`。
+
+该验证只补齐合成数据上的原生文件对话框和菜单入口证据，不代表脱敏真实业务样本、真实模板全量保真、既有目标生产 capability、麒麟 V10/UOS V20、glibc 2.28 或离线 deb 验收；PT-1-3/1-4 整体仍为**未验证**。
