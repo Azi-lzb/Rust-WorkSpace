@@ -17,14 +17,17 @@
   "input": {
     "format": "xlsx",
     "date_system": "1904",
-    "sample_count": 2
+    "sample_count": 2,
+    "template_source_sheet_name": "  Branch_A  ",
+    "expected_output_sheet_name": "Branch_A"
   },
   "behaviors": [
     "formula template header remains formula text in the output workbook",
     "blank template header falls back to its Excel column letter",
     "boolean template header uses Python string capitalization",
     "numeric and date template headers use Python string conversion",
-    "numeric headers match Python scientific-notation thresholds, exponent signs, and padding"
+    "numeric headers match Python scientific-notation thresholds, exponent signs, and padding",
+    "template sheet output names trim surrounding whitespace like PyCode"
   ],
   "comparison": {
     "workbook_projection": "exact",

@@ -37,7 +37,7 @@ def create_template(path: Path) -> None:
     workbook = Workbook()
     workbook.epoch = CALENDAR_MAC_1904
     sheet = workbook.active
-    sheet.title = "Branch_A"
+    sheet.title = "  Branch_A  "
     sheet["A2"] = "row start"
     sheet["A2"].comment = Comment("行区域1", "probe")
     sheet["A4"] = "row end"
@@ -65,7 +65,7 @@ def create_template(path: Path) -> None:
 def create_source(path: Path) -> None:
     workbook = Workbook()
     sheet = workbook.active
-    sheet.title = "Branch_A"
+    sheet.title = "  Branch_A  "
     for row in range(2, 5):
         sheet.cell(row, 2).value = row * 10
         sheet.cell(row, 3).value = row * 100
@@ -135,6 +135,8 @@ def main() -> int:
         output_book = load_workbook(rust_output, data_only=False)
         try:
             output_sheet = output_book["Branch_A"]
+            if output_book.sheetnames != ["Branch_A"]:
+                raise AssertionError("Rust output sheet name did not match PyCode normalization")
             formula_header = output_sheet["C1"]
             blank_header = output_sheet["D1"]
             boolean_header = output_sheet["E1"]
@@ -173,13 +175,20 @@ def main() -> int:
             },
             "entry_route": "pytools summary-comments",
             "baseline": "PyCode/core/summary_321_322.py::run_summary_by_comment",
-            "input": {"format": "xlsx", "date_system": "1904", "sample_count": 2},
+            "input": {
+                "format": "xlsx",
+                "date_system": "1904",
+                "sample_count": 2,
+                "template_source_sheet_name": "  Branch_A  ",
+                "expected_output_sheet_name": "Branch_A",
+            },
             "behaviors": [
                 "formula template header remains formula text in the output workbook",
                 "blank template header falls back to its Excel column letter",
                 "boolean template header uses Python string capitalization",
                 "numeric and date template headers use Python string conversion",
                 "numeric headers match Python scientific-notation thresholds, exponent signs, and padding",
+                "template sheet output names trim surrounding whitespace like PyCode",
             ],
             "comparison": {
                 "workbook_projection": "exact",

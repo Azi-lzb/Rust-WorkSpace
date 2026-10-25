@@ -1297,11 +1297,11 @@ fn summarize_by_comments_inner(
     let workbook_result = (|| -> Result<Workbook> {
         let mut workbook = Workbook::new();
         let header_format = Format::new().set_bold();
-        for name in &spec_order {
+        let output_sheet_names = comment_summary_sheet_names(&spec_order);
+        for (name, sheet_name) in spec_order.iter().zip(&output_sheet_names) {
             let rows = &data[name];
-            let sheet_name = crate::sheet_extract::sanitize_sheet_name(name);
             let ws = workbook.add_worksheet();
-            ws.set_name(&sheet_name)?;
+            ws.set_name(sheet_name)?;
             ws.set_margins(0.75, 0.75, 1.0, 1.0, 0.5, 0.5);
             ws.set_formula_result_default("");
             for (col, header) in headers_by_sheet[name].iter().enumerate() {
@@ -2268,6 +2268,45 @@ fn disambiguate(names: &[String]) -> Vec<String> {
         .collect()
 }
 
+fn comment_summary_sheet_names(names: &[String]) -> Vec<String> {
+    let mut used = BTreeSet::new();
+    names
+        .iter()
+        .map(|name| {
+            let mut sanitized = name
+                .trim()
+                .chars()
+                .map(|character| {
+                    if matches!(character, ':' | '\\' | '/' | '?' | '*' | '[' | ']') {
+                        '_'
+                    } else {
+                        character
+                    }
+                })
+                .take(31)
+                .collect::<String>();
+            if sanitized.is_empty() {
+                sanitized = "Sheet".to_owned();
+            }
+            if used.insert(sanitized.clone()) {
+                return sanitized;
+            }
+
+            let base = sanitized.chars().take(28).collect::<String>();
+            for suffix in 2usize.. {
+                let candidate = format!("{base}_{suffix}")
+                    .chars()
+                    .take(31)
+                    .collect::<String>();
+                if used.insert(candidate.clone()) {
+                    return candidate;
+                }
+            }
+            unreachable!("worksheet names are bounded by Excel's 31-character limit")
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod patch_error_cells_tests {
     use super::*;
@@ -2365,6 +2404,30 @@ mod comment_region_tests {
         assert_eq!(
             probe_text(&serde_json::json!({"type":"datetime_serial", "value":46203.0})),
             "2026-06-30 00:00:00"
+        );
+    }
+
+    #[test]
+    fn comment_summary_output_sheet_names_match_python_normalization() {
+        let names = vec![
+            "  Sales  ".to_owned(),
+            "Sales".to_owned(),
+            "Regional/summary".to_owned(),
+            "   ".to_owned(),
+            "A".repeat(32),
+            "A".repeat(32),
+        ];
+
+        assert_eq!(
+            comment_summary_sheet_names(&names),
+            vec![
+                "Sales".to_owned(),
+                "Sales_2".to_owned(),
+                "Regional_summary".to_owned(),
+                "Sheet".to_owned(),
+                "A".repeat(31),
+                format!("{}_2", "A".repeat(28)),
+            ]
         );
     }
 }

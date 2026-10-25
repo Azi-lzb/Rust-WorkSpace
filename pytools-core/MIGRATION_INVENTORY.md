@@ -718,3 +718,11 @@ Windows 原生 `pytools.exe menu --config ... --log-view developer` 分别经 `p
 - 两种模式的源簿语义投影及配置单元格值均未改变；目标仅为隔离临时目录中的新文件。Windows 原生 `cargo test --offline --locked -p pytools-core --test timeline_menu_cli` 9/9 通过。机器证据追加至 `probe/reports/wide_summary_parity_20261023.json`。
 
 该验证只补齐合成数据上的原生文件对话框和菜单入口证据，不代表脱敏真实业务样本、真实模板全量保真、既有目标生产 capability、麒麟 V10/UOS V20、glibc 2.28 或离线 deb 验收；PT-1-3/1-4 整体仍为**未验证**。
+
+### 2026-10-25 PT-6-2 输出工作表名称与 PyCode 对齐
+
+用合成模板复现 PyCode 与 Rust 的页签名差异：模板和源簿页签名为 `  Branch_A  ` 时，PyCode 将汇总输出页签规范化为 `Branch_A`，此前 Rust 保留首尾空格。`summary-comments` 现对输出页签执行与 PyCode 一致的首尾空白清理、非法字符替换、31 字符截断、空名回退及重复名后缀；源工作表匹配和值仍使用原页签名。
+
+Windows 原生验证：`cargo fmt --manifest-path pytools-core/Cargo.toml -- --check` 通过；`cargo test --offline --locked -p pytools-core --lib comment_region_tests -j 1` 4/4、`cargo test --offline --locked -p pytools-core --test summary_comments_cli -j 1` 5/5 通过。只读 PyCode 与真实 `pytools summary-comments` CLI 的完整工作簿投影对拍通过，3 行数据、4×11 输出尺寸、输出页签 `Branch_A`、值/类型、样式、页面属性均无差异；合成输入未改变。机器报告：`probe/reports/summary_comments_template_header_parity_20261025.json`。
+
+该修复不改变 PT-6-2 的数据读取、规则或引擎路由；仍只有合成标记模板，没有找到有效真实业务模板。麒麟 V10/UOS V20、glibc 2.28、deb 与离线交付仍未验收，PT-6-2 整体状态保持未验证。
