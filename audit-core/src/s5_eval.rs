@@ -83,6 +83,10 @@ impl PartialEq for Decimal28 {
 }
 
 impl Decimal28 {
+    pub fn is_integral(&self) -> bool {
+        self.exponent >= 0 || self.digits.iter().rev().take((-self.exponent) as usize).all(|digit| *digit == 0)
+    }
+
     pub fn zero() -> Self {
         Self {
             negative: false,
@@ -1581,4 +1585,10 @@ mod eval_tests {
             other => panic!("unexpected ROUND result {other:?}"),
         }
     }
+}
+
+
+/// Parse plain-notation decimal text for the retrieval layer.
+pub fn parse_decimal28(text: &str) -> Result<Decimal28, String> {
+    Decimal28::parse(text)
 }
