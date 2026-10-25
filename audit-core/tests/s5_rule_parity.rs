@@ -74,6 +74,7 @@ fn runs_s5_rule_parity_items() {
                     &request.institution_code,
                     &request.institution_name,
                     "",
+                    None,
                 );
                 results.push(json!({
                     "rule_id": rule.rule_id,

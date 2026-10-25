@@ -23,6 +23,18 @@ use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct S5RuleOutcome {
+    pub rule_id: String,
+    pub revision: i64,
+    pub rule_name: String,
+    pub business: String,
+    pub period: String,
+    pub institution_code: String,
+    pub institution_name: String,
+    pub severity: String,
+    pub check_type: String,
+    pub metric: String,
+    pub sheet_name: String,
+    pub formula_cell: String,
     pub status: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub triggered: Option<bool>,
@@ -202,6 +214,7 @@ fn error_code(message: &str, fallback: &str) -> String {
 
 struct RuleHooks<'a> {
     retrieval: &'a RefCell<&'a mut S5Retrieval>,
+    scope_path: Option<Vec<String>>,
     rule: &'a RuleDefinition,
     dictionary: &'a BTreeMap<String, Node>,
     numeric_mode: String,
@@ -363,6 +376,7 @@ impl<'a> crate::s5_eval::EvaluationHooks for RuleHooks<'a> {
         arguments: &[EvalArgument],
         keywords: &BTreeMap<String, String>,
     ) -> Result<EvalValue, EvalError> {
+        let mut arguments: Vec<EvalArgument> = arguments.to_vec();
         let current_row_dynamic = match (name, arguments.len()) {
             ("V_CUR" | "V_PRE", 2) => arguments
                 .first()
@@ -375,9 +389,20 @@ impl<'a> crate::s5_eval::EvaluationHooks for RuleHooks<'a> {
             _ => false,
         };
         if current_row_dynamic {
-            return Err(EvalError::configuration(
-                "取值函数使用 @当前行，但当前规则没有展开适用范围",
-            ));
+            let Some(scope_path) = &self.scope_path else {
+                return Err(EvalError::configuration(
+                    "取值函数使用 @当前行，但当前规则没有展开适用范围",
+                ));
+            };
+            let scope = EvalArgument::Tuple(scope_path.clone());
+            match arguments.len() {
+                2 => {
+                    arguments[0] = scope;
+                }
+                _ => {
+                    arguments[1] = scope;
+                }
+            }
         }
         let cache_key = format!(
             "{}|{}|{}",
@@ -404,7 +429,7 @@ impl<'a> crate::s5_eval::EvaluationHooks for RuleHooks<'a> {
         }
         let outcome = self.retrieval.borrow_mut().retrieve(
             name,
-            arguments,
+            &arguments,
             keywords,
             &self.rule.business,
             &self.rule.default_sheet,
@@ -412,14 +437,14 @@ impl<'a> crate::s5_eval::EvaluationHooks for RuleHooks<'a> {
         );
         match outcome {
             Ok(value) => {
-                self.push_trace(name, arguments, keywords, Ok(&value));
+                self.push_trace(name, &arguments, keywords, Ok(&value));
                 self.retrieval_cache
                     .borrow_mut()
                     .insert(cache_key, Ok(value.clone()));
                 Ok(value)
             }
             Err(failure) => {
-                self.push_trace(name, arguments, keywords, Err(&failure.message));
+                self.push_trace(name, &arguments, keywords, Err(&failure.message));
                 self.retrieval_cache
                     .borrow_mut()
                     .insert(cache_key, Err(failure.clone()));
@@ -472,6 +497,35 @@ fn cache_evidence(cache: &BTreeMap<String, EvalValue>) -> Vec<JsonValue> {
 /// Mirror of `AuditEngine._evaluate_rule` for one rule without
 /// applicability-scope expansion.
 #[allow(clippy::too_many_arguments)]
+fn base_outcome(
+    rule: &RuleDefinition,
+    period: &str,
+    institution_code: &str,
+    institution_name: &str,
+    scope_path: Option<&[String]>,
+) -> S5RuleOutcome {
+    S5RuleOutcome {
+        rule_id: rule.rule_id.clone(),
+        revision: rule.revision,
+        rule_name: rule.name.clone(),
+        business: rule.business.clone(),
+        period: period.to_owned(),
+        institution_code: institution_code.to_owned(),
+        institution_name: institution_name.to_owned(),
+        severity: rule.severity.clone(),
+        check_type: rule.check_type.clone(),
+        metric: rule.metric.clone(),
+        sheet_name: rule.default_sheet.clone(),
+        formula_cell: rule.formula_cell.clone(),
+        status: "NOT_EXECUTED".to_owned(),
+        triggered: None,
+        description: rule.description.clone(),
+        scope_path: scope_path.map(|path| path.join(" / ")).unwrap_or_default(),
+        ..Default::default()
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 pub fn evaluate_rule(
     rule: &RuleDefinition,
     retrieval: &mut S5Retrieval,
@@ -480,20 +534,16 @@ pub fn evaluate_rule(
     institution_code: &str,
     institution_name: &str,
     configuration_version: &str,
+    scope_path: Option<&[String]>,
 ) -> S5RuleOutcome {
-    let _ = (
-        run_id,
+    let _ = (run_id, configuration_version);
+    let mut outcome = base_outcome(
+        rule,
         context_period,
         institution_code,
         institution_name,
-        configuration_version,
+        scope_path,
     );
-    let mut outcome = S5RuleOutcome {
-        status: "NOT_EXECUTED".to_owned(),
-        triggered: None,
-        description: rule.description.clone(),
-        ..Default::default()
-    };
 
     let dictionary_nodes = match parse_dictionary(if rule.value_dictionary.is_empty() {
         None
@@ -522,6 +572,7 @@ pub fn evaluate_rule(
     let retrieval_cell = RefCell::new(retrieval);
     let hooks = RuleHooks {
         retrieval: &retrieval_cell,
+        scope_path: scope_path.map(|path| path.to_vec()),
         rule,
         dictionary: &dictionary,
         numeric_mode: rule.numeric_mode.clone(),
@@ -547,12 +598,16 @@ pub fn evaluate_rule(
             match applicable.value {
                 EvalScalar::Boolean(flag) => {
                     if !flag {
-                        let mut not_applicable = S5RuleOutcome {
-                            status: "NOT_APPLICABLE".to_owned(),
-                            error_message: "规则适用表达式判定为不适用".to_owned(),
-                            evidence: unique_evidence(&[applicable]),
-                            ..Default::default()
-                        };
+                        let mut not_applicable = base_outcome(
+                            rule,
+                            context_period,
+                            institution_code,
+                            institution_name,
+                            scope_path,
+                        );
+                        not_applicable.status = "NOT_APPLICABLE".to_owned();
+                        not_applicable.error_message = "规则适用表达式判定为不适用".to_owned();
+                        not_applicable.evidence = unique_evidence(&[applicable]);
                         not_applicable.unused_variables =
                             unused_dictionary_variables(&dictionary, &hooks.variable_used.borrow());
                         return Ok(not_applicable);
@@ -606,12 +661,16 @@ pub fn evaluate_rule(
         let description =
             render_description(&rule.description, &mut |name| hooks.resolve_variable(name))?;
 
-        let mut outcome = S5RuleOutcome {
-            status: if audit_passes { "PASSED" } else { "TRIGGERED" }.to_owned(),
-            triggered: Some(!audit_passes),
-            description,
-            ..Default::default()
-        };
+        let mut outcome = base_outcome(
+            rule,
+            context_period,
+            institution_code,
+            institution_name,
+            scope_path,
+        );
+        outcome.status = if audit_passes { "PASSED" } else { "TRIGGERED" }.to_owned();
+        outcome.triggered = Some(!audit_passes);
+        outcome.description = description;
         if let Some(value) = &current_value {
             outcome.current_value = Some(resolved_value_json(value));
             outcome.current_unit = value.unit.clone().unwrap_or_default();
@@ -661,16 +720,15 @@ pub fn evaluate_rule(
                 }
                 EvalErrorKind::Evaluation => {
                     if let Some(code) = &error.code {
-                        if STRUCTURE_ERROR_CODES.contains(&code.as_str()) {
-                            ("STRUCTURE_ERROR".to_owned(), code.clone())
+                        // Retrieval failures carry their own code verbatim.
+                        let status = if STRUCTURE_ERROR_CODES.contains(&code.as_str()) {
+                            "STRUCTURE_ERROR"
                         } else if CONFIG_ERROR_CODES.contains(&code.as_str()) {
-                            ("CONFIG_ERROR".to_owned(), code.clone())
+                            "CONFIG_ERROR"
                         } else {
-                            (
-                                "RETRIEVAL_FAILED".to_owned(),
-                                error_code(&error.message, "RETRIEVAL_FAILED"),
-                            )
-                        }
+                            "RETRIEVAL_FAILED"
+                        };
+                        (status.to_owned(), code.clone())
                     } else {
                         (
                             "CALCULATION_FAILED".to_owned(),
@@ -707,4 +765,237 @@ fn unused_dictionary_variables(
         .collect();
     unused.sort();
     unused
+}
+
+fn parse_period_date(value: &str, field: &str) -> Result<(i32, u32, u32), EvalError> {
+    let text = value.trim();
+    let digits = text.chars().all(|c| c.is_ascii_digit());
+    let (year, month, day) = if digits && text.len() == 8 {
+        (
+            text[0..4].parse().unwrap_or(0),
+            text[4..6].parse().unwrap_or(0),
+            text[6..8].parse().unwrap_or(0),
+        )
+    } else if text.len() == 10
+        && text.as_bytes().get(4) == Some(&b'-')
+        && text.as_bytes().get(7) == Some(&b'-')
+    {
+        (
+            text[0..4].parse().unwrap_or(0),
+            text[5..7].parse().unwrap_or(0),
+            text[8..10].parse().unwrap_or(0),
+        )
+    } else if digits && text.len() == 6 {
+        (
+            text[0..4].parse().unwrap_or(0),
+            text[4..6].parse().unwrap_or(0),
+            1,
+        )
+    } else if text.len() == 7 && text.as_bytes().get(4) == Some(&b'-') {
+        (
+            text[0..4].parse().unwrap_or(0),
+            text[5..7].parse().unwrap_or(0),
+            1,
+        )
+    } else {
+        return Err(EvalError::configuration(format!(
+            "{field} 日期格式必须为 YYYYMMDD、YYYY-MM-DD、YYYYMM 或 YYYY-MM"
+        )));
+    };
+    let leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
+    let days = match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 if leap => 29,
+        2 => 28,
+        _ => {
+            return Err(EvalError::configuration(format!(
+                "{field} 日期格式或日期值无效：{text}"
+            )))
+        }
+    };
+    if !(1..=days).contains(&day) {
+        return Err(EvalError::configuration(format!(
+            "{field} 日期格式或日期值无效：{text}"
+        )));
+    }
+    Ok((year, month, day))
+}
+
+fn within_span(period: &str, start: &str, end: &str) -> Result<bool, EvalError> {
+    let value = parse_period_date(period, "报告期")?;
+    if !start.is_empty() && value < parse_period_date(start, "配置版本生效起始日")? {
+        return Ok(false);
+    }
+    if !end.is_empty() && value > parse_period_date(end, "配置版本生效截止日")? {
+        return Ok(false);
+    }
+    Ok(true)
+}
+
+fn within_rule_period(rule: &RuleDefinition, period: (i32, u32, u32)) -> bool {
+    let parse = |text: &str, field: &str| parse_period_date(text, field).ok();
+    if !rule.effective_from.is_empty() {
+        match parse(&rule.effective_from, "规则生效起始日") {
+            Some(from) if period < from => return false,
+            None => return false,
+            _ => {}
+        }
+    }
+    if !rule.effective_to.is_empty() {
+        match parse(&rule.effective_to, "规则生效截止日") {
+            Some(to) if period > to => return false,
+            None => return false,
+            _ => {}
+        }
+    }
+    true
+}
+
+fn scope_paths(
+    rule: &RuleDefinition,
+    configuration: &crate::s5_config::Configuration,
+) -> Vec<Vec<String>> {
+    if rule.applicability_scope.is_empty() {
+        return vec![Vec::new()];
+    }
+    let Some(scope) = configuration
+        .applicability_scopes
+        .iter()
+        .find(|scope| scope.scope_id == rule.applicability_scope)
+    else {
+        return Vec::new();
+    };
+    let mut paths: Vec<Vec<String>> = configuration
+        .metrics
+        .iter()
+        .filter(|metric| {
+            metric.business == scope.business
+                && metric.sheet == scope.sheet
+                && metric.row_path.len() >= scope.row_path_prefix.len()
+                && metric.row_path[..scope.row_path_prefix.len()] == scope.row_path_prefix[..]
+        })
+        .map(|metric| metric.row_path.clone())
+        .collect();
+    paths.sort();
+    paths.dedup();
+    paths
+}
+
+fn status_outcome(
+    rule: &RuleDefinition,
+    period: &str,
+    institution_code: &str,
+    institution_name: &str,
+    status: &str,
+    message: &str,
+) -> S5RuleOutcome {
+    let mut outcome = base_outcome(rule, period, institution_code, institution_name, None);
+    outcome.status = status.to_owned();
+    outcome.error_message = message.to_owned();
+    outcome
+}
+
+/// Mirror of `AuditEngine.run` for the single-binding current-source path:
+/// rule selection with revision/effective-date gating, applicability-scope
+/// expansion (including the `@当前行` substitution), and the status ledger.
+/// Hash-integrity downgrade and output writing belong to later slices.
+pub fn run_rules(
+    configuration: &crate::s5_config::Configuration,
+    retrieval: &mut S5Retrieval,
+    period: &str,
+    businesses: &[String],
+    institution_code: &str,
+    institution_name: &str,
+) -> Result<(Vec<S5RuleOutcome>, BTreeMap<String, usize>), EvalError> {
+    if period.is_empty() {
+        return Err(EvalError::configuration("运行上下文必须提供报告期"));
+    }
+    let period_date = parse_period_date(period, "报告期")?;
+    let config_in_span = within_span(
+        period,
+        &configuration.effective_from,
+        &configuration.effective_to,
+    )?;
+
+    // Group rules by rule_id, choose the max eligible revision.
+    let mut groups: BTreeMap<String, Vec<&RuleDefinition>> = BTreeMap::new();
+    for rule in &configuration.rules {
+        if !businesses.is_empty() && !businesses.iter().any(|business| business == &rule.business) {
+            continue;
+        }
+        groups.entry(rule.rule_id.clone()).or_default().push(rule);
+    }
+    let mut outcomes: Vec<S5RuleOutcome> = Vec::new();
+    for (_rule_id, rules) in &groups {
+        let eligible: Vec<&&RuleDefinition> = rules
+            .iter()
+            .filter(|rule| within_rule_period(rule, period_date))
+            .collect();
+        let eligible_is_empty = eligible.is_empty();
+        let selected: &RuleDefinition = if eligible_is_empty {
+            rules
+                .iter()
+                .max_by_key(|rule| rule.revision)
+                .expect("groups are nonempty")
+        } else {
+            eligible
+                .iter()
+                .copied()
+                .max_by_key(|rule| rule.revision)
+                .expect("eligible nonempty")
+        };
+        let status_override = if eligible_is_empty {
+            Some(("NOT_APPLICABLE", "本次报告期不在规则生效范围内"))
+        } else if !config_in_span {
+            Some(("NOT_APPLICABLE", "本次报告期不在配置版本生效范围内"))
+        } else {
+            None
+        };
+        if let Some((status, message)) = status_override {
+            outcomes.push(status_outcome(
+                selected,
+                period,
+                institution_code,
+                institution_name,
+                status,
+                message,
+            ));
+            continue;
+        }
+        if !config_in_span {
+            continue;
+        }
+        let paths = scope_paths(selected, configuration);
+        if paths.is_empty() {
+            outcomes.push(status_outcome(
+                selected,
+                period,
+                institution_code,
+                institution_name,
+                "CONFIG_ERROR",
+                "适用范围没有匹配到任何模板行路径",
+            ));
+            continue;
+        }
+        for path in paths {
+            let outcome = evaluate_rule(
+                selected,
+                retrieval,
+                "RUN",
+                period,
+                institution_code,
+                institution_name,
+                &configuration.version,
+                Some(&path),
+            );
+            outcomes.push(outcome);
+        }
+    }
+
+    let mut counts: BTreeMap<String, usize> = BTreeMap::new();
+    for outcome in &outcomes {
+        *counts.entry(outcome.status.clone()).or_default() += 1;
+    }
+    Ok((outcomes, counts))
 }

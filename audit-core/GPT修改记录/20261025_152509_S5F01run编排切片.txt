@@ -1,0 +1,37 @@
+# S5-F01 run 编排切片（整业务 377 行全量对拍）
+
+- 时间：2026-10-25 15:25 (+08:00)
+- 执行者：Codex Audit migration agent
+- 分支：audit-dev
+- 修改前 commit：b0a3b1f
+- 修改后 commit：随本轮本地提交，提交 ID 见 Git 历史。
+- WIP：开始时 worktree 干净；验证结束时仅扩展服务/取数模块、新增 run 对拍测试与比较器、脱敏报告、清单更新和本记录。未修改共享 crates、源 Python 项目、真实工作簿、pytools-core、Cargo.toml 或 Cargo.lock。
+
+## 目的
+
+把单规则执行串成 `AuditEngine.run` 的编排语义（规则选取、生效期门、适用范围展开与 `@当前行` 替换、状态计数），并以真实配置+真实审核副本完成整业务全量 Python/Rust 对拍。
+
+## 修改文件
+
+- `audit-core/src/s5_service.rs`：`S5RuleOutcome` 增加规则元数据字段；`RuleHooks` 携带 scope 并在 call_value 中把 `@当前行` 参数替换为 scope 元组；`evaluate_rule` 增加 scope_path 参数并统一 `base_outcome` 构造；新增 `run_rules`（rule_id 分组取最大修订、`within_span`/`within_rule_period` 生效期门、`scope_paths` 展开、空范围 CONFIG_ERROR、状态计数）与日期解析辅助；错误分类修正为取数失败码直取（STRUCTURE/CONFIG 集合定状态，`_error_code` 前缀仅用于无码计算错误）。
+- `audit-core/src/s5_retrieval.rs`：V_PRE/V_EXT 未绑定分支返回 Python 同款 SOURCE_NOT_SELECTED（“没有找到业务 X 对应的previous/external数据源”）。
+- `audit-core/tests/s5_run_parity.rs`：env 驱动的 `#[ignore]` run 对拍运行器。
+- `audit-core/tests/compare/compare_s5_run.py`：Python 比较器（AuditEngine.run businesses=[单位贷款]、schema_snapshot_dir 指向临时目录、persist_schema_snapshots=False；逐行比较元数据/状态/触发/错误/描述/三值/scope_path 与状态计数；报告仅聚合计数）。
+- `audit-core/tests/s5_rule_parity.rs`：evaluate_rule 调用点适配新签名。
+- `audit-core/probe/reports/s5_run_orchestration_windows_real_20261025.json`：新增脱敏机器报告。
+- `audit-core/MIGRATION_INVENTORY.md`：S5-F01 行更新并新增切片小节。
+- 本记录。
+
+## 验证
+
+- 编译与测试：`cargo build --offline -p audit-core` 通过；`cargo test --offline --locked -p audit-core` 全量 195 通过、0 失败。
+- 跨语言对拍（Windows 原生）：真实 config-real 配置 + 真实单位贷款机构审核副本（同一临时目录），整业务运行——377 条结果行与状态计数全量差异 0；真实状态分布覆盖 PASSED/TRIGGERED/RETRIEVAL_FAILED（含 V_EXT 未绑定 SOURCE_NOT_SELECTED）。
+- 对拍中发现并修复三处产品缺陷：闭包内结果构造缺元数据（统一 base_outcome）、V_EXT/V_PRE 未绑定消息与码（Python `_binding` 语义）、取数失败 error_code 应直取携带码（Python `base.error_code = exc.code`）。
+- Python 侧结构快照目录指向临时目录且不持久化，源树未写入；输入未变；报告不含路径、工作表名或业务值。
+
+## 未执行项、已知问题与回滚
+
+- 未迁移：输入哈希完整性降级（INPUT_CHANGED_DURING_RUN）、结构快照比较与持久化、数据质量告警、outputs 三类导出、CLI 接线、上期/外部源绑定与 V_EXT 真实取数、数字区域模板投影；S5-F01 整体仍未验证。
+- 共享请求状态：请求 #3（载荷基线等价）与 #4（校验器行操作映射）已由用户转交 main 处理，本轮未收到实现。
+- 回滚：还原本提交即可；无用户工作簿恢复项。
+- 【组件版本】不升级。

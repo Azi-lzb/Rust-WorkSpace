@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "suite": "audit.s5_run_orchestration_parity",
+  "status": "completed",
+  "sample_scope": {
+    "business": "单位贷款",
+    "rules_executed": 377,
+    "files_copied_to_temporary": true
+  },
+  "comparison": {
+    "rows_matched": 377,
+    "rows_mismatched": 0,
+    "mismatch_rule_sample": [],
+    "status_counts_match": true,
+    "python_status_counts": {
+      "PASSED": 80,
+      "RETRIEVAL_FAILED": 1,
+      "STRUCTURE_ERROR": 162,
+      "TRIGGERED": 134
+    },
+    "rust_status_counts": {
+      "PASSED": 80,
+      "RETRIEVAL_FAILED": 1,
+      "STRUCTURE_ERROR": 162,
+      "TRIGGERED": 134
+    },
+    "python_run_status": "COMPLETED"
+  },
+  "verification": {
+    "rust_runner": "audit-core/tests/s5_run_parity.rs",
+    "python_baseline": "s1audit_configured.engine.AuditEngine.run",
+    "inputs_unchanged": true,
+    "raw_values_persisted": false,
+    "capability_status": "unverified",
+    "production_route_eligible": false
+  },
+  "limitations": [
+    "Hash-integrity downgrade, schema snapshots, data-quality warnings, output writing, and V_PRE/V_EXT bindings are not exercised; the run covers the single-binding current-source path with unchanged inputs."
+  ]
+}

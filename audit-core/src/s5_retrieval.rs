@@ -158,7 +158,20 @@ impl S5Retrieval {
     ) -> Result<EvalValue, RetrievalFailure> {
         let role = match function_name {
             "V_CUR" => "current",
-            "V_PRE" => "previous",
+            "V_PRE" => {
+                // This port binds a single current source; the previous-source
+                // map is always empty, matching Python's unbound behavior.
+                return Err(RetrievalFailure::new(
+                    "SOURCE_NOT_SELECTED",
+                    format!("没有找到业务 {rule_business} 对应的previous数据源"),
+                ));
+            }
+            "V_EXT" => {
+                return Err(RetrievalFailure::new(
+                    "SOURCE_NOT_SELECTED",
+                    format!("没有找到业务 {rule_business} 对应的external数据源"),
+                ));
+            }
             _ => return Err(RetrievalFailure::new("SOURCE_NOT_FOUND", "未知取值函数")),
         };
         // Single-binding resolution: the requested source (when given) must be
