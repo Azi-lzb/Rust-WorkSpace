@@ -16,6 +16,7 @@
   "baseline": "PyCode/core/summary_321_322.py::run_summary_by_comment",
   "input": {
     "format": "xlsx",
+    "date_system": "1904",
     "sample_count": 2
   },
   "behaviors": [

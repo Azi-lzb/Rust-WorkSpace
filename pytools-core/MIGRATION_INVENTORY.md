@@ -621,7 +621,7 @@ Windows 原生 Rust 验证：`cargo fmt --manifest-path pytools-core/Cargo.toml 
 
 对拍发现并修复 `summary-comments` 的模板表头语义差异：模板空白表头现按 PyCode 回退为列字母；模板公式文本由 Calamine 公式投影读取，并在输出簿中作为公式表头保留，公式缓存留空，不执行公式计算。布尔表头按 Python `str(bool)` 大小写输出，数值表头保留 Python 的整数/小数字符串表现；日期表头通过共享 Calamine ISO 日期投影解析，再按 Python datetime 字符串语义输出。
 
-新增 Rust CLI 回归，覆盖公式、空白、布尔、数值和日期表头、输出公式类型及输入不变；`probe/compare_summary_comments_template_header.py` 使用只读 PyCode 基线与 Windows 原生 `pytools summary-comments` CLI 对同一合成模板/源簿执行完整工作簿投影对拍，结果精确一致（3 行、1 个输出；4×8 输出维度；Calamine/rust_xlsxwriter，源未改变）。报告：`probe/reports/summary_comments_template_header_parity_20261025.json`。
+新增 Rust CLI 回归，覆盖公式、空白、布尔、数值和日期表头、输出公式类型及输入不变；`probe/compare_summary_comments_template_header.py` 使用只读 PyCode 基线与 Windows 原生 `pytools summary-comments` CLI 对同一合成模板/源簿执行完整工作簿投影对拍，结果精确一致（3 行、1 个输出；4×8 输出维度；probe 模板使用 1904 日期系统；Calamine/rust_xlsxwriter，源未改变）。报告：`probe/reports/summary_comments_template_header_parity_20261025.json`。
 
 Windows 原生验证：`cargo fmt --manifest-path pytools-core/Cargo.toml -- --check` 通过；`cargo build --offline --locked -q -p pytools-core --bin pytools` 通过；`cargo test --offline --locked -p pytools-core --lib comment_region_tests` 3/3；`--test summary_comments_cli --test summary_menu_cli -j 1` 5/5 与 4/4；`py -3.12 pytools-core/probe/compare_summary_comments_template_header.py` 完整投影 exact。证据限合成模板，不代替真实有效批注区域模板、麒麟 V10/UOS V20、glibc 2.28 或离线 deb 验收；PT-6-2 仍未通过生产验收。
 

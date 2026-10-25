@@ -11,6 +11,7 @@ from pathlib import Path
 import openpyxl
 from openpyxl import Workbook, load_workbook
 from openpyxl.comments import Comment
+from openpyxl.utils.datetime import CALENDAR_MAC_1904
 
 WORKSPACE = Path(__file__).resolve().parents[2]
 PYTOOLS_SOURCE = Path(r"C:\Users\AZI\Desktop\VibeCode\4.pytools-main")
@@ -34,6 +35,7 @@ from core.summary_321_322 import run_summary_by_comment  # noqa: E402
 
 def create_template(path: Path) -> None:
     workbook = Workbook()
+    workbook.epoch = CALENDAR_MAC_1904
     sheet = workbook.active
     sheet.title = "Branch_A"
     sheet["A2"] = "row start"
@@ -164,7 +166,7 @@ def main() -> int:
             },
             "entry_route": "pytools summary-comments",
             "baseline": "PyCode/core/summary_321_322.py::run_summary_by_comment",
-            "input": {"format": "xlsx", "sample_count": 2},
+            "input": {"format": "xlsx", "date_system": "1904", "sample_count": 2},
             "behaviors": [
                 "formula template header remains formula text in the output workbook",
                 "blank template header falls back to its Excel column letter",
