@@ -204,6 +204,113 @@ fn region_sum_cli_runs_python_baseline_workflow() -> Result<()> {
 }
 
 #[test]
+fn region_sum_cli_projects_cached_formula_totals_like_python() -> Result<()> {
+    let cases: Value = serde_json::from_str(include_str!(
+        "fixtures/region_sum/cached_formula/cases.json"
+    ))?;
+    let baseline: Value = serde_json::from_str(include_str!(
+        "../probe/reports/region_sum_cached_formula_python_baseline.json"
+    ))?;
+    let fixture_dir =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/region_sum/cached_formula");
+    let input_paths = cases["run_files"]
+        .as_array()
+        .context("cached formula run_files must be an array")?
+        .iter()
+        .map(|name| Ok(fixture_dir.join(name.as_str().context("fixture names must be strings")?)))
+        .collect::<Result<Vec<_>>>()?;
+    let input_bytes = input_paths
+        .iter()
+        .map(|path| Ok((path.clone(), fs::read(path)?)))
+        .collect::<Result<Vec<_>>>()?;
+
+    let test_dir = unique_test_dir();
+    let output_dir = test_dir.join("output");
+    let log_dir = test_dir.join("logs");
+    let config_path =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/config_loader.xlsx");
+    let output = Command::new(env!("CARGO_BIN_EXE_pytools"))
+        .arg("region-sum-check")
+        .arg("--config")
+        .arg(config_path)
+        .arg("--output-dir")
+        .arg(&output_dir)
+        .arg("--log-dir")
+        .arg(&log_dir)
+        .args(&input_paths)
+        .output()
+        .context("run PT-7-5 CLI with cached formula totals")?;
+    assert!(
+        output.status.success(),
+        "CLI failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        output.stderr.is_empty(),
+        "legacy CLI output changed without --log-view: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let result: Value = serde_json::from_slice(&output.stdout).context("parse CLI JSON")?;
+    for field in ["files", "sheets", "errors", "failed_files"] {
+        assert_eq!(
+            result[field], baseline["statistics"][field],
+            "cached formula statistics field {field}"
+        );
+        assert_eq!(
+            result[field], cases["expected_stats"][field],
+            "cached formula fixture field {field}"
+        );
+    }
+
+    let report_path = PathBuf::from(result["path"].as_str().context("CLI report path")?);
+    let log_path = PathBuf::from(result["log_path"].as_str().context("CLI log path")?);
+    assert!(report_path.is_file());
+    assert!(log_path.is_file());
+    let workbook = excel_reader::read_workbook(&report_path)?;
+    let sheet = workbook.sheets.first().context("result worksheet")?;
+    let expected = &baseline["output_workbook"];
+    assert_eq!(sheet.name, expected["sheet_name"]);
+    assert_eq!(
+        normalize_cell_map(&serde_json::to_value(&sheet.values)?)?,
+        normalize_cell_map(&expected["cells"])?
+    );
+    assert_eq!(
+        serde_json::to_value(&sheet.formulas)?,
+        normalize_openpyxl_formula_map(&expected["formulas"])?
+    );
+    let layout = inspect_layout(&report_path)?;
+    assert_eq!(layout["max_row"], expected["max_row"]);
+    assert_eq!(layout["max_column"], expected["max_column"]);
+    assert_eq!(layout["styles"], expected["styles"]);
+    let expected_widths = expected["column_widths"]
+        .as_object()
+        .context("cached formula Python baseline widths")?;
+    let actual_widths = layout["column_widths"]
+        .as_object()
+        .context("cached formula Rust output widths")?;
+    assert_eq!(actual_widths.len(), expected_widths.len());
+    for (column, expected_width) in expected_widths {
+        let expected_width = expected_width.as_f64().context("expected width")?;
+        let actual_width = actual_widths[column].as_f64().context("actual width")?;
+        assert!(
+            (expected_width - actual_width).abs() <= 0.01,
+            "cached formula column {column}: Python width {expected_width}, Rust width {actual_width}"
+        );
+    }
+    for (path, original) in input_bytes {
+        assert_eq!(
+            fs::read(&path)?,
+            original,
+            "input changed: {}",
+            path.display()
+        );
+    }
+
+    fs::remove_dir_all(test_dir)?;
+    Ok(())
+}
+
+#[test]
 fn interactive_region_sum_menu_matches_python_baseline_workbook() -> Result<()> {
     let cases: Value = serde_json::from_str(include_str!("fixtures/region_sum/cases.json"))?;
     let baseline: Value = serde_json::from_str(include_str!(
