@@ -708,6 +708,7 @@ Windows 原生 `pytools.exe menu --config ... --log-view developer` 分别经 `p
 
 - PT-1-3：汇总 3 行（4×9），新目标追加 3 行、过滤重复 0 行；PyCode/Rust 投影精确一致，开发者历史记录 Calamine、`rust_xlsxwriter` 和目标执行 40 ms。
 - PT-1-4：汇总 3 行（4×9），新目标追加 2 行、过滤重复 1 行；PyCode/Rust 投影精确一致，开发者历史记录 Calamine、`rust_xlsxwriter` 和目标执行 42 ms。
+- PT-1-3 原生对话框多选：一次选择 2 份源簿，汇总 6 行（7×9），新目标追加 6 行、过滤重复 0 行；汇总、候选及提交目标与 PyCode 精确一致，记录 2 次 Calamine 读取、`rust_xlsxwriter` 写入和 43 ms 目标执行；源簿与配置逐字节未变。
 - 两种模式的源簿语义投影及配置单元格值均未改变；目标仅为隔离临时目录中的新文件。Windows 原生 `cargo test --offline --locked -p pytools-core --test timeline_menu_cli` 9/9 通过。机器证据追加至 `probe/reports/wide_summary_parity_20261023.json`。
 
 该验证只补齐合成数据上的原生文件对话框和菜单入口证据，不代表脱敏真实业务样本、真实模板全量保真、既有目标生产 capability、麒麟 V10/UOS V20、glibc 2.28 或离线 deb 验收；PT-1-3/1-4 整体仍为**未验证**。

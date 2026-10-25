@@ -257,6 +257,34 @@
       "duplicate_rows_filtered": 1,
       "target_execute_status": "succeeded",
       "target_execute_elapsed_ms": 42
+    },
+    {
+      "row_suffix": true,
+      "selection_mode": "multi_select",
+      "entry_route": "pytools menu -> 1 -> 3 -> Windows native multi-select file dialog -> confirm",
+      "sample_kind": "synthetic_xlsx",
+      "source_workbooks": 2,
+      "windows_native_file_dialog": true,
+      "summary_rows": 6,
+      "summary_dimensions": [
+        [
+          7,
+          9
+        ]
+      ],
+      "python_rust_summary_projection": "exact",
+      "python_rust_target_candidate_projection": "exact",
+      "python_rust_committed_target_projection": "exact",
+      "target_appended_rows": 6,
+      "duplicate_rows_filtered": 0,
+      "reader_events": 2,
+      "reader_engine": "calamine",
+      "writer_engine": "rust_xlsxwriter",
+      "target_execute_status": "succeeded",
+      "target_execute_elapsed_ms": 43,
+      "target_operation": "created new target in isolated temporary directory after explicit confirmation",
+      "source_and_configuration_bytes_unchanged": true,
+      "production_acceptance": false
     }
   ]
 }
