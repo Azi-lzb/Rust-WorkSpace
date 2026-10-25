@@ -754,3 +754,11 @@ Windows 原生 `cargo fmt --manifest-path pytools-core/Cargo.toml -- --check`、
 主进程在合成报告写入后、真实样本段 Rust 批次执行中被会话中断终止；真实样本段随后以同一解释器与 CLI 单独运行现有 `compare_real_used_range_sample()` 补齐并通过：原项目只读 `xlsx/` 目录 13 份 XLSX 分 4 批，96 张工作表、203,580 行完整投影精确一致，输入前后 SHA-256 相同，批次开发者事件 26/14/27/63 均与保存运行历史一致；批次 2 的 1,212 个错误单元格由既有 OOXML Patch 保留；实际引擎为 Calamine 与 rust_xlsxwriter。报告更新至 `probe/reports/summary_used_range_real_parity_20261025.json`。运行耗时仅记录该次 Windows debug 环境，不作跨实现性能结论。
 
 本结果补齐 PT-6-1 自 2026-10-24 起登记的完整组合对拍缺口；NoCom 独有行为仍为待确认变体差异，不并入 PyCode 生产基线，也不构成生产验收。原项目业务含 VBA 的 XLSM 样本、麒麟 V10/UOS V20 实机、glibc 2.28、deb 与离线交付仍未验收，PT-6-1 整体仍未完成最终验收。
+
+### 2026-10-25 当前 HEAD glibc 2.28 release 重建与真实样本复验
+
+在 pytools-dev HEAD `48bb378` 使用 WSL Ubuntu（host glibc 2.39）的 Zig 0.17.0 + cargo-zigbuild 离线重建 `x86_64-unknown-linux-gnu.2.28` release；`objdump -T` 按数值排序的最高 GLIBC 符号为 `GLIBC_2.28`，产物为 ELF 64-bit LSB PIE 可执行文件。以该 release 二进制直接运行 `summary-used-range`，对原 PyTools 只读 `xlsx/` 目录 13 份真实 XLSX 分 4 批与只读 PyCode 完整工作簿投影对拍：96 张工作表、203,580 行精确一致（值/类型、已填单元格样式、工作表名称与维度、冻结窗格/表头加粗、公式/合并/定义名称/页面属性），输入前后 SHA-256 相同，批次开发者事件 26/14/27/63 均与保存运行历史一致；批次 2 的 1,212 个错误单元格由既有 OOXML Patch 保留；实际引擎为 Calamine、`excel-reader::read_xlsx_worksheet_extents` 与 `rust_xlsxwriter`。此前 glibc 2.28 release 证据停留在 HEAD `98a702f`，本轮把目标 ABI 证据推进到包含时序提取、宽表默认源发现、PT-7-6 追加与 PT-6-2 页签对齐等最新变更的当前 HEAD。
+
+同轮 Windows 原生 `cargo test --offline --locked -p pytools-core` 全量通过：39 个测试目标、42 项结果全部 0 failed；此前登记的 `workbook_extract` 缺夹具单测失败在当前 checkout 不再出现。
+
+机器结果见 `probe/reports/summary_used_range_real_parity_20261025.json` 的 `platform_validation_linux_glibc_2_28_release_current_head_20261025`。该证据只覆盖 WSL glibc 2.28 ABI release 阶段，不是麒麟 V10/UOS V20 实机、deb 安装或离线交付验收；每批单次执行，不作性能结论；PT-6-1 整体仍未完成最终验收。
