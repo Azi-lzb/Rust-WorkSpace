@@ -26,6 +26,8 @@ PT-6-1 另于 2026-10-25 在 Windows MSVC HEAD `13c83fb` 经真实 `pytools menu
 
 PT-6-1 的完整 `compare_summary_tools.py` 组合对拍于 2026-10-25 在 Windows MSVC HEAD `26d0d9e` 补齐：改用只读 NoComPyTools 项目自带虚拟环境（Python 3.12.10、openpyxl 3.1.5、python-calamine 0.9.0）作为对拍解释器，同进程导入 PyCode 与 nocompytools 基线，未安装依赖、未修改源项目。合成段全部断言通过并落盘 `probe/reports/summary_used_range_parity_20261025.json`，其中 NoCom 组合比较登记为既有变体差异（PyCode 20 行、NoCom 19 行，值/类型/样式/维度差异与 2026-10-24 变体记录一致），不改变 PyCode 基线；主进程在合成报告写入后因会话中断被终止，真实样本段随后单独运行现有 `compare_real_used_range_sample()` 补齐并通过：13 份只读 XLSX、96 张工作表、203,580 行四批完整投影精确一致，源文件 SHA-256 前后一致，批次事件 26/14/27/63 与保存历史一致，实际引擎 Calamine 与 rust_xlsxwriter，报告更新至 `probe/reports/summary_used_range_real_parity_20261025.json`。NoCom 独有行为仍按待确认处理；该对拍不构成生产验收。
 
+PT-6-1 当前 HEAD 复验（2026-10-25，bbb8762）：Windows 原生 MSVC CLI 对只读 tests/fixtures/vba_config/VbaV2.4.2.xlsm 与 PyCode 完整投影精确一致，23,975 条数据行、19 列；输入未变，新建 XLSX 不含源 VBA。开发者事件流与保存历史一致，实际引擎为 Calamine、excel-reader::read_xlsx_worksheet_extents、rust_xlsxwriter，Rust 总耗时 5,063 ms。机器证据追加于 probe/reports/summary_used_range_real_vba_xlsm_parity_20261025.json。此项只复验该单一真实宏工作簿；目标 Linux/麒麟/UOS、glibc 2.28 和 deb 仍未验收。
+
 ## 输入与转换矩阵
 
 | 格式 | 计划 | 验收状态 |
