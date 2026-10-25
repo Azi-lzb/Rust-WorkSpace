@@ -1,7 +1,7 @@
 【时间】2026-10-25 22:46:46（Asia/Shanghai）
 【执行者】Codex
 【修改前提交】8785153
-【修改后提交】本记录与功能一起提交；SHA 提交后补记
+【修改后提交】功能提交 `ac6930e`；本次在功能提交后补记 SHA，后续记录更新仅为留痕。
 【WIP】开始时仅有未跟踪 HANDOFF_ZCODE_TO_CODEX.md 与 .pytest-tmp-v3/；均未修改、未暂存
 【目的】继续 S5-F01 中不受共享请求 #8 阻塞的 V_EXT 时序布局迁移；按报告期选择行，保持 Python 日期与告警语义，并接入 s5-audit-run。
 【修改/新增文件】audit-core/src/s5_external_layout.rs；audit-core/src/s5_retrieval.rs；audit-core/tests/s5_previous_source_cli.rs；audit-core/MIGRATION_INVENTORY.md；audit-core/probe/reports/s5_vext_time_series_synthetic_parity_windows_native_20261025.json；本修改记录。
