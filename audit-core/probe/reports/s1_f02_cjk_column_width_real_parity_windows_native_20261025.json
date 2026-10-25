@@ -1,0 +1,58 @@
+{
+  "schema_version": 1,
+  "suite": "audit.s1_f02_named_region_cjk_column_width_real_parity",
+  "status": "partial",
+  "scope": {
+    "sample_period": "2026-07-31",
+    "business_area": "personal-loan",
+    "feature": "任意行汇总",
+    "source_workbooks": 7,
+    "source_sheets": 27,
+    "custom_mapping_applied": false,
+    "mapping_source": "source built-in defaults",
+    "platform": "Windows 11 x86_64-pc-windows-msvc"
+  },
+  "execution": {
+    "python_baseline": {
+      "function": "base_audit.region_summary.run_region_summaries",
+      "engine": "Microsoft Excel",
+      "elapsed_ms": 11326
+    },
+    "rust": {
+      "entrypoint": "open-data-audit s1-region-summary",
+      "exit_code": 0,
+      "reader": "calamine+namespace_aware_ooxml",
+      "writer": "rust_xlsxwriter 0.101.0",
+      "elapsed_ms": 266
+    },
+    "outputs_written_to_temporary_directory": true
+  },
+  "comparison": {
+    "sheet_name_mismatches": 0,
+    "dimension_mismatches": 0,
+    "value_mismatches": 0,
+    "font_mismatches": 0,
+    "alignment_mismatches": 0,
+    "header_style_mismatches": 0,
+    "filter_mismatches": 0,
+    "freeze_mismatches": 0,
+    "column_width_max_delta_characters": 3.07421875,
+    "column_widths_exact": false,
+    "previous_rust_max_delta_before_cjk_correction": 12.92578125
+  },
+  "synthetic_regression": {
+    "status": "passed_with_column_width_variance",
+    "main_max_delta_characters": 1.4296875,
+    "history_max_delta_characters": 1.78515625,
+    "fallback_max_delta_characters": 1.4296875,
+    "fixed_row_max_delta_characters": 1.4296875,
+    "values_types_fonts_alignment_structure_and_filter_mismatches": 0
+  },
+  "inputs_unchanged": true,
+  "temporary_outputs_removed": true,
+  "raw_business_values_or_paths_persisted": false,
+  "limitations": [
+    "The real sample still has column-width variance; complete output-format parity is not established.",
+    "Custom mapping workbooks, Linux target systems, 麒麟 V10, 统信 V20, and deb packaging were not tested."
+  ]
+}

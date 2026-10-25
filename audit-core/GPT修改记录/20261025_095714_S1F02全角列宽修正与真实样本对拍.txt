@@ -1,0 +1,39 @@
+# S1-F02 全角列宽修正与真实样本对拍
+
+时间：2026-10-25 09:57:14 +08:00
+分支：audit-dev
+修改前 commit：88f09c8
+WIP：修改前工作树仅有本次源文件改动；未覆盖其他工作区文件。DEVELOPMENT_GOAL.md 未修改。
+组件版本：audit-core crate 版本保持现有值；未引入 Sx-Fxx 版本编号。
+
+## 目的与变更
+
+修正新建 S1-F02 汇总表的 Rust 自动列宽估算。rust_xlsxwriter 0.101.0 的模拟 AutoFit 将非 ASCII 字符统一按 8 像素估算，导致中文列在真实 Excel COM 输出中偏窄。Audit 模块现按等线 11 的全角字符像素宽度计算每列宽度，保留 ASCII 字符估算、筛选箭头内边距、单元格内边距和 285px（约 40 字符）上限。
+
+修改文件：
+- audit-core/src/s1_region_summary.rs
+- audit-core/MIGRATION_INVENTORY.md
+- audit-core/probe/reports/s1_f02_cjk_column_width_real_parity_windows_native_20261025.json
+- 本记录
+
+未修改共享 crates、根 Cargo 配置、Cargo.lock、Python 源码或真实工作簿。
+
+## 验证
+
+- cargo test --offline --locked -p audit-core --lib -j 1 s1_region_summary::tests::summary_output_width_uses_full_width_cjk_pixels_and_preserves_ascii_metrics：1/1 通过。
+- cargo test --offline --locked -p audit-core --test s1_region_summary_cli -j 1：5/5 通过。
+- cargo build --offline --locked -p audit-core --bin open-data-audit：通过。
+- rustfmt --edition 2024 --check audit-core/src/s1_region_summary.rs 与 git diff --check：通过。
+- python audit-core/tests/compare/compare_s1_region_summary.py --audit-binary target/debug/open-data-audit.exe：合成任意行/固定行/历史追加/兜底比较通过；列宽仍有差异，报告状态 passed_with_column_width_variance。
+- Windows 原生真实对拍：旧 Python run_region_summaries / Microsoft Excel 与 Rust CLI 使用 7 个源工作簿、27 张工作表；值、尺寸、字体、对齐、表头、筛选、冻结差异均为 0。列宽最大差从既有 12.92578125 降为 3.07421875 字符，仍非精确。Python 基线 11,326 ms、Rust CLI 266 ms，仅为本次样本观测。
+- 配置、模板及 7 个源文件运行前后摘要相同；两个输出均在临时目录生成并随测试清理。报告未保存工作簿路径或业务值。
+
+## 未执行项与已知问题
+
+- S1-F02 格式契约仍未完全对拍，列宽差异不为零；仅验证用户提供的个人贷款真实批次，未验证自定义映射。
+- 未执行麒麟 V10、统信 V20、Linux 离线 deb 和 GUI 验收。
+- S1-F01 公式复制/工作簿编辑路由仍 Unverified，本次未修改共享 ExcelModifier。
+
+## 回滚
+
+回滚本次本地提交可恢复原自动列宽实现及其状态记录。真实输入没有被写入；临时输出已清理。

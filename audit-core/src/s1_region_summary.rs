@@ -34,6 +34,7 @@ const SUMMARY_OUTPUT_FONT_NAME: &str = "等线";
 const SUMMARY_OUTPUT_FONT_CHARSET: u8 = 134;
 const MAX_ROWS: usize = 1_048_576;
 const MAX_COLUMNS: usize = 16_384;
+const SUMMARY_MAX_COLUMN_WIDTH_PIXELS: u32 = 285;
 
 #[derive(Clone, Debug, Serialize)]
 pub struct S1RegionSummarySheetSummary {
@@ -739,9 +740,14 @@ pub fn summarize_s1_named_regions(
                 worksheet
                     .autofilter(0, 0, group.rows.len() as u32, (headers.len() - 1) as u16)
                     .context("设置 S1-F02 汇总筛选")?;
-                // Match the legacy Excel COM path's 40-character cap. The writer API
-                // takes pixels here: 285px is about 40 Calibri 11 character units.
-                worksheet.set_autofit_max_width(285).autofit();
+                for (column, width_pixels) in summary_output_column_width_pixels(group)
+                    .into_iter()
+                    .enumerate()
+                {
+                    worksheet
+                        .set_column_width_pixels(column as u16, width_pixels)
+                        .context("设置 S1-F02 汇总列宽")?;
+                }
             }
         }
         workbook
@@ -854,6 +860,127 @@ fn summary_output_headers(group: &RegionGroup) -> Vec<CellValue> {
     headers.extend(group.headers.iter().cloned().map(CellValue::Text));
     headers.extend(group.history_fields.iter().cloned().map(CellValue::Text));
     headers
+}
+
+fn summary_output_column_width_pixels(group: &RegionGroup) -> Vec<u32> {
+    let headers = summary_output_headers(group);
+    let mut widths = vec![0; headers.len()];
+
+    for (column, value) in headers.iter().enumerate() {
+        widths[column] = summary_autofit_cell_width_pixels(value, true);
+    }
+    for row in &group.rows {
+        for (column, value) in row.iter().enumerate().take(widths.len()) {
+            widths[column] = widths[column].max(summary_autofit_cell_width_pixels(value, false));
+        }
+    }
+    for width in &mut widths {
+        *width = (*width).min(SUMMARY_MAX_COLUMN_WIDTH_PIXELS);
+    }
+
+    widths
+}
+
+fn summary_autofit_cell_width_pixels(value: &CellValue, filter_header: bool) -> u32 {
+    let content_width = match value {
+        CellValue::Empty
+        | CellValue::Error(_)
+        | CellValue::DateTimeIso(_)
+        | CellValue::DurationIso(_) => 0,
+        CellValue::Text(value) => value
+            .lines()
+            .map(summary_text_width_pixels)
+            .max()
+            .unwrap_or_default(),
+        CellValue::Number(value) | CellValue::DateTimeSerial(value) => {
+            7 * value.to_string().len() as u32
+        }
+        CellValue::Integer(value) => 7 * (*value as f64).to_string().len() as u32,
+        CellValue::Boolean(true) => 31,
+        CellValue::Boolean(false) => 36,
+    };
+
+    if content_width == 0 {
+        return 0;
+    }
+
+    let filter_padding = if filter_header { 16 } else { 0 };
+    content_width
+        .saturating_add(filter_padding)
+        .saturating_add(7)
+        .min(SUMMARY_MAX_COLUMN_WIDTH_PIXELS)
+}
+
+fn summary_text_width_pixels(text: &str) -> u32 {
+    text.chars()
+        .fold(0_u32, |width, character| {
+            width.saturating_add(summary_character_width_pixels(character))
+        })
+        .min(1_790)
+}
+
+fn summary_character_width_pixels(character: char) -> u32 {
+    let codepoint = character as u32;
+    if !character.is_ascii() {
+        return if is_east_asian_wide(character) { 15 } else { 8 };
+    }
+
+    // ASCII widths mirror rust_xlsxwriter's Excel metrics for its default
+    // autofit simulation; full-width glyphs use the 11-point DengXian width.
+    match codepoint {
+        0x20 | 0x27 => 3,
+        0x2C | 0x2E | 0x3A | 0x3B | 0x49 | 0x60 | 0x69 | 0x6A | 0x6C => 4,
+        0x21 | 0x28 | 0x29 | 0x2D | 0x4A | 0x5B | 0x5D | 0x66 | 0x72 | 0x74 | 0x7B | 0x7D => 5,
+        0x22 | 0x2F | 0x4C | 0x5C | 0x63 | 0x73 | 0x7A => 6,
+        0x23..=0x24
+        | 0x2A..=0x2B
+        | 0x30..=0x39
+        | 0x3C..=0x3F
+        | 0x45..=0x46
+        | 0x53..=0x54
+        | 0x59..=0x5A
+        | 0x5E..=0x5F
+        | 0x61
+        | 0x67
+        | 0x6B
+        | 0x76
+        | 0x78..=0x79
+        | 0x7C
+        | 0x7E => 7,
+        0x42..=0x43
+        | 0x4B
+        | 0x50
+        | 0x52
+        | 0x58
+        | 0x62
+        | 0x64..=0x65
+        | 0x68
+        | 0x6E..=0x71
+        | 0x75 => 8,
+        0x41 | 0x44 | 0x47..=0x48 | 0x55..=0x56 => 9,
+        0x26 | 0x4E | 0x4F | 0x51 => 10,
+        0x25 | 0x77 => 11,
+        0x4D | 0x6D => 12,
+        0x40 | 0x57 => 13,
+        _ => 8,
+    }
+}
+
+fn is_east_asian_wide(character: char) -> bool {
+    matches!(
+        character as u32,
+        0x1100..=0x11FF
+            | 0x2329..=0x232A
+            | 0x2E80..=0xA4CF
+            | 0xAC00..=0xD7A3
+            | 0xF900..=0xFAFF
+            | 0xFE10..=0xFE19
+            | 0xFE30..=0xFE6F
+            | 0xFF01..=0xFF60
+            | 0xFFE0..=0xFFE6
+            | 0x1F300..=0x1FAFF
+            | 0x20000..=0x3FFFD
+    )
 }
 
 fn history_append_rule(
@@ -1669,6 +1796,38 @@ mod tests {
         );
         let error = parse_summary_fields(&[record]).unwrap_err().to_string();
         assert!(error.contains("必须只定位一个单元格"), "{error}");
+    }
+
+    #[test]
+    fn summary_output_width_uses_full_width_cjk_pixels_and_preserves_ascii_metrics() {
+        let group = RegionGroup {
+            feature_name: "任意行汇总".to_owned(),
+            template_sheet_name: "结果".to_owned(),
+            output_sheet_name: "结果".to_owned(),
+            extra_fields: Vec::new(),
+            headers: vec!["名称".to_owned()],
+            history_fields: Vec::new(),
+            rows: vec![vec![
+                CellValue::Text("source.xlsx".to_owned()),
+                CellValue::Text("Data".to_owned()),
+                CellValue::Text("广州银行".to_owned()),
+            ]],
+        };
+
+        let widths = summary_output_column_width_pixels(&group);
+        assert_eq!(summary_character_width_pixels('A'), 9);
+        assert_eq!(summary_character_width_pixels('广'), 15);
+        assert_eq!(widths[2], 67);
+        assert_eq!(
+            summary_autofit_cell_width_pixels(&CellValue::Text("A".to_owned()), true),
+            32
+        );
+
+        let long_wide_text = CellValue::Text("银".repeat(30));
+        assert_eq!(
+            summary_autofit_cell_width_pixels(&long_wide_text, false),
+            SUMMARY_MAX_COLUMN_WIDTH_PIXELS
+        );
     }
 
     #[test]
