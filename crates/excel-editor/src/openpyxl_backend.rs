@@ -1290,22 +1290,7 @@ fn workbook_preservation_snapshot(path: &Path) -> Result<WorkbookPreservationSna
             .dimensions
             .push((sheet_name.clone(), column_dimensions, row_dimensions));
 
-        let mut page_settings = Vec::new();
-        for child in root.children().filter(|node| node.is_element()) {
-            if matches!(
-                child.tag_name().name(),
-                "pageMargins" | "pageSetup" | "printOptions" | "rowBreaks" | "colBreaks"
-            ) {
-                page_settings.push(canonical_xml_element(child));
-            } else if child.tag_name().name() == "sheetPr" {
-                if let Some(setup_properties) = child
-                    .children()
-                    .find(|node| node.is_element() && node.tag_name().name() == "pageSetUpPr")
-                {
-                    page_settings.push(canonical_xml_element(setup_properties));
-                }
-            }
-        }
+        let page_settings = canonical_page_settings(root);
         snapshot
             .page_settings
             .push((sheet_name.clone(), page_settings));
@@ -1395,6 +1380,34 @@ fn read_zip_part(archive: &mut zip::ZipArchive<File>, part_name: &str) -> Result
     part.read_to_string(&mut xml)
         .with_context(|| format!("read OOXML part {part_name}"))?;
     Ok(xml)
+}
+
+fn canonical_page_settings(root: roxmltree::Node<'_, '_>) -> Vec<CanonicalXmlElement> {
+    let mut page_settings = Vec::new();
+    for child in root.children().filter(|node| node.is_element()) {
+        if matches!(
+            child.tag_name().name(),
+            "pageMargins" | "pageSetup" | "printOptions" | "rowBreaks" | "colBreaks"
+        ) {
+            page_settings.push(canonical_xml_element(child));
+        } else if child.tag_name().name() == "sheetPr" {
+            if let Some(setup_properties) = child
+                .children()
+                .find(|node| node.is_element() && node.tag_name().name() == "pageSetUpPr")
+            {
+                // An empty pageSetUpPr carries only schema defaults. Umya
+                // reads fitToPage as false and omits the empty element again;
+                // normalize that representation while retaining strict
+                // per-sheet checks for every explicit attribute/child.
+                let has_explicit_content = setup_properties.attributes().next().is_some()
+                    || setup_properties.children().any(|node| node.is_element());
+                if has_explicit_content {
+                    page_settings.push(canonical_xml_element(setup_properties));
+                }
+            }
+        }
+    }
+    page_settings
 }
 
 fn canonical_xml_element(node: roxmltree::Node<'_, '_>) -> CanonicalXmlElement {
@@ -4054,6 +4067,34 @@ mod tests {
             text: None,
             children: Vec::new(),
         })
+    }
+
+    #[test]
+    fn empty_default_page_setup_properties_are_normalized_but_explicit_settings_remain(
+    ) -> Result<()> {
+        const NS: &str = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
+        let source_xml = format!(
+            r#"<worksheet xmlns="{NS}"><sheetPr><pageSetUpPr/></sheetPr><pageMargins left="0.7" right="0.7" top="0.75" bottom="0.75" header="0.3" footer="0.3"/></worksheet>"#
+        );
+        let normalized_xml = format!(
+            r#"<worksheet xmlns="{NS}"><pageMargins left="0.7" right="0.7" top="0.75" bottom="0.75" header="0.3" footer="0.3"/></worksheet>"#
+        );
+        let explicit_xml = format!(
+            r#"<worksheet xmlns="{NS}"><sheetPr><pageSetUpPr fitToPage="1"/></sheetPr><pageMargins left="0.7" right="0.7" top="0.75" bottom="0.75" header="0.3" footer="0.3"/></worksheet>"#
+        );
+        let source = roxmltree::Document::parse(&source_xml)?;
+        let normalized = roxmltree::Document::parse(&normalized_xml)?;
+        let explicit = roxmltree::Document::parse(&explicit_xml)?;
+
+        assert_eq!(
+            canonical_page_settings(source.root_element()),
+            canonical_page_settings(normalized.root_element())
+        );
+        assert_ne!(
+            canonical_page_settings(source.root_element()),
+            canonical_page_settings(explicit.root_element())
+        );
+        Ok(())
     }
 
     #[test]
