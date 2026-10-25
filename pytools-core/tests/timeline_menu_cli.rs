@@ -719,14 +719,28 @@ fn interactive_wide_summary_menu_commits_new_target_after_confirmation() -> Resu
 
 #[test]
 fn interactive_wide_summary_menu_preserves_negative_date_serial_in_new_target() -> Result<()> {
+    assert_negative_date_serial_menu_target("3")
+}
+
+#[test]
+fn interactive_wide_summary_no_suffix_menu_preserves_negative_date_serial_in_new_target(
+) -> Result<()> {
+    assert_negative_date_serial_menu_target("4")
+}
+
+fn assert_negative_date_serial_menu_target(menu_choice: &str) -> Result<()> {
     let root = TestDirectory::new()?;
     let target = root.path().join("configured target.xlsx");
     let config = create_timeline_config_with_target(root.path(), Some(&target))?;
+    let config_before = fs::read(&config)?;
     let source = root.path().join("sample negative date source.xlsx");
     create_wide_source_with_negative_date(&source, "负序列分行")?;
     let source_before = fs::read(&source)?;
 
-    let completed = run_menu(&config, &format!("1\n3\n{}\ny\n0\n", source.display()))?;
+    let completed = run_menu(
+        &config,
+        &format!("1\n{menu_choice}\n{}\ny\n0\n", source.display()),
+    )?;
     assert!(
         completed.status.success(),
         "wide-summary negative serial target write failed: {}",
@@ -734,24 +748,22 @@ fn interactive_wide_summary_menu_preserves_negative_date_serial_in_new_target() 
     );
     assert!(target.is_file(), "negative serial target was not published");
     assert_eq!(fs::read(&source)?, source_before);
+    assert_eq!(fs::read(&config)?, config_before);
 
     let target_dump = read_workbook(&target)?;
-    let target_sheet = target_dump
-        .sheets
-        .iter()
-        .find(|sheet| sheet.name == "Append")
-        .context("negative serial target worksheet missing")?;
-    let negative_serial = target_sheet.values.iter().find(|(_, value)| {
-        value.get("type").and_then(Value::as_str) == Some("datetime_serial")
-            && value
-                .get("value")
-                .and_then(Value::as_f64)
-                .is_some_and(|serial| (serial + 0.5).abs() < 1e-9)
+    let negative_serial_exists = target_dump.sheets.iter().any(|sheet| {
+        sheet.values.iter().any(|(_, value)| {
+            value.get("type").and_then(Value::as_str) == Some("datetime_serial")
+                && value
+                    .get("value")
+                    .and_then(Value::as_f64)
+                    .is_some_and(|serial| (serial + 0.5).abs() < 1e-9)
+        })
     });
     assert!(
-        negative_serial.is_some(),
+        negative_serial_exists,
         "negative cached Excel serial was not preserved: {:?}",
-        target_sheet.values
+        target_dump.sheets
     );
     let report = latest_menu_json_report(&completed)?;
     assert_eq!(report["target_append_status"], "succeeded");
@@ -759,6 +771,13 @@ fn interactive_wide_summary_menu_preserves_negative_date_serial_in_new_target() 
         report["target_append_executions"][0]["operation"],
         "created"
     );
+    let feature_id = if menu_choice == "3" {
+        "PT-1-3"
+    } else {
+        "PT-1-4"
+    };
+    let history = read_single_run_history(&root.path().join("app").join("logs"), feature_id)?;
+    assert_eq!(history["status"], "succeeded");
     Ok(())
 }
 
