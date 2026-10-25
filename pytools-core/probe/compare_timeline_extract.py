@@ -231,9 +231,15 @@ def run() -> dict:
         source_a = source_dir / "本外币存款表_202604.xlsx"
         source_b = source_dir / "本外币存款表_202605.xlsx"
         broken_source = source_dir / "本外币存款表_202606.xlsx"
+        nested_source_dir = source_dir / "nested"
+        nested_source_dir.mkdir()
+        source_c = nested_source_dir / "本外币存款表_202607.xlsx"
+        lock_source = source_dir / "~$本外币存款表_202608.xlsx"
         make_source(source_a, 4)
         make_source(source_b, 5)
         broken_source.write_bytes(b"synthetic invalid xlsx")
+        make_source(source_c, 7)
+        make_source(lock_source, 8)
         config = root / "config" / "config.xlsx"
         python_output = root / "python-output"
         rust_output = root / "rust-output"
@@ -292,6 +298,57 @@ def run() -> dict:
                     ensure_ascii=False,
                     default=str,
                 )
+            )
+
+        python_discovery_global = load_global(config)
+        python_discovery_global.output_dir = root / "python-discovery-output"
+        python_discovery_path = run_timeline_slim(
+            load_timeline_rules(config),
+            load_path_maps(config),
+            python_discovery_global,
+        )
+        if python_discovery_path is None or not python_discovery_path.is_file():
+            raise AssertionError("PyCode default directory scan produced no output")
+        discovery_run = subprocess.run(
+            [
+                str(rust_cli),
+                "timeline-extract",
+                "--config",
+                str(config),
+                "--output-dir",
+                str(root / "rust-discovery-output"),
+                "--log-dir",
+                str(logs),
+                "--log-view",
+                "developer",
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+        if discovery_run.returncode != 0:
+            raise AssertionError(
+                "Rust default directory scan failed: "
+                f"{discovery_run.stderr}\n{discovery_run.stdout}"
+            )
+        discovery_result = json.loads(discovery_run.stdout)
+        if discovery_result["total_files"] != 4 or discovery_result["failed_files"] != 1:
+            raise AssertionError(
+                "Rust default directory scan did not include recursive configured files "
+                "and the invalid workbook while excluding the lock file"
+            )
+        discovery_history = json.loads(
+            Path(discovery_result["run_log_path"]).read_text(encoding="utf-8")
+        )
+        if discovery_history["progress"]["total_inputs"] != 4:
+            raise AssertionError("source discovery progress did not report the scanned file count")
+        if workbook_projection(python_discovery_path) != workbook_projection(
+            Path(discovery_result["path"])
+        ):
+            raise AssertionError(
+                "default input-directory scan differs from the PyCode output projection"
             )
 
         python_user_global = load_global(config)
@@ -784,6 +841,7 @@ def run() -> dict:
                 "duplicate-rule global deduplication",
                 "row suffix and path mapping",
                 "developer event stream and persisted history",
+                "omitted source paths recursively scan configured input directory and skip Excel lock files; full output matches PyCode",
                 "user view reports progress, hides engine names, and matches PyCode output",
                 "menu 1→2 manual multi-file selection and continue-on-error behavior",
                 "absent target is created through rust_xlsxwriter and matches the PyCode workbook",
@@ -801,6 +859,14 @@ def run() -> dict:
                 "engine_names_hidden": True,
                 "actual_engines_in_history": user_history["actual_engines"],
             },
+            "default_source_discovery": {
+                "full_workbook_projection_equal": True,
+                "total_files": discovery_result["total_files"],
+                "failed_files": discovery_result["failed_files"],
+                "recursive_source_included": True,
+                "excel_lock_file_skipped": True,
+                "actual_engines_in_history": discovery_history["actual_engines"],
+            },
             "elapsed_ms": history["total_elapsed_ms"],
             "deferred_target_write_rules": rust_result["configured_target_rules"],
             "differences": [],
@@ -815,5 +881,10 @@ if __name__ == "__main__":
     report = run()
     output = WORKSPACE / "pytools-core" / "probe" / "reports" / "timeline_extract_parity_20261025.json"
     output.parent.mkdir(parents=True, exist_ok=True)
+    if output.is_file():
+        previous_report = json.loads(output.read_text(encoding="utf-8"))
+        manual_dialog_case = previous_report.get("manual_native_dialog_case")
+        if manual_dialog_case is not None:
+            report["manual_native_dialog_case"] = manual_dialog_case
     output.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(report, ensure_ascii=False, indent=2))

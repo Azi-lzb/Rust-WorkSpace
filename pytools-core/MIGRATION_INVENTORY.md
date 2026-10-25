@@ -712,6 +712,8 @@ Windows 原生构建与回归通过：`cargo fmt --manifest-path pytools-core/Ca
 
 Windows 原生菜单 `1→2` 另以系统 Open 对话框选取 1 个临时合成工作簿，命中 4 个工作表、提取 20 条记录、写出 10 行；与 PyCode 输出的完整工作簿投影一致。机器对拍报告：`probe/reports/timeline_extract_parity_20261025.json`；可重跑自动探针：`probe/compare_timeline_extract.py`。
 
+新增无位置参数入口 `pytools timeline-extract --config <配置簿>`：按 PyCode `source_paths=None` 语义递归扫描配置输入目录，按 `source_exts` 匹配扩展名、跳过 `~$` Excel 锁文件并排序；显式源文件列表与菜单选取不变。Windows 原生集成测试覆盖递归子目录、扩展名大小写、锁文件、未配置格式和空目录。合成 Python/Rust 对拍中默认扫描 4 个已配置扩展名文件（3 个有效、1 个损坏），锁文件排除，输出完整工作簿投影一致。报告已更新至 `probe/reports/timeline_extract_parity_20261025.json`。本项只证明合成样本行为，真实业务样本及目标 Linux/deb 验收仍未完成，PT-1-2 整体保持未验证。
+
 真实业务样本尚不可用：原 PyCode 默认配置的输入目录不存在，源项目树中的工作簿文件没有命中该配置的时序规则。现有证据仅为合成 XLSX；PT-1-2 仍未通过真实数据验收。D01 将 PT-1-2 排除在已确认目标写入合同之外，因此既有目标写入只作为 capability-gated 候选，不能作为生产能力或迁移完成依据。其他格式、麒麟 V10/UOS V20、glibc 2.28 与 deb 离线交付未验证；PT-1-2 整体状态仍为未验证。
 
 ### 2026-10-25 PT-1-3/PT-1-4 Windows 原生文件对话框实测

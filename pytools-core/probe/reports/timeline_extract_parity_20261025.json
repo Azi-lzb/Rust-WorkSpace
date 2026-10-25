@@ -17,6 +17,7 @@
     "duplicate-rule global deduplication",
     "row suffix and path mapping",
     "developer event stream and persisted history",
+    "omitted source paths recursively scan configured input directory and skip Excel lock files; full output matches PyCode",
     "user view reports progress, hides engine names, and matches PyCode output",
     "menu 1→2 manual multi-file selection and continue-on-error behavior",
     "absent target is created through rust_xlsxwriter and matches the PyCode workbook",
@@ -40,7 +41,18 @@
       "rust_xlsxwriter"
     ]
   },
-  "elapsed_ms": 55,
+  "default_source_discovery": {
+    "full_workbook_projection_equal": true,
+    "total_files": 4,
+    "failed_files": 1,
+    "recursive_source_included": true,
+    "excel_lock_file_skipped": true,
+    "actual_engines_in_history": [
+      "calamine",
+      "rust_xlsxwriter"
+    ]
+  },
+  "elapsed_ms": 52,
   "deferred_target_write_rules": 0,
   "differences": [],
   "notes": [

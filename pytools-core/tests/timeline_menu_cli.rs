@@ -204,6 +204,102 @@ fn wide_summary_cli_filters_missing_and_unconfigured_extensions_before_reading()
 }
 
 #[test]
+fn timeline_extract_cli_discovers_default_sources_recursively_and_skips_lock_files() -> Result<()> {
+    let root = TestDirectory::new()?;
+    let config = create_timeline_config(root.path())?;
+    let input_dir = root.path().join("app").join("input");
+    let nested_dir = input_dir.join("nested");
+    fs::create_dir_all(&nested_dir)?;
+
+    let root_source = input_dir.join("sample root source.xlsx");
+    let nested_source = nested_dir.join("sample nested source.XLSX");
+    let lock_source = input_dir.join("~$sample locked source.xlsx");
+    let unsupported_source = input_dir.join("sample unsupported source.xlsb");
+    create_wide_source(&root_source, "自动发现根目录", 21.0)?;
+    create_wide_source(&nested_source, "自动发现子目录", 31.0)?;
+    create_wide_source(&lock_source, "锁文件必须跳过", 41.0)?;
+    fs::write(&unsupported_source, b"unsupported workbook format")?;
+
+    let output = Command::new(env!("CARGO_BIN_EXE_pytools"))
+        .arg("timeline-extract")
+        .arg("--config")
+        .arg(&config)
+        .arg("--log-view")
+        .arg("developer")
+        .output()
+        .context("run timeline-extract with configured input discovery")?;
+    assert!(
+        output.status.success(),
+        "timeline-extract default discovery failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let report: Value = serde_json::from_slice(&output.stdout)?;
+    assert_eq!(report["total_files"], 2);
+    assert_eq!(report["processed_files"], 2);
+    assert_eq!(report["failed_files"], 0);
+    assert!(report["rows"].as_u64().is_some_and(|rows| rows > 0));
+    let output_path = report["path"]
+        .as_str()
+        .map(PathBuf::from)
+        .context("timeline extraction output path missing")?;
+    let workbook = read_workbook(&output_path)?;
+    let output_values = &workbook.sheets[0].values;
+    for expected_source in ["sample root source.xlsx", "sample nested source.XLSX"] {
+        assert!(
+            output_values
+                .values()
+                .any(|cell| { cell.get("value").and_then(Value::as_str) == Some(expected_source) }),
+            "default discovery output missing source {expected_source}"
+        );
+    }
+    assert!(!output_values.values().any(|cell| {
+        cell.get("value").and_then(Value::as_str) == Some("~$sample locked source.xlsx")
+    }));
+
+    let history: Value = serde_json::from_slice(&fs::read(
+        report["run_log_path"]
+            .as_str()
+            .context("timeline extraction history path missing")?,
+    )?)?;
+    assert_eq!(history["progress"]["total_inputs"], 2);
+    assert!(history["events"].as_array().is_some_and(|events| {
+        events.iter().any(|event| {
+            event["phase"] == "source_discovery"
+                && event["status"] == "completed"
+                && event["progress"]["total_inputs"] == 2
+        })
+    }));
+    Ok(())
+}
+
+#[test]
+fn timeline_extract_cli_with_empty_default_input_directory_skips_output() -> Result<()> {
+    let root = TestDirectory::new()?;
+    let config = create_timeline_config(root.path())?;
+    let output = Command::new(env!("CARGO_BIN_EXE_pytools"))
+        .arg("timeline-extract")
+        .arg("--config")
+        .arg(&config)
+        .arg("--log-view")
+        .arg("developer")
+        .output()
+        .context("run timeline-extract with no configured source files")?;
+    assert!(
+        output.status.success(),
+        "timeline-extract empty discovery failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let report: Value = serde_json::from_slice(&output.stdout)?;
+    assert_eq!(report["total_files"], 0);
+    assert_eq!(report["rows"], 0);
+    assert!(report["path"].is_null());
+    assert!(!root.path().join("app").join("output").exists());
+    Ok(())
+}
+
+#[test]
 fn header_path_compare_menu_supports_user_developer_and_off_views() -> Result<()> {
     let root = TestDirectory::new()?;
     let config = create_timeline_config(root.path())?;

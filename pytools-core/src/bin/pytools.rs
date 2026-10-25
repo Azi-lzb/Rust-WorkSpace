@@ -58,8 +58,8 @@ use pytools_core::summary_ops::{
     summarize_used_ranges_with_progress, SummaryProgress, SummaryRunEvent,
 };
 use pytools_core::timeline_extract::{
-    run_timeline_extract, run_timeline_extract_with_progress, TimelineExtractProgress,
-    TimelineExtractResult, TimelineExtractRunEvent,
+    discover_timeline_extract_sources, run_timeline_extract, run_timeline_extract_with_progress,
+    TimelineExtractProgress, TimelineExtractResult, TimelineExtractRunEvent,
 };
 use pytools_core::timeline_ops::{
     build_wide_target_append_plans, prepare_wide_target_replacement_source,
@@ -6730,10 +6730,6 @@ fn run_timeline_extract_cli_report(
     let (commit_target, arguments) = extract_boolean_flag(arguments, "commit-target")?;
     let options = parse_cli_arguments(arguments)?;
     let config = required_path(&options, "config")?;
-    anyhow::ensure!(
-        !options.positional.is_empty(),
-        "provide at least one source workbook path"
-    );
     let log_view = options
         .values
         .get("log-view")
@@ -6885,6 +6881,101 @@ fn run_timeline_extract_cli_report(
         );
     }
 
+    let source_paths = if options.positional.is_empty() {
+        let discovery_started = Instant::now();
+        if log_view != "off" {
+            let sequence = events.len() + 1;
+            emit_timeline_extract_cli_event(
+                log_view,
+                &mut events,
+                TimelineExtractRunEvent {
+                    sequence,
+                    timestamp: Local::now().to_rfc3339(),
+                    feature_id: "PT-1-2",
+                    phase: "source_discovery".to_owned(),
+                    status: "started".to_owned(),
+                    user_message: "正在扫描配置输入目录中的时序源文件".to_owned(),
+                    progress: progress.clone(),
+                    input_index: None,
+                    stage_elapsed_ms: None,
+                    total_elapsed_ms: run_started.elapsed().as_millis(),
+                    components: vec!["Rust".to_owned(), "std::fs".to_owned()],
+                    actual_engine: None,
+                    error_type: None,
+                },
+            );
+        }
+        match discover_timeline_extract_sources(&global) {
+            Ok(sources) => {
+                progress.total_inputs = sources.len();
+                if log_view != "off" {
+                    let sequence = events.len() + 1;
+                    emit_timeline_extract_cli_event(
+                        log_view,
+                        &mut events,
+                        TimelineExtractRunEvent {
+                            sequence,
+                            timestamp: Local::now().to_rfc3339(),
+                            feature_id: "PT-1-2",
+                            phase: "source_discovery".to_owned(),
+                            status: "completed".to_owned(),
+                            user_message: format!("已发现 {} 个时序源文件", sources.len()),
+                            progress: progress.clone(),
+                            input_index: None,
+                            stage_elapsed_ms: Some(discovery_started.elapsed().as_millis()),
+                            total_elapsed_ms: run_started.elapsed().as_millis(),
+                            components: vec!["Rust".to_owned(), "std::fs".to_owned()],
+                            actual_engine: None,
+                            error_type: None,
+                        },
+                    );
+                }
+                sources
+            }
+            Err(error) => {
+                if log_view != "off" {
+                    let sequence = events.len() + 1;
+                    emit_timeline_extract_cli_event(
+                        log_view,
+                        &mut events,
+                        TimelineExtractRunEvent {
+                            sequence,
+                            timestamp: Local::now().to_rfc3339(),
+                            feature_id: "PT-1-2",
+                            phase: "source_discovery".to_owned(),
+                            status: "failed".to_owned(),
+                            user_message: "扫描时序输入目录失败".to_owned(),
+                            progress: progress.clone(),
+                            input_index: None,
+                            stage_elapsed_ms: Some(discovery_started.elapsed().as_millis()),
+                            total_elapsed_ms: run_started.elapsed().as_millis(),
+                            components: vec!["Rust".to_owned(), "std::fs".to_owned()],
+                            actual_engine: None,
+                            error_type: Some("source_discovery_error".to_owned()),
+                        },
+                    );
+                    if let Err(history_error) = write_timeline_extract_run_history(
+                        &log_dir,
+                        &run_id,
+                        &started_at,
+                        run_started.elapsed().as_millis(),
+                        None,
+                        "failed",
+                        "source_discovery_error",
+                        &events,
+                    ) {
+                        eprintln!(
+                            "pytools: warning: could not save PT-1-2 run history: {history_error:#}"
+                        );
+                    }
+                }
+                return Err(error).context("扫描时序提取输入目录失败");
+            }
+        }
+    } else {
+        options.positional.clone()
+    };
+
     let output_dir = options
         .values
         .get("output-dir")
@@ -6893,10 +6984,10 @@ fn run_timeline_extract_cli_report(
     let mut execution_global = global.clone();
     execution_global.output_dir = output_dir.clone();
     let mut result = if log_view == "off" {
-        run_timeline_extract(&options.positional, &rules, &path_maps, &execution_global)
+        run_timeline_extract(&source_paths, &rules, &path_maps, &execution_global)
     } else {
         run_timeline_extract_with_progress(
-            &options.positional,
+            &source_paths,
             &rules,
             &path_maps,
             &execution_global,
@@ -10026,7 +10117,7 @@ fn print_usage() {
          no command opens the migrated menu; available categories: 1 (timeline 1-5), 2 (dedup 1-6), 3 (print 1-4), 4 (conversion and file naming 1-10), 5 (configuration 1/2), 6 (summary 1/2), 7 (batch 7-1/7-8), and 8 (archive 1-5)\n\
          timeline-precheck --config <workbook.xlsx>\n\
          timeline-compare --config <workbook.xlsx> --template <workbook.xlsx> [--log-dir <dir>] [--log-view user|developer|off] <source.xlsx>...\n\
-         timeline-extract --config <workbook.xlsx> [--output-dir <dir>] [--log-dir <dir>] [--log-view user|developer|off] [--capabilities <json> --platform <id> [--commit-target]] <source.xlsx>...\n\
+         timeline-extract --config <workbook.xlsx> [--output-dir <dir>] [--log-dir <dir>] [--log-view user|developer|off] [--capabilities <json> --platform <id> [--commit-target]] [<source.xlsx>...]\n\
          wide-summary --config <workbook.xlsx> <source.xlsx>...\n\
          wide-summary-row-suffix --config <workbook.xlsx> <source.xlsx>...\n\
          wide-summary target writes produce append-plan JSON; execute with dedup-append-execute and matching capability evidence\n\
