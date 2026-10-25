@@ -3,7 +3,8 @@
 use anyhow::{Context, Result};
 use chrono::Local;
 use excel_reader::{
-    read_workbook, read_workbook_with_unknown_error_tokens_as_text, read_xlsx_worksheet_extents,
+    read_value_columns_with_iso_dates, read_workbook,
+    read_workbook_with_unknown_error_tokens_as_text, read_xlsx_worksheet_extents, CellValue,
     SheetDump, WorksheetExtent,
 };
 use excel_writer::{Format, Workbook, Worksheet};
@@ -24,6 +25,13 @@ const COMMENT_READ_COMPONENTS: &[&str] = &[
     "pytools-core",
     "excel-reader",
     "calamine",
+    "namespace-aware OOXML supplement",
+];
+const COMMENT_TEMPLATE_READ_COMPONENTS: &[&str] = &[
+    "pytools-core",
+    "excel-reader",
+    "calamine",
+    "Calamine ISO date projection",
     "namespace-aware OOXML supplement",
 ];
 const USED_RANGE_READ_COMPONENTS: &[&str] = &["pytools-core", "excel-reader", "calamine"];
@@ -880,11 +888,14 @@ fn summarize_by_comments_inner(
         &progress,
         Some(template_path),
         None,
-        COMMENT_READ_COMPONENTS,
+        COMMENT_TEMPLATE_READ_COMPONENTS,
         Some("calamine + namespace-aware OOXML supplement"),
         None,
     );
-    let template = match read_workbook(template_path) {
+    let template = match read_workbook(template_path).and_then(|mut template| {
+        overlay_template_iso_dates(template_path, &mut template.sheets)?;
+        Ok(template)
+    }) {
         Ok(template) => template,
         Err(error) => {
             emitter.emit(
@@ -894,7 +905,7 @@ fn summarize_by_comments_inner(
                 &progress,
                 Some(template_path),
                 Some(template_read_started.elapsed()),
-                COMMENT_READ_COMPONENTS,
+                COMMENT_TEMPLATE_READ_COMPONENTS,
                 Some("calamine + namespace-aware OOXML supplement"),
                 Some("template_read_error"),
             );
@@ -910,7 +921,7 @@ fn summarize_by_comments_inner(
         &progress,
         Some(template_path),
         Some(template_read_started.elapsed()),
-        COMMENT_READ_COMPONENTS,
+        COMMENT_TEMPLATE_READ_COMPONENTS,
         Some("calamine + namespace-aware OOXML supplement"),
         None,
     );
@@ -1930,6 +1941,35 @@ fn parse_set_name(text: &str) -> Option<String> {
     }
     Some(name.trim().to_owned())
 }
+fn overlay_template_iso_dates(path: &Path, sheets: &mut [SheetDump]) -> Result<()> {
+    let max_columns = sheets
+        .iter()
+        .flat_map(|sheet| sheet.values.keys())
+        .filter_map(|address| parse_a1(address).map(|(_, column)| column))
+        .max()
+        .unwrap_or(1)
+        .max(1);
+    for date_sheet in read_value_columns_with_iso_dates(path, max_columns)
+        .context("read ISO date values from summary template")?
+    {
+        let Some(sheet) = sheets
+            .iter_mut()
+            .find(|sheet| sheet.name == date_sheet.name)
+        else {
+            continue;
+        };
+        for (address, value) in date_sheet.values {
+            if let CellValue::DateTimeIso(value) = value {
+                sheet.values.insert(
+                    address,
+                    serde_json::json!({"type":"datetime_iso", "value":value}),
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
 fn build_column_headers(sheet: &SheetDump, ranges: &[(usize, usize, usize, usize)]) -> Vec<String> {
     let mut out = Vec::new();
     for (sr, er, sc, ec) in ranges {
@@ -1938,8 +1978,8 @@ fn build_column_headers(sheet: &SheetDump, ranges: &[(usize, usize, usize, usize
                 template_cell_at_or_merged(sheet, &format!("{}{}", column_letters(col), sr));
             let lower =
                 template_cell_at_or_merged(sheet, &format!("{}{}", column_letters(col), er));
-            let a = probe_text(&probe_to_value(&upper));
-            let b = probe_text(&probe_to_value(&lower));
+            let a = probe_text(&upper);
+            let b = probe_text(&lower);
             let text = if *sr < *er && !a.is_empty() && !b.is_empty() && a != b {
                 format!("{a}_{b}")
             } else if !a.is_empty() {
@@ -2062,38 +2102,133 @@ fn iso_duration_serial(text: &str) -> Option<f64> {
     }
     Some(seconds / 86_400.0)
 }
-fn probe_to_value(value: &serde_json::Value) -> serde_json::Value {
-    match value.get("type").and_then(serde_json::Value::as_str) {
-        Some("string") | Some("datetime_iso") | Some("duration_iso") | Some("error") => {
-            serde_json::Value::String(
-                value
-                    .get("value")
-                    .and_then(serde_json::Value::as_str)
-                    .unwrap_or_default()
-                    .to_owned(),
-            )
-        }
-        Some("boolean") => value.get("value").cloned().unwrap_or_default(),
-        Some("number") | Some("integer") | Some("datetime_serial") => {
-            value.get("value").cloned().unwrap_or_default()
-        }
-        _ => serde_json::Value::Null,
-    }
-}
 fn probe_text(value: &serde_json::Value) -> String {
     if value.is_null() {
         String::new()
-    } else if let Some(s) = value.as_str() {
-        s.trim().to_owned()
-    } else if let Some(boolean) = value.as_bool() {
-        if boolean {
-            "True".to_owned()
-        } else {
-            "False".to_owned()
-        }
     } else {
-        value.to_string()
+        let cell_type = value.get("type").and_then(serde_json::Value::as_str);
+        let cell_value = value.get("value").unwrap_or(value);
+        match cell_type {
+            Some("empty") => String::new(),
+            Some("string") | Some("duration_iso") | Some("error") => {
+                cell_value.as_str().unwrap_or_default().trim().to_owned()
+            }
+            Some("boolean") => python_bool_text(cell_value.as_bool().unwrap_or(false)),
+            Some("number") | Some("integer") => python_number_text(cell_value),
+            Some("datetime_iso") => {
+                python_datetime_iso_text(cell_value.as_str().unwrap_or_default())
+            }
+            Some("datetime_serial") => cell_value
+                .as_f64()
+                .and_then(python_datetime_serial_text)
+                .unwrap_or_default(),
+            _ if let Some(text) = value.as_str() => text.trim().to_owned(),
+            _ if let Some(boolean) = value.as_bool() => python_bool_text(boolean),
+            _ => value.to_string(),
+        }
     }
+}
+
+fn python_bool_text(value: bool) -> String {
+    if value {
+        "True".to_owned()
+    } else {
+        "False".to_owned()
+    }
+}
+
+fn python_number_text(value: &serde_json::Value) -> String {
+    if let Some(integer) = value.as_i64() {
+        return integer.to_string();
+    }
+    if let Some(integer) = value.as_u64() {
+        return integer.to_string();
+    }
+    if let Some(number) = value.as_f64() {
+        if number.is_finite() && number.fract() == 0.0 && number.abs() <= 9_007_199_254_740_991.0 {
+            // Excel stores ordinary integral numeric values without a decimal
+            // point, which openpyxl reloads as Python int even when Calamine
+            // exposes the value as f64.
+            return format!("{number:.0}");
+        }
+        return number.to_string();
+    }
+    value.to_string()
+}
+
+fn python_datetime_iso_text(value: &str) -> String {
+    use chrono::{NaiveDate, NaiveDateTime};
+
+    let datetime = NaiveDateTime::parse_from_str(value, "%Y-%m-%dT%H:%M:%S%.f")
+        .or_else(|_| NaiveDateTime::parse_from_str(value, "%Y-%m-%d %H:%M:%S%.f"));
+    if let Ok(datetime) = datetime {
+        return python_naive_datetime_text(datetime);
+    }
+    if let Ok(date) = NaiveDate::parse_from_str(value, "%Y-%m-%d") {
+        return format!("{} 00:00:00", date.format("%Y-%m-%d"));
+    }
+    value.replace('T', " ")
+}
+
+fn python_datetime_serial_text(serial: f64) -> Option<String> {
+    use chrono::{Duration, NaiveDate, NaiveTime};
+
+    if !serial.is_finite() {
+        return None;
+    }
+    let milliseconds = (serial * 86_400_000.0).round();
+    if milliseconds < i64::MIN as f64 || milliseconds > i64::MAX as f64 {
+        return None;
+    }
+    let milliseconds = milliseconds as i64;
+    const DAY_MILLISECONDS: i64 = 86_400_000;
+    let days = milliseconds.div_euclid(DAY_MILLISECONDS);
+    let day_milliseconds = milliseconds.rem_euclid(DAY_MILLISECONDS);
+    let time = NaiveTime::from_num_seconds_from_midnight_opt(
+        (day_milliseconds / 1_000) as u32,
+        ((day_milliseconds % 1_000) * 1_000_000) as u32,
+    )?;
+
+    // openpyxl returns a time object for serials in [0, 1). For modern dates,
+    // Excel's 1900-system epoch is 1899-12-30 (including its leap-year quirk).
+    if (0..DAY_MILLISECONDS).contains(&milliseconds) {
+        return Some(python_time_text(time));
+    }
+    let epoch = if days < 60 {
+        NaiveDate::from_ymd_opt(1900, 1, 1)?
+    } else {
+        NaiveDate::from_ymd_opt(1899, 12, 30)?
+    };
+    let date = epoch
+        .and_time(time)
+        .checked_add_signed(Duration::days(if days < 60 {
+            days.saturating_sub(1)
+        } else {
+            days
+        }))?;
+    Some(python_naive_datetime_text(date))
+}
+
+fn python_naive_datetime_text(datetime: chrono::NaiveDateTime) -> String {
+    let mut text = datetime.format("%Y-%m-%d %H:%M:%S").to_string();
+    let micros = datetime.and_utc().timestamp_subsec_micros();
+    if micros != 0 {
+        text.push('.');
+        text.push_str(&format!("{micros:06}"));
+    }
+    text
+}
+
+fn python_time_text(time: chrono::NaiveTime) -> String {
+    use chrono::Timelike;
+
+    let mut text = time.format("%H:%M:%S").to_string();
+    let micros = time.nanosecond() / 1_000;
+    if micros != 0 {
+        text.push('.');
+        text.push_str(&format!("{micros:06}"));
+    }
+    text
 }
 fn disambiguate(names: &[String]) -> Vec<String> {
     let mut counts = std::collections::HashMap::new();
@@ -2174,6 +2309,25 @@ mod comment_region_tests {
         assert_eq!(probe_text(&serde_json::Value::Null), "");
         assert_eq!(probe_text(&serde_json::json!(true)), "True");
         assert_eq!(probe_text(&serde_json::json!(false)), "False");
+        assert_eq!(
+            probe_text(&serde_json::json!({"type":"number", "value":10.0})),
+            "10"
+        );
+        assert_eq!(
+            probe_text(&serde_json::json!({"type":"number", "value":10.5})),
+            "10.5"
+        );
+        assert_eq!(
+            probe_text(&serde_json::json!({
+                "type":"datetime_iso",
+                "value":"2026-06-30T00:00:00.123"
+            })),
+            "2026-06-30 00:00:00.123000"
+        );
+        assert_eq!(
+            probe_text(&serde_json::json!({"type":"datetime_serial", "value":46203.0})),
+            "2026-06-30 00:00:00"
+        );
     }
 }
 

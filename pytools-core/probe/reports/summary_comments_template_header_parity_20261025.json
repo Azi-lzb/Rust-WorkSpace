@@ -21,7 +21,8 @@
   "behaviors": [
     "formula template header remains formula text in the output workbook",
     "blank template header falls back to its Excel column letter",
-    "boolean template header uses Python string capitalization"
+    "boolean template header uses Python string capitalization",
+    "numeric and date template headers use Python string conversion"
   ],
   "comparison": {
     "workbook_projection": "exact",
@@ -42,14 +43,14 @@
       {
         "name": "Branch_A",
         "rows": 4,
-        "columns": 6
+        "columns": 8
       }
     ],
     "python_dimensions": [
       {
         "name": "Branch_A",
         "rows": 4,
-        "columns": 6
+        "columns": 8
       }
     ],
     "reader_engine": "calamine",

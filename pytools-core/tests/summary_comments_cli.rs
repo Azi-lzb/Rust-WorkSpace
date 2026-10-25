@@ -107,6 +107,9 @@ fn summary_comments_cli_logs_actual_stages_and_preserves_output_across_views() -
                 components
                     .iter()
                     .any(|component| component == "namespace-aware OOXML supplement")
+                    && components
+                        .iter()
+                        .any(|component| component == "Calamine ISO date projection")
             })
     }));
     assert!(developer_events.iter().any(|event| {
@@ -297,6 +300,16 @@ fn summary_comments_cli_preserves_formula_and_blank_template_headers() -> Result
         sheet.values.get("E1").and_then(|value| value.get("value")),
         Some(&serde_json::json!("True")),
         "boolean template header should use Python's string capitalization"
+    );
+    assert_eq!(
+        sheet.values.get("F1").and_then(|value| value.get("value")),
+        Some(&serde_json::json!("10")),
+        "numeric template header should use Python's string representation"
+    );
+    assert_eq!(
+        sheet.values.get("G1").and_then(|value| value.get("value")),
+        Some(&serde_json::json!("2026-06-30 00:00:00")),
+        "date template header should use Python's datetime string representation"
     );
     assert_eq!(fs::read(&source)?, source_before, "source workbook changed");
 
@@ -501,12 +514,20 @@ fn create_formula_header_template(path: &Path) -> Result<()> {
         worksheet.write_string(3, 0, "行结束")?;
         worksheet.write_formula(0, 1, "=\"余额\"")?;
         worksheet.write_boolean(0, 3, true)?;
+        worksheet.write_number(0, 4, 10.0)?;
+        let date = rust_xlsxwriter::ExcelDateTime::from_ymd(2026, 6, 30)?;
+        let date_format = rust_xlsxwriter::Format::new().set_num_format("yyyy-mm-dd");
+        worksheet.write_datetime_with_format(0, 5, &date, &date_format)?;
         worksheet.insert_note(1, 0, &rust_xlsxwriter::Note::new("行区域1"))?;
         worksheet.insert_note(3, 0, &rust_xlsxwriter::Note::new("行区域#1"))?;
         worksheet.insert_note(0, 1, &rust_xlsxwriter::Note::new("列区域1"))?;
         worksheet.insert_note(0, 2, &rust_xlsxwriter::Note::new("列区域#1"))?;
         worksheet.insert_note(0, 3, &rust_xlsxwriter::Note::new("列区域2"))?;
         worksheet.insert_note(1, 3, &rust_xlsxwriter::Note::new("列区域#2"))?;
+        worksheet.insert_note(0, 4, &rust_xlsxwriter::Note::new("列区域3"))?;
+        worksheet.insert_note(1, 4, &rust_xlsxwriter::Note::new("列区域#3"))?;
+        worksheet.insert_note(0, 5, &rust_xlsxwriter::Note::new("列区域4"))?;
+        worksheet.insert_note(1, 5, &rust_xlsxwriter::Note::new("列区域#4"))?;
     }
     workbook
         .save(path)

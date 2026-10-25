@@ -46,6 +46,12 @@ def create_template(path: Path) -> None:
     sheet["D1"] = True
     sheet["D1"].comment = Comment("列区域2", "probe")
     sheet["D2"].comment = Comment("列区域#2", "probe")
+    sheet["E1"] = 10.0
+    sheet["E1"].comment = Comment("列区域3", "probe")
+    sheet["E2"].comment = Comment("列区域#3", "probe")
+    sheet["F1"] = dt.datetime(2026, 6, 30)
+    sheet["F1"].comment = Comment("列区域4", "probe")
+    sheet["F2"].comment = Comment("列区域#4", "probe")
     workbook.save(path)
     workbook.close()
 
@@ -130,6 +136,8 @@ def main() -> int:
                 formula_header.data_type != "f"
                 or blank_header.value != "C"
                 or boolean_header.value != "True"
+                or output_sheet["F1"].value != "10"
+                or output_sheet["G1"].value != "2026-06-30 00:00:00"
             ):
                 raise AssertionError("Rust template header semantics changed")
         finally:
@@ -161,6 +169,7 @@ def main() -> int:
                 "formula template header remains formula text in the output workbook",
                 "blank template header falls back to its Excel column letter",
                 "boolean template header uses Python string capitalization",
+                "numeric and date template headers use Python string conversion",
             ],
             "comparison": {
                 "workbook_projection": "exact",
