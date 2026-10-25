@@ -1,0 +1,35 @@
+# S5-F01 布局区域发现切片
+
+- 时间：2026-10-25 13:35 (+08:00)
+- 执行者：Codex Audit migration agent
+- 分支：audit-dev
+- 修改前 commit：ab5175d
+- 修改后 commit：随本轮本地提交，提交 ID 见 Git 历史。
+- WIP：开始时 worktree 干净；验证结束时仅新增布局模块、对拍测试、Python 比较器、脱敏报告、清单更新和本记录。未修改共享 crates、源 Python 项目、真实工作簿、pytools-core、Cargo.toml 或 Cargo.lock。
+
+## 目的
+
+承接规则执行运行时切片，移植 `layout.py` 的纯命名区域发现半边（地址扫描 `scan_rule_paths` 与 V 取数定位的共同基础），并以真实双模板完成 Python/Rust 对拍。
+
+## 修改文件
+
+- `audit-core/src/s5_layout.rs`：新增布局区域模块（NamedRegion、region_number、named_regions、paired_column_region、inferred_numeric_regions、numeric_regions、structure_regions 分组；区域引用串逐字组装；多区域名 `#序号` 展开与 `''` 引号回退）。
+- `audit-core/tests/s5_layout_parity.rs`：env 驱动的 `#[ignore]` 对拍运行器。
+- `audit-core/tests/compare/compare_s5_layout.py`：Python 比较器（openpyxl 加载后调用 layout.region 发现函数，逐字段递归比较，报告仅聚合计数）。
+- `audit-core/probe/reports/s5_layout_regions_windows_real_20261025.json`：新增脱敏机器报告。
+- `audit-core/src/lib.rs`：注册 `s5_layout`。
+- `audit-core/MIGRATION_INVENTORY.md`：S5-F01 行更新并新增切片小节。
+- 本记录。
+
+## 验证
+
+- 编译与测试：`cargo build --offline -p audit-core` 通过；`cargo test --offline --locked -p audit-core` 全量 195 通过、0 失败。
+- 跨语言对拍（Windows 原生）：config-real 单位贷款与个人贷款命名区域模板双例（各 16+4 个工作簿级定义名），named 结构轴（8/模板）、numeric 区域（各 4 个）、推断结果（各 4）、推断缺失（0）、结构分组全字段差异 0；单位贷款命中「条件格式区域（兼容现有模板）」、个人贷款命中「表结构区域交叉推导」——numeric_regions 的两条真实分支均被真实数据覆盖并一致。
+- 模板以字节级临时副本参与对拍，源文件只读未变；报告不含工作表名或区域引用原文。
+
+## 未执行项、已知问题与回滚
+
+- 未迁移：`scan_rule_paths` 的序列匹配与列投影（地址扫描切片）、`numeric_scope` 的模板投影取数（`project_numeric_regions`，属 V 取数源读取切片）、工作簿打开失败的容错细节（Rust 端读取失败按空清单处理）。
+- 共享请求状态：main 自 bbd922d 后无新提交；载荷基线等价、umya 冻结/筛选、校验器 MoveSheet 识别三项请求均未响应。
+- 回滚：删除新增模块/测试/比较器/报告，还原 lib.rs、清单与本记录即可；无用户工作簿恢复项。
+- 【组件版本】不升级。

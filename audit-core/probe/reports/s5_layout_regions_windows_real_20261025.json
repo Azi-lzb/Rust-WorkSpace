@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "suite": "audit.s5_layout_regions_parity",
+  "status": "completed",
+  "sample_scope": {
+    "workbooks": 2,
+    "workbooks_copied_to_temporary": true
+  },
+  "comparison": {
+    "total_diff_count": 0,
+    "cases": [
+      {
+        "workbook_index": 0,
+        "python_named_structure_axes": 8,
+        "python_numeric_regions": 4,
+        "python_numeric_origins": "条件格式区域（兼容现有模板）",
+        "python_inferred_results": 4,
+        "python_inferred_missing": 0,
+        "rust_status": "unknown",
+        "diff_count": 0,
+        "diff_paths_sample": []
+      },
+      {
+        "workbook_index": 1,
+        "python_named_structure_axes": 8,
+        "python_numeric_regions": 4,
+        "python_numeric_origins": "表结构区域交叉推导",
+        "python_inferred_results": 4,
+        "python_inferred_missing": 0,
+        "rust_status": "unknown",
+        "diff_count": 0,
+        "diff_paths_sample": []
+      }
+    ]
+  },
+  "verification": {
+    "rust_runner": "audit-core/tests/s5_layout_parity.rs",
+    "python_baseline": "s1audit_configured.layout region discovery",
+    "inputs_unchanged": true,
+    "raw_sheet_names_persisted": false,
+    "capability_status": "unverified",
+    "production_route_eligible": false
+  },
+  "limitations": [
+    "Covers the defined-name region discovery half of layout.py; the sequence matching inside scan_rule_paths belongs to the address-scan slice.",
+    "Sheet-scoped defined names are read through the shared read_defined_names records; multi-area names use the Python #index suffix convention."
+  ]
+}
