@@ -377,6 +377,7 @@ pub fn write_run_outputs(
     )?;
     for source in request.additional_sources {
         let label = match source.role {
+            "current" => "本期数据源",
             "previous" => "上期数据源",
             "external" => "外部数据源",
             _ => return Err(format!("不支持的附加来源角色：{}", source.role)),
@@ -457,6 +458,7 @@ pub fn write_run_outputs(
         fs::copy(source.path, &source_copy)
             .map_err(|error| format!("复制附加数据源失败：{error}"))?;
         let label = match source.role {
+            "current" => "本期数据源",
             "previous" => "上期数据源",
             "external" => "外部数据源",
             _ => return Err(format!("不支持的附加来源角色：{}", source.role)),

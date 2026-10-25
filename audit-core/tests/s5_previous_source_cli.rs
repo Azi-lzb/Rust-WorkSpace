@@ -370,6 +370,19 @@ fn write_external_source_variant(
 }
 
 fn write_config(path: &Path, include_external: bool, include_external_contract: bool) {
+    write_config_variant(path, include_external, include_external_contract, false);
+}
+
+fn write_multi_current_source_config(path: &Path) {
+    write_config_variant(path, false, false, true);
+}
+
+fn write_config_variant(
+    path: &Path,
+    include_external: bool,
+    include_external_contract: bool,
+    multi_current_sources: bool,
+) {
     let mut workbook = excel_writer::Workbook::new();
     let rule_headers = [
         "规则ID",
@@ -394,7 +407,31 @@ fn write_config(path: &Path, include_external: bool, include_external_contract: 
         "适用范围",
         "适用表达式",
     ];
-    let rule_values: Vec<&str> = if include_external {
+    let rule_values: Vec<&str> = if multi_current_sources {
+        vec![
+            "MULTI.CURRENT.A",
+            "1",
+            "是",
+            "其他业务",
+            "CUR_A",
+            "贷款表",
+            "本期来源 A",
+            "错误",
+            "表间核对",
+            "经营贷款余额",
+            "ABS({本期}) < 0",
+            "否",
+            "本期值={本期}",
+            "{本期}",
+            "",
+            "",
+            r#"{"本期": V_CUR(("贷款产品类别", "经营贷款"), ("余额", "本期"))}"#,
+            "",
+            "",
+            "",
+            "",
+        ]
+    } else if include_external {
         vec![
             "EXTERNAL.PARITY",
             "1",
@@ -458,6 +495,36 @@ fn write_config(path: &Path, include_external: bool, include_external_contract: 
                 .write_string(1, column as u16, *value)
                 .expect("write rule value");
         }
+        if multi_current_sources {
+            let second_rule_values = [
+                "MULTI.CURRENT.B",
+                "1",
+                "是",
+                "单位贷款",
+                "",
+                "贷款表",
+                "本期来源 B",
+                "错误",
+                "表间核对",
+                "经营贷款余额",
+                "ABS({本期}) < 0",
+                "否",
+                "本期值={本期}",
+                "{本期}",
+                "",
+                "",
+                r#"{"本期": V_CUR(("贷款产品类别", "经营贷款"), ("余额", "本期"))}"#,
+                "",
+                "",
+                "",
+                "",
+            ];
+            for (column, value) in second_rule_values.iter().enumerate() {
+                sheet
+                    .write_string(2, column as u16, *value)
+                    .expect("write second current-source rule");
+            }
+        }
     }
 
     let metric_headers = [
@@ -511,6 +578,17 @@ fn write_config(path: &Path, include_external: bool, include_external_contract: 
             sheet
                 .write_string(1, column as u16, *value)
                 .expect("write metric value");
+        }
+        if multi_current_sources {
+            for (column, value) in metric_values.iter().enumerate() {
+                sheet
+                    .write_string(
+                        2,
+                        column as u16,
+                        if column == 0 { "其他业务" } else { value },
+                    )
+                    .expect("write metric for primary source business");
+            }
         }
     }
     if include_external {
@@ -640,16 +718,14 @@ fn write_config(path: &Path, include_external: bool, include_external_contract: 
                 .write_string(0, column as u16, *header)
                 .expect("write version header");
         }
-        for (column, value) in [
-            "synthetic-v1",
-            "测试",
-            "2026-10-25",
-            "",
-            "",
-            "Rust/Python V_PRE 对拍",
-        ]
-        .iter()
-        .enumerate()
+        let version_note = if multi_current_sources {
+            "Rust/Python multi current-source parity"
+        } else {
+            "Rust/Python V_PRE parity"
+        };
+        for (column, value) in ["synthetic-v1", "测试", "2026-10-25", "", "", version_note]
+            .iter()
+            .enumerate()
         {
             sheet
                 .write_string(1, column as u16, *value)
@@ -719,6 +795,50 @@ fn run_cli(
         command.arg("--developer-view");
     }
     command.output().expect("run S5 audit CLI")
+}
+
+fn run_multi_current_cli(
+    config: &Path,
+    primary: &Path,
+    additional: &Path,
+    output_dir: &Path,
+) -> Output {
+    let empty_template_dir = primary
+        .parent()
+        .expect("primary source parent directory")
+        .join("empty-multi-current-layout-templates");
+    fs::create_dir_all(&empty_template_dir).expect("create empty template directory");
+    Command::new(env!("CARGO_BIN_EXE_open-data-audit"))
+        .arg("s5-audit-run")
+        .arg("--config")
+        .arg(config)
+        .arg("--source")
+        .arg(primary)
+        .arg("--source-id")
+        .arg("CUR_A")
+        .arg("--source-business")
+        .arg("其他业务")
+        .arg("--current-source")
+        .arg(format!("CUR_B=单位贷款={}", additional.display()))
+        .arg("--template-dir")
+        .arg(empty_template_dir)
+        .arg("--period")
+        .arg("2026-08-31")
+        .arg("--org-code")
+        .arg("I001")
+        .arg("--org-name")
+        .arg("合成机构")
+        .arg("--business")
+        .arg("其他业务")
+        .arg("--business")
+        .arg("单位贷款")
+        .arg("--output-dir")
+        .arg(output_dir)
+        .arg("--run-id")
+        .arg("multi-current")
+        .arg("--developer-view")
+        .output()
+        .expect("run S5 multi-current CLI")
 }
 
 fn run_config_check_cli(config: &Path, external: Option<&Path>, developer_view: bool) -> Output {
@@ -1038,6 +1158,143 @@ fn s5_audit_cli_reads_and_copies_independent_previous_source() {
     assert_eq!(missing_summary["status_counts"]["RETRIEVAL_FAILED"], 1);
 
     fs::remove_dir_all(directory).expect("remove synthetic S5 CLI files");
+}
+
+#[test]
+fn s5_audit_cli_selects_multiple_current_sources_by_rule_binding() {
+    let directory = temporary_directory();
+    let config = directory.join("multi-current-config.xlsx");
+    let primary = directory.join("primary.xlsx");
+    let additional = directory.join("additional.xlsx");
+    let output_dir = directory.join("out");
+    let template_dir = directory.join("empty-templates");
+    fs::create_dir_all(&template_dir).expect("create empty template directory");
+    write_multi_current_source_config(&config);
+    write_source(&primary, 111.0);
+    write_source(&additional, 222.0);
+
+    let output = run_multi_current_cli(&config, &primary, &additional, &output_dir);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let summary: Value = serde_json::from_slice(&output.stdout).expect("valid multi-source JSON");
+    assert_eq!(summary["status"], "completed");
+    assert_eq!(summary["status_counts"]["TRIGGERED"], 2);
+    assert_eq!(
+        summary["source_roles"],
+        serde_json::json!(["current", "additional current"])
+    );
+
+    let result_path = PathBuf::from(
+        summary["output_files"]["result_workbook"]
+            .as_str()
+            .expect("result workbook path"),
+    );
+    let result_workbook = read_workbook(&result_path).expect("read multi-source result workbook");
+    let result_sheet = result_workbook
+        .sheets
+        .iter()
+        .find(|sheet| sheet.name == "审核结果")
+        .expect("result sheet");
+    assert_eq!(
+        CellValue::from_probe_json(&result_sheet.values["J2"]).expect("primary source value"),
+        CellValue::Number(111.0)
+    );
+    assert_eq!(
+        CellValue::from_probe_json(&result_sheet.values["J3"]).expect("additional source value"),
+        CellValue::Number(222.0)
+    );
+
+    let ledger_path = PathBuf::from(
+        summary["output_files"]["run_ledger"]
+            .as_str()
+            .expect("run ledger path"),
+    );
+    let ledger: Value = serde_json::from_slice(&fs::read(&ledger_path).expect("read ledger"))
+        .expect("valid ledger");
+    let manifest = ledger["audit_copy_manifest"]
+        .as_array()
+        .expect("audit-copy manifest");
+    for (source_id, original) in [("CUR_A", &primary), ("CUR_B", &additional)] {
+        let entry = manifest
+            .iter()
+            .find(|entry| entry["role"] == "current" && entry["source_id"] == source_id)
+            .expect("current source manifest entry");
+        assert_eq!(entry["matches_snapshot"], true);
+        let copy_path = PathBuf::from(entry["copy_path"].as_str().expect("source copy path"));
+        assert_eq!(
+            fs::read(copy_path).expect("read audit copy"),
+            fs::read(original).expect("read source input")
+        );
+    }
+    let events = String::from_utf8_lossy(&output.stderr)
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).expect("progress JSON"))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        events.first().expect("start event")["current_source_ids"],
+        serde_json::json!(["CUR_A", "CUR_B"])
+    );
+
+    if let Some(python_source_root) = std::env::var_os("AUDIT_PYTHON_SOURCE_ROOT") {
+        let report_path = std::env::var_os("AUDIT_S5_MULTI_SOURCE_REPORT")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| directory.join("multi-source-parity.json"));
+        let comparator = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests")
+            .join("compare")
+            .join("compare_s5_outputs.py");
+        let rust_binary = env!("CARGO_BIN_EXE_open-data-audit");
+        let python = std::env::var_os("PYTHON").unwrap_or_else(|| "python".into());
+        let parity_output = Command::new(python)
+            .arg(comparator)
+            .arg("--source-root")
+            .arg(python_source_root)
+            .arg("--config-workbook")
+            .arg(&config)
+            .arg("--audit-copy")
+            .arg(&primary)
+            .arg("--current-source")
+            .arg(format!("CUR_B=单位贷款={}", additional.display()))
+            .arg("--source-id")
+            .arg("CUR_A")
+            .arg("--source-business")
+            .arg("其他业务")
+            .arg("--period")
+            .arg("2026-08-31")
+            .arg("--institution-code")
+            .arg("I001")
+            .arg("--institution-name")
+            .arg("合成机构")
+            .arg("--business")
+            .arg("其他业务")
+            .arg("--business")
+            .arg("单位贷款")
+            .arg("--template-dir")
+            .arg(&template_dir)
+            .arg("--rust-bin")
+            .arg(rust_binary)
+            .arg("--report")
+            .arg(&report_path)
+            .output()
+            .expect("run Python/Rust multi-source parity comparator");
+        assert!(
+            parity_output.status.success(),
+            "{}\n{}",
+            String::from_utf8_lossy(&parity_output.stdout),
+            String::from_utf8_lossy(&parity_output.stderr)
+        );
+        let report: Value =
+            serde_json::from_slice(&fs::read(report_path).expect("read parity report"))
+                .expect("valid parity report");
+        assert_eq!(report["status"], "completed");
+        assert_eq!(report["comparison"]["diff_count"], 0);
+        assert_eq!(report["verification"]["inputs_unchanged"], true);
+    }
+
+    fs::remove_dir_all(directory).expect("remove multi-source S5 CLI files");
 }
 
 #[test]

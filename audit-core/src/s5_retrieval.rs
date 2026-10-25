@@ -1,10 +1,10 @@
-//! S5 V_CUR/V_PRE retrieval core (single-binding, no-contract path).
+//! S5 retrieval core for configured V_CUR/V_PRE/V_EXT source bindings.
 //!
 //! Faithful Rust port of the retrieval chain in
 //! `s1audit_configured.sources` for the common configuration shape used by
-//! real runs: derived metric specs (no 模板指标目录 sheet), one bound source
-//! workbook per role, no 数据源契约 (period/institution gates on the binding
-//! instead), and `_template_index_from_paths` (rule paths indexed directly via
+//! real runs: derived metric specs (no 模板指标目录 sheet), one or more current
+//! source workbooks and at most one previous/external workbook, and
+//! `_template_index_from_paths` (rule paths indexed directly via
 //! `scan_rule_paths`). Unit conversion, type checks, blank rules, error codes,
 //! and evidence construction mirror `_convert_value`/`_value_with_unit`.
 //!
@@ -107,12 +107,20 @@ fn amount_factor(unit: &str) -> Option<i64> {
 }
 
 /// A source explicitly selected for one S5 period role.
+#[derive(Clone, Copy)]
 pub struct S5SourceDescriptor<'a> {
     pub path: &'a Path,
     pub source_id: &'a str,
     pub period: &'a str,
     pub institution_code: &'a str,
     pub institution_name: &'a str,
+}
+
+/// A current-period source bound to the business used by Python's
+/// `RuntimeContext.current_sources` fallback selection.
+pub struct S5CurrentSourceBinding<'a> {
+    pub source: S5SourceDescriptor<'a>,
+    pub business: &'a str,
 }
 
 /// A layout template actually selected while retrieving S5 numeric regions.
@@ -133,6 +141,18 @@ struct BoundSource {
     book: ScanBook,
     numeric_scope: NumericScopeResolver,
     index_cache: BTreeMap<String, crate::s5_scan::ScanResult>,
+}
+
+struct BoundCurrentSource {
+    business: String,
+    source: BoundSource,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct S5CurrentSourceSnapshot {
+    pub path: PathBuf,
+    pub source_id: String,
+    pub sha256: String,
 }
 
 impl BoundSource {
@@ -197,10 +217,12 @@ impl BoundSource {
     }
 }
 
-/// Runtime context for one current source and an optional selected previous source.
+/// Runtime context for selected current sources and optional previous/external sources.
 pub struct S5Retrieval {
     configuration: Configuration,
     current: BoundSource,
+    current_business: String,
+    additional_current: Vec<BoundCurrentSource>,
     previous: Option<BoundSource>,
     external: Option<BoundSource>,
     external_layout: Option<ExternalLayout>,
@@ -235,6 +257,8 @@ impl S5Retrieval {
         Ok(Self {
             configuration,
             current,
+            current_business: String::new(),
+            additional_current: Vec::new(),
             previous: None,
             external: None,
             external_layout: None,
@@ -285,13 +309,91 @@ impl S5Retrieval {
         template_path: Option<&Path>,
         template_dir: Option<&Path>,
     ) -> Result<Self, RetrievalFailure> {
+        let current_binding = S5CurrentSourceBinding {
+            source: current,
+            business: "",
+        };
+        Self::bind_with_current_sources_and_templates(
+            configuration,
+            &[current_binding],
+            previous,
+            external,
+            audit_period,
+            template_path,
+            template_dir,
+        )
+    }
+
+    /// Bind multiple current sources using the same logical-ID and business
+    /// selection rules as Python's `RuntimeContext.current_sources` mapping.
+    /// The first binding remains the compatibility source for legacy callers.
+    pub fn bind_with_current_sources_and_templates(
+        configuration: Configuration,
+        current_sources: &[S5CurrentSourceBinding<'_>],
+        previous: Option<S5SourceDescriptor<'_>>,
+        external: Option<S5SourceDescriptor<'_>>,
+        audit_period: &str,
+        template_path: Option<&Path>,
+        template_dir: Option<&Path>,
+    ) -> Result<Self, RetrievalFailure> {
+        let Some(primary_binding) = current_sources.first() else {
+            return Err(RetrievalFailure::new(
+                "SOURCE_NOT_FOUND",
+                "运行上下文没有登记本期数据源",
+            ));
+        };
         let current = BoundSource::bind(
-            current,
+            primary_binding.source,
             "current",
             audit_period,
             template_path,
             template_dir,
         )?;
+        let current_business = primary_binding.business.trim().to_owned();
+        let mut additional_current = Vec::new();
+        let mut source_ids = vec![current.source_id.clone()];
+        for binding in current_sources.iter().skip(1) {
+            let source_id = binding.source.source_id.trim();
+            if source_id.is_empty() {
+                return Err(RetrievalFailure::new(
+                    "SOURCE_NOT_FOUND",
+                    "附加本期来源必须提供逻辑数据源 ID",
+                ));
+            }
+            if source_ids.iter().any(|known| known == source_id) {
+                return Err(RetrievalFailure::new(
+                    "SOURCE_DUPLICATE",
+                    format!("本期逻辑数据源 ID 重复：{source_id}"),
+                ));
+            }
+            source_ids.push(source_id.to_owned());
+            let source = BoundSource::bind(
+                binding.source,
+                "current",
+                audit_period,
+                template_path,
+                template_dir,
+            )?;
+            if source.institution_code != current.institution_code {
+                return Err(RetrievalFailure::new(
+                    "INSTITUTION_MISMATCH",
+                    "本期来源机构身份与本次审核机构不一致",
+                ));
+            }
+            if !source.institution_name.is_empty()
+                && !current.institution_name.is_empty()
+                && source.institution_name != current.institution_name
+            {
+                return Err(RetrievalFailure::new(
+                    "INSTITUTION_MISMATCH",
+                    "本期来源机构名称与本次审核机构不一致",
+                ));
+            }
+            additional_current.push(BoundCurrentSource {
+                business: binding.business.trim().to_owned(),
+                source,
+            });
+        }
         let previous = previous
             .map(|descriptor| {
                 BoundSource::bind(
@@ -318,6 +420,8 @@ impl S5Retrieval {
         Ok(Self {
             configuration,
             current,
+            current_business,
+            additional_current,
             previous,
             external,
             external_layout: None,
@@ -330,6 +434,9 @@ impl S5Retrieval {
     /// current and previous source metrics.
     pub fn numeric_region_template_selections(&self) -> Vec<JsonValue> {
         let mut selections = self.current.numeric_scope.selection_records("current");
+        for source in &self.additional_current {
+            selections.extend(source.source.numeric_scope.selection_records("current"));
+        }
         if let Some(previous) = &self.previous {
             selections.extend(previous.numeric_scope.selection_records("previous"));
         }
@@ -340,7 +447,10 @@ impl S5Retrieval {
     /// pre-read snapshots, for inclusion in the run's audit-copy manifest.
     pub fn numeric_region_template_sources(&self) -> Vec<S5NumericTemplateSource> {
         let mut sources = Vec::new();
-        for bound_source in std::iter::once(&self.current).chain(self.previous.iter()) {
+        for bound_source in std::iter::once(&self.current)
+            .chain(self.additional_current.iter().map(|source| &source.source))
+            .chain(self.previous.iter())
+        {
             for template in bound_source.numeric_scope.selected_templates() {
                 if sources
                     .iter()
@@ -363,6 +473,72 @@ impl S5Retrieval {
     /// SHA-256 captured when the current source was opened for this run.
     pub fn source_sha256(&self) -> &str {
         &self.current.sha256
+    }
+
+    /// Additional current-source snapshots, excluding the compatibility
+    /// source represented by `source_sha256()`.
+    pub fn additional_current_source_snapshots(&self) -> Vec<S5CurrentSourceSnapshot> {
+        self.additional_current
+            .iter()
+            .map(|binding| S5CurrentSourceSnapshot {
+                path: binding.source.source_path.clone(),
+                source_id: binding.source.source_id.clone(),
+                sha256: binding.source.sha256.clone(),
+            })
+            .collect()
+    }
+
+    fn current_source_index(
+        &self,
+        requested_source: &str,
+        rule_business: &str,
+    ) -> Result<Option<usize>, RetrievalFailure> {
+        let requested_source = requested_source.trim();
+        if !requested_source.is_empty() {
+            if self.current.source_id == requested_source {
+                return Ok(None);
+            }
+            return self
+                .additional_current
+                .iter()
+                .position(|binding| binding.source.source_id == requested_source)
+                .map(Some)
+                .ok_or_else(|| {
+                    RetrievalFailure::new(
+                        "SOURCE_NOT_FOUND",
+                        format!("未选择或未登记逻辑数据源：{requested_source}"),
+                    )
+                });
+        }
+
+        let primary_matches = self.current_business == rule_business;
+        let matching_additional: Vec<usize> = self
+            .additional_current
+            .iter()
+            .enumerate()
+            .filter_map(|(index, binding)| (binding.business == rule_business).then_some(index))
+            .collect();
+        let match_count = usize::from(primary_matches) + matching_additional.len();
+        if match_count == 1 {
+            return Ok(if primary_matches {
+                None
+            } else {
+                Some(matching_additional[0])
+            });
+        }
+        if match_count > 1 {
+            return Err(RetrievalFailure::new(
+                "SOURCE_AMBIGUOUS",
+                format!("业务 {rule_business} 对应多个current数据源，请显式选择逻辑来源"),
+            ));
+        }
+        if self.additional_current.is_empty() {
+            return Ok(None);
+        }
+        Err(RetrievalFailure::new(
+            "SOURCE_NOT_FOUND",
+            format!("没有找到业务 {rule_business} 对应的current数据源"),
+        ))
     }
 
     /// SHA-256 captured for the selected previous source, when present.
@@ -438,8 +614,16 @@ impl S5Retrieval {
             "V_PRE" => "previous",
             _ => return Err(RetrievalFailure::new("SOURCE_NOT_FOUND", "未知取值函数")),
         };
+        let requested_source = keywords
+            .get("source")
+            .filter(|source_id| !source_id.trim().is_empty())
+            .map(String::as_str)
+            .unwrap_or(rule_default_source);
         let source = if role == "current" {
-            &mut self.current
+            match self.current_source_index(requested_source, rule_business)? {
+                None => &mut self.current,
+                Some(index) => &mut self.additional_current[index].source,
+            }
         } else {
             self.previous.as_mut().ok_or_else(|| {
                 RetrievalFailure::new(
@@ -449,11 +633,6 @@ impl S5Retrieval {
             })?
         };
         if role == "previous" {
-            let requested_source = keywords
-                .get("source")
-                .filter(|source_id| !source_id.trim().is_empty())
-                .map(String::as_str)
-                .unwrap_or(rule_default_source);
             if !requested_source.is_empty() && requested_source != source.source_id {
                 return Err(RetrievalFailure::new(
                     "SOURCE_NOT_SELECTED",

@@ -41,7 +41,7 @@ use audit_core::{
     s5_config_check::validate_s5_config,
     s5_outputs::{write_run_outputs, S5OutputRequest, S5OutputSource},
     s5_period_recognition::{detect_s5_period, s5_file_period_hint},
-    s5_retrieval::{S5Retrieval, S5SourceDescriptor},
+    s5_retrieval::{S5CurrentSourceBinding, S5Retrieval, S5SourceDescriptor},
     s5_service::run_rules,
     s5_template_matching::match_s5_template,
     web_bridge::serve_web_ui,
@@ -634,6 +634,14 @@ struct S5AuditRunArgs {
     /// Logical source id recorded on retrieval evidence.
     #[arg(long, default_value = "CURRENT")]
     source_id: String,
+
+    /// Business associated with the primary source for Python-compatible fallback selection.
+    #[arg(long, default_value = "")]
+    source_business: String,
+
+    /// Additional current-period binding in SOURCE_ID=BUSINESS=FILE form; repeat as needed.
+    #[arg(long = "current-source", value_name = "SOURCE_ID=BUSINESS=FILE")]
+    current_sources: Vec<String>,
 
     /// Optional previous-period source workbook for V_PRE calls.
     #[arg(long)]
@@ -4526,6 +4534,28 @@ fn default_s5_template_dir() -> Option<PathBuf> {
     Some(base_data_dir.join("s5").join("templates"))
 }
 
+struct S5CurrentSourceArgument {
+    source_id: String,
+    business: String,
+    path: PathBuf,
+}
+
+fn parse_s5_current_source_argument(value: &str) -> Result<S5CurrentSourceArgument> {
+    let mut parts = value.splitn(3, '=');
+    let source_id = parts.next().unwrap_or_default().trim();
+    let business = parts.next().unwrap_or_default().trim();
+    let path = parts.next().unwrap_or_default();
+    anyhow::ensure!(
+        !source_id.is_empty() && !path.is_empty(),
+        "--current-source must use SOURCE_ID=BUSINESS=FILE form"
+    );
+    Ok(S5CurrentSourceArgument {
+        source_id: source_id.to_owned(),
+        business: business.to_owned(),
+        path: PathBuf::from(path),
+    })
+}
+
 fn run_s5_audit_run(arguments: S5AuditRunArgs) -> Result<()> {
     anyhow::ensure!(
         arguments.config.is_file(),
@@ -4537,6 +4567,25 @@ fn run_s5_audit_run(arguments: S5AuditRunArgs) -> Result<()> {
         "S5 本期数据源工作簿不存在：{}",
         arguments.source.display()
     );
+    let additional_current_sources: Vec<S5CurrentSourceArgument> = arguments
+        .current_sources
+        .iter()
+        .map(|value| parse_s5_current_source_argument(value))
+        .collect::<Result<_>>()?;
+    let mut current_source_ids = vec![arguments.source_id.trim().to_owned()];
+    for source in &additional_current_sources {
+        anyhow::ensure!(
+            source.path.is_file(),
+            "S5 附加本期数据源工作簿不存在：{}",
+            source.path.display()
+        );
+        anyhow::ensure!(
+            !current_source_ids.iter().any(|id| id == &source.source_id),
+            "本期逻辑数据源 ID 重复：{}",
+            source.source_id
+        );
+        current_source_ids.push(source.source_id.clone());
+    }
     if let Some(template_path) = &arguments.template_path {
         anyhow::ensure!(
             template_path.is_file(),
@@ -4609,6 +4658,9 @@ fn run_s5_audit_run(arguments: S5AuditRunArgs) -> Result<()> {
         .unwrap_or_else(|| format!("s5-{}", chrono::Local::now().format("%Y%m%d_%H%M%S")));
     let started = Instant::now();
     let mut source_roles = vec!["current"];
+    if !additional_current_sources.is_empty() {
+        source_roles.push("additional current");
+    }
     if arguments.previous_source.is_some() {
         source_roles.push("previous");
     }
@@ -4628,6 +4680,7 @@ fn run_s5_audit_run(arguments: S5AuditRunArgs) -> Result<()> {
                 "period": arguments.period,
                 "businesses": arguments.businesses,
                 "source_roles": source_roles,
+                "current_source_ids": current_source_ids,
                 "template_path": arguments.template_path,
                 "template_dir": template_dir,
                 "numeric_region_template_engine": "Calamine via excel-reader + namespace-aware defined names",
@@ -4678,15 +4731,31 @@ fn run_s5_audit_run(arguments: S5AuditRunArgs) -> Result<()> {
             institution_code: &arguments.org_code,
             institution_name: &arguments.org_name,
         });
-    let mut retrieval = S5Retrieval::bind_with_sources_and_templates(
-        configuration.clone(),
-        S5SourceDescriptor {
+    let mut current_bindings = vec![S5CurrentSourceBinding {
+        source: S5SourceDescriptor {
             path: &arguments.source,
             source_id: &arguments.source_id,
             period: arguments.period.trim(),
             institution_code: &arguments.org_code,
             institution_name: &arguments.org_name,
         },
+        business: &arguments.source_business,
+    }];
+    current_bindings.extend(additional_current_sources.iter().map(|binding| {
+        S5CurrentSourceBinding {
+            source: S5SourceDescriptor {
+                path: &binding.path,
+                source_id: &binding.source_id,
+                period: arguments.period.trim(),
+                institution_code: &arguments.org_code,
+                institution_name: &arguments.org_name,
+            },
+            business: &binding.business,
+        }
+    }));
+    let mut retrieval = S5Retrieval::bind_with_current_sources_and_templates(
+        configuration.clone(),
+        &current_bindings,
         previous_descriptor,
         external_descriptor,
         arguments.period.trim(),
@@ -4706,7 +4775,16 @@ fn run_s5_audit_run(arguments: S5AuditRunArgs) -> Result<()> {
     )
     .map_err(|error| anyhow::anyhow!("{error}"))?;
 
-    let mut additional_output_sources = Vec::new();
+    let current_source_snapshots = retrieval.additional_current_source_snapshots();
+    let mut additional_output_sources: Vec<S5OutputSource<'_>> = current_source_snapshots
+        .iter()
+        .map(|source| S5OutputSource {
+            role: "current",
+            path: &source.path,
+            source_id: &source.source_id,
+            sha256_before: &source.sha256,
+        })
+        .collect();
     if let (Some(path), Some(sha256_before)) = (
         arguments.previous_source.as_deref(),
         retrieval.previous_source_sha256(),

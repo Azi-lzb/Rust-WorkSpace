@@ -1,0 +1,41 @@
+# S5 多本期来源绑定切片
+
+- 时间：2026-10-26 06:43（Asia/Shanghai）
+- 执行者：Codex Audit migration agent
+- 分支：audit-dev
+- 修改前 commit：`77ac5131b38c10984f814cd06ddec59c7f3054b5`
+- 修改后 commit：随本功能提交；SHA 可由 Git 历史追溯。
+- WIP：保留既有 `HANDOFF_ZCODE_TO_CODEX.md`、`.pytest-tmp-v3/` 与已有未跟踪报告；本轮新生成的失败对拍报告也未覆盖或删除。未改源 Python、真实样本、共享 crates、`Cargo.lock`、根 Cargo 配置、`pytools-core/**`、`DEVELOPMENT_GOAL.md` 或 main。
+- 【组件版本】：不升级；不使用旧 Sx-Fxx 组件版本制度。
+
+## 目的与变更
+
+将 S5 当前来源绑定从单来源扩展为多来源，复现 Python `SourceRepository._binding` 按显式 ID 或唯一业务来源选择的行为。
+
+- `audit-core/src/s5_retrieval.rs`：绑定多个当前来源，校验来源 ID、期间和机构；`V_CUR` 按显式 ID 或业务唯一匹配选择，保存附加来源快照。
+- `audit-core/src/bin/open-data-audit.rs`：CLI 增加 `--source-business` 与可重复 `--current-source SOURCE_ID=BUSINESS=FILE`，接通来源绑定、进度和输出副本清单。
+- `audit-core/src/s5_outputs.rs`：将附加本期来源复制并纳入哈希清单。
+- `audit-core/tests/s5_previous_source_cli.rs`：新增显式 ID 与业务回退的 CLI 集成测试。
+- `audit-core/tests/compare/compare_s5_outputs.py`：支持多业务和附加来源的 Python/Rust CLI 对拍；归一化超链接 URI 片段与 OOXML `location` 属性。
+- `audit-core/MIGRATION_INVENTORY.md`：记录合成切片与验收边界。
+- `audit-core/probe/reports/s5_multiple_current_sources_synthetic_parity_windows_native_20261026_v3.json`：保存脱敏合成对拍摘要。
+
+没有持久配置 schema 变更；不涉及 VBA 读取/保留，也没有新增生产能力声明。
+
+## 验证
+
+- `cargo test --offline --locked -p audit-core --test s5_previous_source_cli s5_audit_cli_selects_multiple_current_sources_by_rule_binding -- --nocapture`，设置 `AUDIT_PYTHON_SOURCE_ROOT` 与独立报告路径：1 passed；Python 3.12.10 / Rust CLI 两条结果对拍差异 0，输入未变。
+- `cargo test --offline --locked -p audit-core --test s5_previous_source_cli`：17 passed、1 ignored（手动 fixture 导出用例）。
+- `python -m py_compile audit-core/tests/compare/compare_s5_outputs.py`、`git diff --check`：通过。
+- 合成结果工作簿、审核副本、哈希清单和状态计数均进入对拍；无样本原始值或本机路径写入通过报告。
+
+## 未执行与已知限制
+
+- 未有真实多当前来源业务样本；本次两来源仅覆盖显式 ID 与唯一业务回退，不覆盖重复来源歧义、真实数据及其他平台。
+- 该切片不是 S5-F01 完整验收；`V_PRE/V_EXT` 多来源、条件格式/数据质量表、结构快照与哈希完整性降级、Linux/glibc 2.28/deb、麒麟 V10/UOS V20 均未覆盖。
+- 生产 capability 仍为 unverified；Audit 共享能力请求 #8（MoveSheet/历史关系快照）保持未解决。
+
+## 删除与回滚
+
+- 本功能未删除文件。
+- 回滚包含本记录的功能提交即可撤销多本期来源 CLI、绑定与对拍改动；未修改用户源文件或真实样本。

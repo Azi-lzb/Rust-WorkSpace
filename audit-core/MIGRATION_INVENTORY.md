@@ -211,3 +211,9 @@ Windows 原生同一组合成 XLSX（含 prior-date 行、Excel 日期格式单�
 Windows 原生真实单位贷款审核副本、config-real 配置及模板目录对拍：Python `AuditEngine.run` 与 Rust 服务结果 377/377 行一致，差异 0；两侧状态计数一致（PASSED 80、TRIGGERED 296、RETRIEVAL_FAILED 1）。真实产品 CLI 与 Python 完整输出对比差异 0，输入未变化。证据：`probe/reports/s5_real_service_parity_windows_native_20261026.json`、`probe/reports/s5_real_cli_full_output_parity_windows_native_20261026.json`。
 
 该证据限于 Windows、单位贷款、单机构、当前来源和所选模板目录；条件格式/数据质量表为空，V_PRE/V_EXT、结构快照与哈希完整性降级未覆盖。S5-F01 整体仍未验收，生产 capability 仍为 unverified。Audit 共享能力请求 #8 保持未解决。
+
+### S5-F01 多本期来源绑定切片（Windows 合成对拍）
+
+`s5-audit-run` 支持重复 `--current-source SOURCE_ID=BUSINESS=FILE` 与主来源 `--source-business`；`V_CUR` 按显式逻辑来源 ID 选择，未指定来源时按 Python `SourceRepository._binding` 的业务绑定唯一选择或返回歧义/缺失错误。所有本期来源共用本次期间和机构身份门禁，附加来源进入审核副本和哈希总账。Python/Rust 合成 CLI 对拍同时覆盖显式 ID 和业务回退两条规则，结果行 2/2、输出工作簿/副本/清单差异 0，输入未变；超链接比较将 URI fragment 与 OOXML `location` 属性归一为同一目标。证据见 `probe/reports/s5_multiple_current_sources_synthetic_parity_windows_native_20261026_v3.json`。
+
+该切片仅有 Windows 合成样本证据；真实多来源业务、重复/歧义来源、跨平台及完整 S5-F01 验收未完成，生产 capability 仍为 unverified。Audit 共享能力请求 #8 保持未解决。
