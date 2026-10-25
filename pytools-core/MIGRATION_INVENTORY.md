@@ -808,3 +808,9 @@ Windows 原生 `cargo test --offline --locked -p pytools-core` 全量通过（42
 按用户"以合成数据继续"的指示，新增 1904 日期系统（`workbookPr date1904="1"`）带日期数据单元格的合成源簿对拍，发现并修复真实缺陷：Calamine 保持源簿日期序列原样输出（1904 簿即 1904 基准序列），而汇总新簿为 1900 基准，Rust 此前把序列原样写入，导致 1904 源簿的日期整体偏移 1462 天（2026-06-30 输出为 2022-06-29）；PyCode 经 openpyxl 读取 epoch 感知日期，无此问题。既有夹具无 1904 日期数据单元格，该路径从未被覆盖（此前 PT-6-2 的 1904 记录只覆盖模板日期表头的 ISO 投影路径）。修复 `summary_ops.rs`：使用区域汇总（`read_workbook_with_unknown_error_tokens_as_text` 读取点）与批注汇总（`read_workbook` 读取点）在读入后按共享 reader `uses_1904_date_system` 判定，1904 源簿的全部 `datetime_serial` 值 +1462 后再进入汇总（新辅助 `shift_datetime_serials_to_1900_epoch`）；duration 序列与 epoch 无关，不调整。
 
 验证（Windows 原生）：1904 合成源簿（纯日期/日期时间/数值混合）PT-6-1 使用区域汇总与 PT-6-2 批注汇总（模板 1904 + 数据区含日期/日期时间单元格）PyCode/Rust 完整工作簿投影均精确一致；源簿前后未变；`cargo test --offline --locked -p pytools-core` 全量 42 项结果 0 failed；`cargo fmt --check` 通过。该修复影响 1904 日期系统源簿（Mac Excel 遗产文件）的汇总输出正确性；常规 1900 簿行为不变。仍为合成证据。
+
+### 2026-10-25 PT-4-2/4-3 真实 .xls/.doc 输入端到端尝试与 lo-convert 共享能力请求
+
+按用户"以合成数据继续"的指示构造真实 CDF 输入（合成 xlsx 经 WSL LibreOffice 转出 `source.xls`、中文 txt 转出 `notes.doc`，均为 Composite Document File V2 真实格式），以 2.28 release `pytools`（HEAD `328532c`）+ WSL 构建 lo-convert 运行 `convert-excel`/`convert-word` 端到端。结果：LibreOffice 报 `WrappedTargetRuntimeException`，转换失败——**共享 sidecar 缺陷**，非业务层问题：`sidecar/lo-convert/src/main.rs::run_libreoffice` 把 `-env:UserInstallation` 拼成裸 POSIX 路径且未预建 profile 目录，同文件 `run_libreoffice_recalculate` 的写法（`create_dir_all` + `file_uri`）正确。最小复现与修复方向已按规则登记为共享能力请求（`pytools-core/GPT修改记录/共享能力请求_20261025_lo-convert的UserInstallation路径形态.txt`），sidecar 归 main 治理，pytools-dev 未修改共享代码。
+
+已验证的周边事实：转换失败被逐文件记录、写入运行历史、CLI 退出码 2，无静默回退；以正确 profile 形态手动调用同一 soffice 时 `.xls→.xlsx` 与 `.doc→.docx` 均成功且保真（xlsx→xls→xlsx roundtrip sheet 名与全部非空值含日期完全一致，docx 保留全部中文文本）——目标环境可行，等待 sidecar 修复后即可补端到端证据。另记录：WSL 空闲回收会清空 /tmp，跨调用的转换实验须用持久目录。PT-4-2/4-3 真实输入端到端维持未完成状态。
