@@ -1,0 +1,20 @@
+# S5 真实布局模板审核副本输出修复
+
+- 时间：2026-10-26 02:38:33 +08:00
+- 执行者：Codex
+- 修改前 HEAD：4ffb063e3fa8a950d62fb55ae96dd845dd170020；本项待本地提交。
+- WIP：保留 `HANDOFF_ZCODE_TO_CODEX.md`、`.pytest-tmp-v3/`、已有配置与数值范围报告，以及首次真实输出对拍的差异报告；均未修改或纳入本项。
+- 目的：恢复 S5 输出与 Python `write_run_outputs` 的模板副本契约。真实输出对拍首次发现：Python 会把已读取的数字区域布局模板作为 `layout` 审核副本写入清单，Rust 之前只复制本期源与配置。
+- 修改：
+  - `audit-core/src/s5_numeric_scope.rs`、`audit-core/src/s5_retrieval.rs`：记录规则实际选中的布局模板路径及读取时 SHA-256 快照，按首次使用顺序去重并生成与 Python 相同的 `LAYOUT_<路径哈希>` 来源编号。
+  - `audit-core/src/s5_outputs.rs`、`audit-core/src/bin/open-data-audit.rs`：`s5-audit-run` 仅复制实际选中的布局模板，并把模板加入 `layout` 清单；复制前后与快照不一致时停止输出。
+  - `audit-core/tests/s5_outputs_parity.rs`、`audit-core/tests/compare/compare_s5_outputs.py`：真实输出对拍入口支持显式模板路径或目录。
+  - `audit-core/MIGRATION_INVENTORY.md` 及本记录：记录范围和验证证据。
+- 验证（Windows 原生 Rust，Python 3.12.10/openpyxl 基线）：
+  - `cargo fmt --all -- --check`、`git diff --check`：通过。
+  - `cargo test -p audit-core --lib output_writer_copies_selected_layout_template_and_records_snapshot --locked`：1 passed。
+  - `compare_s5_outputs.py` 对同批只读真实配置、源表及显式布局模板运行 Python `AuditEngine.run` 与 Rust 输出链：377 条规则结果及工作簿、审核副本、SHA-256 清单差异 0；PASSED 352、TRIGGERED 24、RETRIEVAL_FAILED 1。报告：`audit-core/probe/reports/s5_outputs_real_template_fixed_windows_native_20261026.json`。
+  - 真实 `s5-audit-run` CLI 同批运行 COMPLETED，377 条结果；current/layout/configuration 三项副本快照均匹配。配置、源表、模板的前后 SHA-256 均相同。
+- 未执行：模板目录自动选择的独立真实对拍；V_PRE/V_EXT 真实多来源、结构快照、完整业务范围和失败降级验收；Linux 构建/运行、glibc 2.28、deb、麒麟 V10/UOS V20。
+- 状态：本次修复只闭合 S5 的显式数字区域模板审核副本输出差异，不代表 S5-F01 整体通过。Audit #8 共享能力请求仍未解决。未修改共享 crate、根 Cargo 配置、原 Python 项目或真实样本；不涉及版本变更。
+- 回滚：仅回退本项 S5 输出、检索、CLI、对拍、清单和记录改动；保留此前提交、交接材料、已有报告及所有用户工作。

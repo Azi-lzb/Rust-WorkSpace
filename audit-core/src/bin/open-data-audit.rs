@@ -4574,6 +4574,16 @@ fn run_s5_audit_run(arguments: S5AuditRunArgs) -> Result<()> {
             sha256_before,
         });
     }
+    let selected_template_bindings = retrieval.numeric_region_template_sources();
+    let selected_output_templates: Vec<S5OutputSource<'_>> = selected_template_bindings
+        .iter()
+        .map(|template| S5OutputSource {
+            role: "layout",
+            path: &template.path,
+            source_id: &template.source_id,
+            sha256_before: &template.sha256,
+        })
+        .collect();
     let output_summary = write_run_outputs(
         &S5OutputRequest {
             run_id: &run_id,
@@ -4587,6 +4597,7 @@ fn run_s5_audit_run(arguments: S5AuditRunArgs) -> Result<()> {
             source_id: &arguments.source_id,
             source_sha256_before: &source_sha256_before,
             additional_sources: &additional_output_sources,
+            selected_templates: &selected_output_templates,
             config_path: &arguments.config,
             config_sha256_before: &configuration.sha256,
             config_version: &configuration.version,

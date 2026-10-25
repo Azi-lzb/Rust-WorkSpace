@@ -189,6 +189,8 @@ def main() -> int:
     parser.add_argument("--source-root", type=Path, required=True)
     parser.add_argument("--config-workbook", type=Path, required=True)
     parser.add_argument("--audit-copy", type=Path, required=True)
+    parser.add_argument("--template-path", type=Path)
+    parser.add_argument("--template-dir", type=Path)
     parser.add_argument("--workspace", type=Path, default=ROOT)
     parser.add_argument("--report", type=Path, required=True)
     args = parser.parse_args()
@@ -196,6 +198,8 @@ def main() -> int:
     source_root = args.source_root.resolve(strict=True)
     workspace = args.workspace.resolve(strict=True)
     report_path = args.report.resolve()
+    template_path = args.template_path.resolve(strict=True) if args.template_path else None
+    template_dir = args.template_dir.resolve(strict=True) if args.template_dir else None
     sys.path.insert(0, str(source_root / "core" / "src"))
     os.environ["AUDIT3_WRITER_ENGINE"] = "openpyxl"
 
@@ -211,6 +215,7 @@ def main() -> int:
         # --- Python side: full run + write_run_outputs ---
         from s1audit_configured.engine import AuditEngine
         from s1audit_configured.model import RuntimeContext, SourceBinding
+        from s1audit_configured.runtime import RuntimePaths
 
         engine = AuditEngine(config_copy)
         context = RuntimeContext(
@@ -234,6 +239,10 @@ def main() -> int:
             businesses=["单位贷款"],
             schema_snapshot_dir=directory / "snap",
             persist_schema_snapshots=False,
+            runtime_paths=RuntimePaths(
+                template_path=template_path,
+                template_dir=template_dir,
+            ),
         )
         py_run_dir = py_root / RUN_ID
 
@@ -241,6 +250,8 @@ def main() -> int:
         request = {
             "config": str(config_copy),
             "source": str(source_copy),
+            "template_path": str(template_path) if template_path else None,
+            "template_dir": str(template_dir) if template_dir else None,
             "period": "2026-07-31",
             "institution_code": "PARITY",
             "institution_name": "PARITY",
@@ -350,6 +361,8 @@ def main() -> int:
             "business": "单位贷款",
             "run_id": RUN_ID,
             "files_copied_to_temporary": True,
+            "template_path_supplied": template_path is not None,
+            "template_dir_supplied": template_dir is not None,
             "python_writer_engine": "openpyxl (styling baseline)",
         },
         "comparison": {
@@ -362,6 +375,7 @@ def main() -> int:
                 "s1audit_configured.engine.run(output_dir=...) with "
                 "AUDIT3_WRITER_ENGINE=openpyxl"
             ),
+            "python_baseline_version": sys.version.split()[0],
             "inputs_unchanged": True,
             "raw_values_persisted": False,
             "capability_status": "unverified",

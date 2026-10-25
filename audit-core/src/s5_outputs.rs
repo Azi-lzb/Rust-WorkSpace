@@ -13,7 +13,7 @@ use excel_writer::{Color, Format, FormatAlign, FormatUnderline, Workbook};
 use serde_json::{json, Value as JsonValue};
 use sha2::{Digest, Sha256};
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     fs,
     path::{Path, PathBuf},
 };
@@ -38,6 +38,7 @@ pub struct S5OutputRequest<'a> {
     pub source_id: &'a str,
     pub source_sha256_before: &'a str,
     pub additional_sources: &'a [S5OutputSource<'a>],
+    pub selected_templates: &'a [S5OutputSource<'a>],
     pub config_path: &'a Path,
     pub config_sha256_before: &'a str,
     pub config_version: &'a str,
@@ -121,6 +122,10 @@ fn file_sha256(path: &Path) -> Result<String, String> {
     let mut hasher = Sha256::new();
     hasher.update(&bytes);
     Ok(format!("{:x}", hasher.finalize()))
+}
+
+fn copy_identity(path: &Path) -> PathBuf {
+    fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
 fn verify_input_snapshot(path: &Path, expected: &str, label: &str) -> Result<(), String> {
@@ -378,6 +383,12 @@ pub fn write_run_outputs(
         };
         verify_input_snapshot(source.path, source.sha256_before, label)?;
     }
+    for template in request.selected_templates {
+        if template.role != "layout" {
+            return Err(format!("不支持的布局模板角色：{}", template.role));
+        }
+        verify_input_snapshot(template.path, template.sha256_before, "数字区域布局模板")?;
+    }
     let output_root = output_root.to_path_buf();
     fs::create_dir_all(&output_root).map_err(|error| format!("创建输出根目录失败：{error}"))?;
     let run_dir = output_root.join(safe_name(request.run_id));
@@ -393,6 +404,7 @@ pub fn write_run_outputs(
 
     let mut manifest: Vec<S5OutputManifestEntry> = Vec::new();
     let mut copy_by_source: BTreeMap<String, PathBuf> = BTreeMap::new();
+    let mut copied_source_paths = BTreeSet::new();
 
     let source_copy = copies_dir.join(format!(
         "current_{}_{}{}",
@@ -427,6 +439,7 @@ pub fn write_run_outputs(
         request.source_path.display().to_string(),
         source_copy.clone(),
     );
+    copied_source_paths.insert(copy_identity(request.source_path));
 
     for source in request.additional_sources {
         let extension = source
@@ -466,6 +479,43 @@ pub fn write_run_outputs(
             matches_snapshot: true,
         });
         copy_by_source.insert(source.path.display().to_string(), source_copy);
+        copied_source_paths.insert(copy_identity(source.path));
+    }
+
+    for template in request.selected_templates {
+        if !copied_source_paths.insert(copy_identity(template.path)) {
+            continue;
+        }
+        let extension = template
+            .path
+            .extension()
+            .map(|extension| format!(".{}", extension.to_string_lossy().to_lowercase()))
+            .unwrap_or_default();
+        let template_copy = copies_dir.join(format!(
+            "layout_{}_{}{}",
+            safe_name(template.source_id),
+            safe_name(&path_stem(template.path)),
+            extension
+        ));
+        fs::copy(template.path, &template_copy)
+            .map_err(|error| format!("复制数字区域布局模板失败：{error}"))?;
+        let (sha_after, sha_copy) = verify_copied_snapshot(
+            &run_dir,
+            "数字区域布局模板",
+            template.sha256_before,
+            file_sha256(template.path),
+            file_sha256(&template_copy),
+        )?;
+        manifest.push(S5OutputManifestEntry {
+            role: template.role.to_owned(),
+            source_id: template.source_id.to_owned(),
+            source_path: template.path.display().to_string(),
+            copy_path: template_copy.display().to_string(),
+            sha256_before: template.sha256_before.to_owned(),
+            sha256_after: sha_after,
+            sha256_copy: sha_copy,
+            matches_snapshot: true,
+        });
     }
 
     let config_copy = copies_dir.join(format!(
@@ -896,6 +946,7 @@ mod tests {
     use std::{
         collections::BTreeMap,
         fs,
+        path::PathBuf,
         time::{SystemTime, UNIX_EPOCH},
     };
 
@@ -931,6 +982,7 @@ mod tests {
             source_id: "CURRENT",
             source_sha256_before: &source_sha,
             additional_sources: &[],
+            selected_templates: &[],
             config_path: &config,
             config_sha256_before: &config_sha,
             config_version: "test",
@@ -986,6 +1038,7 @@ mod tests {
             source_id: "CURRENT",
             source_sha256_before: &current_sha,
             additional_sources: &additional_sources,
+            selected_templates: &[],
             config_path: &config,
             config_sha256_before: &config_sha,
             config_version: "test",
@@ -998,6 +1051,80 @@ mod tests {
             !output.exists(),
             "rejected previous input must not create a run directory"
         );
+        fs::remove_dir_all(root).expect("remove test root");
+    }
+
+    #[test]
+    fn output_writer_copies_selected_layout_template_and_records_snapshot() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "audit_s5_layout_copy_{}_{}",
+            std::process::id(),
+            nonce
+        ));
+        fs::create_dir_all(&root).expect("create test root");
+        let current = root.join("current.xlsx");
+        let template = root.join("template.xlsx");
+        let config = root.join("config.xlsx");
+        let output = root.join("output");
+        fs::write(&current, b"current workbook snapshot").expect("write current source");
+        fs::write(&template, b"selected layout snapshot").expect("write selected template");
+        fs::write(&config, b"configuration snapshot").expect("write config");
+        let current_sha = file_sha256(&current).expect("hash current source");
+        let template_sha = file_sha256(&template).expect("hash selected template");
+        let config_sha = file_sha256(&config).expect("hash config");
+        let counts = BTreeMap::new();
+        let selected_templates = [S5OutputSource {
+            role: "layout",
+            path: &template,
+            source_id: "LAYOUT_0123456789ab",
+            sha256_before: &template_sha,
+        }];
+        let request = S5OutputRequest {
+            run_id: "selected-layout-template",
+            period: "2026-07-31",
+            institution_code: "123",
+            institution_name: "sample",
+            outcomes: &[],
+            status_counts: &counts,
+            data_quality_warnings: &[],
+            source_path: &current,
+            source_id: "CURRENT",
+            source_sha256_before: &current_sha,
+            additional_sources: &[],
+            selected_templates: &selected_templates,
+            config_path: &config,
+            config_sha256_before: &config_sha,
+            config_version: "test",
+        };
+
+        let summary = write_run_outputs(&request, &output).expect("write run outputs");
+        assert_eq!(
+            summary
+                .manifest
+                .iter()
+                .map(|entry| entry.role.as_str())
+                .collect::<Vec<_>>(),
+            vec!["current", "layout", "configuration"]
+        );
+        let layout_entry = summary
+            .manifest
+            .iter()
+            .find(|entry| entry.role == "layout")
+            .expect("layout manifest entry");
+        let layout_copy = PathBuf::from(&layout_entry.copy_path);
+        assert_eq!(
+            layout_copy.file_name().unwrap(),
+            "layout_LAYOUT_0123456789ab_template.xlsx"
+        );
+        assert_eq!(
+            fs::read(layout_copy).expect("read copied template"),
+            b"selected layout snapshot"
+        );
+        assert!(layout_entry.matches_snapshot);
         fs::remove_dir_all(root).expect("remove test root");
     }
 }

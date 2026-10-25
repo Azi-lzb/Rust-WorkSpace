@@ -115,6 +115,14 @@ pub struct S5SourceDescriptor<'a> {
     pub institution_name: &'a str,
 }
 
+/// A layout template actually selected while retrieving S5 numeric regions.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct S5NumericTemplateSource {
+    pub path: PathBuf,
+    pub source_id: String,
+    pub sha256: String,
+}
+
 struct BoundSource {
     source_path: PathBuf,
     source_id: String,
@@ -326,6 +334,30 @@ impl S5Retrieval {
             selections.extend(previous.numeric_scope.selection_records("previous"));
         }
         selections
+    }
+
+    /// Selected numeric-region templates in first-use order, with their
+    /// pre-read snapshots, for inclusion in the run's audit-copy manifest.
+    pub fn numeric_region_template_sources(&self) -> Vec<S5NumericTemplateSource> {
+        let mut sources = Vec::new();
+        for bound_source in std::iter::once(&self.current).chain(self.previous.iter()) {
+            for template in bound_source.numeric_scope.selected_templates() {
+                if sources
+                    .iter()
+                    .any(|source: &S5NumericTemplateSource| source.path == template.path)
+                {
+                    continue;
+                }
+                let path_text = template.path.to_string_lossy();
+                let source_id_hash = Sha256::digest(path_text.as_bytes());
+                sources.push(S5NumericTemplateSource {
+                    path: template.path.clone(),
+                    source_id: format!("LAYOUT_{:x}", source_id_hash)[..19].to_owned(),
+                    sha256: template.sha256.clone(),
+                });
+            }
+        }
+        sources
     }
 
     /// SHA-256 captured when the current source was opened for this run.

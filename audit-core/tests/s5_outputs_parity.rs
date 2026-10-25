@@ -5,8 +5,8 @@
 //! (`AUDIT_S5_OUTPUTS_REPORT`). Manual parity harness only.
 
 use audit_core::s5_config::load_configuration;
-use audit_core::s5_outputs::{write_run_outputs, S5OutputRequest};
-use audit_core::s5_retrieval::S5Retrieval;
+use audit_core::s5_outputs::{write_run_outputs, S5OutputRequest, S5OutputSource};
+use audit_core::s5_retrieval::{S5Retrieval, S5SourceDescriptor};
 use audit_core::s5_service::run_rules;
 use serde::Deserialize;
 use serde_json::json;
@@ -16,6 +16,8 @@ use std::{fs, path::PathBuf};
 struct OutputsRequest {
     config: PathBuf,
     source: PathBuf,
+    template_path: Option<PathBuf>,
+    template_dir: Option<PathBuf>,
     period: String,
     institution_code: String,
     institution_name: String,
@@ -46,14 +48,20 @@ fn runs_s5_outputs_parity_item() {
             format!("{:x}", hasher.finalize())
         })
         .unwrap_or_default();
-    let mut retrieval = S5Retrieval::bind(
+    let mut retrieval = S5Retrieval::bind_with_sources_and_templates(
         configuration.clone(),
-        "current",
-        &request.source,
-        &request.source_id,
+        S5SourceDescriptor {
+            path: &request.source,
+            source_id: &request.source_id,
+            period: &request.period,
+            institution_code: &request.institution_code,
+            institution_name: &request.institution_name,
+        },
+        None,
+        None,
         &request.period,
-        &request.institution_code,
-        &request.period,
+        request.template_path.as_deref(),
+        request.template_dir.as_deref(),
     )
     .expect("bind source");
     let (outcomes, counts) = run_rules(
@@ -65,6 +73,16 @@ fn runs_s5_outputs_parity_item() {
         &request.institution_name,
     )
     .expect("run rules");
+    let selected_template_bindings = retrieval.numeric_region_template_sources();
+    let selected_templates: Vec<S5OutputSource<'_>> = selected_template_bindings
+        .iter()
+        .map(|template| S5OutputSource {
+            role: "layout",
+            path: &template.path,
+            source_id: &template.source_id,
+            sha256_before: &template.sha256,
+        })
+        .collect();
     let output_request = S5OutputRequest {
         run_id: &request.run_id,
         period: &request.period,
@@ -77,6 +95,7 @@ fn runs_s5_outputs_parity_item() {
         source_id: &request.source_id,
         source_sha256_before: &source_sha,
         additional_sources: &[],
+        selected_templates: &selected_templates,
         config_path: &request.config,
         config_sha256_before: &configuration.sha256,
         config_version: &configuration.version,

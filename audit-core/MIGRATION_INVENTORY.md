@@ -179,6 +179,7 @@ main 落地请求 #3/#4 后，S1 公式复制业务计划（`s1_formula_copy`）
 - S1-F01 公式复制：worker 样式表守卫已同步且 worker 定向回归 10 passed；真实 worker 输出仍可能因 `cellXfs` 引用越界被拒绝，Umya 路线仍有 1,036 项真实对拍差异；没有可用生产编辑引擎，整项未验收。
 - S5-F01 V_PRE CLI 切片：`s5-audit-run` 新增可选 `--previous-source`、`--previous-source-id`、`--previous-period`，审核结果总账登记并校验上期副本哈希；未提供上期时保留 Python `SOURCE_NOT_SELECTED` 失败结果。合成 Windows Python/Rust 对拍核对结果表值、状态、超链接目标和当前/上期副本清单，差异 0，见 `probe/reports/s5_vpre_cli_synthetic_parity_20261025.json`。仅覆盖单个上期来源的无契约绑定路径；真实上期样本、数据源契约校验、多来源选择、V_EXT 动态布局/时间序列（时间序列后续仅有合成验证）、结构快照、数据质量告警及全配置/多业务验收仍缺，S5-F01 整体未验证。
 - S5-F01：此前 Windows CLI 与 Python `AuditEngine.run` 377 条结果及输出文件对拍差异 0 的真实证据仍仅覆盖单位贷款单业务切片。新增业务筛选拒绝未知/无启用规则业务，输出 writer 在写出前后验证源与配置快照，防止空业务或输入变化生成完成态输出；定向测试通过、CLI check 通过。
+- S5-F01 真实布局模板输出：修复实际模板绑定审核只把模板用于取数、却未纳入 Python `layout` 审核副本和 SHA-256 清单的差异。Rust 现在仅复制规则取数中实际选中的模板，并用模板读取时快照校验输出。Windows 原生 Python/Rust 真实模板输出对拍 377 条结果、工作簿、审核副本及清单差异 0，见 `probe/reports/s5_outputs_real_template_fixed_windows_native_20261026.json`；正式 `s5-audit-run` CLI 同批输出 COMPLETED（PASSED 352、TRIGGERED 24、RETRIEVAL_FAILED 1），副本为 current/layout/configuration 且三项快照均匹配，输入文件前后哈希不变。此证据只覆盖单位贷款单业务、显式模板路径和 Windows；S5-F01 整体仍未验证，Audit #8 共享能力问题仍未解决。
 - 平台：本轮仅完成 Windows 原生编译/测试及 Windows 隔离 openpyxl worker 回归；WSL Python、Linux 目标、glibc 2.28、deb、麒麟 V10/UOS V20 均未验证。
 
 ### S5-F01 V_EXT 单来源配置契约 CLI 切片（Windows 合成对拍）

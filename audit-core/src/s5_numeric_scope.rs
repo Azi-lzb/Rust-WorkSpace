@@ -9,6 +9,7 @@
 use crate::s5_layout::{self, NamedRegion};
 use crate::s5_scan::ScanBook;
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
@@ -47,8 +48,15 @@ struct NumericRegionLayout {
 }
 
 struct TemplateMetadata {
+    sha256: String,
     numeric_sheets: BTreeSet<String>,
     layouts: Vec<NumericRegionLayout>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct SelectedNumericTemplate {
+    pub path: PathBuf,
+    pub sha256: String,
 }
 
 #[derive(Clone, Debug)]
@@ -65,6 +73,7 @@ pub(crate) struct NumericScopeResolver {
     templates: BTreeMap<PathBuf, TemplateMetadata>,
     projected_by_sheet: BTreeMap<String, Vec<NamedRegion>>,
     selections_by_sheet: BTreeMap<String, TemplateSelection>,
+    selected_templates: Vec<SelectedNumericTemplate>,
 }
 
 impl NumericScopeResolver {
@@ -75,6 +84,7 @@ impl NumericScopeResolver {
             templates: BTreeMap::new(),
             projected_by_sheet: BTreeMap::new(),
             selections_by_sheet: BTreeMap::new(),
+            selected_templates: Vec::new(),
         }
     }
 
@@ -88,53 +98,74 @@ impl NumericScopeResolver {
         }
 
         let started = Instant::now();
-        let (regions, selected_path) = if let Some(path) = self.explicit_template_path.clone() {
-            let metadata = self.template_metadata(&path)?;
-            let projected = project_numeric_regions(source, metadata, sheet_name)?;
-            if projected.is_empty() {
-                return Err(NumericScopeError::new(
-                    "NUMERIC_REGION_NOT_FOUND",
-                    "选定模板缺少该工作表可定位的数字区域",
-                    json!({
-                        "sheet": sheet_name,
-                        "template": file_name(&path),
-                    }),
-                ));
-            }
-            (projected, Some(path))
-        } else if let Some(template_dir) = self.template_dir.clone() {
-            let selected = self.select_template(source, &template_dir, sheet_name)?;
-            if let Some(path) = selected {
+        let (regions, selected_path, selected_sha256) =
+            if let Some(path) = self.explicit_template_path.clone() {
+                let path = resolve_template_path(&path)?;
                 let metadata = self.template_metadata(&path)?;
+                let sha256 = metadata.sha256.clone();
                 let projected = project_numeric_regions(source, metadata, sheet_name)?;
                 if projected.is_empty() {
                     return Err(NumericScopeError::new(
                         "NUMERIC_REGION_NOT_FOUND",
-                        "布局模板缺少可定位的数字区域表头",
+                        "选定模板缺少该工作表可定位的数字区域",
                         json!({
                             "sheet": sheet_name,
                             "template": file_name(&path),
                         }),
                     ));
                 }
-                (projected, Some(path))
+                (projected, Some(path), Some(sha256))
+            } else if let Some(template_dir) = self.template_dir.clone() {
+                let selected = self.select_template(source, &template_dir, sheet_name)?;
+                if let Some(path) = selected
+                    .map(|path| resolve_template_path(&path))
+                    .transpose()?
+                {
+                    let metadata = self.template_metadata(&path)?;
+                    let sha256 = metadata.sha256.clone();
+                    let projected = project_numeric_regions(source, metadata, sheet_name)?;
+                    if projected.is_empty() {
+                        return Err(NumericScopeError::new(
+                            "NUMERIC_REGION_NOT_FOUND",
+                            "布局模板缺少可定位的数字区域表头",
+                            json!({
+                                "sheet": sheet_name,
+                                "template": file_name(&path),
+                            }),
+                        ));
+                    }
+                    (projected, Some(path), Some(sha256))
+                } else {
+                    (Vec::new(), None, None)
+                }
             } else {
-                (Vec::new(), None)
-            }
-        } else {
-            (Vec::new(), None)
-        };
+                (Vec::new(), None, None)
+            };
 
         self.projected_by_sheet
             .insert(sheet_name.to_owned(), regions.clone());
         self.selections_by_sheet.insert(
             sheet_name.to_owned(),
             TemplateSelection {
-                path: selected_path,
+                path: selected_path.clone(),
                 elapsed_ms: started.elapsed().as_millis(),
             },
         );
+        if let (Some(path), Some(sha256)) = (selected_path, selected_sha256) {
+            if !self
+                .selected_templates
+                .iter()
+                .any(|template| template.path == path)
+            {
+                self.selected_templates
+                    .push(SelectedNumericTemplate { path, sha256 });
+            }
+        }
         Ok(regions)
+    }
+
+    pub(crate) fn selected_templates(&self) -> &[SelectedNumericTemplate] {
+        &self.selected_templates
     }
 
     pub(crate) fn selection_records(&self, role: &str) -> Vec<Value> {
@@ -243,7 +274,36 @@ impl NumericScopeResolver {
     }
 }
 
+fn resolve_template_path(path: &Path) -> Result<PathBuf, NumericScopeError> {
+    let canonical = fs::canonicalize(path).map_err(|error| {
+        NumericScopeError::new(
+            "RETRIEVAL_FAILED",
+            format!("数字区域布局模板无法读取：{}：{error}", file_name(path)),
+            json!({ "template": file_name(path) }),
+        )
+    })?;
+    #[cfg(windows)]
+    {
+        let canonical_text = canonical.to_string_lossy();
+        if let Some(unc_path) = canonical_text.strip_prefix(r"\\?\UNC\") {
+            return Ok(PathBuf::from(format!(r"\\{}", unc_path)));
+        }
+        if let Some(drive_path) = canonical_text.strip_prefix(r"\\?\") {
+            return Ok(PathBuf::from(drive_path));
+        }
+    }
+    Ok(canonical)
+}
+
 fn load_template_metadata(path: &Path) -> Result<TemplateMetadata, NumericScopeError> {
+    let bytes = fs::read(path).map_err(|error| {
+        NumericScopeError::new(
+            "RETRIEVAL_FAILED",
+            format!("数字区域布局模板无法读取：{}：{error}", file_name(path)),
+            json!({ "template": file_name(path) }),
+        )
+    })?;
+    let sha256 = format!("{:x}", Sha256::digest(bytes));
     let book = ScanBook::open(path).map_err(|error| {
         NumericScopeError::new(
             "RETRIEVAL_FAILED",
@@ -261,6 +321,7 @@ fn load_template_metadata(path: &Path) -> Result<TemplateMetadata, NumericScopeE
         .filter_map(|region| numeric_region_layout(&book, &axes, region))
         .collect();
     Ok(TemplateMetadata {
+        sha256,
         numeric_sheets,
         layouts,
     })
