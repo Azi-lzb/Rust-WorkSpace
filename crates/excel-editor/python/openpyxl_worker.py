@@ -643,6 +643,56 @@ def _apply_operation(workbook: Any, cached_workbook: Any, operation: Dict[str, A
         raise WorkerError("unsupported_operation", "operation is not implemented: " + kind, unsupported=True)
 
 
+def _verify_style_table_integrity(output_path: Path) -> None:
+    """Reject a saved workbook whose cell style references exceed its style table.
+
+    A styles table with fewer xf entries than the highest s= index referenced
+    by any worksheet makes Excel/umya fall back to the default style and
+    silently drop that cell's formatting semantics. Component-style
+    assignment has been observed to produce such output on a real template;
+    the worker must fail loudly instead of publishing a corrupted candidate.
+    """
+    import re
+    import zipfile as _zipfile
+
+    try:
+        with _zipfile.ZipFile(str(output_path)) as archive:
+            styles_xml = archive.read("xl/styles.xml").decode("utf-8")
+            match = re.search(r'<cellXfs\b[^>]*\bcount="(\d+)"[^>]*>(.*?)</cellXfs>', styles_xml, re.S)
+            if match is None:
+                raise WorkerError(
+                    "style_table_corrupted",
+                    "saved workbook has no recognizable cellXfs style table",
+                )
+            declared_count = int(match.group(1))
+            xf_elements = len(re.findall(r"<xf\b", match.group(2)))
+            highest = -1
+            for name in archive.namelist():
+                if not re.match(r"xl/worksheets/sheet\d+\.xml$", name):
+                    continue
+                sheet_xml = archive.read(name).decode("utf-8")
+                for style_ref in re.finditer(r'\bs="(\d+)"', sheet_xml):
+                    highest = max(highest, int(style_ref.group(1)))
+    except WorkerError:
+        raise
+    except Exception as error:
+        raise WorkerError("save_failed", "style-table integrity check failed: " + str(error))
+    if declared_count != xf_elements:
+        raise WorkerError(
+            "style_table_corrupted",
+            "saved workbook cellXfs declares count={} but carries {} xf entries".format(
+                declared_count, xf_elements
+            ),
+        )
+    if highest >= xf_elements:
+        raise WorkerError(
+            "style_table_corrupted",
+            "saved workbook references cell style {} beyond its {} cellXfs entries; formatting would silently fall back to the default style".format(
+                highest, xf_elements
+            ),
+        )
+
+
 def _apply(request: Dict[str, Any]) -> Dict[str, Any]:
     started = time.monotonic()
     input_path, output_path, operations = _preflight(request)
@@ -680,6 +730,7 @@ def _apply(request: Dict[str, Any]) -> Dict[str, Any]:
         raise WorkerError("source_changed", "worker input changed while applying the edit plan")
     if not output_path.is_file() or output_path.stat().st_size == 0:
         raise WorkerError("save_failed", "openpyxl did not create a non-empty output workbook")
+    _verify_style_table_integrity(output_path)
     try:
         verification = openpyxl.load_workbook(str(output_path), read_only=False, data_only=False, keep_links=True)
         if not verification.worksheets:
