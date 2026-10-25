@@ -95,6 +95,7 @@ def make_input(
     elapsed_duration: bool = False,
     elapsed_formula: bool = False,
     elapsed_number_format: str | None = None,
+    elapsed_duration_serial: float = 1.123456789,
 ) -> None:
     workbook = Workbook()
     if date_1904:
@@ -115,7 +116,7 @@ def make_input(
     sheet.append([])
     sheet["A5"] = "公司甲"
     if elapsed_duration:
-        sheet["B5"] = 1.123456789
+        sheet["B5"] = elapsed_duration_serial
         sheet["B5"].number_format = elapsed_number_format or "[h]:mm:ss.000"
     elif elapsed_formula:
         sheet["B5"] = "=0.75+0.373456789"
@@ -1006,6 +1007,7 @@ def run_case(
     elapsed_duration: bool = False,
     elapsed_formula: bool = False,
     elapsed_number_format: str | None = None,
+    elapsed_duration_serial: float = 1.123456789,
 ) -> dict[str, object]:
     if elapsed_duration:
         case_name = f"elapsed_duration_{'row_suffix' if row_suffix else 'no_suffix'}"
@@ -1033,6 +1035,7 @@ def run_case(
         elapsed_duration=elapsed_duration,
         elapsed_formula=elapsed_formula,
         elapsed_number_format=elapsed_number_format,
+        elapsed_duration_serial=elapsed_duration_serial,
     )
     python_output = case / "python_output"
     rust_output = case / "rust_output"
@@ -1074,6 +1077,19 @@ def run_case(
     if not run_log_path:
         raise AssertionError("developer-view menu report did not include its run history")
     history = json.loads(rust_path_result(run_log_path).read_text(encoding="utf-8"))
+    source_read_events = [
+        event
+        for event in history.get("events", [])
+        if event.get("phase") == "source_read" and event.get("status") == "completed"
+    ]
+    if len(source_read_events) != 1:
+        raise AssertionError(f"expected one completed source-read event: {source_read_events}")
+    source_read_event = source_read_events[0]
+    if (
+        source_read_event.get("actual_engine") != "calamine"
+        or not isinstance(source_read_event.get("stage_elapsed_ms"), int)
+    ):
+        raise AssertionError(f"unexpected source-read event: {source_read_event}")
     target_events = [
         event
         for event in history.get("events", [])
@@ -1140,6 +1156,32 @@ def run_case(
             "actual_engine": time_normalization_event["actual_engine"],
             "stage_elapsed_ms_recorded": True,
         }
+    elapsed_duration_normalization = None
+    if elapsed_duration:
+        duration_events = [
+            event
+            for event in history.get("events", [])
+            if event.get("phase") == "elapsed_duration_normalization"
+        ]
+        if len(duration_events) != 1:
+            raise AssertionError(
+                f"expected one elapsed-duration normalization event: {duration_events}"
+            )
+        duration_event = duration_events[0]
+        if (
+            duration_event.get("status") != "completed"
+            or duration_event.get("actual_engine") != "pytools-core"
+            or not isinstance(duration_event.get("stage_elapsed_ms"), int)
+        ):
+            raise AssertionError(
+                f"unexpected elapsed-duration normalization event: {duration_event}"
+            )
+        elapsed_duration_normalization = {
+            "phase": duration_event["phase"],
+            "status": duration_event["status"],
+            "actual_engine": duration_event["actual_engine"],
+            "stage_elapsed_ms": duration_event["stage_elapsed_ms"],
+        }
     assert_parity(python_target, candidate)
     assert_parity(python_target, committed_target)
     if cached_formula or elapsed_formula:
@@ -1167,6 +1209,7 @@ def run_case(
         "source_date_system": "1904" if date_1904 else "1900",
         "calendar_date_projection": date_projection,
         "subday_time_normalization": time_normalization,
+        "elapsed_duration_normalization": elapsed_duration_normalization,
         "blank_data_date_format": "yyyy/m/d" if cached_formula else "not_applicable",
         "summary_status": "passed",
         "target_append_status": "passed",
@@ -1177,6 +1220,12 @@ def run_case(
         ),
         "summary_effective_styles": "exact",
         "entry_route": "pytools menu -> 1 timeline -> 3 row-suffix or 4 no-suffix -> confirm",
+        "source_read_history": {
+            "phase": source_read_event["phase"],
+            "status": source_read_event["status"],
+            "actual_engine": source_read_event["actual_engine"],
+            "stage_elapsed_ms": source_read_event["stage_elapsed_ms"],
+        },
         "target_commit_operation": commit_execution["operation"],
         "target_candidate_matches_committed_bytes": True,
         "target_execution_history": {
@@ -1568,6 +1617,86 @@ def main() -> int:
                         "report": str(report_path),
                         "summary_cases": len(summary_results),
                         "existing_target_cases": len(existing_target_results),
+                        "status": report["status"],
+                    },
+                    ensure_ascii=False,
+                )
+            )
+            cleanup_probe_directory(root)
+        return 0
+
+    if sys.argv[1:] == ["--negative-elapsed-duration"]:
+        cases = [
+            ("negative_multiday", -1.123456789),
+            ("negative_half_day", -0.5),
+            ("negative_one_and_half_days", -1.5),
+            ("negative_half_millisecond_tie", -5.787037037037037e-9),
+            ("negative_one_and_half_millisecond_tie", -1.736111111111111e-8),
+        ]
+        with tempfile.TemporaryDirectory(
+            prefix="pytools-wide-negative-elapsed-probe-", ignore_cleanup_errors=True
+        ) as temp:
+            root = Path(temp)
+            summary_results = []
+            for index, (case_name, serial) in enumerate(cases):
+                case_root = root / f"serial_{index}"
+                case_root.mkdir()
+                for row_suffix in (False, True):
+                    result = run_case(
+                        case_root,
+                        row_suffix,
+                        elapsed_duration=True,
+                        elapsed_duration_serial=serial,
+                    )
+                    result["negative_duration_case"] = case_name
+                    summary_results.append(result)
+            report = {
+                "schema_version": 1,
+                "suite": "pytools.timeline.wide_summary_negative_elapsed_duration_parity",
+                "date": date.today().isoformat(),
+                "status": "passed_synthetic_python_rust_parity",
+                "baseline": "PyCode/core/wide_397_398.py::run_wide_summary",
+                "rust_entry": "pytools menu -> 1 timeline -> 3/4 wide summary -> confirm",
+                "input": {
+                    "format": "xlsx",
+                    "kind": "synthetic",
+                    "elapsed_number_format": "[h]:mm:ss.000",
+                    "cases": [case_name for case_name, _ in cases],
+                    "row_modes": ["no_suffix", "row_suffix"],
+                },
+                "comparison": {
+                    "summary_values_types_and_effective_styles": "exact",
+                    "new_target_values_types_and_effective_styles": "exact",
+                    "source_and_configuration_unchanged": True,
+                },
+                "summary_results": summary_results,
+                "safety": {
+                    "source_unchanged": True,
+                    "configuration_unchanged": True,
+                    "outputs_temporary_only": True,
+                    "report_contains_input_filenames_or_business_cell_values": False,
+                },
+                "limitations": [
+                    "Synthetic XLSX only; no sanitized real wide-summary workbook was available.",
+                    "This case does not validate other Excel formats or production edit capabilities.",
+                    "Linux target systems and offline deb acceptance were not tested.",
+                ],
+            }
+            report_path = (
+                WORKSPACE
+                / "pytools-core"
+                / "probe"
+                / "reports"
+                / f"wide_summary_negative_elapsed_duration_parity_{date.today():%Y%m%d}.json"
+            )
+            report_path.write_text(
+                json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+            )
+            print(
+                json.dumps(
+                    {
+                        "report": str(report_path),
+                        "summary_cases": len(summary_results),
                         "status": report["status"],
                     },
                     ensure_ascii=False,
