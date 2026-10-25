@@ -1,0 +1,35 @@
+# S5-F01 V_EXT 无契约普通静态布局切片
+
+- 时间：2026-10-25（Windows 原生）
+- 执行者：Codex
+- 修改前 HEAD：`9d869226d71377be1fc0d0f64ab928a07b721302`
+- 修改后 HEAD：待本轮功能提交
+WIP：开始时保留 `HANDOFF_ZCODE_TO_CODEX.md` 未跟踪文件，并在既有 `s5_external_layout`/模块导出 WIP 上继续；未覆盖或提交交接文件。
+
+【目的】将 Python `external_layout` 的普通静态 V_EXT 布局接入实际 `s5-audit-run` 取数链。范围为单个显式外部来源、无 `数据源契约` 的普通布局；S5-F01 整体仍未验证。
+
+【修改文件】
+
+- `audit-core/src/s5_external_layout.rs`：新增映射表及静态外部报表布局发现、机构代码优先/名称回退、唯一指标/报表项目定位、表头归一化和版式告警扫描；时间序列布局明确拒绝。
+- `audit-core/src/lib.rs`：导出 `s5_external_layout` 模块。
+- `audit-core/src/s5_retrieval.rs`：V_EXT 无契约分支接入布局发现和来源内缓存；提供单位换算、映射证据和实际 `s5-audit-run` 输出。布局告警以及空白/非法数值失败关闭，避免在数据质量提示输出契约未迁移时静默按 0 继续；公式目标仍拒绝。
+- `audit-core/tests/s5_previous_source_cli.rs`：无契约普通布局成功、布局告警、时序格式和非法数值回归；原 V_PRE 及契约 V_EXT 案例继续通过。
+- `audit-core/probe/reports/s5_vext_dynamic_layout_synthetic_parity_windows_native_20261025.json`：记录 Python/Rust 合成入口对拍结果与边界。
+- `audit-core/MIGRATION_INVENTORY.md`：更新 S5-F01 V_EXT 无契约静态布局进度、未迁移边界及请求 #8 状态。
+
+【业务/配置/VBA】配置格式未变，不涉及 VBA。只读 Python 基线实现普通布局时会继续审核并记录数据质量告警；Rust 当前对告警样本返回 `RETRIEVAL_FAILED`，待后续迁移告警总账/结果表后再对齐该分支。多外部来源、时序数据和真实外部工作簿未覆盖。原 Python 项目与用户真实样本未修改。
+
+【测试与对拍】
+
+- `cargo fmt --all -- --check`：通过（格式化后复核）。
+- `cargo check --offline --locked -p audit-core --lib`：通过；仅有既存 workspace/API 弃用及未使用代码警告。
+- `cargo test --offline --locked -p audit-core --test s5_previous_source_cli -- --nocapture`：6 passed。覆盖普通无契约布局换算 0.15 亿元→1500 万元、布局告警/时间序列/非法数值失败关闭，及 V_PRE 与契约 V_EXT 回归。
+- 原 Python 定向测试：Windows Python 3.12.10、openpyxl 3.1.5，`test_s5_configured_engine.py` 中外部布局换算、映射边界和数值告警测试 6 passed。
+- Python `AuditEngine.run` 与 Rust `open-data-audit s5-audit-run` 使用同一临时合成工作簿对拍：状态 `TRIGGERED`、当前/外部/差值、用户描述差异 0；数值按 Decimal 数值相等比较，Rust 输出 J/K/L number format 均为 `0.00`。见上述 JSON 报告。该报告不是实际外部业务样本验收。
+- `git diff --check`：实现阶段通过；文档更新后待提交前复核。
+
+【未执行/已知问题】未使用真实外部来源文件；数据质量告警表、无效数值按 0 并写告警的 Python 语义、时序取数、多来源冲突、Excel 公式重算、Linux/目标 glibc/deb、麒麟 V10/UOS V20 均未验收。S5-F01 整体保持未验证。Audit 共享能力请求 #8 未变更、仍未解决。
+
+【组件版本】`audit-core` 当前 crate 版本 `0.1.0`，本轮未升级 Cargo 版本。
+
+【删除清单/回滚】未删除任何项目文件。回滚方式为撤销本轮功能提交；不得丢弃原交接报告或本轮之前的 WIP。

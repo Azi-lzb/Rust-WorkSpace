@@ -14,6 +14,7 @@
 
 use crate::s5_config::{Configuration, SourceContract};
 use crate::s5_eval::{EvalArgument, EvalErrorKind, EvalValue};
+use crate::s5_external_layout::ExternalLayout;
 use crate::s5_scan::{in_numeric_regions, row_path_candidates, scan_rule_paths, ScanBook};
 use serde_json::{json, Value as JsonValue};
 use sha2::{Digest, Sha256};
@@ -174,6 +175,7 @@ pub struct S5Retrieval {
     current: BoundSource,
     previous: Option<BoundSource>,
     external: Option<BoundSource>,
+    external_layout: Option<ExternalLayout>,
 }
 
 impl S5Retrieval {
@@ -203,6 +205,7 @@ impl S5Retrieval {
             current,
             previous: None,
             external: None,
+            external_layout: None,
         })
     }
 
@@ -247,6 +250,7 @@ impl S5Retrieval {
             current,
             previous,
             external,
+            external_layout: None,
         })
     }
 
@@ -461,21 +465,26 @@ impl S5Retrieval {
     }
 
     fn retrieve_external(
-        &self,
+        &mut self,
         args: &[EvalArgument],
         keywords: &BTreeMap<String, String>,
         rule_business: &str,
     ) -> Result<EvalValue, RetrievalFailure> {
-        let source = self.external.as_ref().ok_or_else(|| {
-            RetrievalFailure::new(
-                "SOURCE_NOT_SELECTED",
-                format!("没有找到业务 {rule_business} 对应的external数据源"),
-            )
-        })?;
+        let source_id = self
+            .external
+            .as_ref()
+            .ok_or_else(|| {
+                RetrievalFailure::new(
+                    "SOURCE_NOT_SELECTED",
+                    format!("没有找到业务 {rule_business} 对应的external数据源"),
+                )
+            })?
+            .source_id
+            .clone();
         if let Some(requested_source) = keywords
             .get("source")
             .filter(|source_id| !source_id.trim().is_empty())
-            .filter(|source_id| source_id.as_str() != source.source_id)
+            .filter(|requested| requested.as_str() != source_id)
         {
             return Err(RetrievalFailure::new(
                 "SOURCE_NOT_SELECTED",
@@ -493,9 +502,7 @@ impl S5Retrieval {
             .configuration
             .external_metrics
             .iter()
-            .filter(|metric| {
-                metric.source_id == source.source_id && metric.metric_header == metric_header
-            })
+            .filter(|metric| metric.source_id == source_id && metric.metric_header == metric_header)
             .collect();
         if metric_matches.len() != 1 {
             let code = if metric_matches.is_empty() {
@@ -508,7 +515,7 @@ impl S5Retrieval {
                 "外部指标目录未能唯一找到被引用的指标",
             ));
         }
-        let metric = metric_matches[0];
+        let metric = metric_matches[0].clone();
         if !metric.confirmed {
             return Err(RetrievalFailure::new(
                 "METRIC_NOT_CONFIRMED",
@@ -519,13 +526,16 @@ impl S5Retrieval {
             .configuration
             .source_contracts
             .iter()
-            .find(|contract| contract.source_id == source.source_id)
-            .ok_or_else(|| {
-                RetrievalFailure::new(
-                    "SOURCE_LAYOUT_UNVERIFIED",
-                    "未配置外部来源映射契约，动态布局识别尚未迁移",
-                )
-            })?;
+            .find(|contract| contract.source_id == source_id)
+            .cloned();
+        let Some(contract) = contract else {
+            let sheet_filter = keywords.get("sheet").map(String::as_str).unwrap_or("");
+            return self.retrieve_external_from_layout(&metric, metric_header, sheet_filter);
+        };
+        let source = self
+            .external
+            .as_ref()
+            .expect("external source checked above");
         if contract.mapping_sheet == "参照表" {
             return Err(RetrievalFailure::new(
                 "MAPPING_SHEET_MISSING",
@@ -543,7 +553,7 @@ impl S5Retrieval {
                 "外部数据源缺少配置的机构映射工作表",
             ));
         }
-        let source_period = self.validate_external_contract(source, contract)?;
+        let source_period = self.validate_external_contract(source, &contract)?;
         let identity_column = Self::external_header_column(
             source,
             &contract.mapping_sheet,
@@ -704,6 +714,133 @@ impl S5Retrieval {
         });
         convert_value(
             &raw_value,
+            &metric.data_type,
+            &metric.metric_type,
+            &metric.source_unit,
+            &metric.standard_unit,
+            &metric.storage_scale,
+            metric.allow_blank,
+            metric.precision,
+            evidence,
+        )
+    }
+
+    fn retrieve_external_from_layout(
+        &mut self,
+        metric: &crate::s5_config::ExternalMetricSpec,
+        metric_header: &str,
+        sheet_filter: &str,
+    ) -> Result<EvalValue, RetrievalFailure> {
+        let source = self
+            .external
+            .as_ref()
+            .expect("external source checked above");
+        if self.external_layout.is_none() {
+            self.external_layout = Some(
+                ExternalLayout::discover(&source.book)
+                    .map_err(|failure| RetrievalFailure::new(&failure.code, failure.message))?,
+            );
+        }
+        let layout = self
+            .external_layout
+            .as_ref()
+            .expect("layout is populated before retrieval");
+        if let Some(warning) = layout.warnings.first() {
+            return Err(RetrievalFailure::new(
+                "EXTERNAL_LAYOUT_WARNING_UNMIGRATED",
+                format!(
+                    "工作表“{}”{}：{}；数据质量提示尚未接入 S5 结果与总账",
+                    warning.sheet, warning.location, warning.message
+                ),
+            ));
+        }
+        let lookup = layout
+            .resolve(
+                &self.current.institution_code,
+                &self.current.institution_name,
+                metric_header,
+                sheet_filter,
+            )
+            .map_err(|failure| RetrievalFailure::new(&failure.code, failure.message))?;
+        let source = self
+            .external
+            .as_ref()
+            .expect("external source checked above");
+        let cell = format!("{}{}", column_letter_local(lookup.column), lookup.row);
+        if source
+            .book
+            .sheet_has_formula(&lookup.sheet, lookup.row, lookup.column)
+        {
+            return Err(RetrievalFailure::new(
+                "SOURCE_FORMULA_UNVERIFIED",
+                "源数据目标单元格包含公式，未确认其重算缓存，不能作为审核输入",
+            )
+            .with_evidence(&lookup.sheet, &cell));
+        }
+        let (raw_type, raw_value) =
+            source
+                .book
+                .stored_value(&lookup.sheet, lookup.row, lookup.column);
+        let mut conversion_value = raw_value.clone();
+        if matches!(
+            metric.data_type.as_str(),
+            "number" | "decimal" | "integer" | "numeric"
+        ) {
+            if !matches!(raw_type.as_str(), "number" | "string") || raw_value.trim().is_empty() {
+                return Err(RetrievalFailure::new(
+                    "EXTERNAL_DATA_WARNING_UNMIGRATED",
+                    format!(
+                        "外部指标“{metric_header}”在 {}!{} 为空或不是可用数值；动态取数的数据质量告警尚未迁移",
+                        lookup.sheet, cell
+                    ),
+                )
+                .with_evidence(&lookup.sheet, &cell));
+            }
+            conversion_value = raw_value.replace(',', "");
+            if crate::s5_eval::parse_decimal28(&conversion_value).is_err() {
+                return Err(RetrievalFailure::new(
+                    "EXTERNAL_DATA_WARNING_UNMIGRATED",
+                    format!(
+                        "外部指标“{metric_header}”在 {}!{} 不是有效数值；动态取数的数据质量告警尚未迁移",
+                        lookup.sheet, cell
+                    ),
+                )
+                .with_evidence(&lookup.sheet, &cell));
+            }
+        } else if matches!(metric.data_type.as_str(), "text" | "string")
+            && !raw_value.is_empty()
+            && raw_type != "string"
+        {
+            return Err(RetrievalFailure::new(
+                "VALUE_TYPE_INVALID",
+                "指标要求文本值，但源单元格不是文本",
+            )
+            .with_evidence(&lookup.sheet, &cell));
+        }
+        let evidence = json!({
+            "source_id": source.source_id,
+            "source_path": source.source_path.display().to_string(),
+            "source_sha256": source.sha256,
+            "sheet": lookup.sheet,
+            "cell": cell,
+            "raw_value": raw_value,
+            "source_unit": metric.source_unit,
+            "standard_unit": metric.standard_unit,
+            "source_period": source.source_period,
+            "source_contract_version": "",
+            "metric_layout_version": "",
+            "metric_definition_evidence": metric.evidence,
+            "institution_code": self.current.institution_code,
+            "precision": metric.precision,
+            "mapping_sheet": lookup.mapping_sheet,
+            "mapping_cell": lookup.mapping_cell,
+            "mapping_key": lookup.mapping_key,
+            "report_item": lookup.report_item,
+            "metric_header": metric_header,
+            "mapping_method": lookup.mapping_method,
+        });
+        convert_value(
+            &conversion_value,
             &metric.data_type,
             &metric.metric_type,
             &metric.source_unit,

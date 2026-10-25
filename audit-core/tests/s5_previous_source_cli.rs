@@ -60,6 +60,28 @@ fn write_source(path: &Path, value: f64) {
 }
 
 fn write_external_source(path: &Path, value: f64) {
+    write_external_source_variant(path, value, false, false, false);
+}
+
+fn write_external_source_with_layout_warning(path: &Path, value: f64, warning: bool) {
+    write_external_source_variant(path, value, warning, false, false);
+}
+
+fn write_external_source_with_invalid_numeric(path: &Path) {
+    write_external_source_variant(path, 0.0, false, true, false);
+}
+
+fn write_external_time_series_source(path: &Path, value: f64) {
+    write_external_source_variant(path, value, false, false, true);
+}
+
+fn write_external_source_variant(
+    path: &Path,
+    value: f64,
+    warning: bool,
+    invalid_numeric: bool,
+    time_series: bool,
+) {
     let mut workbook = excel_writer::Workbook::new();
     let mapping = workbook
         .add_worksheet()
@@ -82,25 +104,41 @@ fn write_external_source(path: &Path, value: f64) {
         .add_worksheet()
         .set_name("集中系统数据")
         .expect("name external data sheet");
-    for (column, value) in ["序号", "报表项目", " 贷款余额(亿元) ", "备用指标"]
-        .iter()
-        .enumerate()
-    {
+    let headers = if time_series {
+        ["数据日期", "行名称", "贷款余额(亿元)", "备用指标"]
+    } else {
+        ["序号", "报表项目", " 贷款余额(亿元) ", "备用指标"]
+    };
+    for (column, value) in headers.iter().enumerate() {
         data.write_string(1, column as u16, *value)
             .expect("write external metric headers");
     }
-    data.write_number(2, 0, 1)
-        .expect("write external row number");
+    if time_series {
+        data.write_string(2, 0, "2026-08-31")
+            .expect("write external report date");
+    } else {
+        data.write_number(2, 0, 1)
+            .expect("write external row number");
+    }
     data.write_string(2, 1, " 单位贷款 ")
         .expect("write external report item");
-    data.write_number(2, 2, value)
-        .expect("write external metric value");
+    if invalid_numeric {
+        data.write_string(2, 2, "误填文字")
+            .expect("write invalid external metric value");
+    } else {
+        data.write_number(2, 2, value)
+            .expect("write external metric value");
+    }
     data.write_number(2, 3, 1)
         .expect("write external control value");
+    if warning {
+        data.write_number(3, 2, 0.01)
+            .expect("write unlabelled external metric value");
+    }
     workbook.save(path).expect("save external source workbook");
 }
 
-fn write_config(path: &Path, include_external: bool) {
+fn write_config(path: &Path, include_external: bool, include_external_contract: bool) {
     let mut workbook = excel_writer::Workbook::new();
     let rule_headers = [
         "规则ID",
@@ -285,7 +323,9 @@ fn write_config(path: &Path, include_external: bool) {
                 .write_string(1, column as u16, *value)
                 .expect("write external metric value");
         }
+    }
 
+    if include_external_contract {
         let contract_headers = [
             "数据源ID",
             "来源类型",
@@ -452,7 +492,7 @@ fn s5_audit_cli_reads_and_copies_independent_previous_source() {
     let output_dir = directory.join("out");
     write_source(&current, 120.0);
     write_source(&previous, 90.0);
-    write_config(&config, false);
+    write_config(&config, false, false);
 
     let output = run_cli(&config, &current, Some(&previous), None, &output_dir, true);
     assert!(
@@ -557,7 +597,7 @@ fn s5_audit_cli_reads_and_copies_configured_external_source() {
     let output_dir = directory.join("out");
     write_source(&current, 1500.0);
     write_external_source(&external, 0.15);
-    write_config(&config, true);
+    write_config(&config, true, true);
 
     let output = run_cli(&config, &current, None, Some(&external), &output_dir, true);
     assert!(
@@ -643,4 +683,139 @@ fn s5_audit_cli_reads_and_copies_configured_external_source() {
     assert_eq!(missing_summary["status_counts"]["RETRIEVAL_FAILED"], 1);
 
     fs::remove_dir_all(directory).expect("remove synthetic external CLI files");
+}
+
+#[test]
+fn s5_audit_cli_retrieves_ordinary_external_layout_without_contract() {
+    let directory = temporary_directory();
+    let current = directory.join("current.xlsx");
+    let external = directory.join("external.xlsx");
+    let config = directory.join("config.xlsx");
+    let output_dir = directory.join("out");
+    write_source(&current, 1500.0);
+    write_external_source(&external, 0.15);
+    write_config(&config, true, false);
+
+    let output = run_cli(&config, &current, None, Some(&external), &output_dir, true);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let summary: Value = serde_json::from_slice(&output.stdout).expect("valid CLI JSON");
+    assert_eq!(summary["status"], "completed");
+    assert_eq!(summary["status_counts"]["TRIGGERED"], 1);
+    let result_path = PathBuf::from(
+        summary["output_files"]["result_workbook"]
+            .as_str()
+            .expect("result workbook path"),
+    );
+    let result_workbook = read_workbook(&result_path).expect("read dynamic-layout result workbook");
+    let result_sheet = result_workbook
+        .sheets
+        .iter()
+        .find(|sheet| sheet.name == "审核结果")
+        .expect("result sheet");
+    assert_eq!(
+        CellValue::from_probe_json(&result_sheet.values["K2"]).expect("external value"),
+        CellValue::Number(1500.0)
+    );
+    assert_eq!(
+        CellValue::from_probe_json(&result_sheet.values["L2"]).expect("difference value"),
+        CellValue::Number(0.0)
+    );
+
+    fs::remove_dir_all(directory).expect("remove synthetic dynamic-layout files");
+}
+
+#[test]
+fn s5_audit_cli_fails_closed_when_dynamic_external_layout_has_unmigrated_warnings() {
+    let directory = temporary_directory();
+    let current = directory.join("current.xlsx");
+    let external = directory.join("external.xlsx");
+    let config = directory.join("config.xlsx");
+    let output_dir = directory.join("out");
+    write_source(&current, 1500.0);
+    write_external_source_with_layout_warning(&external, 0.15, true);
+    write_config(&config, true, false);
+
+    let output = run_cli(&config, &current, None, Some(&external), &output_dir, true);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let summary: Value = serde_json::from_slice(&output.stdout).expect("valid CLI JSON");
+    assert_eq!(summary["status"], "completed");
+    assert_eq!(summary["status_counts"]["RETRIEVAL_FAILED"], 1);
+
+    fs::remove_dir_all(directory).expect("remove synthetic warning-layout files");
+}
+
+#[test]
+fn s5_audit_cli_rejects_unmigrated_dynamic_external_time_series_layout() {
+    let directory = temporary_directory();
+    let current = directory.join("current.xlsx");
+    let external = directory.join("external.xlsx");
+    let config = directory.join("config.xlsx");
+    let output_dir = directory.join("out");
+    write_source(&current, 1500.0);
+    write_external_time_series_source(&external, 0.15);
+    write_config(&config, true, false);
+
+    let output = run_cli(&config, &current, None, Some(&external), &output_dir, true);
+    assert!(output.status.success());
+    let summary: Value = serde_json::from_slice(&output.stdout).expect("valid CLI JSON");
+    assert_eq!(summary["status_counts"]["RETRIEVAL_FAILED"], 1);
+    let result_path = PathBuf::from(
+        summary["output_files"]["result_workbook"]
+            .as_str()
+            .expect("result workbook path"),
+    );
+    let result_workbook = read_workbook(&result_path).expect("read time-series rejection result");
+    let result_sheet = result_workbook
+        .sheets
+        .iter()
+        .find(|sheet| sheet.name == "审核结果")
+        .expect("result sheet");
+    let description = CellValue::from_probe_json(&result_sheet.values["I2"])
+        .expect("time-series rejection message");
+    assert!(matches!(description, CellValue::Text(text) if text.contains("时序布局尚未迁移")));
+
+    fs::remove_dir_all(directory).expect("remove synthetic time-series files");
+}
+
+#[test]
+fn s5_audit_cli_fails_closed_for_invalid_dynamic_external_numeric_values() {
+    let directory = temporary_directory();
+    let current = directory.join("current.xlsx");
+    let external = directory.join("external.xlsx");
+    let config = directory.join("config.xlsx");
+    let output_dir = directory.join("out");
+    write_source(&current, 1500.0);
+    write_external_source_with_invalid_numeric(&external);
+    write_config(&config, true, false);
+
+    let output = run_cli(&config, &current, None, Some(&external), &output_dir, true);
+    assert!(output.status.success());
+    let summary: Value = serde_json::from_slice(&output.stdout).expect("valid CLI JSON");
+    assert_eq!(summary["status_counts"]["RETRIEVAL_FAILED"], 1);
+    let result_path = PathBuf::from(
+        summary["output_files"]["result_workbook"]
+            .as_str()
+            .expect("result workbook path"),
+    );
+    let result_workbook = read_workbook(&result_path).expect("read invalid-value result");
+    let result_sheet = result_workbook
+        .sheets
+        .iter()
+        .find(|sheet| sheet.name == "审核结果")
+        .expect("result sheet");
+    let description = CellValue::from_probe_json(&result_sheet.values["I2"])
+        .expect("invalid-value rejection message");
+    assert!(
+        matches!(description, CellValue::Text(text) if text.contains("动态取数的数据质量告警尚未迁移"))
+    );
+
+    fs::remove_dir_all(directory).expect("remove synthetic invalid-value files");
 }

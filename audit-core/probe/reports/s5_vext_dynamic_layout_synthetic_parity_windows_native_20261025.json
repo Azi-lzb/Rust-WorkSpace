@@ -1,0 +1,59 @@
+{
+  "feature": "S5-F01 V_EXT ordinary external layout without SourceContract",
+  "platform": "Windows native x86_64",
+  "input": "synthetic XLSX workbooks generated in a temporary directory",
+  "python": {
+    "runtime": "3.12.10",
+    "excel_engine": "openpyxl 3.1.5",
+    "status": "TRIGGERED",
+    "values": {
+      "current": "1500",
+      "external": "1500.00",
+      "difference": "0.00"
+    },
+    "description": "差异=0.00万元",
+    "external_mapping": {
+      "sheet": "集中系统数据",
+      "cell": "C3",
+      "mapping_sheet": "机构参照表",
+      "mapping_cell": "A2:B2",
+      "mapping_key": "I001",
+      "report_item": "单位贷款",
+      "mapping_method": "统一社会信用代码",
+      "conversion": "亿元→万元:×10000"
+    },
+    "data_quality_warnings": []
+  },
+  "rust": {
+    "toolchain": "rustc 1.99.1 (58cf8f9c3 2026-10-13)",
+    "excel_engine": "Calamine through excel-reader",
+    "entry": "open-data-audit s5-audit-run",
+    "status": "TRIGGERED",
+    "values": {
+      "current": "1500",
+      "external": "1500",
+      "difference": "0"
+    },
+    "number_formats": {
+      "current": "0.00",
+      "external": "0.00",
+      "difference": "0.00"
+    },
+    "description": "差异=0.00万元",
+    "status_counts": {
+      "TRIGGERED": 1
+    }
+  },
+  "parity": {
+    "result": "PASS",
+    "comparison": "Decimal numeric equality; configured output precision is independently recorded in Rust cell number_formats.",
+    "differences": []
+  },
+  "limits": [
+    "Synthetic ordinary-layout case only; not a real external workbook acceptance.",
+    "Time-series layouts are explicitly rejected as not migrated.",
+    "Layout warnings and invalid/blank numeric values fail closed because the S5 data-quality output contract is not migrated.",
+    "No Linux, glibc 2.28, deb, Kylin V10, or UOS V20 validation was performed.",
+    "S5-F01 remains unverified overall; shared capability request #8 remains unresolved."
+  ]
+}

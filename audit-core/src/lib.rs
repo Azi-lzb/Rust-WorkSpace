@@ -43,6 +43,7 @@ pub mod s5_config;
 pub mod s5_config_check;
 pub mod s5_config_dsl;
 pub mod s5_eval;
+pub mod s5_external_layout;
 pub mod s5_layout;
 pub mod s5_outputs;
 pub mod s5_period_recognition;
