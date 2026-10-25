@@ -95,6 +95,10 @@
 
 使用 `config-real` 的 `2.报表采集系统` 配置备份和单位贷款命名区域模板，经 Windows 原生 `open-data-audit conditional-audit-directory` 目录入口运行 1 个根目录工作簿；Python/Rust 各 2 条条件格式 Issue，字段差异 0，模板推荐一致，双方各评估 602 个单元格。Rust 读取 2 条 S1 映射、12 个命名区域并扫描 4 个条件区域、8 个结构区域；该模板规则发现中，真实配置与内置映射的 1,072 条规则定义完全一致。Rust 982 ms、Python 375 ms 仅为该样本观测。原配置为 `.xlsx.bak`，为满足 Python 对拍读取，将相同字节复制至系统临时 `.xlsx`，测试结束已删除；真实输入只读，未写工作簿。用户批次目录递归包含 184 个 XLSX 且混有多个模板类型，整目录推荐按设计拒绝，故本证据仅覆盖根目录单簿；详见 `probe/reports/s1_conditional_audit_config_real_directory_windows_native_20261025.json`。S1-F01 公式复制/重算、既有历史簿写回和整体流程仍未验证。
 
+### S1-F01 config-real 公式复制 Windows 原生候选复验
+
+按用户提供的 `config-real` S1 映射和 2026-07-31 批次，选取同一真实模板族的 7 个带缓存审核副本；模板含 1,072 个公式、752 个公式缓存、4 个复制区和 8 个结构区。Windows 原生 Rust 完整 60 操作计划经隔离 OpenPyXL worker candidate-only 测试，7/7 在写前因 `target_merged_non_anchor_payload` 拒绝，未创建候选，模板和目标输入均未改变。七个目标分别有 983、688、692、686、692、688、686 个非空公式缓存，均按工作表与单元格坐标落在四个 ImportRange 内，范围外为 0。既有 `s1_formula_copy_target_merged_payload_guard_20261025.json` 对两个定向样本记录每本 855 个合并非锚载荷，全部位于复制区外（31 个载荷合并区域）；没有保留的 Python 写后工作簿可核对这些载荷是否保留，因此该项仍未验证。共享提交 `799cfe7` 的行列尺寸读回校验未被触发。候选证据见 `probe/reports/s1_formula_copy_candidate_openpyxl_windows_native_20261025.json`；OpenPyXL 写回能力及 S1-F01 生产路由保持 Unverified。
+
 ### S1-F01 非空历史簿真实链路烟测（跨模板）
 
 Windows 原生 Python/Rust 对拍将 `config-real` 的非空历史簿接入 2026-07 S1 审核 CLI：7 组源簿/既有公式结果副本均由模板推荐器匹配同一当前模板；每组读取 9 行历史，7 组共 159 条当前 Issue，Python/Rust 当前 Issue、历史分类输入、当前结果簿与独立历史结果簿差异均为 0，历史输出共 222 行，所有输入均未改变。脱敏汇总见 `probe/reports/s1_f01_nonempty_history_real_batch_windows_native_20261025.json`。该历史簿未匹配当前模板（推荐 `matched=false`，confidence 0.63），且本批未观察到历史 Issue ID 重叠；因此只证明真实非空历史读取和无重叠合流路径，不证明同业务连续性/重复归类。使用已有公式结果副本，未运行 Rust 公式复制/重算；只新建独立历史结果簿，没有改写既有历史簿，既有 PageSettings 保留未验证。S1-F01 整体仍未验证。

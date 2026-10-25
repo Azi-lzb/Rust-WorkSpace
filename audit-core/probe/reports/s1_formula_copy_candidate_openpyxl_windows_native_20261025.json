@@ -1,0 +1,162 @@
+{
+  "schema_version": 1,
+  "suite": "audit.s1_formula_copy_candidate.windows_native_after_dimension_validator",
+  "status": "candidate_rejected_before_write",
+  "candidate_engine": "openpyxl-worker",
+  "candidate_operation_scope": "config-real full S1 formula-copy plan including four ImportRange operations, comment writes, and workbook calculation properties",
+  "candidate_runtime": {
+    "platform": "Windows native Rust MSVC",
+    "worker": "isolated temporary Python venv",
+    "python": "3.12.10",
+    "openpyxl": "3.1.5",
+    "et_xmlfile": "2.0.0"
+  },
+  "shared_validator_commit": "799cfe7",
+  "sample_scope": {
+    "sample_period": "2026-07-31",
+    "mapping_source": "user-provided config-real S1 mapping backup copied byte-for-byte to a temporary .xlsx for the Python baseline",
+    "template_profile_formula_cells": 1072,
+    "template_formula_cache_cells": 752,
+    "copy_ranges": 4,
+    "structure_regions": 8,
+    "matched_cached_candidates": 17,
+    "selected_samples": 7,
+    "selection": "first seven sorted same-template inputs with nonempty cached formula results for which the Python formula-copy baseline completed",
+    "exact_identity_with_prior_source-default_WSL_samples": "not asserted; this run uses config-real mapping and persists no paths"
+  },
+  "candidate_results": [
+    {
+      "sample_ordinal": 1,
+      "status": "candidate_unavailable",
+      "candidate_exit_code": 0,
+      "failure_kind": "unsupported_before_write",
+      "failure_category": "target_merged_non_anchor_payload",
+      "output_created": false,
+      "input_workbooks_unchanged": true,
+      "operation_count": 60,
+      "candidate_elapsed_ms": 384,
+      "wrapper_elapsed_ms": 4878,
+      "target_formula_cache": {
+        "total": 983,
+        "inside_import_ranges": 983,
+        "outside_import_ranges": 0
+      }
+    },
+    {
+      "sample_ordinal": 2,
+      "status": "candidate_unavailable",
+      "candidate_exit_code": 0,
+      "failure_kind": "unsupported_before_write",
+      "failure_category": "target_merged_non_anchor_payload",
+      "output_created": false,
+      "input_workbooks_unchanged": true,
+      "operation_count": 60,
+      "candidate_elapsed_ms": 364,
+      "wrapper_elapsed_ms": 4682,
+      "target_formula_cache": {
+        "total": 688,
+        "inside_import_ranges": 688,
+        "outside_import_ranges": 0
+      }
+    },
+    {
+      "sample_ordinal": 3,
+      "status": "candidate_unavailable",
+      "candidate_exit_code": 0,
+      "failure_kind": "unsupported_before_write",
+      "failure_category": "target_merged_non_anchor_payload",
+      "output_created": false,
+      "input_workbooks_unchanged": true,
+      "operation_count": 60,
+      "candidate_elapsed_ms": 379,
+      "wrapper_elapsed_ms": 4769,
+      "target_formula_cache": {
+        "total": 692,
+        "inside_import_ranges": 692,
+        "outside_import_ranges": 0
+      }
+    },
+    {
+      "sample_ordinal": 4,
+      "status": "candidate_unavailable",
+      "candidate_exit_code": 0,
+      "failure_kind": "unsupported_before_write",
+      "failure_category": "target_merged_non_anchor_payload",
+      "output_created": false,
+      "input_workbooks_unchanged": true,
+      "operation_count": 60,
+      "candidate_elapsed_ms": 368,
+      "wrapper_elapsed_ms": 5021,
+      "target_formula_cache": {
+        "total": 686,
+        "inside_import_ranges": 686,
+        "outside_import_ranges": 0
+      }
+    },
+    {
+      "sample_ordinal": 5,
+      "status": "candidate_unavailable",
+      "candidate_exit_code": 0,
+      "failure_kind": "unsupported_before_write",
+      "failure_category": "target_merged_non_anchor_payload",
+      "output_created": false,
+      "input_workbooks_unchanged": true,
+      "operation_count": 60,
+      "candidate_elapsed_ms": 378,
+      "wrapper_elapsed_ms": 6117,
+      "target_formula_cache": {
+        "total": 692,
+        "inside_import_ranges": 692,
+        "outside_import_ranges": 0
+      }
+    },
+    {
+      "sample_ordinal": 6,
+      "status": "candidate_unavailable",
+      "candidate_exit_code": 0,
+      "failure_kind": "unsupported_before_write",
+      "failure_category": "target_merged_non_anchor_payload",
+      "output_created": false,
+      "input_workbooks_unchanged": true,
+      "operation_count": 60,
+      "candidate_elapsed_ms": 397,
+      "wrapper_elapsed_ms": 4817,
+      "target_formula_cache": {
+        "total": 688,
+        "inside_import_ranges": 688,
+        "outside_import_ranges": 0
+      }
+    },
+    {
+      "sample_ordinal": 7,
+      "status": "candidate_unavailable",
+      "candidate_exit_code": 0,
+      "failure_kind": "unsupported_before_write",
+      "failure_category": "target_merged_non_anchor_payload",
+      "output_created": false,
+      "input_workbooks_unchanged": true,
+      "operation_count": 60,
+      "candidate_elapsed_ms": 400,
+      "wrapper_elapsed_ms": 5136,
+      "target_formula_cache": {
+        "total": 686,
+        "inside_import_ranges": 686,
+        "outside_import_ranges": 0
+      }
+    }
+  ],
+  "input_safety": {
+    "all_selected_template_and_target_workbooks_unchanged": true,
+    "outputs_written_to_temporary_directories": true
+  },
+  "comparison": {
+    "object_level_preservation": "not_run because candidates were rejected before write",
+    "formula_recalculation": "not performed"
+  },
+  "conclusion": {
+    "capability_status": "unverified",
+    "production_route_eligible": false,
+    "target_linux_validation": "not performed",
+    "raw_paths_values_formulas_coordinates_or_hashes_persisted": false
+  }
+}
