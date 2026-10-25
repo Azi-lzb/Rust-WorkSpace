@@ -280,6 +280,97 @@ fn duplicate_mapping_keys_use_last_value_without_changing_first_match_order() ->
 }
 
 #[test]
+fn floating_mapping_key_with_python_scientific_notation_is_planned_by_cli() -> Result<()> {
+    let temp = TempDirectory::new("pytools-pt-7-2-float-string")?;
+    let config = temp.path().join("institution-config.xlsx");
+    let source = temp.path().join("numeric-source.xlsx");
+    let plan_dir = temp.path().join("plans");
+    let report_path = temp.path().join("run.json");
+    write_numeric_institution_config(&config)?;
+
+    let mut workbook = Workbook::new();
+    let sheet = workbook.add_worksheet();
+    sheet.set_name("示例分机构")?;
+    sheet.write_string(0, 0, "机构")?;
+    sheet.write_number(1, 0, 0.00001)?;
+    workbook.save(&source)?;
+    let source_hash = pytools_core::file_commit::sha256_file(&source)?;
+    let config_hash = pytools_core::file_commit::sha256_file(&config)?;
+
+    let output = run_cli([
+        "institution-normalize",
+        "--config",
+        config.to_str().context("temporary path is UTF-8")?,
+        "--plan-dir",
+        plan_dir.to_str().context("temporary path is UTF-8")?,
+        "--report-output",
+        report_path.to_str().context("temporary path is UTF-8")?,
+        "--view",
+        "developer",
+        source.to_str().context("temporary path is UTF-8")?,
+    ])?;
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let report: Value = serde_json::from_slice(&fs::read(&report_path)?)?;
+    assert_eq!(report["files"][0]["mapped_rows"], 1);
+    let plan_path = plan_dir.join("0001_institution_normalize.json");
+    let plan: Value = serde_json::from_slice(&fs::read(&plan_path)?)?;
+    let operations = plan["operations"]
+        .as_array()
+        .context("plan operations missing")?;
+    assert_eq!(operations.len(), 1);
+    assert_eq!(operations[0]["sheet"], "示例分机构");
+    assert_eq!(operations[0]["cell"], "A2");
+    assert_eq!(operations[0]["value"]["value"], "Float Standard");
+    assert_eq!(
+        pytools_core::file_commit::sha256_file(&source)?,
+        source_hash
+    );
+    assert_eq!(
+        pytools_core::file_commit::sha256_file(&config)?,
+        config_hash
+    );
+
+    if let Some(path) = std::env::var_os("PYTOOLS_INSTITUTION_FLOAT_STRING_REPORT") {
+        let report = json!({
+            "schema_version": 1,
+            "suite": "pytools.PT-7-2.python_float_string_compatibility",
+            "status": "passed_synthetic_rust_cli_regression",
+            "baseline": "PyCode/core/feature_1_2_normalize_institution.py::_process_sheet",
+            "rust_entry": "pytools institution-normalize --view developer",
+            "case": {
+                "input_kind": "synthetic XLSX numeric cell",
+                "mapping_match": "Python float scientific-notation string",
+                "expected_mapped_rows": 1
+            },
+            "comparison": {
+                "mapped_rows": "exact",
+                "planned_cell_update": "exact",
+                "source_and_configuration_unchanged": true
+            },
+            "safety": {
+                "source_unchanged": true,
+                "configuration_unchanged": true,
+                "outputs_temporary_only": true,
+                "report_contains_input_filenames_or_cell_values": false
+            },
+            "limitations": [
+                "Synthetic XLSX only; no authorized real institution-normalization workbook was available.",
+                "This verifies planning semantics, not ExcelModifier execution or package preservation.",
+                "Production capability and target Linux/deb acceptance remain unverified."
+            ]
+        });
+        fs::write(path, serde_json::to_vec_pretty(&report)?)?;
+    }
+
+    Ok(())
+}
+
+#[test]
 fn empty_mapping_still_emits_a_completed_task_summary() -> Result<()> {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let fixture = root.join("tests/fixtures/institution_normalize.xlsx");
@@ -420,6 +511,18 @@ fn write_empty_institution_config(path: &Path) -> Result<()> {
     sheet.set_name("机构映射表")?;
     sheet.write_string(0, 0, "原始机构")?;
     sheet.write_string(0, 1, "标准机构")?;
+    workbook.save(path)?;
+    Ok(())
+}
+
+fn write_numeric_institution_config(path: &Path) -> Result<()> {
+    let mut workbook = Workbook::new();
+    let sheet = workbook.add_worksheet();
+    sheet.set_name("机构映射表")?;
+    sheet.write_string(0, 0, "原始机构")?;
+    sheet.write_string(0, 1, "标准机构")?;
+    sheet.write_string(1, 0, "1e-05")?;
+    sheet.write_string(1, 1, "Float Standard")?;
     workbook.save(path)?;
     Ok(())
 }

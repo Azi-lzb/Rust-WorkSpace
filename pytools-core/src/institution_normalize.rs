@@ -1594,9 +1594,8 @@ fn cell_python_string_from_dump(sheet: &SheetDump, address: &str) -> Result<Opti
         ReaderCellValue::Text(value)
         | ReaderCellValue::DateTimeIso(value)
         | ReaderCellValue::DurationIso(value) => Some(value),
-        ReaderCellValue::Number(value) | ReaderCellValue::DateTimeSerial(value) => {
-            Some(value.to_string())
-        }
+        ReaderCellValue::Number(value) => Some(crate::summary_ops::python_float_text(value)),
+        ReaderCellValue::DateTimeSerial(value) => Some(value.to_string()),
         ReaderCellValue::Integer(value) => Some(value.to_string()),
         ReaderCellValue::Boolean(value) => Some(if value { "True" } else { "False" }.to_owned()),
         ReaderCellValue::Error(value) => {
@@ -1798,6 +1797,45 @@ mod tests {
     use excel_reader::read_workbook;
     use serde_json::{json, Value};
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn floating_mapping_keys_use_python_float_string_format() {
+        let sheet = SheetDump {
+            name: "示例分机构".to_owned(),
+            values: BTreeMap::from([(
+                "A2".to_owned(),
+                json!({"type": "number", "value": 0.00001}),
+            )]),
+            formulas: BTreeMap::new(),
+            formula_status: "read_by_test".to_owned(),
+            merges: Vec::new(),
+            merge_status: "read_by_test".to_owned(),
+            comments: BTreeMap::new(),
+            comments_status: "read_by_test".to_owned(),
+            conditional_formatting: Vec::new(),
+            conditional_formatting_status: "read_by_test".to_owned(),
+            data_validations: Vec::new(),
+            data_validations_status: "read_by_test".to_owned(),
+        };
+
+        assert_eq!(
+            cell_python_string_from_dump(&sheet, "A2")
+                .unwrap()
+                .as_deref(),
+            Some("1e-05")
+        );
+
+        let mut rows = vec![
+            vec![Some("机构".to_owned())],
+            vec![cell_python_string_from_dump(&sheet, "A2").unwrap()],
+        ];
+        let mapping = vec![("1e-05".to_owned(), "Float Standard".to_owned())];
+        assert_eq!(
+            normalize_branch_sheet_values("示例分机构", &mut rows, &mapping),
+            1
+        );
+        assert_eq!(rows[1][0].as_deref(), Some("Float Standard"));
+    }
 
     #[test]
     fn workbook_normalization_matches_python_baseline_and_preserves_fixture_metadata() {
