@@ -228,4 +228,6 @@ Windows 原生 `s5-audit-run` 与原 Python `AuditEngine.run` 对拍覆盖业务
 
 同一真实输入另显式将 `EXT_REAL` 设为默认外部来源，验证 `--default-external-source-id` 路径：Python/Rust 完整输出差异仍为 0，状态计数相同，输入未变且未持久化原始值；报告中的 `default_external_source` 为 `EXT_REAL`。证据见 `probe/reports/s5_vext_real_external_default_selection_parity_windows_native_20261026.json`。
 
-该真实运行仅覆盖一个物理外部工作簿和一个单位贷款审核副本；多物理外部来源真实验收、条件格式/数据质量非空路径、结构快照/哈希完整性降级、Linux/deb、glibc 2.28、麒麟 V10/UOS V20 与完整 S5-F01 仍未验收，生产 capability 仍为 unverified。Audit 共享能力请求 #8 仍未解决。
+个人贷款业务也使用该真实配置、另一份 2026-07-31 当前工作簿、真实个人贷款模板及同一外部工作簿，显式验证默认来源：配置校验 valid/complete，356 条启用规则通过，模板地址 475/475、外部表头 5/5；Python/Rust `s5-audit-run` 完整输出差异 0，状态计数均为 PASSED 339、TRIGGERED 12、STRUCTURE_ERROR 5，输入未变且报告不保存原始值。证据见 `probe/reports/s5_vext_personal_loan_real_external_default_parity_windows_native_20261026.json`。
+
+上述真实运行覆盖单位贷款和个人贷款各一本当前工作簿，但共用一个物理外部工作簿；多物理外部来源真实验收、条件格式/数据质量非空路径、结构快照/哈希完整性降级、Linux/deb、glibc 2.28、麒麟 V10/UOS V20 与完整 S5-F01 仍未验收，生产 capability 仍为 unverified。Audit 共享能力请求 #8 仍未解决。

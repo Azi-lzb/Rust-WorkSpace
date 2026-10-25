@@ -1,0 +1,35 @@
+# S5-F01 个人贷款真实 V_EXT 默认来源对拍
+
+- 时间：2026-10-26 07:47（Asia/Shanghai）
+- 执行者：Codex Audit migration agent
+- 分支：`audit-dev`
+- 修改前 commit：`c4111a77e9bd2fe5826e7211d593f4771ce35abe`
+- 修改后 commit：随本记录提交；SHA 可由 Git 历史追溯。
+- WIP：修改前 tracked 工作区干净；保留 handoff、`.pytest-tmp-v3/` 和其他已有未跟踪报告。原 Python 项目、config-real 配置、模板、外部文件和当前工作簿只读。
+- 【组件版本】：`audit-core` 仍为 0.1.0，不升级。
+
+## 目的与变更
+
+把 S5 真实 Python/Rust 端到端对拍从单位贷款扩展到个人贷款，使用真实当前工作簿、真实模板、同一真实外部工作簿，验证 `--default-external-source-id` 在多个 V_EXT 指标上的选择行为。
+
+- `audit-core/probe/reports/s5_vext_personal_loan_real_external_default_parity_windows_native_20261026.json`：新增脱敏完整输出对拍摘要。
+- `audit-core/MIGRATION_INVENTORY.md`：记录第二业务的真实验证和剩余范围。
+
+没有修改 Rust 业务代码、共享 crates、原 Python 项目或真实输入文件。
+
+## 验证
+
+- Windows 原生 `open-data-audit s5-config-check --scope current_business`：真实配置、个人贷款模板和外部工作簿均通过；356 条启用规则通过，静态模板地址 475/475、外部表头 5/5 定位成功。
+- Windows 原生 `compare_s5_outputs.py` 使用 Python 3.12.10/openpyxl 和当前 `open-data-audit s5-audit-run` CLI，显式默认来源 `EXT_REAL`：完整结果工作簿、审核副本、总账和清单差异 0；Python/Rust 状态计数均为 PASSED 339、TRIGGERED 12、STRUCTURE_ERROR 5；输入未变，`raw_values_persisted=false`。
+- 报告能力保持 `unverified`。本次仍复用一个物理外部工作簿，没有证明多物理来源真实业务验收。
+
+## 未执行与已知问题
+
+- 多物理外部来源、条件格式/数据质量非空输出、结构快照、哈希完整性降级及完整 S5-F01 尚未验收。
+- Linux、glibc 2.28、deb、麒麟 V10、UOS V20 未验证。
+- Audit 共享能力请求 #8（MoveSheet/历史关系快照）仍未解决。
+- 比较器自动清理了输入副本与运行输出。先前手动隔离的模板副本和脱敏摘要仍在 `C:\Users\AZI\AppData\Local\Temp\audit-s5-vext-real-20261026`；清理命令被执行策略拒绝。
+
+## 删除与回滚
+
+- 未删除或修改原始输入。回滚本次记录提交即可撤销报告与迁移清单条目；不涉及业务代码回滚。
