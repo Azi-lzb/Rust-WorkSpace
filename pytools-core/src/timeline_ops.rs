@@ -17,7 +17,7 @@ use excel_editor::{
     inspect_xlsx_profile, CellValue, EditOperation, ExcelEditPlan, PreservationRequirement,
     RangeStyleMode, WorkbookFormat,
 };
-use excel_reader::{read_workbook, SheetDump};
+use excel_reader::{read_workbook, uses_1904_date_system, SheetDump};
 use excel_writer::{Format, FormatAlign, FormatBorder, Workbook};
 use serde::Serialize;
 use std::{
@@ -744,6 +744,30 @@ where
             return Err(error);
         }
     };
+    let template_date_1904 = match uses_1904_date_system(template_path) {
+        Ok(value) => value,
+        Err(error) => {
+            emit_header_path_compare_event(
+                &mut on_event,
+                &mut sequence,
+                &run_started,
+                &template_started,
+                &progress,
+                "template_read",
+                "failed",
+                "读取表头比对模板日期系统信息失败".to_owned(),
+                &["excel-reader", "OOXML workbook epoch metadata"],
+                Some("ooxml_metadata"),
+                Some("template_date_system_error"),
+            );
+            return Err(error).with_context(|| {
+                format!(
+                    "read date-system metadata from template {}",
+                    template_path.display()
+                )
+            });
+        }
+    };
     emit_header_path_compare_event(
         &mut on_event,
         &mut sequence,
@@ -753,7 +777,7 @@ where
         "template_read",
         "completed",
         "表头比对模板读取完成".to_owned(),
-        &["excel-reader", "calamine"],
+        &["excel-reader", "calamine", "OOXML workbook epoch metadata"],
         Some("calamine"),
         None,
     );
@@ -832,6 +856,39 @@ where
                 continue;
             }
         };
+        let source_date_1904 = match uses_1904_date_system(source_path) {
+            Ok(value) => value,
+            Err(error) => {
+                summary_rows.push(vec![
+                    file_name(source_path),
+                    "".into(),
+                    "0".into(),
+                    "0".into(),
+                    format!("打开失败: {error:#}"),
+                ]);
+                progress.processed_inputs = index + 1;
+                progress.failed_inputs += 1;
+                emit_header_path_compare_event(
+                    &mut on_event,
+                    &mut sequence,
+                    &run_started,
+                    &source_started,
+                    &progress,
+                    "source_read",
+                    "failed",
+                    format!(
+                        "第 {}/{} 个源工作簿日期系统信息读取失败，已记入结果",
+                        index + 1,
+                        source_paths.len()
+                    ),
+                    &["excel-reader", "OOXML workbook epoch metadata"],
+                    Some("ooxml_metadata"),
+                    Some("source_date_system_error"),
+                );
+                progress.current_input = None;
+                continue;
+            }
+        };
         emit_header_path_compare_event(
             &mut on_event,
             &mut sequence,
@@ -841,7 +898,7 @@ where
             "source_read",
             "completed",
             format!("第 {}/{} 个源工作簿读取完成", index + 1, source_paths.len()),
-            &["excel-reader", "calamine"],
+            &["excel-reader", "calamine", "OOXML workbook epoch metadata"],
             Some("calamine"),
             None,
         );
@@ -888,8 +945,10 @@ where
                         continue;
                     };
                     compared_sheets += 1;
-                    let (template_matrix, _) = matrix_from_dump(template_sheet)?;
-                    let (source_matrix, _) = matrix_from_dump(source_sheet)?;
+                    let (mut template_matrix, _) = matrix_from_dump(template_sheet)?;
+                    let (mut source_matrix, _) = matrix_from_dump(source_sheet)?;
+                    normalize_header_comparison_dates(&mut template_matrix, template_date_1904);
+                    normalize_header_comparison_dates(&mut source_matrix, source_date_1904);
                     let positional = position_differences(&template_matrix, &source_matrix, rule);
                     for (kind, source_value, template_value) in &positional {
                         diff_rows.push(vec![
@@ -2844,6 +2903,28 @@ fn position_differences(
         }
     }
     diffs
+}
+
+fn normalize_header_comparison_dates(matrix: &mut [Vec<Option<WorkbookCell>>], date_1904: bool) {
+    const DAYS_1904_TO_1900: f64 = 1462.0;
+    for cell in matrix.iter_mut().flatten() {
+        let value = match cell.as_ref() {
+            Some(WorkbookCell::DateTimeSerial(serial)) => {
+                let python_serial = if date_1904 && *serial >= 1.0 {
+                    serial + DAYS_1904_TO_1900
+                } else {
+                    *serial
+                };
+                crate::summary_ops::python_datetime_serial_text(python_serial)
+                    .unwrap_or_else(|| format!("{serial:?}"))
+            }
+            Some(WorkbookCell::DateTimeIso(text)) => {
+                crate::summary_ops::python_datetime_iso_text(text)
+            }
+            _ => continue,
+        };
+        *cell = Some(WorkbookCell::Text(value));
+    }
 }
 
 fn path_differences(

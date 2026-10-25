@@ -565,6 +565,53 @@ fn header_path_compare_menu_supports_user_developer_and_off_views() -> Result<()
 }
 
 #[test]
+fn header_path_compare_formats_date_headers_as_python_datetime_text() -> Result<()> {
+    let root = TestDirectory::new()?;
+    let config = create_timeline_config(root.path())?;
+    let template = root.path().join("sample template.xlsx");
+    let source = root.path().join("sample source.xlsx");
+    create_date_header_source(&template, 2024, 1, 31)?;
+    create_date_header_source(&source, 2024, 2, 29)?;
+
+    let input = format!("1\n1\n{}\n{}\n0\n", template.display(), source.display());
+    let output = run_menu_with_view(&config, "off", &input)?;
+    assert!(
+        output.status.success(),
+        "date-header compare failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report = latest_timeline_compare_report(&output)?;
+    let result_path = PathBuf::from(
+        report["output"]
+            .as_str()
+            .context("date-header comparison output path missing")?,
+    );
+    let workbook = read_workbook(result_path)?;
+    let differences = workbook
+        .sheets
+        .iter()
+        .find(|sheet| sheet.name == "表头比对结果")
+        .context("date-header difference sheet missing")?;
+    assert_eq!(
+        differences.values["H2"]["value"],
+        "存款_2024-02-29 00:00:00"
+    );
+    assert_eq!(
+        differences.values["I2"]["value"],
+        "存款_2024-01-31 00:00:00"
+    );
+    assert_eq!(
+        differences.values["H3"]["value"],
+        "存款_2024-02-29 00:00:00"
+    );
+    assert_eq!(
+        differences.values["I4"]["value"],
+        "存款_2024-01-31 00:00:00"
+    );
+    Ok(())
+}
+
+#[test]
 fn header_path_compare_menu_records_terminal_failure_summary() -> Result<()> {
     let root = TestDirectory::new()?;
     let config = create_timeline_config(root.path())?;
@@ -1160,6 +1207,23 @@ fn create_wide_source(path: &Path, organization: &str, amount: f64) -> Result<()
     sheet.write_number(4, 2, amount + 1.0)?;
     sheet.write_number(4, 3, amount + 2.0)?;
     workbook.save(path).context("save timeline source workbook")
+}
+
+fn create_date_header_source(path: &Path, year: u16, month: u8, day: u8) -> Result<()> {
+    let mut workbook = rust_xlsxwriter::Workbook::new();
+    let sheet = workbook.add_worksheet();
+    sheet.set_name("Report")?;
+    let date = rust_xlsxwriter::ExcelDateTime::from_ymd(year, month, day)?;
+    let date_format = rust_xlsxwriter::Format::new().set_num_format("yyyy-mm-dd");
+    sheet.write_string(2, 0, "地区")?;
+    sheet.write_string(2, 1, "存款")?;
+    sheet.write_string(3, 0, "名称")?;
+    sheet.write_datetime_with_format(3, 1, &date, &date_format)?;
+    sheet.write_string(4, 0, "甲支行")?;
+    sheet.write_number(4, 1, 1.0)?;
+    workbook
+        .save(path)
+        .context("save date-header timeline source")
 }
 
 fn find_output(output_dir: &Path, stem_contains: &str) -> Result<PathBuf> {

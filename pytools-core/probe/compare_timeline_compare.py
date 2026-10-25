@@ -8,9 +8,11 @@ import os
 import subprocess
 import sys
 import tempfile
+from datetime import datetime
 from pathlib import Path
 
 from openpyxl import Workbook, load_workbook
+from openpyxl.utils.datetime import CALENDAR_MAC_1904
 
 sys.dont_write_bytecode = True
 WORKSPACE = Path(__file__).resolve().parents[2]
@@ -33,6 +35,18 @@ def make_book(path: Path, changed: bool = False, sheet_title: str = "Report Data
     ws["B6"] = 12
     ws["C6"] = 22
     wb.save(path)
+
+
+def make_date_header_book(path: Path, value: datetime, date_1904: bool = False) -> None:
+    make_book(path)
+    wb = load_workbook(path)
+    if date_1904:
+        wb.epoch = CALENDAR_MAC_1904
+    ws = wb["Report Data"]
+    ws["B3"] = value
+    ws["B3"].number_format = "yyyy-mm-dd"
+    wb.save(path)
+    wb.close()
 
 
 def make_config(
@@ -354,11 +368,63 @@ def main() -> int:
                 or any(side[0] != "thin" for side in style["border"])
             ):
                 raise AssertionError(f"unexpected header style at {cell[0]!r}: {style!r}")
+
+        date_template = root / "date_template.xlsx"
+        date_source = inputs / "DATE_source.xlsx"
+        make_date_header_book(date_template, datetime(2024, 1, 31))
+        make_date_header_book(date_source, datetime(2024, 2, 29))
+        date_config = root / "date_config.xlsx"
+        make_config(date_config, rust_output, inputs, workbook_keyword="DATE")
+        expected_dates = python_baseline(
+            date_template, [date_source], date_config, root / "python_date_output"
+        )
+        actual_dates = run_rust(date_template, [date_source], date_config)
+        expected_date_projection = _projection_without_styles(workbook_projection(expected_dates))
+        actual_date_projection = _projection_without_styles(workbook_projection(actual_dates))
+        if expected_date_projection != actual_date_projection:
+            raise AssertionError(
+                json.dumps(
+                    {
+                        "case": "date-valued multi-row column header",
+                        "expected": expected_date_projection,
+                        "actual": actual_date_projection,
+                    },
+                    ensure_ascii=False,
+                    default=str,
+                    indent=2,
+                )
+            )
+        epoch_template = root / "epoch_template.xlsx"
+        epoch_source = inputs / "EPOCH_source.xlsx"
+        same_date = datetime(2024, 1, 31)
+        make_date_header_book(epoch_template, same_date)
+        make_date_header_book(epoch_source, same_date, date_1904=True)
+        epoch_config = root / "epoch_config.xlsx"
+        make_config(epoch_config, rust_output, inputs, workbook_keyword="EPOCH")
+        expected_epoch = python_baseline(
+            epoch_template, [epoch_source], epoch_config, root / "python_epoch_output"
+        )
+        actual_epoch = run_rust(epoch_template, [epoch_source], epoch_config)
+        expected_epoch_projection = _projection_without_styles(workbook_projection(expected_epoch))
+        actual_epoch_projection = _projection_without_styles(workbook_projection(actual_epoch))
+        if expected_epoch_projection != actual_epoch_projection:
+            raise AssertionError(
+                json.dumps(
+                    {
+                        "case": "same calendar date stored with 1900 and 1904 epochs",
+                        "expected": expected_epoch_projection,
+                        "actual": actual_epoch_projection,
+                    },
+                    ensure_ascii=False,
+                    default=str,
+                    indent=2,
+                )
+            )
         report = {
             "schema_version": 1,
-            "suite": "pytools.timeline.header_path_compare_keyword_parity",
-            "date": "2026-10-24",
-            "status": "passed_synthetic_semantics_and_header_style",
+            "suite": "pytools.timeline.header_path_compare_parity",
+            "date": "2026-10-26",
+            "status": "passed_synthetic_semantics_header_style_and_dates",
             "entry": "timeline-compare CLI -> run_header_path_compare",
             "baseline": "PyCode/core/compare_393.py::run_compare",
             "rust_cli": f"{sys.platform} native debug",
@@ -372,6 +438,8 @@ def main() -> int:
                 "same_template_source_skipped": "passed",
                 "output_cells_values_types_and_structure": "exact",
                 "output_header_style": "exact",
+                "date_valued_column_header_projection": "exact",
+                "mixed_1900_1904_date_epoch_projection": "exact",
             },
             "sheet_names": expected_projection["sheet_names"],
             "matched_sources": 3,
@@ -380,7 +448,7 @@ def main() -> int:
             "header_style_mismatch_cells": len(style_mismatches),
             "style_gap": None,
         }
-        report_path = WORKSPACE / "pytools-core" / "probe" / "reports" / "timeline_compare_keyword_parity_20261024.json"
+        report_path = WORKSPACE / "pytools-core" / "probe" / "reports" / "timeline_compare_parity_20261026.json"
         report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + chr(10), encoding="utf-8")
         print(json.dumps(report, ensure_ascii=False))
 
