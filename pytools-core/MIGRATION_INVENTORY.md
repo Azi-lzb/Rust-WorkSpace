@@ -80,7 +80,7 @@ Python 基线由源 `run_batch_rename_33` 对同一合成配置及路径场景�
 - 为尚未覆盖的配置表、业务工作簿及各迁移功能建立 pytools 专属 fixtures、probe config、对拍输出和日期报告。
 - 时序抽取目前没有批量目录调度、CSV 输入、结果工作簿写入或向目标簿追加；日期单元格序列值、xlsb 合并区域和真实模板仍未验证。
 - 普通版工作表提取已有 Rust CLI 与 7→6 主菜单入口；extract-sheets --append-existing 仅作为显式 CLI 选项追加既有 XLSX 输出，需精确 capability/platform。区域及整表追加已有合成执行与既有簿属性回归；生产 capability 未登记。真实模板、其他格式、Windows 文件弹窗及麒麟/UOS glibc 2.28/deb 未验证。
-- 机构名称规范化已有显式文件列表和配置 CLI；仍未接入原 GUI 菜单/dispatcher 或目录发现，当前候选只接受 `.xlsx`。合成夹具已有通过临时测试 capability 的 ExcelModifier/openpyxl worker/validator 执行证据，但未形成生产 capability；计划报告与执行测试覆盖范围不同。源实现支持的 `.xlsm` 保留行为、真实模板中的全部 OOXML 部件、真实样本、Windows 原生执行及目标平台仍需验收。
+- 机构名称规范化已接入 `pytools menu`→7→2 和配置 CLI；菜单支持多选文件、当前层及递归目录选择，当前仅接受 `.xlsx` 并过滤锁文件和未验收格式。Windows 原生菜单测试覆盖 user/developer/off 三种视图及临时测试 capability 执行；新增递归目录回归以两个不同子目录中的同名 XLSX 验证计划独立保存、输入不变，并将 Rust 行数汇总与既有 PyCode 单文件基线作倍数核对。该证据仅为合成 XLSX；生产 capability、真实样本、`.xlsm` 保留、全量模板部件、麒麟/UOS、glibc 2.28 与 deb 仍未验收。
 - 地区总分校验 `region_sum::run_region_sum_check` 现已接入 `pytools region-sum-check` CLI，并通过合成 XLSX 对拍；原 GUI 菜单、真实模板和非 XLSX 格式、执行性能/峰值内存、Windows 原生与目标 Linux/deb 均未验证，现有 Python 功能仍保留。
 - 4-6/4-7、4-8、4-9 和 4-10 均已接入显式文件列表 Rust CLI；只有 4-9/4-10 写操作日志。4-6/4-7 已接入 `pytools menu`→4→5/6，并有交互菜单集成测试；本轮原项目随附 13 份 `.xlsx` 样本经 Python/Rust CLI 对拍，详见 `probe/reports/content_prefix_project_asset_parity_20261025.json`。该样本不是授权客户模板，真实宏、数字/日期/公式缓存边界、`.xls/.xlt` COM 读取和不同文件系统仍未验证；Windows 桌面文件弹窗未人工操作。4-9/4-10 日志时间、并发及重复运行行为尚未逐项与 Python logger 对拍；4-8 尚未验证真实配置、目标平台和非 UTF-8 文件名。上述操作的真实目录、Windows 原生 Rust 构建和目标 Linux 包均未验收。4-10 的 `.xls/.xlt` 内容读取、多单元格规格及真实文件仍未验证，源 COM 内容读取仅作基线，不进入 Rust 主路径。旧 COM 业务读取未迁入 sidecar。
 - 拿到经授权的脱敏业务文件；当前合成测试不能证明真实模板兼容。

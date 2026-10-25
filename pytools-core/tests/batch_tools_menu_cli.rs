@@ -876,6 +876,71 @@ fn interactive_institution_normalize_menu_supports_user_developer_and_off_views(
 }
 
 #[test]
+fn interactive_institution_normalize_menu_recursively_plans_xlsx_files_only() -> Result<()> {
+    let root = TestDirectory::new()?;
+    let config = create_config(root.path())?;
+    let source_root = root.path().join("sources");
+    let first_folder = source_root.join("A");
+    let second_folder = source_root.join("nested/B");
+    fs::create_dir_all(&first_folder)?;
+    fs::create_dir_all(&second_folder)?;
+    let fixture =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/institution_normalize.xlsx");
+    let first = first_folder.join("report.xlsx");
+    let second = second_folder.join("report.xlsx");
+    fs::copy(&fixture, &first)?;
+    fs::copy(&fixture, &second)?;
+    let originals = [(&first, fs::read(&first)?), (&second, fs::read(&second)?)];
+    fs::write(first_folder.join("unsupported.xlsm"), b"unverified format")?;
+    fs::write(second_folder.join("~$locked.xlsx"), b"Excel lock file")?;
+
+    let input = format!("7\n2\n3\n{}\n0\n", source_root.display());
+    let output = run_menu(&config, &input)?;
+    assert!(
+        output.status.success(),
+        "recursive PT-7-2 menu failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("选择文件夹（递归子目录）"));
+    assert!(stdout.contains("已选择文件 2 个"));
+    assert!(stdout.contains(r#""total_inputs": 2"#));
+    assert!(stdout.contains(r#""completed_files": 2"#));
+    let python_baseline: Value = serde_json::from_slice(&fs::read(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("probe/reports/institution_normalize_baseline.json"),
+    )?)?;
+    let python_rows_per_file = python_baseline["stats"]["mapped_rows"]
+        .as_u64()
+        .context("Python institution-normalize baseline mapped_rows missing")?;
+    assert!(stdout.contains(&format!(r#""mapped_rows": {}"#, python_rows_per_file * 2)));
+    assert!(!stdout.contains("unsupported.xlsm"));
+    assert!(!stdout.contains("~$locked.xlsx"));
+
+    for (path, original) in originals {
+        assert_eq!(
+            fs::read(path)?,
+            original,
+            "plan mode modified {}",
+            path.display()
+        );
+    }
+    let plan_dir = root.path().join("app/output/plans/PT-7-2");
+    let plans = fs::read_dir(plan_dir)?
+        .map(|entry| entry.map(|entry| entry.path()))
+        .collect::<std::io::Result<Vec<_>>>()?;
+    assert_eq!(
+        plans.len(),
+        2,
+        "same-named nested workbooks need distinct plans"
+    );
+    assert!(plans
+        .iter()
+        .all(|path| path.extension().is_some_and(|ext| ext == "json")));
+    Ok(())
+}
+
+#[test]
 fn interactive_institution_normalize_menu_applies_only_with_temporary_capability() -> Result<()> {
     let root = TestDirectory::new()?;
     let config = create_config(root.path())?;
