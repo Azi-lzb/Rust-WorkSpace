@@ -1,0 +1,36 @@
+时间：2026-10-26 03:11（Asia/Shanghai）
+执行者：Codex Audit 开发 Agent
+修改前 commit：de149e8ee85a407010f63046e7e1b09f38d71c2b
+修改后 commit：本记录与功能修复一并提交；以 Git 历史为准。
+WIP：开始时工作树只有既有未跟踪文件；未修改、暂存或删除这些文件。
+
+目的：用真实 S3 比较结果与项目配置验证 Rust `s3-export-explanations` 入口；修正对拍发现的新建工作簿页面边距差异，并扩展现有 Python/Rust 对拍器覆盖完整输出契约。
+
+修改文件：
+- `src/s3_explanation_export.rs`：两张输出工作表明确采用 Python 原新建工作簿默认页边距（左/右 0.75、上/下 1.0、页眉/页脚 0.5 英寸）。
+- `tests/compare/compare_s3_explanation_export.py`：比较所有输出单元格与公式文本、有效样式、合并、名称、行列尺寸、页面设置、批注/链接及工作表对象；支持只读真实工作簿输入，并分别运行用户/开发者 CLI 视图，校验引擎、进度状态和阶段耗时。归一化 Excel 的等效默认字体、颜色 alpha、分组列宽及默认纵向打印方向。
+- `probe/reports/s3_f02_real_comparison_parity_windows_native_20261026.json`：记录脱敏的真实对拍汇总，不含输入路径或业务单元格内容。
+- `MIGRATION_INVENTORY.md`：登记 S3-F02 真实 CLI 切片证据；整体状态仍为未验证。
+
+业务及配置影响：
+- 原 Python GUI 将 `export_selected_explanations` 配置为 `_central_config_paths("comparison")[0]`，即通用配置。真实对拍采用 `config-real/3.0大集中通用配置.xlsx`，其“机构地区参照”表结构匹配。
+- 原 Python 比较结果样本为 `<3.open-data-audit>/2026-07-31/大集中系统工具/执行结果/比较结果_20260914_215957.xlsx`。Python 与 Rust 均导出 2610 行，业务值、映射结果、布局、有效样式、页面属性及元数据差异 0；用户视图和开发者视图结果相同。比较文件和配置文件执行前后字节一致。
+- 开发者视图记录的本次阶段耗时：Calamine 读取 619 ms、配置读取 41 ms、工作簿写入 1186 ms、总计 1959 ms。
+- 未修改共享 crate、根 Cargo 配置、Cargo.lock、Python 源码或真实输入；未改变 #8 状态。
+
+实际验证：
+- Windows 原生 `cargo build --locked -p audit-core --bin open-data-audit`：通过。
+- Windows 原生 `cargo test --locked -p audit-core --test s3_explanation_export_cli -- --nocapture`：1 项通过，覆盖两种视图、选择/映射、输出值、输入只读和拒绝覆盖。
+- Windows Python 3.12.10 合成 Python/Rust 对拍：4 行、两种视图、完整输出契约差异 0。
+- Windows Python 3.12.10 真实样本 Python/Rust 对拍：2610 行、两种视图、完整输出契约差异 0；报告见上。
+- `rustfmt --check --edition 2024 audit-core/src/s3_explanation_export.rs`、`git diff --check`：通过。
+
+未执行/已知限制：
+- 现有 Audit GUI 仍调用 Python；本次验证接通的是可用 Rust CLI，尚未把 S3 GUI/Web bridge 迁到 Rust。
+- 真实工作簿为 XLSX；XLSM、目标 Linux/deb、Excel/WPS 打开验收及峰值内存预算未验证。故 S3-F02 整体仍未完成。
+- 仅使用一份真实比较结果和一份匹配通用配置；本次没有验证其他批次或编码/格式变体。
+- Audit #8 共享能力问题仍未解决，本次不涉及该阻塞点。
+
+【组件版本】`audit-core` crate 0.1.0，未升级。
+删除清单：无。
+回滚提示：对本功能提交执行 `git revert <commit>`；不要改动原 Python 项目、真实比较结果或配置文件。

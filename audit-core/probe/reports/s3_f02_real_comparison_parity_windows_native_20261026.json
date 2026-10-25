@@ -1,0 +1,50 @@
+{
+  "feature": "S3-F02",
+  "fixture": "real_s3_workbook",
+  "baseline": "read-only Python export_selected_explanations",
+  "cli_entry": "s3-export-explanations",
+  "python_version": "3.12.10",
+  "status": "passed",
+  "selected_rows_python": 2610,
+  "selected_rows_rust": 2610,
+  "selected_rows_rust_developer": 2610,
+  "output_rows_compared": 2610,
+  "rust_reader": "calamine",
+  "rust_writer": "rust_xlsxwriter",
+  "views": {
+    "user": {
+      "status": "completed",
+      "selected_rows": 2610
+    },
+    "developer": {
+      "status": "completed",
+      "selected_rows": 2610,
+      "reader": "calamine",
+      "writer": "rust_xlsxwriter",
+      "progress_statuses": [
+        "started",
+        "completed"
+      ],
+      "timings_ms": {
+        "comparison_read_time_ms": 619,
+        "config_read_time_ms": 41,
+        "workbook_write_time_ms": 1186,
+        "elapsed_ms": 1959
+      }
+    }
+  },
+  "differences": [],
+  "comparison_input_unchanged": true,
+  "configuration_input_unchanged": true,
+  "checks": [
+    "selected rows and cell values",
+    "region code and exact/wildcard institution names",
+    "header order and comparison data preserved without rounding",
+    "all output values, formula text, effective styles and names",
+    "sheet order, merges, freeze panes, filters, row/column sizes",
+    "page setup including margins",
+    "metadata content and timestamp format",
+    "user and developer CLI views with measured engine timings",
+    "comparison and configuration workbooks remain inputs only"
+  ]
+}

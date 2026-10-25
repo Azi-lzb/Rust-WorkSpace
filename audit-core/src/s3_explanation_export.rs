@@ -5,9 +5,9 @@
 //! This module only creates a new workbook; it never modifies the comparison
 //! file or the optional institution/region reference workbook.
 
-use anyhow::{bail, ensure, Context, Result};
+use anyhow::{Context, Result, bail, ensure};
 use chrono::Local;
-use excel_reader::{read_value_columns, read_workbook, CellValue, SheetValues};
+use excel_reader::{CellValue, SheetValues, read_value_columns, read_workbook};
 use excel_writer::{Color, ExcelDateTime, Format, FormatAlign, Workbook, Worksheet};
 use serde::Serialize;
 use std::{
@@ -48,6 +48,7 @@ const BODY_HEADERS: [&str; 8] = [
     "变动原因",
 ];
 const COLUMN_WIDTHS: [u32; 8] = [14, 26, 14, 36, 14, 14, 14, 48];
+const REPORT_PAGE_MARGINS: [f64; 6] = [0.75, 0.75, 1.0, 1.0, 0.5, 0.5];
 
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -505,6 +506,7 @@ fn write_workbook(
     explanation
         .set_name("说明文件")
         .context("设置说明工作表名称失败")?;
+    set_report_page_margins(explanation);
     explanation
         .merge_range(0, 0, 0, 7, TITLE, &title_format)
         .context("合并说明文件标题单元格失败")?;
@@ -541,6 +543,7 @@ fn write_workbook(
     let info = workbook.add_worksheet();
     info.set_name("生成信息")
         .context("设置生成信息工作表名称失败")?;
+    set_report_page_margins(info);
     info.write_string_with_format(0, 0, "项目", &info_header_format)?;
     info.write_string_with_format(0, 1, "内容", &info_header_format)?;
     let exported_at = Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
@@ -555,6 +558,17 @@ fn write_workbook(
     info.set_column_width_pixels(0, 18 * 7)?;
     info.set_column_width_pixels(1, 90 * 7)?;
     workbook.save(path).context("保存 S3-F02 说明 XLSX 失败")
+}
+
+fn set_report_page_margins(worksheet: &mut Worksheet) {
+    worksheet.set_margins(
+        REPORT_PAGE_MARGINS[0],
+        REPORT_PAGE_MARGINS[1],
+        REPORT_PAGE_MARGINS[2],
+        REPORT_PAGE_MARGINS[3],
+        REPORT_PAGE_MARGINS[4],
+        REPORT_PAGE_MARGINS[5],
+    );
 }
 
 fn write_cell(
