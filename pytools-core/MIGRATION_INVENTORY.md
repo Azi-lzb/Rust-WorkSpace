@@ -617,6 +617,14 @@ Windows 原生 Rust 验证：`cargo fmt --manifest-path pytools-core/Cargo.toml 
 
 补充真实拒绝路径：以原项目只读 `PyCode/config/config.xlsx`（含批注但不含 `行区域`/`列区域` 标记）分别运行 PyCode `run_summary_by_comment` 与 Rust `summary-comments` CLI；两端错误文本逐字一致，均以失败码 2 终止且未生成结果工作簿，输入簿大小/修改时间保持不变。Rust 提示已对齐 Python，并由 `summary_menu_cli` 集成测试覆盖。该证据只验证无有效区域标记时的拒绝行为；合法真实区域模板、PT-6-2 正向业务验收和目标平台仍未验证。
 
+### 2026-10-25 PT-6-2 空白与公式模板表头对拍
+
+对拍发现并修复 `summary-comments` 的模板表头语义差异：模板空白表头现按 PyCode 回退为列字母；模板公式文本由 Calamine 公式投影读取，并在输出簿中作为公式表头保留，公式缓存留空，不执行公式计算。布尔表头文本按 Python `str(bool)` 的大小写转换。
+
+新增 Rust CLI 回归，覆盖公式表头、空白表头、输出公式类型和输入不变；`probe/compare_summary_comments_template_header.py` 使用只读 PyCode 基线与 Windows 原生 `pytools summary-comments` CLI 对同一合成模板/源簿执行完整工作簿投影对拍，结果精确一致（3 行、1 个输出；Calamine/rust_xlsxwriter，源未改变）。报告：`probe/reports/summary_comments_template_header_parity_20261025.json`。
+
+Windows 原生验证：`cargo fmt --manifest-path pytools-core/Cargo.toml -- --check` 通过；`cargo test --offline --locked -p pytools-core --lib comment_region_tests` 3/3；`--test summary_comments_cli --test summary_menu_cli -j 1` 5/5 与 4/4；`py -3.12 pytools-core/probe/compare_summary_comments_template_header.py` 完整投影 exact。证据限合成模板，不代替真实有效批注区域模板、麒麟 V10/UOS V20、glibc 2.28 或离线 deb 验收；PT-6-2 仍未通过生产验收。
+
 ### 2026-10-25 PT-5-1/PT-5-2 配置工具交互菜单接入
 
 主菜单新增类别 5，并按只读 PyCode `main.py` 的 5-1/5-2 入口接入现有 Rust 配置能力。配置缺失或无法加载时仍可打开菜单；其他依赖配置的业务类别会提示先处理配置。5-1 在缺少配置时通过 Rust `initialize_new_config` 新建 11 张表；配置已存在时生成修复计划并保留原文件。只有显式提供匹配 capability/platform 才经 ExcelModifier 生成并校验候选，用户再输入 `y` 后才按原文件规划快照安全替换，保留备份。5-2 每次从磁盘读取，用户视图展示工作表维度、全局路径、启用规则/映射/提取任务摘要，开发者视图附原始配置结构及实际读取组件；打印阶段用时。没有已验收的生产修复 capability，因此菜单不默认修改现有配置。

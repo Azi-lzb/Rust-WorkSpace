@@ -246,6 +246,65 @@ fn summary_comments_cli_uses_merge_anchor_for_non_anchor_cells() -> Result<()> {
 }
 
 #[test]
+fn summary_comments_cli_preserves_formula_and_blank_template_headers() -> Result<()> {
+    let root = unique_test_dir();
+    fs::create_dir_all(&root)?;
+    let template = root.join("formula_header_template.xlsx");
+    create_formula_header_template(&template)?;
+    let template_dump = read_workbook(&template)?;
+    anyhow::ensure!(
+        template_dump.sheets[0].formulas.contains_key("B1"),
+        "formula fixture was not read: {:?}",
+        template_dump.sheets[0].formulas
+    );
+    let source = root.join("source.xlsx");
+    create_source_workbook(&source)?;
+    let source_before = fs::read(&source)?;
+
+    let output = run_cli(&template, &[&source], &root.join("run"), Some("off"))?;
+    assert!(
+        output.status.success(),
+        "summary-comments CLI failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report = parse_stdout(&output)?;
+    assert_eq!(report["saved"], true);
+    assert_eq!(report["rows"], 3);
+
+    let summary = read_workbook(output_workbook(&report)?)?;
+    let sheet = summary
+        .sheets
+        .first()
+        .context("formula-header summary sheet missing")?;
+    let formula = sheet.formulas.get("C1").with_context(|| {
+        format!(
+            "formula header was not written: formulas={:?}, C1={:?}, D1={:?}",
+            sheet.formulas,
+            sheet.values.get("C1"),
+            sheet.values.get("D1")
+        )
+    })?;
+    assert!(
+        formula.trim_start_matches('=').contains("余额"),
+        "unexpected formula header: {formula}"
+    );
+    assert_eq!(
+        sheet.values.get("D1").and_then(|value| value.get("value")),
+        Some(&serde_json::json!("C")),
+        "blank template header should fall back to its column letter"
+    );
+    assert_eq!(
+        sheet.values.get("E1").and_then(|value| value.get("value")),
+        Some(&serde_json::json!("True")),
+        "boolean template header should use Python's string capitalization"
+    );
+    assert_eq!(fs::read(&source)?, source_before, "source workbook changed");
+
+    fs::remove_dir_all(root)?;
+    Ok(())
+}
+
+#[test]
 fn summary_comments_cli_ignores_empty_set_marker_like_pycode() -> Result<()> {
     let root = unique_test_dir();
     fs::create_dir_all(&root)?;
@@ -431,6 +490,27 @@ fn create_empty_set_template(path: &Path) -> Result<()> {
     workbook
         .save(path)
         .context("save empty-set comment template")
+}
+
+fn create_formula_header_template(path: &Path) -> Result<()> {
+    let mut workbook = rust_xlsxwriter::Workbook::new();
+    {
+        let worksheet = workbook.add_worksheet();
+        worksheet.set_name("Branch_A")?;
+        worksheet.write_string(1, 0, "行开始")?;
+        worksheet.write_string(3, 0, "行结束")?;
+        worksheet.write_formula(0, 1, "=\"余额\"")?;
+        worksheet.write_boolean(0, 3, true)?;
+        worksheet.insert_note(1, 0, &rust_xlsxwriter::Note::new("行区域1"))?;
+        worksheet.insert_note(3, 0, &rust_xlsxwriter::Note::new("行区域#1"))?;
+        worksheet.insert_note(0, 1, &rust_xlsxwriter::Note::new("列区域1"))?;
+        worksheet.insert_note(0, 2, &rust_xlsxwriter::Note::new("列区域#1"))?;
+        worksheet.insert_note(0, 3, &rust_xlsxwriter::Note::new("列区域2"))?;
+        worksheet.insert_note(1, 3, &rust_xlsxwriter::Note::new("列区域#2"))?;
+    }
+    workbook
+        .save(path)
+        .context("save formula-header comment template")
 }
 
 fn unique_test_dir() -> PathBuf {

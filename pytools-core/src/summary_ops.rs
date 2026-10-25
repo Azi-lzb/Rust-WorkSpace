@@ -1292,8 +1292,13 @@ fn summarize_by_comments_inner(
             let ws = workbook.add_worksheet();
             ws.set_name(&sheet_name)?;
             ws.set_margins(0.75, 0.75, 1.0, 1.0, 0.5, 0.5);
+            ws.set_formula_result_default("");
             for (col, header) in headers_by_sheet[name].iter().enumerate() {
-                ws.write_string_with_format(0, col as u16, header, &header_format)?;
+                if header.starts_with('=') {
+                    ws.write_formula_with_format(0, col as u16, header.as_str(), &header_format)?;
+                } else {
+                    ws.write_string_with_format(0, col as u16, header, &header_format)?;
+                }
             }
             for (row, values) in rows.iter().enumerate() {
                 for (col, value) in values.iter().enumerate() {
@@ -1929,8 +1934,10 @@ fn build_column_headers(sheet: &SheetDump, ranges: &[(usize, usize, usize, usize
     let mut out = Vec::new();
     for (sr, er, sc, ec) in ranges {
         for col in *sc..=*ec {
-            let upper = cell_at_or_merged(sheet, &format!("{}{}", column_letters(col), sr));
-            let lower = cell_at_or_merged(sheet, &format!("{}{}", column_letters(col), er));
+            let upper =
+                template_cell_at_or_merged(sheet, &format!("{}{}", column_letters(col), sr));
+            let lower =
+                template_cell_at_or_merged(sheet, &format!("{}{}", column_letters(col), er));
             let a = probe_text(&probe_to_value(&upper));
             let b = probe_text(&probe_to_value(&lower));
             let text = if *sr < *er && !a.is_empty() && !b.is_empty() && a != b {
@@ -1968,6 +1975,36 @@ fn cell_at_or_merged(sheet: &SheetDump, address: &str) -> serde_json::Value {
     sheet
         .values
         .get(address)
+        .cloned()
+        .unwrap_or(serde_json::Value::Null)
+}
+
+fn template_cell_at_or_merged(sheet: &SheetDump, address: &str) -> serde_json::Value {
+    let Some((row, col)) = parse_a1(address) else {
+        return serde_json::Value::Null;
+    };
+    let mut anchor = address.to_owned();
+    for range in &sheet.merges {
+        let Some((start, end)) = range.split_once(':') else {
+            continue;
+        };
+        if let (Some((r1, c1)), Some((r2, c2))) = (parse_a1(start), parse_a1(end)) {
+            if r1.min(r2) <= row && row <= r1.max(r2) && c1.min(c2) <= col && col <= c1.max(c2) {
+                anchor = format!("{}{}", column_letters(c1.min(c2)), r1.min(r2));
+                break;
+            }
+        }
+    }
+    if let Some(formula) = sheet.formulas.get(&anchor) {
+        let formula = formula.strip_prefix('=').unwrap_or(formula);
+        return serde_json::json!({
+            "type": "string",
+            "value": format!("={formula}")
+        });
+    }
+    sheet
+        .values
+        .get(&anchor)
         .cloned()
         .unwrap_or(serde_json::Value::Null)
 }
@@ -2044,8 +2081,16 @@ fn probe_to_value(value: &serde_json::Value) -> serde_json::Value {
     }
 }
 fn probe_text(value: &serde_json::Value) -> String {
-    if let Some(s) = value.as_str() {
+    if value.is_null() {
+        String::new()
+    } else if let Some(s) = value.as_str() {
         s.trim().to_owned()
+    } else if let Some(boolean) = value.as_bool() {
+        if boolean {
+            "True".to_owned()
+        } else {
+            "False".to_owned()
+        }
     } else {
         value.to_string()
     }
@@ -2122,6 +2167,13 @@ mod comment_region_tests {
             parse_comment_ranges(&comments, "行区域"),
             vec![(3, 5, 1, 1)]
         );
+    }
+
+    #[test]
+    fn template_header_text_matches_python_for_empty_and_boolean_values() {
+        assert_eq!(probe_text(&serde_json::Value::Null), "");
+        assert_eq!(probe_text(&serde_json::json!(true)), "True");
+        assert_eq!(probe_text(&serde_json::json!(false)), "False");
     }
 }
 
