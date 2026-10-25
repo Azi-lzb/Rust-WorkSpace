@@ -991,7 +991,7 @@ fn validate_preserved_ooxml_metadata(
         .contains(&PreservationRequirement::PageSettings)
     {
         anyhow::ensure!(
-            source.page_settings == output.page_settings,
+            per_sheet_entries_match(&source.page_settings, &output.page_settings),
             "openpyxl changed worksheet page settings"
         );
     }
@@ -1000,7 +1000,7 @@ fn validate_preserved_ooxml_metadata(
         .contains(&PreservationRequirement::HeaderFooterText)
     {
         anyhow::ensure!(
-            source.header_footers == output.header_footers,
+            per_sheet_entries_match(&source.header_footers, &output.header_footers),
             "openpyxl changed worksheet header/footer settings"
         );
     }
@@ -1018,7 +1018,10 @@ fn validate_preserved_ooxml_metadata(
         .contains(&PreservationRequirement::ConditionalFormatting)
     {
         anyhow::ensure!(
-            source.conditional_formatting == output.conditional_formatting,
+            per_sheet_entries_match(
+                &source.conditional_formatting,
+                &output.conditional_formatting
+            ),
             "openpyxl changed conditional formatting rules"
         );
     }
@@ -1027,7 +1030,7 @@ fn validate_preserved_ooxml_metadata(
         .contains(&PreservationRequirement::DataValidations)
     {
         anyhow::ensure!(
-            source.data_validations == output.data_validations,
+            per_sheet_entries_match(&source.data_validations, &output.data_validations),
             "openpyxl changed data validations"
         );
     }
@@ -1057,6 +1060,21 @@ fn validate_preserved_ooxml_metadata(
         );
     }
     Ok(())
+}
+
+/// Worksheet order changes are legal edit-plan semantics (MoveSheet), so the
+/// workbook-order per-sheet snapshot lists compare through sheet names:
+/// every source worksheet must appear with identical content, position must
+/// not matter. Content within one worksheet keeps its exact-order
+/// comparison; sheet-order correctness is owned by `validate_sheet_names`.
+fn per_sheet_entries_match<T: PartialEq>(source: &[(String, T)], output: &[(String, T)]) -> bool {
+    source.len() == output.len()
+        && source.iter().all(|(name, expected)| {
+            output
+                .iter()
+                .find(|(output_name, _)| output_name == name)
+                .is_some_and(|(_, actual)| actual == expected)
+        })
 }
 
 fn preserved_sheet_metadata_matches(
@@ -4627,6 +4645,28 @@ mod tests {
         assert!(merged_payload_cells_in_range(cells.clone(), "Sheet1", "A5:A9")?.is_empty());
         assert!(merged_payload_cells_in_range(cells, "Other", "A5:A26")?.is_empty());
         Ok(())
+    }
+
+    #[test]
+    fn per_sheet_snapshot_comparison_ignores_sheet_order_only() {
+        let source = vec![
+            ("使用说明".to_owned(), vec![1]),
+            ("核查表校验结果".to_owned(), vec![2, 3]),
+        ];
+        // Reordered worksheets with identical per-sheet content match.
+        let reordered = vec![
+            ("核查表校验结果".to_owned(), vec![2, 3]),
+            ("使用说明".to_owned(), vec![1]),
+        ];
+        assert!(per_sheet_entries_match(&source, &reordered));
+        // Changed per-sheet content still fails.
+        let changed = vec![
+            ("核查表校验结果".to_owned(), vec![2, 4]),
+            ("使用说明".to_owned(), vec![1]),
+        ];
+        assert!(!per_sheet_entries_match(&source, &changed));
+        // A dropped worksheet still fails.
+        assert!(!per_sheet_entries_match(&source, &reordered[0..1].to_vec()));
     }
 
     fn sheet_dump(name: &str, merges: &[&str]) -> SheetDump {
