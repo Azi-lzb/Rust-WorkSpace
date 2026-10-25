@@ -554,7 +554,7 @@ fn validate_date_range(start: &str, end: &str, field: &str) -> Result<(), LoadEr
 
 /// Mirror of `layout.split_path` for string inputs: split on `@` and trim each
 /// part, keeping empty parts.
-fn split_at_path(value: &str) -> Vec<String> {
+pub(crate) fn split_at_path(value: &str) -> Vec<String> {
     value
         .split('@')
         .map(|part| part.trim().to_owned())

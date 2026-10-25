@@ -40,6 +40,7 @@ pub mod s2_validation;
 pub mod s3_explanation_export;
 pub mod s5_business;
 pub mod s5_config;
+pub mod s5_config_check;
 pub mod s5_config_dsl;
 pub mod s5_period_recognition;
 pub mod s5_template_matching;

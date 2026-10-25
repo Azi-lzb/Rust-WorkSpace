@@ -1,0 +1,37 @@
+# S5-F01 配置校验入口切片
+
+- 时间：2026-10-25 12:57 (+08:00)
+- 执行者：Codex Audit migration agent
+- 分支：audit-dev
+- 修改前 commit：55c9c88
+- 修改后 commit：随本轮本地提交，提交 ID 见 Git 历史。
+- WIP：开始时 worktree 干净；验证结束时仅新增配置校验模块、对拍测试、Python 比较器、脱敏报告、清单更新和本记录；另将 s5_config::split_at_path 放宽为 pub(crate)。未修改共享 crates、源 Python 项目、真实工作簿、pytools-core、Cargo.toml 或 Cargo.lock。
+
+## 目的
+
+承接配置加载与业务识别切片，移植 `service.validate_s5_config` 的配置级校验分支，使真实配置的语法/字典引用/引用提取/业务门控校验可在 Rust 侧复现，为 S5 审核服务主流程铺路。
+
+## 修改文件
+
+- `audit-core/src/s5_config_check.rs`：新增配置校验模块（scope 门控与未知范围拒绝、`_configured_business_sheets` 轻量读取、`_infer_business_from_template`、strict_current 前置拒绝、加载错误映射、规则/启用/业务计数、`_rule_references` 引用提取含 `@当前行` 动态引用、无模板/外部文件 not_checked/no_references 路径与 message 组装；模板/外部地址扫描与全量分支以显式未迁移错误拒绝）。
+- `audit-core/src/s5_config.rs`：`split_at_path` 放宽为 `pub(crate)`（无行为变化）。
+- `audit-core/tests/s5_config_check_parity.rs`：env 驱动的 `#[ignore]` 对拍运行器。
+- `audit-core/tests/compare/compare_s5_config_check.py`：Python 比较器，三个 scope 用例全字段递归比较（排除运行时 path 字段），报告仅聚合计数。
+- `audit-core/probe/reports/s5_config_check_windows_real_20261025.json`：新增脱敏机器报告。
+- `audit-core/src/lib.rs`：注册 `s5_config_check`。
+- `audit-core/MIGRATION_INVENTORY.md`：S5-F01 行更新并新增切片小节。
+- 本记录。
+
+## 验证
+
+- 编译与测试：`cargo build --offline -p audit-core` 通过；`cargo test --offline --locked -p audit-core` 全量 192 通过、0 失败。
+- 真实对拍（Windows 原生）：config-real 生效配置 3 用例——current（无业务/无模板）、current+业务=单位贷款、current_business（严格前置拒绝）——Python/Rust 报告全字段差异 0；前两用例 valid=true/complete=false（模板地址未检查），第三用例 valid=false 且拒绝消息一致。
+- 输入未变；报告不含路径或错误消息。
+
+## 未执行项、已知问题与回滚
+
+- 未迁移：模板/外部工作簿地址扫描（`_check_template_addresses`/`_check_external_addresses` 的带路径分支）、all/all_enabled 全量分支（含模板目录候选选择）、`evaluate` 规则执行、S5 审核结果输出与 CLI 接线；这些入参在 Rust 侧显式报"未迁移"。S5-F01 整体仍未验证。
+- 已知差：加载错误变体的 configuration_errors locations 在 Rust 侧为空（Python row.check 附加单元格位置）；真实配置加载成功未触发该变体。
+- 共享请求状态：main 自 bbd922d（MoveSheet）后无新提交；载荷基线等价、umya 冻结/筛选、校验器 MoveSheet 识别三项请求均未响应。
+- 回滚：删除新增模块/测试/比较器/报告，还原 s5_config.rs 可见性、清单与本记录即可；无用户工作簿恢复项。
+- 【组件版本】不升级。
