@@ -1071,8 +1071,10 @@ pub fn read_xlsx_sheet_names_ooxml(path: impl AsRef<Path>) -> Result<Vec<String>
     ensure!(
         path.extension()
             .and_then(|extension| extension.to_str())
-            .is_some_and(|extension| extension.eq_ignore_ascii_case("xlsx")),
-        "OOXML sheet-name adapter only supports .xlsx"
+            .is_some_and(|extension| {
+                extension.eq_ignore_ascii_case("xlsx") || extension.eq_ignore_ascii_case("xlsm")
+            }),
+        "OOXML sheet-name adapter only supports .xlsx and .xlsm"
     );
 
     let mut zip = ZipArchive::new(fs::File::open(path).context("open XLSX package")?)
@@ -1678,13 +1680,14 @@ mod tests {
         Ok(path)
     }
 
-    fn sheet_name_ooxml_fixture() -> Result<PathBuf> {
+    fn sheet_name_ooxml_fixture(extension: &str) -> Result<PathBuf> {
         let path = std::env::temp_dir().join(format!(
-            "excel-reader-sheet-names-{}-{}.xlsx",
+            "excel-reader-sheet-names-{}-{}.{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)?
-                .as_nanos()
+                .as_nanos(),
+            extension
         ));
         let workbook = format!(
             r#"<s:workbook xmlns:s="{SPREADSHEET_MAIN_NS}" xmlns:x="urn:unrelated"><s:sheets><s:sheet name="单位贷款" sheetId="1"/><s:sheet name="图表页" sheetId="2"/><x:sheet name="must-be-ignored" sheetId="3"/></s:sheets></s:workbook>"#
@@ -1797,7 +1800,16 @@ mod tests {
 
     #[test]
     fn ooxml_sheet_name_adapter_matches_namespace_and_workbook_order() -> Result<()> {
-        let fixture = sheet_name_ooxml_fixture()?;
+        let fixture = sheet_name_ooxml_fixture("xlsx")?;
+        let names = read_xlsx_sheet_names_ooxml(&fixture)?;
+        fs::remove_file(fixture)?;
+        assert_eq!(names, vec!["单位贷款".to_owned(), "图表页".to_owned()]);
+        Ok(())
+    }
+
+    #[test]
+    fn ooxml_sheet_name_adapter_accepts_xlsm_metadata() -> Result<()> {
+        let fixture = sheet_name_ooxml_fixture("xlsm")?;
         let names = read_xlsx_sheet_names_ooxml(&fixture)?;
         fs::remove_file(fixture)?;
         assert_eq!(names, vec!["单位贷款".to_owned(), "图表页".to_owned()]);
@@ -1891,15 +1903,15 @@ mod tests {
     }
 
     #[test]
-    fn ooxml_sheet_name_adapter_rejects_other_formats_without_fallback() -> Result<()> {
+    fn ooxml_sheet_name_adapter_rejects_biff_formats_without_fallback() -> Result<()> {
         let path = std::env::temp_dir().join(format!(
-            "excel-reader-sheet-names-{}.xlsm",
+            "excel-reader-sheet-names-{}.xls",
             std::process::id()
         ));
-        fs::write(&path, b"not an xlsx")?;
+        fs::write(&path, b"not an OOXML package")?;
         let error = read_xlsx_sheet_names_ooxml(&path).expect_err("reject unsupported format");
         fs::remove_file(path)?;
-        assert!(error.to_string().contains("only supports .xlsx"));
+        assert!(error.to_string().contains("only supports .xlsx and .xlsm"));
         Ok(())
     }
 

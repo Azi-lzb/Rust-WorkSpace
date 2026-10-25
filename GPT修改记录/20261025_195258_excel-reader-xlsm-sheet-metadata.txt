@@ -1,0 +1,21 @@
+时间：2026-10-25 19:52（Asia/Shanghai）
+执行者：Codex（main）
+目的：修复共享 OOXML sheet-name reader 因扩展名限制拒绝 XLSM 元数据读取的问题。
+
+修改文件：
+- `crates/excel-reader/src/lib.rs`
+- 本记录
+
+变更：`read_xlsx_sheet_names_ooxml` 现在接受大小写不敏感的 `.xlsx` 与 `.xlsm` 扩展名；它仍只读取 `xl/workbook.xml`，不改写工作簿、不读取 VBA、不提供值读取回退。其他格式（包括 BIFF `.xls`）仍明确拒绝。新增合成 OOXML `.xlsm` 元数据测试，并更新 BIFF 拒绝测试。
+
+验证：
+- `cargo test --offline --locked -p excel-reader`：通过（13 个单元测试、2 个集成测试；doc tests 0）。
+- `cargo fmt --package excel-reader -- --check`：通过。
+- `git diff --check`：通过。
+- 测试使用带 `.xlsm` 扩展名的合成 OOXML fixture；未宣称真实含 VBA 工作簿的完整兼容验收。
+
+未执行：完整 workspace 测试、Linux/glibc 2.28/deb 测试、真实业务 XLSM 对拍。
+
+已知问题：XLSM 的值读取、VBA 保留及修改仍按各自格式/操作能力单独验收；本次仅补齐 sheet-name 元数据读取入口。
+
+回滚：回滚本次代码和记录提交即可恢复旧扩展名限制。
