@@ -97,7 +97,7 @@
 
 ### S1-F01 config-real 公式复制 Windows 原生候选复验
 
-按用户提供的 `config-real` S1 映射和 2026-07-31 批次，选取同一真实模板族的 7 个带缓存审核副本；模板含 1,072 个公式、752 个公式缓存、4 个复制区和 8 个结构区。Windows 原生 Rust 完整 60 操作计划经隔离 OpenPyXL worker candidate-only 测试，7/7 在写前因 `target_merged_non_anchor_payload` 拒绝，未创建候选，模板和目标输入均未改变。七个目标分别有 983、688、692、686、692、688、686 个非空公式缓存，均按工作表与单元格坐标落在四个 ImportRange 内，范围外为 0。既有 `s1_formula_copy_target_merged_payload_guard_20261025.json` 对两个定向样本记录每本 855 个合并非锚载荷，全部位于复制区外（31 个载荷合并区域）；没有保留的 Python 写后工作簿可核对这些载荷是否保留，因此该项仍未验证。共享提交 `799cfe7` 的行列尺寸读回校验未被触发。候选证据见 `probe/reports/s1_formula_copy_candidate_openpyxl_windows_native_20261025.json`；OpenPyXL 写回能力及 S1-F01 生产路由保持 Unverified。
+按用户提供的 `config-real` S1 映射和 2026-07-31 批次，选取同一真实模板族的 7 个带缓存审核副本；模板含 1,072 个公式、752 个公式缓存、4 个复制区和 8 个结构区。Windows 原生 Rust 完整 60 操作计划经隔离 OpenPyXL worker candidate-only 测试，7/7 在写前因 `target_merged_non_anchor_payload` 拒绝，未创建候选，模板和目标输入均未改变。七个目标分别有 983、688、692、686、692、688、686 个非空公式缓存，均按工作表与单元格坐标落在四个 ImportRange 内，范围外为 0。既有 `s1_formula_copy_target_merged_payload_guard_20261025.json` 对两个定向样本记录每本 855 个合并非锚载荷，全部位于复制区外（31 个载荷合并区域）；没有保留的 Python 写后工作簿可核对这些载荷是否保留，因此该项仍未验证。共享提交 `799cfe7` 的行列尺寸读回校验未被触发。OpenPyXL 证据见 `probe/reports/s1_formula_copy_candidate_openpyxl_windows_native_20261025.json`；同模板族首个带缓存副本的 Umya full-S1 候选写出并通过 Rust 读回，但对拍共 1,036 项差异（复制区值/公式各 78、样式 802、批注 74；范围外批注 4），输入未变，不可路由，见 `probe/reports/s1_formula_copy_candidate_umya_windows_native_20261025.json`。两类候选均不能作为 S1-F01 生产路由。
 
 ### S1-F01 非空历史簿真实链路烟测（跨模板）
 

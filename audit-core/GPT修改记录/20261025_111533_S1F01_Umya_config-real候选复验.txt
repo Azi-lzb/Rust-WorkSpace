@@ -1,0 +1,31 @@
+# S1-F01 Umya config-real 真实候选复验
+
+- 时间：2026-10-25 11:15:33 +08:00
+- 执行者：Codex Audit migration agent
+- 分支：audit-dev
+- 修改前 commit：617d847
+- 修改后 commit：随本轮本地证据提交，提交 ID 见 Git 历史。
+- WIP：修改前 worktree 干净；候选输出及 Python 对拍副本均位于比较器临时目录并已清理。未修改 DEVELOPMENT_GOAL.md、源 Python 项目、真实工作簿、pytools-core、共享 crates、Cargo.lock 或根 Cargo 配置。
+
+## 目的
+
+在 OpenPyXL worker 因范围外合并非锚载荷而写前拒绝后，验证现有 Umya direct candidate 能否覆盖用户提供的 config-real 映射下完整 S1-F01 公式复制批次；不更改生产路由。
+
+## 修改文件
+
+- `audit-core/probe/reports/s1_formula_copy_candidate_umya_windows_native_20261025.json`：新增单样本脱敏对拍报告，不含路径、文件名、工作表名、业务值、公式文本、单元格坐标或哈希。
+- `audit-core/MIGRATION_INVENTORY.md`：补充 Umya 候选对象级差异与不可路由结论。
+- 本记录。
+
+## 验证
+
+- Windows 原生 MSVC Rust，在 config-real S1 映射下选取同一模板族首个带缓存且 Python 公式复制基线可生成的审核副本；使用 Unverified `umya-spreadsheet` direct backend 执行完整 60 操作计划。
+- 候选 XLSX 成功写出，独立 Rust readback 通过，输入未变；Python/Rust/目标逐坐标对拍共 1,036 项差异：复制区 5,487 格中值/类型 78、公式文本 78、样式 802、批注 74 项差异；范围外另有 4 项批注差异。工作簿元数据与计算标志差异为 0。
+- 目标非空公式缓存共 983 个，按坐标全部处于 ImportRange 内；范围外为 0。公式重算未执行。候选报告为 `candidate_mismatch`，不能登记能力或接入生产路由。
+
+## 未执行项、已知问题与回滚
+
+- Umya 的复制区语义差异较大；OpenPyXL 完整批次仍因范围外合并非锚载荷 fail-closed。当前没有可用的完整 S1-F01 公式复制后端。
+- 未执行其他文件批次、目标 Linux/deb、麒麟 V10/UOS V20 或真实 Excel 写后验收。
+- 回滚：移除本报告、本 inventory 补充和本记录即可；没有用户工作簿恢复项。
+- 【组件版本】不升级。
