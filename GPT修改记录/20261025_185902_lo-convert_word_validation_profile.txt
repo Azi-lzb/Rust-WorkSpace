@@ -1,0 +1,22 @@
+时间：2026-10-25 18:58 (+08:00)；执行者：Codex
+修改前 commit：f7a384ae967d5e615a0eb31fd3041859f06e8f1e；修改后 commit：本记录对应提交
+WIP：保留未跟踪 HANDOFF_ZCODE_TO_CODEX.md；未修改 PyTools 工作树。
+
+目的：PyTools 在 main 首次修复转换/重算 profile 参数后复验发现，Word 转换后的 LO 文本提取/验证仍以裸路径启动 soffice，PT-4-3 因此继续失败。把剩余调用点纳入共享 profile 修复。
+
+修改文件：sidecar/lo-convert/src/main.rs。
+
+变化：extract_word_text_lo 现在使用已测试的 libreoffice_user_installation_arg helper，与转换、重算路径一致地创建隔离 profile 目录并传 file URI。检查源码中的全部 soffice 启动点，均已使用该 helper；CLI 和路由未改。
+
+测试：
+- cargo test --offline --locked -p lo-convert：4 个单元测试通过。集成测试因当前 Windows 无 soffice 按既有逻辑提前返回，不代表真实 LO 调用通过。
+- cargo fmt --manifest-path sidecar/lo-convert/Cargo.toml -- --check：通过。
+- git diff --check：通过。
+- rg 复核转换、重算、Word 文本提取的所有 soffice 调用均使用共享 helper。
+
+未执行：真实 .doc→.docx 的 WSL/LibreOffice 端到端重跑、目标 Linux/deb 验收。需要 PyTools 在同步后复跑既有 PT-4-3 样本、文本保真及转换历史断言。
+
+已知问题：Windows 本机未安装 soffice；真实结果仍以 PyTools WSL 样本回归为准。
+
+【组件版本】不升级。
+回滚：如 LO 兼容性回归，revert 本记录对应提交；原 .doc 输入保持不变。

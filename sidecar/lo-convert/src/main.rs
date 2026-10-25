@@ -694,15 +694,13 @@ fn validate_conversion(
 fn extract_word_text_lo(input: &Path, output_dir: &Path) -> Result<String> {
     fs::create_dir_all(output_dir)?;
     let profile = output_dir.join("lo-profile");
+    let profile_argument = libreoffice_user_installation_arg(&profile)?;
     let command = Command::new("soffice")
         .arg("--headless")
         .arg("--nologo")
         .arg("--nodefault")
         .arg("--nolockcheck")
-        .arg(format!(
-            "-env:UserInstallation={}",
-            profile.to_string_lossy()
-        ))
+        .arg(profile_argument)
         .arg("--convert-to")
         .arg("txt:Text")
         .arg("--outdir")
