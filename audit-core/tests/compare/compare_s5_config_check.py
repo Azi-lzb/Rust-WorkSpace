@@ -67,6 +67,7 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--source-root", type=Path, required=True)
     parser.add_argument("--config-workbook", type=Path, required=True)
+    parser.add_argument("--template-workbook", type=Path)
     parser.add_argument("--workspace", type=Path, default=ROOT)
     parser.add_argument("--report", type=Path, required=True)
     args = parser.parse_args()
@@ -83,11 +84,22 @@ def main() -> int:
         directory = Path(temporary)
         config_copy = directory / "config.xlsx"
         shutil.copy2(args.config_workbook.resolve(strict=True), config_copy)
+        template_copy = None
+        if args.template_workbook:
+            template_copy = directory / "template.xlsx"
+            shutil.copy2(args.template_workbook.resolve(strict=True), template_copy)
 
         case_reports = []
         total_diffs = 0
-        for case_index, base_case in enumerate(CASES):
+        all_cases = list(CASES)
+        if args.template_workbook:
+            all_cases = all_cases + [
+                {"scope": "current", "template_path": str(template_copy)},
+            ]
+        for case_index, base_case in enumerate(all_cases):
             case = {**base_case, "config": str(config_copy)}
+            if template_copy is not None and "template_path" in case:
+                case["template_path"] = str(template_copy)
             python_payload = run_case(case, python_validate_s5_config)
 
             request = {
@@ -168,7 +180,7 @@ def main() -> int:
                 "config_copied_to_temporary": True,
             },
             "comparison": {
-                "case_count": len(CASES),
+                "case_count": len(all_cases),
                 "total_diff_count": total_diffs,
                 "cases": case_reports,
             },
@@ -199,7 +211,7 @@ def main() -> int:
         )
         print(json.dumps({
             "status": report["status"],
-            "cases": len(CASES),
+            "cases": len(all_cases),
             "total_diffs": total_diffs,
         }))
         return 0 if total_diffs == 0 else 1

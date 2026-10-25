@@ -21,7 +21,7 @@
     "config_copied_to_temporary": true
   },
   "comparison": {
-    "case_count": 3,
+    "case_count": 4,
     "total_diff_count": 0,
     "cases": [
       {
@@ -52,6 +52,16 @@
         "diff_count": 0,
         "diff_paths_sample": [],
         "python_valid": false,
+        "python_complete": false
+      },
+      {
+        "scope": "current",
+        "business": "",
+        "python_status": "ok",
+        "rust_status": "ok",
+        "diff_count": 0,
+        "diff_paths_sample": [],
+        "python_valid": true,
         "python_complete": false
       }
     ]

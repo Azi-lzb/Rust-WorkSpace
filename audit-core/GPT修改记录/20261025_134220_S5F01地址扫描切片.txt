@@ -1,0 +1,38 @@
+# S5-F01 地址扫描切片（scan_rule_paths + validate 模板地址检查）
+
+- 时间：2026-10-25 13:42 (+08:00)
+- 执行者：Codex Audit migration agent
+- 分支：audit-dev
+- 修改前 commit：c71cbd0
+- 修改后 commit：随本轮本地提交，提交 ID 见 Git 历史。
+- WIP：开始时 worktree 干净；验证结束时仅新增地址扫描模块、validate 模板分支扩展、对拍脚本更新、脱敏报告、清单更新和本记录。未修改共享 crates、源 Python 项目、真实工作簿、pytools-core、Cargo.toml 或 Cargo.lock。
+
+## 目的
+
+承接布局区域发现切片，移植 `layout.scan_rule_paths` 序列匹配半边并接通 `validate_s5_config` 的模板地址检查，使真实配置+真实模板的端到端配置校验在 Rust 侧复现。
+
+## 修改文件
+
+- `audit-core/src/s5_scan.rs`：新增地址扫描模块（合并锚点簿、`row_sequence`、`row_path_candidates` 含组限定别名提案、`contextual_row_hits`、`starts`、`in_numeric_regions`、`projected_column_region`、`scan_rule_paths` 主循环；未绑定源数字区域为空按 Python 兼容回退到整表区域）。
+- `audit-core/src/s5_layout.rs`：`paired_column_region` 放宽为 `pub(crate)`（无行为变化）。
+- `audit-core/src/s5_config_check.rs`：`rule_references` 模板键改为首见序保持 Python defaultdict 迭代序；新增 `configuration_rule_locations` 行定位映射、`config_locations` 错误位置构造与 `check_template_addresses` 模板分支（缺工作表/无法读取/多匹配/未找到行或列路径等错误消息与结构逐字对齐）；外部文件与全量分支保持显式未迁移边界；`set_configuration_source_path` 供对拍运行器注入配置路径。
+- `audit-core/tests/s5_config_check_parity.rs`：运行器设置配置源路径。
+- `audit-core/tests/compare/compare_s5_config_check.py`：新增真实模板用例（当前业务 + 模板路径，业务由推断得出）。
+- `audit-core/probe/reports/s5_config_check_windows_real_20261025.json`：更新脱敏机器报告（4 用例）。
+- `audit-core/src/lib.rs`：注册 `s5_scan`。
+- `audit-core/MIGRATION_INVENTORY.md`：S5-F01 行更新并新增地址扫描切片小节。
+- 本记录。
+
+## 验证
+
+- 编译与测试：`cargo build --offline -p audit-core` 通过；`cargo test --offline --locked -p audit-core` 全量 195 通过、0 失败。
+- 端到端对拍（Windows 原生）：真实 config-real 配置 + 真实单位贷款命名区域模板，4 用例（current 无业务、current+单位贷款、current_business 严格拒绝、current+模板路径业务推断）Python/Rust 全字段差异 0。模板用例 valid=true/complete=false：模板地址静态检查通过、@当前行动态地址按 Python 语义待适用范围核对；business_checks 模板名、checks.template_addresses 的 checked/resolved/status 与错误结构全部一致。
+- 模板与配置以字节级临时副本参与；源树只读未变；报告不含工作表名或错误消息。
+
+## 未执行项、已知问题与回滚
+
+- 未迁移：外部文件地址扫描（`_check_external_addresses` + `external_layout`）、`numeric_scope` 数字区域模板投影（`project_numeric_regions`，V 取数源读取侧）、S5 审核服务主流程与结果输出；S5-F01 整体仍未验证。
+- 已知边界：错误 locations 依赖的行映射经共享 calamine 读取（Python 用 openpyxl read_only）；两读取器对纯文本规则表数值一致，未观察到差异。
+- 共享请求状态：main 自 bbd922d 后无新提交；载荷基线等价、umya 冻结/筛选、校验器 MoveSheet 识别三项请求均未响应。
+- 回滚：删除新增模块与更新文件，还原 s5_layout.rs 可见性、s5_config_check.rs（revert 本提交）即可；无用户工作簿恢复项。
+- 【组件版本】不升级。

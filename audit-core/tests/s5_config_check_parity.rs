@@ -43,6 +43,7 @@ fn runs_s5_config_check_parity_item() {
     let request: CheckRequest =
         serde_json::from_str(&fs::read_to_string(&input_path).expect("read check request"))
             .expect("parse check request");
+    audit_core::s5_config_check::set_configuration_source_path(&request.config);
     let outcome = match validate_s5_config(
         &request.config,
         &request.template_path,

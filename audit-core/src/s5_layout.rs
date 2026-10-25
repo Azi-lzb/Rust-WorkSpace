@@ -146,7 +146,7 @@ pub fn named_regions(path: &Path, prefixes: &[&str]) -> Vec<NamedRegion> {
 }
 
 /// Mirror of layout.inferred_numeric_regions' geometric row/column pairing.
-fn paired_column_region<'a>(
+pub(crate) fn paired_column_region<'a>(
     region: &NamedRegion,
     axes: &'a [NamedRegion],
 ) -> Option<&'a NamedRegion> {
