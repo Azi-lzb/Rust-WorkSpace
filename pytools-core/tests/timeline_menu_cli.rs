@@ -261,6 +261,64 @@ fn wide_summary_cli_projects_elapsed_duration_as_numeric_for_both_row_modes() ->
 }
 
 #[test]
+fn wide_summary_cli_processes_legacy_xls_without_ooxml_metadata() -> Result<()> {
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures")
+        .join("timeline")
+        .join("wide_summary_legacy.xls");
+
+    for command in ["wide-summary", "wide-summary-row-suffix"] {
+        let root = TestDirectory::new()?;
+        let config = create_legacy_xls_timeline_config(root.path())?;
+        let source = root.path().join("app").join("input").join("input.xls");
+        fs::copy(&fixture, &source)?;
+        let source_before = fs::read(&source)?;
+
+        let output = Command::new(env!("CARGO_BIN_EXE_pytools"))
+            .arg(command)
+            .arg("--config")
+            .arg(&config)
+            .arg("--log-view")
+            .arg("developer")
+            .arg(&source)
+            .output()
+            .context("run wide-summary CLI with legacy XLS input")?;
+        assert!(
+            output.status.success(),
+            "{command} did not process legacy XLS: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let report: Value = serde_json::from_slice(&output.stdout)?;
+        assert!(report["output"].is_null());
+
+        let run_log_path = report["run_log_path"]
+            .as_str()
+            .map(PathBuf::from)
+            .context("legacy XLS run history missing")?;
+        let history: Value = serde_json::from_slice(&fs::read(run_log_path)?)?;
+        assert_eq!(history["status"], "skipped");
+        assert_eq!(history["total_inputs"], 1);
+        assert_eq!(history["completed_inputs"], 1);
+        assert_eq!(history["failed_inputs"], 0);
+        assert_eq!(history["matched_rule_sheets"], 1);
+        assert_eq!(history["extracted_cells"], 0);
+        assert!(history["events"].as_array().is_some_and(|events| {
+            events.iter().any(|event| {
+                event["phase"] == "elapsed_duration_metadata"
+                    && event["status"] == "skipped"
+                    && event["user_message"]
+                        .as_str()
+                        .is_some_and(|message| message.contains("格式识别未验证"))
+            })
+        }));
+        assert_eq!(fs::read(&source)?, source_before);
+    }
+    Ok(())
+}
+
+#[test]
 fn wide_summary_cli_discovers_default_sources_for_both_row_modes() -> Result<()> {
     let root = TestDirectory::new()?;
     let config = create_timeline_config(root.path())?;
@@ -1262,6 +1320,99 @@ fn create_timeline_config_inner(
     workbook
         .save(&config)
         .context("save timeline menu configuration")?;
+    Ok(config)
+}
+
+fn create_legacy_xls_timeline_config(root: &Path) -> Result<PathBuf> {
+    let app = root.join("app");
+    let input_dir = app.join("input");
+    let output_dir = app.join("output");
+    let log_dir = app.join("logs");
+    fs::create_dir_all(&input_dir)?;
+    fs::create_dir_all(&output_dir)?;
+    fs::create_dir_all(&log_dir)?;
+
+    let config = app.join("config").join("config.xlsx");
+    fs::create_dir_all(config.parent().context("config parent missing")?)?;
+
+    let mut workbook = rust_xlsxwriter::Workbook::new();
+    {
+        let global = workbook.add_worksheet();
+        global.set_name("全局配置")?;
+        global.write_string(0, 0, "配置项")?;
+        global.write_string(0, 1, "值")?;
+        let settings = [
+            ("输入目录", input_dir.to_string_lossy().into_owned()),
+            ("输出目录", output_dir.to_string_lossy().into_owned()),
+            ("日志目录", log_dir.to_string_lossy().into_owned()),
+            ("错误策略", "fail_fast".to_owned()),
+            ("源文件扩展名", ".xlsx".to_owned()),
+            ("时序规则命中策略", "all_match".to_owned()),
+        ];
+        for (index, (key, value)) in settings.iter().enumerate() {
+            global.write_string((index + 1) as u32, 0, *key)?;
+            global.write_string((index + 1) as u32, 1, value)?;
+        }
+    }
+    {
+        let timeline = workbook.add_worksheet();
+        timeline.set_name("时序提取规则")?;
+        let headers = [
+            "是否启用",
+            "规则名称",
+            "工作簿关键字",
+            "工作表关键字",
+            "行头列",
+            "列表头行",
+            "必含列头",
+            "必含行头",
+            "数据起始行",
+            "数据结束行",
+            "数据起始列",
+            "数据结束列",
+            "跳过关键字",
+            "目标工作簿路径",
+            "目标工作表",
+            "启用目标写入",
+            "set区域",
+            "目标去重列",
+            "是否输出行序号",
+        ];
+        for (column, header) in headers.iter().enumerate() {
+            timeline.write_string(0, column as u16, *header)?;
+        }
+        let values = [
+            "是", "WideRule", "input", "Data", "A", "1", "", "", "2", "", "B", "B", "", "", "",
+            "否", "", "", "是",
+        ];
+        for (column, value) in values.iter().enumerate() {
+            timeline.write_string(1, column as u16, *value)?;
+        }
+    }
+    {
+        let path_maps = workbook.add_worksheet();
+        path_maps.set_name("路径标准化映射")?;
+        for (column, header) in [
+            "是否启用",
+            "映射名称",
+            "适用规则名",
+            "工作簿关键字",
+            "工作表关键字",
+            "作用对象",
+            "匹配方式",
+            "原始路径",
+            "标准路径",
+            "备注",
+        ]
+        .iter()
+        .enumerate()
+        {
+            path_maps.write_string(0, column as u16, *header)?;
+        }
+    }
+    workbook
+        .save(&config)
+        .context("save legacy XLS timeline configuration")?;
     Ok(config)
 }
 

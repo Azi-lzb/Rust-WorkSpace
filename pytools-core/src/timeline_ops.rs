@@ -1343,7 +1343,23 @@ fn run_wide_summary_inner(
             }
         };
         let elapsed_metadata_started = Instant::now();
-        let elapsed_time_cells =
+        let is_legacy_xls = path
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("xls"));
+        let elapsed_time_cells = if is_legacy_xls {
+            emitter.emit(
+                "elapsed_duration_metadata",
+                "skipped",
+                "BIFF .xls 不支持当前 OOXML 样式读取；累计时长格式识别未验证，继续按 Calamine 读取值处理",
+                Some(input_index),
+                Some(elapsed_metadata_started.elapsed()),
+                &["pytools-core", "Excel number-format metadata", "BIFF .xls"],
+                None,
+                None,
+            );
+            BTreeMap::new()
+        } else {
             match crate::summary_ops::read_elapsed_time_cells(path, &workbook.sheets) {
                 Ok(cells) => cells,
                 Err(error) if global.error_policy == "continue" => {
@@ -1383,7 +1399,8 @@ fn run_wide_summary_inner(
                         format!("read elapsed-time formats from {}", path.display())
                     });
                 }
-            };
+            }
+        };
         let elapsed_duration_values =
             overlay_wide_elapsed_duration_serials(&mut workbook.sheets, &elapsed_time_cells);
         if elapsed_duration_values > 0 {
