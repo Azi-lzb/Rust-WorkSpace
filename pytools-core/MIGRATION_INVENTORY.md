@@ -762,3 +762,7 @@ Windows 原生 `cargo fmt --manifest-path pytools-core/Cargo.toml -- --check`、
 同轮 Windows 原生 `cargo test --offline --locked -p pytools-core` 全量通过：39 个测试目标、42 项结果全部 0 failed；此前登记的 `workbook_extract` 缺夹具单测失败在当前 checkout 不再出现。
 
 机器结果见 `probe/reports/summary_used_range_real_parity_20261025.json` 的 `platform_validation_linux_glibc_2_28_release_current_head_20261025`。该证据只覆盖 WSL glibc 2.28 ABI release 阶段，不是麒麟 V10/UOS V20 实机、deb 安装或离线交付验收；每批单次执行，不作性能结论；PT-6-1 整体仍未完成最终验收。
+
+### 2026-10-25 PT-1-3/PT-1-4 相对配置目录发现覆盖与真实样本预检复核
+
+复检原 PyCode 只读配置：`全局配置/输入目录` 为相对路径 `input`（按 PyCode 语义相对配置上上级目录解析），该目录在原项目中不存在；结合此前对源树工作簿的只读预检结论，PT-1-3/PT-1-4 仍无可命中业务规则的真实样本，状态不变。Rust `load_global` 的 base/相对路径解析与 PyCode `config_xlsx.load_global`（`cfg_path.parent.parent`）语义一致，但新增的默认源发现此前只用绝对路径配置测试过；本次补相对配置目录组合覆盖：配置写入相对值 `input`/`output`/`logs` 时，两种行头模式的默认发现按配置相对目录扫描根与嵌套子目录、跳过 `~$` 锁文件和未配置 `.xlsb`，汇总簿与运行历史分别落在配置相对的 `output`、`logs` 目录。新增集成测试 `wide_summary_cli_resolves_relative_configured_directories_for_discovery`；Windows 原生 `cargo test --offline --locked -p pytools-core --test timeline_menu_cli` 13/13 通过，`cargo fmt --check` 通过。该项为合成配置夹具行为，不改变 PT-1-3/PT-1-4 未有真实样本、未验收的状态。

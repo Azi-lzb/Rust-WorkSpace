@@ -280,6 +280,78 @@ fn wide_summary_cli_discovers_default_sources_for_both_row_modes() -> Result<()>
 }
 
 #[test]
+fn wide_summary_cli_resolves_relative_configured_directories_for_discovery() -> Result<()> {
+    let root = TestDirectory::new()?;
+    let config = create_timeline_config_with_relative_dirs(root.path())?;
+    let input_dir = root.path().join("app").join("input");
+    let nested_dir = input_dir.join("nested");
+    fs::create_dir_all(&nested_dir)?;
+    create_wide_source(
+        &input_dir.join("sample relative root source.xlsx"),
+        "相对目录根",
+        21.0,
+    )?;
+    create_wide_source(
+        &nested_dir.join("sample relative nested source.xlsx"),
+        "相对目录子",
+        31.0,
+    )?;
+    create_wide_source(
+        &input_dir.join("~$sample relative locked source.xlsx"),
+        "锁文件必须跳过",
+        41.0,
+    )?;
+    fs::write(
+        input_dir.join("sample relative unsupported source.xlsb"),
+        b"not xlsb",
+    )?;
+
+    let output = Command::new(env!("CARGO_BIN_EXE_pytools"))
+        .arg("wide-summary")
+        .arg("--config")
+        .arg(&config)
+        .arg("--log-view")
+        .arg("developer")
+        .output()
+        .context("run wide-summary with relative configured directories")?;
+    assert!(
+        output.status.success(),
+        "relative directory wide-summary failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let report: Value = serde_json::from_slice(&output.stdout)?;
+    let summary_path = report["output"]
+        .as_str()
+        .map(PathBuf::from)
+        .with_context(|| "relative wide-summary output path missing")?;
+    let output_dir = root.path().join("app").join("output");
+    assert!(
+        summary_path.starts_with(&output_dir),
+        "summary must be written under the config-relative output directory: {summary_path:?}"
+    );
+    let summary = read_workbook(&summary_path)?;
+    assert_eq!(summary.sheets.len(), 1);
+    assert!(summary.sheets[0].values.len() > 10);
+
+    let run_log_path = report["run_log_path"]
+        .as_str()
+        .map(PathBuf::from)
+        .with_context(|| "relative wide-summary run log path missing")?;
+    let log_dir = root.path().join("app").join("logs");
+    assert!(
+        run_log_path.starts_with(&log_dir),
+        "run history must be written under the config-relative log directory: {run_log_path:?}"
+    );
+    let history: Value = serde_json::from_slice(&fs::read(&run_log_path)?)?;
+    assert_eq!(history["total_inputs"], 2);
+    assert_eq!(history["completed_inputs"], 2);
+    assert_eq!(history["failed_inputs"], 0);
+
+    Ok(())
+}
+
+#[test]
 fn timeline_extract_cli_discovers_default_sources_recursively_and_skips_lock_files() -> Result<()> {
     let root = TestDirectory::new()?;
     let config = create_timeline_config(root.path())?;
@@ -893,14 +965,35 @@ fn read_single_run_history(log_dir: &Path, feature_id: &str) -> Result<Value> {
 }
 
 fn create_timeline_config(root: &Path) -> Result<PathBuf> {
-    create_timeline_config_with_target(root, None)
+    create_timeline_config_inner(root, None, false)
+}
+
+fn create_timeline_config_with_relative_dirs(root: &Path) -> Result<PathBuf> {
+    create_timeline_config_inner(root, None, true)
 }
 
 fn create_timeline_config_with_target(root: &Path, target: Option<&Path>) -> Result<PathBuf> {
+    create_timeline_config_inner(root, target, false)
+}
+
+fn create_timeline_config_inner(
+    root: &Path,
+    target: Option<&Path>,
+    relative_dirs: bool,
+) -> Result<PathBuf> {
     let config = root.join("app").join("config").join("config.xlsx");
     fs::create_dir_all(config.parent().context("config parent missing")?)?;
     let app = root.join("app");
     fs::create_dir_all(app.join("input"))?;
+    let directory_values = if relative_dirs {
+        ["input".to_owned(), "output".to_owned(), "logs".to_owned()]
+    } else {
+        [
+            app.join("input").to_string_lossy().into_owned(),
+            app.join("output").to_string_lossy().into_owned(),
+            app.join("logs").to_string_lossy().into_owned(),
+        ]
+    };
 
     let mut workbook = rust_xlsxwriter::Workbook::new();
     {
@@ -909,12 +1002,9 @@ fn create_timeline_config_with_target(root: &Path, target: Option<&Path>) -> Res
         global.write_string(0, 0, "配置项")?;
         global.write_string(0, 1, "值")?;
         let settings = [
-            ("输入目录", app.join("input").to_string_lossy().into_owned()),
-            (
-                "输出目录",
-                app.join("output").to_string_lossy().into_owned(),
-            ),
-            ("日志目录", app.join("logs").to_string_lossy().into_owned()),
+            ("输入目录", directory_values[0].clone()),
+            ("输出目录", directory_values[1].clone()),
+            ("日志目录", directory_values[2].clone()),
             ("错误策略", "fail_fast".to_owned()),
             ("时序规则命中策略", "all_match".to_owned()),
         ];
