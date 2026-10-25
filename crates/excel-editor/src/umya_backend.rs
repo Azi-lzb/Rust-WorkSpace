@@ -1436,8 +1436,78 @@ impl OutputValidator for UmyaXlsxValidator {
                 );
             }
         }
+        let moves = plan
+            .operations
+            .iter()
+            .filter_map(|operation| match operation {
+                EditOperation::MoveSheet { sheet, new_index } => Some((sheet.as_str(), *new_index)),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        if !moves.is_empty() {
+            let mut expected_order = excel_reader::read_sheet_names(&plan.input)
+                .with_context(|| format!("reopen source {}", plan.input.display()))?;
+            for (sheet, new_index) in &moves {
+                let current = expected_order
+                    .iter()
+                    .position(|name| name == sheet)
+                    .with_context(|| format!("worksheet {sheet:?} not found"))?;
+                anyhow::ensure!(
+                    *new_index < expected_order.len(),
+                    "move target index {new_index} exceeds workbook sheet count {}",
+                    expected_order.len()
+                );
+                let moved = expected_order.remove(current);
+                expected_order.insert(*new_index, moved);
+            }
+            let actual_order = dump
+                .sheets
+                .iter()
+                .map(|sheet| sheet.name.clone())
+                .collect::<Vec<_>>();
+            anyhow::ensure!(
+                actual_order == expected_order,
+                "candidate sheet order {actual_order:?} does not match the move-sheet plan expectation {expected_order:?}"
+            );
+            assert_scoped_defined_names_follow_sheets(&plan.input, candidate_output)?;
+        }
         Ok(())
     }
+}
+
+/// Sheet-scoped defined names must stay attached to the worksheet named in
+/// their scope after a sheet move: the write path renumbers `localSheetId`,
+/// so a stale id would silently re-bind print areas and print titles to a
+/// different worksheet. Compare the resolved (name, scoped worksheet,
+/// reference) records of source and candidate; records whose scope the source
+/// file itself left unresolved are skipped, because the umya read path already
+/// drops them before any write.
+fn assert_scoped_defined_names_follow_sheets(source: &Path, candidate: &Path) -> Result<()> {
+    let scoped_keys = |path: &Path| -> Result<Vec<(String, String, String)>> {
+        let mut keys = Vec::new();
+        for record in excel_reader::read_defined_names(path)? {
+            let scoped_sheet = match &record.scope {
+                excel_reader::DefinedNameScope::Workbook => String::new(),
+                excel_reader::DefinedNameScope::Worksheet {
+                    sheet_name: Some(name),
+                    ..
+                } => name.clone(),
+                _ => continue,
+            };
+            keys.push((record.name, scoped_sheet, record.raw_reference));
+        }
+        keys.sort();
+        Ok(keys)
+    };
+    let expected = scoped_keys(source)
+        .with_context(|| format!("read source defined names {}", source.display()))?;
+    let actual = scoped_keys(candidate)
+        .with_context(|| format!("read candidate defined names {}", candidate.display()))?;
+    anyhow::ensure!(
+        actual == expected,
+        "candidate defined names do not follow their worksheets after the move: expected {expected:?}, found {actual:?}"
+    );
+    Ok(())
 }
 
 fn apply_operation(workbook: &mut crate::Workbook, operation: &EditOperation) -> Result<()> {
@@ -1631,6 +1701,7 @@ fn apply_operation(workbook: &mut crate::Workbook, operation: &EditOperation) ->
                     .all(|sheet| sheet.get_name() != name),
                 "worksheet {name:?} already exists"
             );
+            let active_sheet = active_sheet_name(workbook);
             workbook
                 .new_sheet(name)
                 .with_context(|| format!("create worksheet {name:?}"))?;
@@ -1639,15 +1710,43 @@ fn apply_operation(workbook: &mut crate::Workbook, operation: &EditOperation) ->
             for destination in (*index..appended_index).rev() {
                 collection.swap(destination, destination + 1);
             }
+            remap_sheet_index_metadata(workbook, active_sheet.as_deref());
+        }
+        EditOperation::MoveSheet { sheet, new_index } => {
+            validate_sheet_name(sheet)?;
+            let current_count = workbook.sheet_count();
+            anyhow::ensure!(
+                *new_index < current_count,
+                "move target index {new_index} exceeds workbook sheet count {current_count}"
+            );
+            let current_index = workbook
+                .get_sheet_collection()
+                .iter()
+                .position(|candidate| candidate.get_name() == sheet.as_str())
+                .with_context(|| format!("worksheet {sheet:?} not found"))?;
+            let active_sheet = active_sheet_name(workbook);
+            let collection = workbook.get_sheet_collection_mut();
+            if *new_index < current_index {
+                for slot in (*new_index..current_index).rev() {
+                    collection.swap(slot, slot + 1);
+                }
+            } else if *new_index > current_index {
+                for slot in current_index..*new_index {
+                    collection.swap(slot, slot + 1);
+                }
+            }
+            remap_sheet_index_metadata(workbook, active_sheet.as_deref());
         }
         EditOperation::DeleteSheet { name } => {
             anyhow::ensure!(
                 workbook.sheet_count() > 1,
                 "cannot delete the only worksheet"
             );
+            let active_sheet = active_sheet_name(workbook).filter(|active| active != name);
             workbook
                 .remove_sheet_by_name(name)
                 .with_context(|| format!("delete worksheet {name:?}"))?;
+            remap_sheet_index_metadata(workbook, active_sheet.as_deref());
         }
         EditOperation::SetCellFillColor { sheet, cell, argb } => {
             let normalized = normalize_argb(argb)?;
@@ -2216,6 +2315,49 @@ fn import_range(
     });
     let _ = copy_values;
     Ok(())
+}
+
+/// Name of the currently active worksheet, when the stored tab index is in range.
+fn active_sheet_name(workbook: &crate::Workbook) -> Option<String> {
+    let active_tab = workbook.workbook_view().active_tab() as usize;
+    workbook
+        .get_sheet_collection()
+        .get(active_tab)
+        .map(|sheet| sheet.get_name().to_owned())
+}
+
+/// umya-spreadsheet keeps the `localSheetId` captured at read time on
+/// sheet-scoped defined names (print areas, print titles, user names) and
+/// re-emits that value unchanged, and stores `activeTab` as a raw index. After
+/// the sheet collection order changes, both must be rewritten from the new
+/// positions: scoped names keep pointing at their own worksheet and the
+/// previously active sheet stays active. When the active sheet did not
+/// survive the change, the stored index is clamped into range.
+fn remap_sheet_index_metadata(workbook: &mut crate::Workbook, active_sheet: Option<&str>) {
+    let collection = workbook.get_sheet_collection_mut();
+    for (index, sheet) in collection.iter_mut().enumerate() {
+        for defined_name in sheet.defined_names_mut() {
+            if defined_name.has_local_sheet_id() {
+                defined_name.set_local_sheet_id(index as u32);
+            }
+        }
+    }
+    let count = workbook.sheet_count();
+    let new_active_tab = active_sheet
+        .and_then(|name| {
+            workbook
+                .get_sheet_collection()
+                .iter()
+                .position(|sheet| sheet.get_name() == name)
+        })
+        .map(|position| position as u32)
+        .unwrap_or_else(|| {
+            workbook
+                .workbook_view()
+                .active_tab()
+                .min(count.saturating_sub(1) as u32)
+        });
+    workbook.workbook_view_mut().set_active_tab(new_active_tab);
 }
 
 fn validate_sheet_name(name: &str) -> Result<()> {

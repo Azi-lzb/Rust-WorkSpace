@@ -99,6 +99,7 @@ pub enum EditOperationKind {
     RenameSheet,
     CreateSheet,
     CreateSheetAt,
+    MoveSheet,
     SetFreezePanes,
     SetAutoFilter,
     DeleteSheet,
@@ -209,6 +210,13 @@ pub enum EditOperation {
         name: String,
         index: usize,
     },
+    /// Move an existing worksheet to a zero-based position in the final sheet
+    /// order. Worksheet content and page settings stay untouched; only
+    /// workbook-level position metadata follows the sheet.
+    MoveSheet {
+        sheet: String,
+        new_index: usize,
+    },
     /// Freeze panes at the first unfrozen cell, such as `A2`; `None` clears panes.
     SetFreezePanes {
         sheet: String,
@@ -300,6 +308,7 @@ impl EditOperation {
             Self::RenameSheet { .. } => EditOperationKind::RenameSheet,
             Self::CreateSheet { .. } => EditOperationKind::CreateSheet,
             Self::CreateSheetAt { .. } => EditOperationKind::CreateSheetAt,
+            Self::MoveSheet { .. } => EditOperationKind::MoveSheet,
             Self::SetFreezePanes { .. } => EditOperationKind::SetFreezePanes,
             Self::SetAutoFilter { .. } => EditOperationKind::SetAutoFilter,
             Self::DeleteSheet { .. } => EditOperationKind::DeleteSheet,
@@ -415,6 +424,11 @@ impl EditOperation {
             Self::CreateSheetAt { name, .. } => {
                 if name.trim().is_empty() {
                     bail!("worksheet name must not be empty");
+                }
+            }
+            Self::MoveSheet { sheet, .. } => {
+                if sheet.trim().is_empty() {
+                    bail!("sheet move requires a worksheet name");
                 }
             }
             Self::SetFreezePanes { sheet, cell } => {
