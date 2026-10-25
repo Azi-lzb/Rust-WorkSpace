@@ -307,5 +307,115 @@ class OpenpyxlWorkerTests(unittest.TestCase):
         self.assertFalse(output.exists())
 
 
+class StyleTableIntegrityTest(unittest.TestCase):
+    """Direct coverage for the saved-output style-table integrity assertion."""
+
+    def setUp(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("openpyxl_worker_module", WORKER)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        self.integrity = module._verify_style_table_integrity
+        self.root = Path(tempfile.mkdtemp(prefix="worker-style-integrity-"))
+        self.addCleanup(self._cleanup)
+
+    def _cleanup(self):
+        import shutil
+        shutil.rmtree(self.root, ignore_errors=True)
+
+    def _workbook_with_styles(self, path, cellxfs_body, declared_count, sheet_xml):
+        styles = (
+            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            '<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+            '<fonts count="1"><font><sz val="11"/><name val="Calibri"/></font></fonts>'
+            '<fills count="2"><fill><patternFill patternType="none"/></fill>'
+            '<fill><patternFill patternType="gray125"/></fill></fills>'
+            '<borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>'
+            '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>'
+            f'<cellXfs count="{declared_count}">{cellxfs_body}</cellXfs>'
+            '<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>'
+            '</styleSheet>'
+        )
+        with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as archive:
+            archive.writestr("[Content_Types].xml",
+                '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+                '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+                '<Default Extension="xml" ContentType="application/xml"/>'
+                '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>'
+                '<Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>'
+                '<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/></Types>')
+            archive.writestr("_rels/.rels",
+                '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+                '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>')
+            archive.writestr("xl/workbook.xml",
+                '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+                '<sheets><sheet name="Data" sheetId="1" r:id="rId1"/></sheets></workbook>')
+            archive.writestr("xl/_rels/workbook.xml.rels",
+                '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+                '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>'
+                '<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>')
+            archive.writestr("xl/styles.xml", styles)
+            archive.writestr("xl/worksheets/sheet1.xml", sheet_xml)
+
+    def test_out_of_range_style_reference_is_rejected(self):
+        target = self.root / "oob.xlsx"
+        self._workbook_with_styles(
+            target,
+            cellxfs_body='<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>',
+            declared_count=1,
+            sheet_xml='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+                      '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+                      '<sheetData><row r="1"><c r="A1" t="inlineStr" s="5"><is><t>x</t></is></c></row></sheetData></worksheet>',
+        )
+        with self.assertRaises(Exception) as caught:
+            self.integrity(target)
+        self.assertIn("beyond its", str(caught.exception))
+
+    def test_out_of_range_column_dimension_style_is_rejected(self):
+        target = self.root / "column-style-oob.xlsx"
+        self._workbook_with_styles(
+            target,
+            cellxfs_body='<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>',
+            declared_count=1,
+            sheet_xml=(
+                '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+                '<x:worksheet xmlns:x="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+                '<x:cols><x:col min="1" max="1" style="1"/></x:cols>'
+                '<x:sheetData><x:row r="1"><x:c r="A1" t="inlineStr"><x:is><x:t>x</x:t>'
+                '</x:is></x:c></x:row></x:sheetData></x:worksheet>'
+            ),
+        )
+        with self.assertRaises(Exception) as caught:
+            self.integrity(target)
+        self.assertIn("cell style 1 beyond its 1 cellXfs entries", str(caught.exception))
+
+    def test_count_mismatch_is_rejected(self):
+        target = self.root / "mismatch.xlsx"
+        self._workbook_with_styles(
+            target,
+            cellxfs_body='<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>',
+            declared_count=9,
+            sheet_xml='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+                      '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+                      '<sheetData><row r="1"><c r="A1" t="inlineStr" s="0"><is><t>x</t></is></c></row></sheetData></worksheet>',
+        )
+        with self.assertRaises(Exception) as caught:
+            self.integrity(target)
+        self.assertIn("declares count=", str(caught.exception))
+
+    def test_consistent_table_passes(self):
+        target = self.root / "consistent.xlsx"
+        self._workbook_with_styles(
+            target,
+            cellxfs_body='<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>'
+                         '<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0" applyAlignment="1"><alignment vertical="center"/></xf>',
+            declared_count=2,
+            sheet_xml='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+                      '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+                      '<sheetData><row r="1"><c r="A1" t="inlineStr" s="1"><is><t>x</t></is></c></row></sheetData></worksheet>',
+        )
+        self.integrity(target)
+
+
 if __name__ == "__main__":
     unittest.main()

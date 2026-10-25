@@ -1,0 +1,38 @@
+时间：2026-10-25 14:55:58 Asia/Shanghai
+执行者：Codex main
+修改前 commit：7ac87d6（main）
+修改后 commit：本记录与校验器行映射修复由同一提交承载；SHA 见本轮汇报。
+WIP 情况：修改前 main 工作区干净；本轮修改与本记录一并提交。未触碰 audit-dev（有 S5 未提交 WIP）与 pytools-dev 工作树。
+
+目的：处理 audit-dev 第四项共享能力请求 `audit-core/shared-capability-requests/20261025_validator_row_operation_mapping.md`——S1 历史 38 操作完整计划在 umya apply 与审计侧读回全部通过后，被引擎无关校验器 `OpenpyxlXlsxValidator` 以"unmodified-style readback mismatch at 核查表校验结果!M6/L3"误拒：删除行范围内的只带样式无值空格被当作未修改内容与输出直查比对，插入导致的行号偏移同样未映射。该误拒是 S1 历史完整写回路由的最后一道阻塞。
+
+修改文件：
+- `crates/excel-editor/src/openpyxl_backend.rs`
+- `crates/excel-editor/tests/validator_row_mapping.rs`（新增）
+- `EXCEL_ENGINE_ARCHITECTURE.md`
+- 本记录
+
+变化：
+- 新增 `plan_row_map`：按计划操作顺序模拟 DeleteRows/InsertRows，构造单表的"源行号 → 输出行号"映射（被删源行为 None；窗口之下的源行按统一位移解析）。计划对该表无行操作时返回 None，调用方保持原恒等快速路径，既有行为不变。
+- 未修改内容读回比较接入映射，共四处：值（validate_preserved_values）、公式（validate_preserved_formulas）、批注（validate_preserved_comments）、样式（validate_unmodified_styles）。删除区内的源格跳过（其移除即计划语义）；下移行按映射坐标在输出中比对；"被计划修改"判定与输出查找均使用映射后坐标（计划中行操作先于单元格编辑、后者按最终坐标书写）。
+- 两个有意的边界：下移公式的引用会被引擎重写（如 A3+1 → A5+1），引擎无关校验器不做逐字比较，仅比对映射后坐标不变的公式，覆盖仍由引擎自身公式调整与请求方读回承担；合并单元格非锚边框检查仅在映射后地址与源地址一致时适用（合并区自身随行移动，共享坐标比较才有效）。合并区域本身的随行移动/收缩本轮不做映射，保持严格比较，若业务计划触发再按请求扩展。
+- EXCEL_ENGINE_ARCHITECTURE.md §4.2 同步登记；仍为合成证据，不产生生产 capability。
+
+配置及业务路由影响：无 API/枚举变化；仅校验器误报修复。S1 历史完整计划经 audit-dev 同步后预期可直接通过引擎无关校验；生产路由与能力登记仍由 Audit 按真实样本流程执行。
+
+组件版本：不升级。
+
+测试：
+- `cargo test --offline --locked -p excel-editor --test validator_row_mapping`：2 项通过。一是复现真实场景：DeleteRows(2..=6)+InsertRows+改写内容的计划中，删除区内 L3/M6 样式空格不再误报，下方行原位保留并双重校验器（OpenpyxlXlsxValidator+UmyaXlsxValidator）通过；二是纯插入位移：源 A2/A3/A5、B3 样式、A3 批注、C3 公式全部按 +2 映射比对通过，且断言引擎确实完成了位移。
+- `cargo test -p excel-editor`（全部 10 个测试二进制）与 `cargo test --workspace --locked --offline -q`：除 pytools-core 既有 `config_task_loader_parity` Windows 路径失败（上轮已用 stash 验证与本修复无关，属 PyTools 业务 crate）外全部通过。
+- `cargo fmt -p excel-editor -- --check`、`git diff --check`：通过。
+
+未执行项：未在真实 config-real 工作簿上复跑（真实样本与 `AUDIT_S1_HISTORY_REAL_WORKBOOK` 入口在 audit-dev 侧，属 Audit Agent 同步后执行的最小验证）；未做 Linux/deb 验收；未处理第三项请求（S1 公式复制目标簿合并非锚载荷基线等价豁免，契约级设计，仍待单独一轮）。
+
+已知问题：
+- 行操作先于单元格编辑是映射的既定语义；若计划把单元格编辑写在行操作之前，该编辑所在格不参与映射比对（现网计划均为行操作在前）。
+- 下移公式逐字比较豁免与合并区域严格比较的边界如上所述，均为有意最小范围。
+- pytools-core `task_config_loaders_match_python_baseline` Windows verbatim 路径失败仍未修（PyTools 业务 crate，等待 PyTools Agent 处理）。
+
+删除清单：无。
+回滚：回退本次提交即恢复四处比较的源坐标直查行为（回到对 S1 完整计划的误拒状态）；不回滚既有提交，不修改输入工作簿。

@@ -237,13 +237,14 @@ impl EditBackend for OpenpyxlXlsxBackend {
                 "ExcelEditPlan workbook profile differs from the source package inventory",
             ));
         }
-        match find_non_anchor_merged_payload(&plan.input, None) {
-            Ok(Some((sheet, cell))) => {
-                return Err(BackendFailure::unsupported_before_write(format!(
-                    "openpyxl cannot preserve stored content in merged non-anchor cell {sheet}!{cell}"
-                )))
+        match merged_non_anchor_payloads(&plan.input, None) {
+            Ok(payloads) => {
+                if let Some((sheet, cell)) = offending_target_merged_payload(plan, payloads) {
+                    return Err(BackendFailure::unsupported_before_write(format!(
+                        "openpyxl cannot preserve stored content in merged non-anchor cell {sheet}!{cell}"
+                    )));
+                }
             }
-            Ok(None) => {}
             Err(error) => {
                 return Err(BackendFailure::failed(format!(
                     "inspect merged-cell payloads before openpyxl: {error:#}"
@@ -279,16 +280,17 @@ impl EditBackend for OpenpyxlXlsxBackend {
                         "ImportRange source contains workbook features outside the openpyxl capability evidence",
                     ));
                 }
-                match find_non_anchor_merged_payload(
+                match merged_non_anchor_payloads(
                     source_workbook,
                     Some((source_sheet, source_range)),
                 ) {
-                    Ok(Some((sheet, cell))) => {
-                        return Err(BackendFailure::unsupported_before_write(format!(
-                            "openpyxl cannot preserve ImportRange source content in merged non-anchor cell {sheet}!{cell}"
-                        )))
+                    Ok(payloads) => {
+                        if let Some((sheet, cell)) = payloads.into_iter().next() {
+                            return Err(BackendFailure::unsupported_before_write(format!(
+                                "openpyxl cannot preserve ImportRange source content in merged non-anchor cell {sheet}!{cell}"
+                            )));
+                        }
                     }
-                    Ok(None) => {}
                     Err(error) => {
                         return Err(BackendFailure::failed(format!(
                             "inspect ImportRange merged-cell payloads before openpyxl: {error:#}"
@@ -989,7 +991,7 @@ fn validate_preserved_ooxml_metadata(
         .contains(&PreservationRequirement::PageSettings)
     {
         anyhow::ensure!(
-            source.page_settings == output.page_settings,
+            per_sheet_entries_match(&source.page_settings, &output.page_settings),
             "openpyxl changed worksheet page settings"
         );
     }
@@ -998,7 +1000,7 @@ fn validate_preserved_ooxml_metadata(
         .contains(&PreservationRequirement::HeaderFooterText)
     {
         anyhow::ensure!(
-            source.header_footers == output.header_footers,
+            per_sheet_entries_match(&source.header_footers, &output.header_footers),
             "openpyxl changed worksheet header/footer settings"
         );
     }
@@ -1016,7 +1018,10 @@ fn validate_preserved_ooxml_metadata(
         .contains(&PreservationRequirement::ConditionalFormatting)
     {
         anyhow::ensure!(
-            source.conditional_formatting == output.conditional_formatting,
+            per_sheet_entries_match(
+                &source.conditional_formatting,
+                &output.conditional_formatting
+            ),
             "openpyxl changed conditional formatting rules"
         );
     }
@@ -1025,7 +1030,7 @@ fn validate_preserved_ooxml_metadata(
         .contains(&PreservationRequirement::DataValidations)
     {
         anyhow::ensure!(
-            source.data_validations == output.data_validations,
+            per_sheet_entries_match(&source.data_validations, &output.data_validations),
             "openpyxl changed data validations"
         );
     }
@@ -1055,6 +1060,21 @@ fn validate_preserved_ooxml_metadata(
         );
     }
     Ok(())
+}
+
+/// Worksheet order changes are legal edit-plan semantics (MoveSheet), so the
+/// workbook-order per-sheet snapshot lists compare through sheet names:
+/// every source worksheet must appear with identical content, position must
+/// not matter. Content within one worksheet keeps its exact-order
+/// comparison; sheet-order correctness is owned by `validate_sheet_names`.
+fn per_sheet_entries_match<T: PartialEq>(source: &[(String, T)], output: &[(String, T)]) -> bool {
+    source.len() == output.len()
+        && source.iter().all(|(name, expected)| {
+            output
+                .iter()
+                .find(|(output_name, _)| output_name == name)
+                .is_some_and(|(_, actual)| actual == expected)
+        })
 }
 
 fn preserved_sheet_metadata_matches(
@@ -1270,22 +1290,7 @@ fn workbook_preservation_snapshot(path: &Path) -> Result<WorkbookPreservationSna
             .dimensions
             .push((sheet_name.clone(), column_dimensions, row_dimensions));
 
-        let mut page_settings = Vec::new();
-        for child in root.children().filter(|node| node.is_element()) {
-            if matches!(
-                child.tag_name().name(),
-                "pageMargins" | "pageSetup" | "printOptions" | "rowBreaks" | "colBreaks"
-            ) {
-                page_settings.push(canonical_xml_element(child));
-            } else if child.tag_name().name() == "sheetPr" {
-                if let Some(setup_properties) = child
-                    .children()
-                    .find(|node| node.is_element() && node.tag_name().name() == "pageSetUpPr")
-                {
-                    page_settings.push(canonical_xml_element(setup_properties));
-                }
-            }
-        }
+        let page_settings = canonical_page_settings(root);
         snapshot
             .page_settings
             .push((sheet_name.clone(), page_settings));
@@ -1375,6 +1380,34 @@ fn read_zip_part(archive: &mut zip::ZipArchive<File>, part_name: &str) -> Result
     part.read_to_string(&mut xml)
         .with_context(|| format!("read OOXML part {part_name}"))?;
     Ok(xml)
+}
+
+fn canonical_page_settings(root: roxmltree::Node<'_, '_>) -> Vec<CanonicalXmlElement> {
+    let mut page_settings = Vec::new();
+    for child in root.children().filter(|node| node.is_element()) {
+        if matches!(
+            child.tag_name().name(),
+            "pageMargins" | "pageSetup" | "printOptions" | "rowBreaks" | "colBreaks"
+        ) {
+            page_settings.push(canonical_xml_element(child));
+        } else if child.tag_name().name() == "sheetPr" {
+            if let Some(setup_properties) = child
+                .children()
+                .find(|node| node.is_element() && node.tag_name().name() == "pageSetUpPr")
+            {
+                // An empty pageSetUpPr carries only schema defaults. Umya
+                // reads fitToPage as false and omits the empty element again;
+                // normalize that representation while retaining strict
+                // per-sheet checks for every explicit attribute/child.
+                let has_explicit_content = setup_properties.attributes().next().is_some()
+                    || setup_properties.children().any(|node| node.is_element());
+                if has_explicit_content {
+                    page_settings.push(canonical_xml_element(setup_properties));
+                }
+            }
+        }
+    }
+    page_settings
 }
 
 fn canonical_xml_element(node: roxmltree::Node<'_, '_>) -> CanonicalXmlElement {
@@ -2177,27 +2210,41 @@ fn validate_unmodified_styles(
         let output_sheet = output
             .sheet_by_name(&output_name)
             .with_context(|| format!("style-preservation output sheet {output_name:?} missing"))?;
+        let row_map = plan_row_map(plan, source_name)?;
         for source_cell in source_sheet.cells() {
             let address = source_cell.coordinate().to_string();
-            if style_is_modified_by_plan(plan, source_name, &output_name, &address)? {
+            let output_address = match &row_map {
+                Some(map) => match map.map_address(&address)? {
+                    Some(mapped) => mapped,
+                    // The plan deletes the row owning this source cell; its
+                    // removal is the requested semantics, not a loss.
+                    None => continue,
+                },
+                None => address.clone(),
+            };
+            if style_is_modified_by_plan(plan, source_name, &output_name, &output_address)? {
                 continue;
             }
             let actual = output_sheet
-                .cell(address.as_str())
+                .cell(output_address.as_str())
                 .map(|cell| cell.style().clone())
                 .unwrap_or_default();
             // openpyxl normalizes non-anchor cells in merged ranges when it
             // loads/saves a workbook. Validate only border sides on the
             // merged range perimeter here; non-border style comes from the
-            // anchor, which is checked independently above.
-            if let Some(equal) =
-                merged_member_effective_borders_equal(source_sheet, output_sheet, &address)
-            {
-                anyhow::ensure!(
-                    equal,
-                    "Rust unmodified merged-cell border readback mismatch at {output_name}!{address}"
-                );
-                continue;
+            // anchor, which is checked independently above. The perimeter
+            // check compares shared coordinates, so it only applies when the
+            // row mapping leaves this address in place.
+            if output_address == address {
+                if let Some(equal) =
+                    merged_member_effective_borders_equal(source_sheet, output_sheet, &address)
+                {
+                    anyhow::ensure!(
+                        equal,
+                        "Rust unmodified merged-cell border readback mismatch at {output_name}!{address}"
+                    );
+                    continue;
+                }
             }
             anyhow::ensure!(
                 styles_semantically_equal(&actual, source_cell.style()),
@@ -2288,6 +2335,105 @@ fn final_sheet_name(plan: &ExcelEditPlan, source_name: &str) -> String {
         }
     }
     name
+}
+
+/// Sequential source-row → output-row mapping for one worksheet, derived by
+/// simulating the plan's DeleteRows/InsertRows operations in application
+/// order. Plans author row operations before the cell edits that target the
+/// final coordinates; a cell edit authored before a row operation is not
+/// remapped.
+struct PlanRowMap {
+    rows: BTreeMap<u32, Option<u32>>,
+    beyond_from: u32,
+    beyond_shift: i64,
+}
+
+impl PlanRowMap {
+    fn output_row(&self, source_row: u32) -> Option<u32> {
+        if source_row >= self.beyond_from {
+            Some((source_row as i64 + self.beyond_shift) as u32)
+        } else {
+            self.rows.get(&source_row).copied().flatten()
+        }
+    }
+
+    /// `Ok(None)` means the plan deletes the row owning this source address.
+    fn map_address(&self, address: &str) -> Result<Option<String>> {
+        let (row, column) = parse_cell(address)?;
+        Ok(self
+            .output_row(row)
+            .map(|row| format!("{}{}", column_letters(column), row)))
+    }
+}
+
+/// Build the per-sheet row mapping for the unmodified-readback comparisons.
+/// Returns `None` when the plan has no row operations for the worksheet so
+/// callers keep the identity fast path.
+fn plan_row_map(plan: &ExcelEditPlan, source_sheet: &str) -> Result<Option<PlanRowMap>> {
+    let matches_sheet =
+        |sheet: &str| sheet == source_sheet || sheet == final_sheet_name(plan, source_sheet);
+    let row_operations: Vec<(&u32, &u32, bool)> = plan
+        .operations
+        .iter()
+        .filter_map(|operation| match operation {
+            EditOperation::DeleteRows {
+                sheet,
+                first_row,
+                count,
+            } if matches_sheet(sheet) => Some((first_row, count, true)),
+            EditOperation::InsertRows {
+                sheet,
+                first_row,
+                count,
+            } if matches_sheet(sheet) => Some((first_row, count, false)),
+            _ => None,
+        })
+        .collect();
+    if row_operations.is_empty() {
+        return Ok(None);
+    }
+    // rows[i] models current worksheet row i+1: Some(source row) or None for
+    // a row the plan inserted. Source rows below the simulated window shift
+    // uniformly and resolve through `beyond_shift`.
+    let mut rows: Vec<Option<u32>> = Vec::new();
+    let mut next_source_row: u32 = 1;
+    for (first_row, count, delete) in row_operations {
+        let first = *first_row as usize;
+        let count = *count as usize;
+        if delete {
+            let end = first
+                .checked_add(count)
+                .and_then(|end| end.checked_sub(1))
+                .context("row deletion range overflows")?;
+            while rows.len() < end {
+                rows.push(Some(next_source_row));
+                next_source_row += 1;
+            }
+            rows.drain(first - 1..first - 1 + count);
+        } else {
+            while rows.len() < first - 1 {
+                rows.push(Some(next_source_row));
+                next_source_row += 1;
+            }
+            rows.splice(first - 1..first - 1, std::iter::repeat(None).take(count));
+        }
+    }
+    let highest_placed = next_source_row - 1;
+    let mut mapped = BTreeMap::new();
+    for (index, entry) in rows.iter().enumerate() {
+        if let Some(source_row) = entry {
+            mapped.insert(*source_row, Some(index as u32 + 1));
+        }
+    }
+    for source_row in 1..=highest_placed {
+        mapped.entry(source_row).or_insert(None);
+    }
+    let beyond_shift = rows.len() as i64 - i64::from(highest_placed);
+    Ok(Some(PlanRowMap {
+        rows: mapped,
+        beyond_from: highest_placed + 1,
+        beyond_shift,
+    }))
 }
 
 fn style_is_modified_by_plan(
@@ -2560,10 +2706,10 @@ fn worksheet_parts_by_name(source: &Path) -> Result<BTreeMap<String, String>> {
 /// Openpyxl's normal worksheet loader removes every non-anchor cell in a
 /// merged range. Check target workbooks globally; for ImportRange sources,
 /// check only the selected sheet and source range whose payload will be read.
-fn find_non_anchor_merged_payload(
+fn merged_non_anchor_payloads(
     source: &Path,
     scope: Option<(&str, &str)>,
-) -> Result<Option<(String, String)>> {
+) -> Result<Vec<(String, String)>> {
     let parts = worksheet_parts_by_name(source)?;
     if let Some((source_sheet, source_range)) = scope {
         anyhow::ensure!(
@@ -2593,12 +2739,13 @@ fn find_non_anchor_merged_payload(
         }
     }
     if candidates.is_empty() {
-        return Ok(None);
+        return Ok(Vec::new());
     }
 
     // Use the Rust reader to distinguish actual values from empty styled cells
     // that happen to contain an empty <v> or <is> element.
     let workbook = read_workbook(source).context("read cells identified in merged ranges")?;
+    let mut payloads = Vec::new();
     for (sheet_name, address) in candidates {
         let Some(sheet) = workbook
             .sheets
@@ -2609,10 +2756,65 @@ fn find_non_anchor_merged_payload(
         };
         let address = normalize_address(&address);
         if sheet.values.contains_key(&address) || sheet.formulas.contains_key(&address) {
-            return Ok(Some((sheet_name, address)));
+            payloads.push((sheet_name, address));
         }
     }
-    Ok(None)
+    Ok(payloads)
+}
+
+/// First merged non-anchor payload of the target workbook the plan still has
+/// to protect: worksheets with an explicit `MergedNonAnchorPayloads` allowance
+/// may drop payloads outside every operation target rectangle (openpyxl
+/// rewrite loss, baseline-equivalent), while payloads inside a rectangle the
+/// plan writes into stay protected, as do payloads on worksheets without the
+/// allowance.
+fn offending_target_merged_payload(
+    plan: &ExcelEditPlan,
+    payloads: Vec<(String, String)>,
+) -> Option<(String, String)> {
+    let target_rectangles: Vec<(&str, &str, &str)> = plan
+        .operations
+        .iter()
+        .filter_map(|operation| match operation {
+            EditOperation::CopyRange {
+                target_sheet,
+                source_range,
+                target_start,
+                ..
+            }
+            | EditOperation::ImportRange {
+                target_sheet,
+                source_range,
+                target_start,
+                ..
+            } => Some((
+                target_sheet.as_str(),
+                source_range.as_str(),
+                target_start.as_str(),
+            )),
+            _ => None,
+        })
+        .collect();
+    for (sheet, address) in payloads {
+        let allowance = plan.drop_allowed.get(&sheet).is_some_and(|allowed| {
+            allowed.contains(&PreservationRequirement::MergedNonAnchorPayloads)
+        });
+        if !allowance {
+            return Some((sheet, address));
+        }
+        let inside_operation_rectangle =
+            target_rectangles
+                .iter()
+                .any(|(target_sheet, source_range, target_start)| {
+                    *target_sheet == sheet.as_str()
+                        && target_range_contains(source_range, target_start, &address)
+                            .unwrap_or(false)
+                });
+        if inside_operation_rectangle {
+            return Some((sheet, address));
+        }
+    }
+    None
 }
 
 fn merged_payload_cells_in_range(
@@ -3171,6 +3373,44 @@ fn validate_value(expected: &crate::CellValue, actual: Option<&serde_json::Value
     Ok(())
 }
 
+/// The merge range covering a non-anchor cell, if any.
+fn non_anchor_merge_containing(sheet: &SheetDump, address: &str) -> Option<String> {
+    let (row, column) = parse_cell(address).ok()?;
+    sheet
+        .merges
+        .iter()
+        .find(|merge| {
+            let Ok((start_row, start_column, end_row, end_column)) = parse_range(merge) else {
+                return false;
+            };
+            row >= start_row
+                && row <= end_row
+                && column >= start_column
+                && column <= end_column
+                && (row != start_row || column != start_column)
+        })
+        .cloned()
+}
+
+/// Baseline-equivalence exemption for merged non-anchor payloads: on a
+/// worksheet with an explicit `MergedNonAnchorPayloads` allowance, a source
+/// cell hidden under a merged range whose range string is unchanged may
+/// surface as empty after the openpyxl rewrite, matching the legacy Python
+/// baseline. The strict whole-sheet merge comparison stays in
+/// `validate_preserved_merges`; this only exempts the emptied payload cells.
+fn merged_non_anchor_payload_loss_exempt(
+    plan: &ExcelEditPlan,
+    source_sheet: &SheetDump,
+    output_sheet: &SheetDump,
+    address: &str,
+) -> bool {
+    plan.drop_allowed
+        .get(&source_sheet.name)
+        .is_some_and(|allowed| allowed.contains(&PreservationRequirement::MergedNonAnchorPayloads))
+        && non_anchor_merge_containing(source_sheet, address)
+            .is_some_and(|range| output_sheet.merges.contains(&range))
+}
+
 fn validate_preserved_values(
     source: &[SheetDump],
     output: &[SheetDump],
@@ -3208,11 +3448,26 @@ fn validate_preserved_values(
         let Some(new_sheet) = output.iter().find(|sheet| &sheet.name == output_name) else {
             continue;
         };
+        let row_map = plan_row_map(plan, &old_sheet.name)?;
         for (address, value) in &old_sheet.values {
-            if cell_value_is_modified(&old_sheet.name, address, &plan.operations) {
+            let output_address = match &row_map {
+                Some(map) => match map.map_address(address)? {
+                    Some(mapped) => mapped,
+                    // The plan deletes the row owning this source cell.
+                    None => continue,
+                },
+                None => address.clone(),
+            };
+            if cell_value_is_modified(&old_sheet.name, &output_address, &plan.operations) {
                 continue;
             }
-            let actual = new_sheet.values.get(address);
+            let actual = new_sheet.values.get(&output_address);
+            if actual.is_none()
+                && output_address == *address
+                && merged_non_anchor_payload_loss_exempt(plan, old_sheet, new_sheet, address)
+            {
+                continue;
+            }
             anyhow::ensure!(
                 json_value_equal(value, actual),
                 "unmodified cell value changed at {}!{}: expected {:?}, got {:?}",
@@ -3246,12 +3501,35 @@ fn validate_preserved_formulas(
         let Some(new_sheet) = output.iter().find(|sheet| &sheet.name == output_name) else {
             continue;
         };
+        let row_map = plan_row_map(plan, &old_sheet.name)?;
         for (address, formula) in &old_sheet.formulas {
-            if cell_formula_is_modified(&old_sheet.name, address, &plan.operations) {
+            let output_address = match &row_map {
+                Some(map) => match map.map_address(address)? {
+                    Some(mapped) => mapped,
+                    // The plan deletes the row owning this source formula.
+                    None => continue,
+                },
+                None => address.clone(),
+            };
+            if output_address != *address {
+                // Row insertion/deletion rewrites the references inside
+                // shifted formulas; the engine-neutral validator cannot
+                // recompute that rewrite, so shifted formulas are not
+                // text-compared here. They stay covered by the engine's own
+                // formula adjustment plus the requesting side's readback.
+                continue;
+            }
+            if cell_formula_is_modified(&old_sheet.name, &output_address, &plan.operations) {
+                continue;
+            }
+            if !new_sheet.formulas.contains_key(&output_address)
+                && output_address == *address
+                && merged_non_anchor_payload_loss_exempt(plan, old_sheet, new_sheet, address)
+            {
                 continue;
             }
             anyhow::ensure!(
-                new_sheet.formulas.get(address) == Some(formula),
+                new_sheet.formulas.get(&output_address) == Some(formula),
                 "unmodified formula changed at {}!{}",
                 old_sheet.name,
                 address
@@ -3281,12 +3559,21 @@ fn validate_preserved_comments(
         let Some(new_sheet) = output.iter().find(|sheet| &sheet.name == output_name) else {
             continue;
         };
+        let row_map = plan_row_map(plan, &old_sheet.name)?;
         for (address, text) in &old_sheet.comments {
-            if cell_comment_is_modified(&old_sheet.name, address, &plan.operations) {
+            let output_address = match &row_map {
+                Some(map) => match map.map_address(address)? {
+                    Some(mapped) => mapped,
+                    // The plan deletes the row owning this source comment.
+                    None => continue,
+                },
+                None => address.clone(),
+            };
+            if cell_comment_is_modified(&old_sheet.name, &output_address, &plan.operations) {
                 continue;
             }
             anyhow::ensure!(
-                new_sheet.comments.get(address) == Some(text),
+                new_sheet.comments.get(&output_address) == Some(text),
                 "unmodified comment moved or changed at {}!{}",
                 old_sheet.name,
                 address
@@ -3780,6 +4067,34 @@ mod tests {
             text: None,
             children: Vec::new(),
         })
+    }
+
+    #[test]
+    fn empty_default_page_setup_properties_are_normalized_but_explicit_settings_remain(
+    ) -> Result<()> {
+        const NS: &str = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
+        let source_xml = format!(
+            r#"<worksheet xmlns="{NS}"><sheetPr><pageSetUpPr/></sheetPr><pageMargins left="0.7" right="0.7" top="0.75" bottom="0.75" header="0.3" footer="0.3"/></worksheet>"#
+        );
+        let normalized_xml = format!(
+            r#"<worksheet xmlns="{NS}"><pageMargins left="0.7" right="0.7" top="0.75" bottom="0.75" header="0.3" footer="0.3"/></worksheet>"#
+        );
+        let explicit_xml = format!(
+            r#"<worksheet xmlns="{NS}"><sheetPr><pageSetUpPr fitToPage="1"/></sheetPr><pageMargins left="0.7" right="0.7" top="0.75" bottom="0.75" header="0.3" footer="0.3"/></worksheet>"#
+        );
+        let source = roxmltree::Document::parse(&source_xml)?;
+        let normalized = roxmltree::Document::parse(&normalized_xml)?;
+        let explicit = roxmltree::Document::parse(&explicit_xml)?;
+
+        assert_eq!(
+            canonical_page_settings(source.root_element()),
+            canonical_page_settings(normalized.root_element())
+        );
+        assert_ne!(
+            canonical_page_settings(source.root_element()),
+            canonical_page_settings(explicit.root_element())
+        );
+        Ok(())
     }
 
     #[test]
@@ -4371,6 +4686,180 @@ mod tests {
         assert!(merged_payload_cells_in_range(cells.clone(), "Sheet1", "A5:A9")?.is_empty());
         assert!(merged_payload_cells_in_range(cells, "Other", "A5:A26")?.is_empty());
         Ok(())
+    }
+
+    #[test]
+    fn per_sheet_snapshot_comparison_ignores_sheet_order_only() {
+        let source = vec![
+            ("使用说明".to_owned(), vec![1]),
+            ("核查表校验结果".to_owned(), vec![2, 3]),
+        ];
+        // Reordered worksheets with identical per-sheet content match.
+        let reordered = vec![
+            ("核查表校验结果".to_owned(), vec![2, 3]),
+            ("使用说明".to_owned(), vec![1]),
+        ];
+        assert!(per_sheet_entries_match(&source, &reordered));
+        // Changed per-sheet content still fails.
+        let changed = vec![
+            ("核查表校验结果".to_owned(), vec![2, 4]),
+            ("使用说明".to_owned(), vec![1]),
+        ];
+        assert!(!per_sheet_entries_match(&source, &changed));
+        // A dropped worksheet still fails.
+        assert!(!per_sheet_entries_match(&source, &reordered[0..1].to_vec()));
+    }
+
+    fn sheet_dump(name: &str, merges: &[&str]) -> SheetDump {
+        SheetDump {
+            name: name.to_owned(),
+            values: BTreeMap::new(),
+            formulas: BTreeMap::new(),
+            formula_status: "ok".to_owned(),
+            merges: merges.iter().map(|merge| merge.to_string()).collect(),
+            merge_status: "ok".to_owned(),
+            comments: BTreeMap::new(),
+            comments_status: "ok".to_owned(),
+            conditional_formatting: Vec::new(),
+            conditional_formatting_status: "ok".to_owned(),
+            data_validations: Vec::new(),
+            data_validations_status: "ok".to_owned(),
+        }
+    }
+
+    fn exemption_plan(
+        directory: &Path,
+        operations: Vec<EditOperation>,
+        allowance_sheet: Option<&str>,
+    ) -> ExcelEditPlan {
+        let input = directory.join("input.xlsx");
+        std::fs::write(&input, b"original workbook bytes").unwrap();
+        let mut plan = ExcelEditPlan {
+            request_id: "payload-allowance-test".to_owned(),
+            input,
+            output: directory.join("output.xlsx"),
+            format: WorkbookFormat::Xlsx,
+            workbook: crate::WorkbookProfile {
+                format: WorkbookFormat::Xlsx,
+                inventory_complete: true,
+                features_present: BTreeSet::new(),
+            },
+            operations,
+            preserve: [PreservationRequirement::UnmodifiedPackageParts]
+                .into_iter()
+                .collect(),
+            drop_allowed: BTreeMap::new(),
+        };
+        if let Some(sheet) = allowance_sheet {
+            plan.drop_allowed.insert(
+                sheet.to_owned(),
+                [PreservationRequirement::MergedNonAnchorPayloads]
+                    .into_iter()
+                    .collect(),
+            );
+        }
+        plan
+    }
+
+    fn exemption_test_directory(label: &str) -> PathBuf {
+        let directory = std::env::temp_dir().join(format!(
+            "excel-editor-payload-allowance-{label}-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&directory).unwrap();
+        directory
+    }
+
+    #[test]
+    fn payload_allowance_exempts_only_outside_operation_rectangles() -> Result<()> {
+        let directory = exemption_test_directory("preflight");
+        let operations = vec![
+            EditOperation::ImportRange {
+                source_workbook: directory.join("source.xlsx"),
+                source_sheet: "模板".to_owned(),
+                source_range: "A1:M10".to_owned(),
+                target_sheet: "汇总".to_owned(),
+                target_start: "A1".to_owned(),
+                copy_values: true,
+                copy_formulas: true,
+                style_mode: RangeStyleMode::Basic,
+                copy_comments: false,
+                copy_merges: false,
+                copy_row_heights: false,
+                copy_column_widths: false,
+                copy_row_hidden: false,
+                copy_column_hidden: false,
+                copy_outline_levels: false,
+                copy_all_row_dimensions: false,
+                copy_all_column_dimensions: false,
+                materialize_blank_cells: false,
+                hide_zero: false,
+            },
+            EditOperation::SetCellValue {
+                sheet: "其他".to_owned(),
+                cell: "A1".to_owned(),
+                value: crate::CellValue::Text("unrelated".to_owned()),
+            },
+        ];
+        let plan = exemption_plan(&directory, operations, Some("汇总"));
+
+        // Payload on an allowed sheet outside the A1:M10 import rectangle.
+        assert_eq!(
+            offending_target_merged_payload(&plan, vec![("汇总".to_owned(), "B20".to_owned())]),
+            None
+        );
+        // The same payload one row inside the import rectangle stays protected.
+        assert_eq!(
+            offending_target_merged_payload(&plan, vec![("汇总".to_owned(), "M10".to_owned())]),
+            Some(("汇总".to_owned(), "M10".to_owned()))
+        );
+        // A payload on a worksheet without the allowance stays protected.
+        assert_eq!(
+            offending_target_merged_payload(&plan, vec![("其他".to_owned(), "B2".to_owned())]),
+            Some(("其他".to_owned(), "B2".to_owned()))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn readback_exemption_requires_allowance_and_unchanged_merge() {
+        let source = sheet_dump("汇总", &["A1:C1"]);
+        let output = sheet_dump("汇总", &["A1:C1"]);
+        let operations = vec![EditOperation::SetCellValue {
+            sheet: "汇总".to_owned(),
+            cell: "F5".to_owned(),
+            value: crate::CellValue::Text("unrelated".to_owned()),
+        }];
+        let directory = exemption_test_directory("readback");
+        let mut plan = exemption_plan(&directory, operations, None);
+
+        // Without the allowance nothing is exempt, even for merged members.
+        assert!(!merged_non_anchor_payload_loss_exempt(
+            &plan, &source, &output, "B1"
+        ));
+        assert_eq!(
+            non_anchor_merge_containing(&source, "B1"),
+            Some("A1:C1".to_owned())
+        );
+        assert_eq!(non_anchor_merge_containing(&source, "A1"), None);
+        assert_eq!(non_anchor_merge_containing(&source, "D4"), None);
+
+        plan.drop_allowed.insert(
+            "汇总".to_owned(),
+            [PreservationRequirement::MergedNonAnchorPayloads]
+                .into_iter()
+                .collect(),
+        );
+        assert!(merged_non_anchor_payload_loss_exempt(
+            &plan, &source, &output, "B1"
+        ));
+
+        // A changed merge set drops the exemption; the strict merge comparison
+        // reports that change separately.
+        let rewritten = sheet_dump("汇总", &["A1:D1"]);
+        assert!(!merged_non_anchor_payload_loss_exempt(
+            &plan, &source, &rewritten, "B1"
+        ));
     }
 
     fn add_test_row_and_column_styles(xml: &str) -> Result<String> {

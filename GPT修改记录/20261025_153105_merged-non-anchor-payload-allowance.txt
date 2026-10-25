@@ -1,0 +1,45 @@
+时间：2026-10-25 15:31:05 Asia/Shanghai
+执行者：Codex main
+修改前 commit：e73bc1a（main）
+修改后 commit：本记录与豁免契约实现由同一提交承载；SHA 见本轮汇报。
+WIP 情况：修改前 main 工作区干净；本轮修改与本记录一并提交。未触碰 audit-dev（有 S5 未提交 WIP）与 pytools-dev 工作树。
+
+目的：处理 audit-dev 第三项共享能力请求 `audit-core/shared-capability-requests/20261025_openpyxl_target_merged_payload_baseline_equivalence.md`——S1-F01 完整 60 操作公式复制计划（4×ImportRange + SetComment + SetWorkbookCalculationProperties）在 7/7 真实目标簿上被 `target_merged_non_anchor_payload` 写前拒绝：目标簿 4 个复制区之外有 855 个合并不锚载荷。Audit 已用 7/7 真实样本证明 Python 基线（openpyxl load+save）本身同样不保留这些载荷（写后保留 0/855、合并区域 37→37 不变），worker 丢弃与基线逐格等价；请求引入计划级显式 opt-in，实现方式由 main 决定。前置条件（S1 历史完整计划先落地，即 e73bc1a）已由 audit `4cd3154` 满足。
+
+契约设计（main 裁决）：
+- 不新增 ExcelEditPlan 字段（避免破坏两个业务分支所有既有结构体字面量构造），改为 `PreservationRequirement` 新增 `MergedNonAnchorPayloads` 变体，经既有 `drop_allowed` 按表显式声明。
+- 该变体语义：声明表允许 openpyxl 重写按已验证基线等价丢弃合并非锚载荷。与旧有变体不同，它描述保留工作表上的引擎重写损失，不要求 DeleteSheet；同键混入任何旧变体仍维持 DeleteSheet 要求（旧语义不变）。
+- 该变体不得进入 `preserve`（语义为豁免而非保留），文档注释已写明；未做额外强制校验。
+
+修改文件：
+- `crates/excel-editor/src/plan.rs`
+- `crates/excel-editor/src/openpyxl_backend.rs`
+- `crates/excel-editor/tests/merged_payload_exemption.rs`（新增）
+- `EXCEL_ENGINE_ARCHITECTURE.md`
+- 本记录
+
+变化：
+- plan.rs：新枚举变体（serde snake_case `merged_non_anchor_payloads`，旧 JSON 兼容）+ drop_allowed 验证规则按上述语义调整。
+- openpyxl 预检：`find_non_anchor_merged_payload` 重构为 `merged_non_anchor_payloads`（返回全部载荷，行为等价）；目标侧经新函数 `offending_target_merged_payload` 过滤——无声明表的载荷、以及有声明表但与任一 ImportRange/CopyRange 目标矩形相交的载荷仍拒绝，声明表上操作矩形之外的载荷放行。ImportRange 源侧守卫语义不变（范围内任一载荷即拒）。
+- 读回校验：`validate_preserved_values`/`validate_preserved_formulas` 新增豁免——声明表上，源格为合并非锚成员、同一合并区在输出中不变、且输出该格为空时，不计入 unmodified 变化（公式仅在行映射未移位时适用既有规则，本豁免同样要求地址未移位）。合并区域本身的严格比较（validate_preserved_merges）不变；样式与批注不在豁免范围。
+- EXCEL_ENGINE_ARCHITECTURE.md §4.2 登记契约与证据边界。
+
+配置及业务路由影响：无默认路由变化；未声明豁免的计划与旧行为逐字节一致。Audit S1-F01 计划需按真实目标簿的载荷所在表显式加入 drop_allowed 声明后方可通过预检；openpyxl worker 真实运行、结果值对拍与能力登记仍由 Audit 按真实样本执行，本实现本身不构成生产 Passed。
+
+组件版本：不升级。
+
+测试：
+- `cargo test --offline --locked -p excel-editor --lib`：32 项通过（新增 3 项：仅含新变体的 drop_allowed 免 DeleteSheet 且混入旧变体恢复要求；预检过滤对允许表矩形外放行/矩形内仍拒/未声明表仍拒；读回豁免需声明+合并区不变，锚点与非成员格不豁免）。
+- `cargo test --offline --locked -p excel-editor --test merged_payload_exemption`（Windows 预检链路，无需 openpyxl runtime）：1 项通过——真实 umya 构造的合并载荷簿无声明时以 `merged non-anchor cell 汇总!B1` 拒绝且无输出；有声明时预检通过、apply 在伪 worker 启动处失败（错误不含 merged non-anchor）。
+- `cargo test --workspace --locked --offline -q`：除 pytools-core 既有 `config_task_loader_parity` Windows 路径失败（与前两轮相同，属 PyTools 业务 crate）外全部通过。
+- `cargo fmt -p excel-editor -- --check`：通过。
+
+未执行项：未跑真实 openpyxl worker 端到端（隔离 runtime 测试按仓库惯例为 --ignored；真实样本运行与 Python 基线对拍属 Audit 侧最小验证）；未做 Linux/deb 验收；请求文件本身未改动（由 Audit 同步时按结果更新状态）。
+
+已知问题：
+- 豁免按表面粒度：若真实目标簿的载荷分布在多张表，Audit 须逐表声明；未声明表上的载荷仍全局拒绝（有意收紧）。
+- 读回豁免要求输出该格为空（values/formulas 中不存在）；若 openpyxl 以空字符串物化该格，仍会按未修改值变化报错——按 7/7 基线证据（载荷完全消失）该情形未出现。
+- pytools-core `task_config_loaders_match_python_baseline` Windows verbatim 路径失败仍未修（PyTools 业务 crate）。
+
+删除清单：无。
+回滚：回退本次提交即恢复全局严格守卫与旧 drop_allowed 规则；不回滚既有提交，不修改输入工作簿。

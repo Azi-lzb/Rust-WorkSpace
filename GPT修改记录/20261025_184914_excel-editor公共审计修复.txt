@@ -1,0 +1,31 @@
+时间：2026-10-25（本机时间）；执行者：Codex
+修改前 commit：d2da501866a4aca7d2a4132b5c2ed0d2116d4f42；修改后 commit：本记录提交时生成
+WIP：保留未跟踪 HANDOFF_ZCODE_TO_CODEX.md，不纳入提交；未修改其他工作树。
+
+修改目的：审计 GLM 阶段公共 Excel 编辑成果，修正两个可复现/可由规范确认的公共语义缺陷。
+
+修改文件：
+- crates/excel-editor/python/openpyxl_worker.py
+- crates/excel-editor/tests/python/test_openpyxl_worker.py
+- crates/excel-editor/src/umya_backend.rs
+- crates/excel-editor/tests/freeze_panes_auto_filter.rs
+- EXCEL_ENGINE_ARCHITECTURE.md
+
+变化：
+1. openpyxl 保存后的样式表检查改用 namespace-aware XML 解析；检查 cellXfs 计数，并流式检查单元格/行 s 与列 style 样式索引。增加带前缀命名空间、列样式越界的回归用例，确保损坏候选被拒绝。
+2. 新建或更新 AutoFilter 的 _xlnm._FilterDatabase 均设置 hidden=true，并增加读回断言。
+3. 能力矩阵补充以上边界和未完成的真实样本验收说明。没有修改生产默认路由或 capability 登记。
+
+测试：
+- cargo test --offline --locked -p excel-editor：通过；openpyxl 隔离运行时专项有 4 项按现状 ignored。
+- python crates/excel-editor/tests/python/test_openpyxl_worker.py：11/11 通过。
+- cargo fmt -p excel-editor -- --check：通过。
+- git diff --check：通过。
+
+未执行：真实 S1 工作簿端到端重跑、性能基准、Linux/glibc 2.28/deb 验收。合成回归不能证明真实模板已验收。style-table 检查只阻止已识别的结构损坏，不修复真实模板中导致损坏的上游样式重建问题。
+
+已知问题：Audit 真实样本的样式重建根因仍待样本复核；Openpyxl/umya 均未据此登记为新生产能力。
+
+配置/VBA/组件版本：无配置或 VBA 影响；组件版本不升级（公共引擎缺陷修复）。
+
+回滚：提交后如回归失败，用 git revert 回退本记录对应提交；保留原始输入文件并从原始工作簿重跑。

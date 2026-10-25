@@ -1,0 +1,21 @@
+时间：2026-10-25 18:58 (+08:00)；执行者：Codex
+修改前 commit：f7a384ae967d5e615a0eb31fd3041859f06e8f1e；修改后 commit：本记录对应提交
+WIP：保留未跟踪 HANDOFF_ZCODE_TO_CODEX.md；未修改 Audit/PyTools 工作树。
+
+目的：评估 Audit 共享请求 #7。真实工作簿报告显示 Umya 输出省略无属性的空 pageSetUpPr，导致逐表 PageSettings XML 快照拒绝候选。检查 umya-spreadsheet 3.1.1 reader/writer 后确认：无 fitToPage 属性按 false 默认读取，false 状态下 writer 省略元素；空节点只编码 schema 默认值，不承载显式打印设置。因此这是保留校验误报，不是已证明的打印语义数据丢失。
+
+修改文件：crates/excel-editor/src/openpyxl_backend.rs。
+
+变化：逐表 PageSettings 仍完整比较 pageMargins、pageSetup、printOptions、分页符及显式 pageSetUpPr 设置；仅将无属性且无元素子节点的默认 pageSetUpPr 归一为缺省。新增测试断言空节点与省略节点等价，fitToPage="1" 等显式设置仍不等价；未放宽工作表范围或其他属性。
+
+测试：
+- cargo test --offline --locked -p excel-editor：通过，34 个库单测和全部集成测试通过；4 个需隔离 openpyxl runtime 的测试按现状 ignored。
+- cargo fmt -p excel-editor -- --check：通过。
+- git diff --check：通过。
+
+未执行：Audit config-real 工作簿候选复跑、Excel/WPS 打印渲染或 Linux/deb 验收。真实工作簿结果仍应由 Audit 在安全节点按其只读样本重新跑完整计划，确认顺序、逐表页面设置、历史写入和其他表保真。
+
+已知问题：本地没有 Audit 用户样本；本修复基于具体 OOXML 内容及 umya-spreadsheet 3.1.1 读写源码验证，不能替代该样本的完整候选测试。
+
+【组件版本】不升级。
+回滚：如后续样本证明空元素存在非默认语义，revert 本记录对应提交并按实际内容扩展模型/保留校验。

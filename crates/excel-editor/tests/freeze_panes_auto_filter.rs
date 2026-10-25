@@ -116,6 +116,16 @@ fn filter_database_record(path: &Path, sheet: &str) -> Result<Option<(usize, Str
     Ok(None)
 }
 
+fn filter_database_hidden(path: &Path, sheet: &str) -> Result<Option<bool>> {
+    let workbook = excel_editor::open_xlsx(path)?;
+    let worksheet = workbook.sheet_by_name(sheet)?;
+    Ok(worksheet
+        .defined_names()
+        .iter()
+        .find(|record| record.name() == "_xlnm._FilterDatabase")
+        .map(|record| record.hidden()))
+}
+
 #[test]
 fn set_creates_pane_filter_and_filter_database_on_non_ascii_sheet() -> Result<()> {
     let dir = TestDir::new();
@@ -199,6 +209,7 @@ fn set_creates_pane_filter_and_filter_database_on_non_ascii_sheet() -> Result<()
         filter_database_record(&output, "历史")?.expect("filter database name after SetAutoFilter");
     assert_eq!(local_sheet_id, 0);
     assert_eq!(raw_reference.replace('\'', ""), "历史!$A$1:$M$5");
+    assert_eq!(filter_database_hidden(&output, "历史")?, Some(true));
     Ok(())
 }
 
@@ -211,6 +222,7 @@ fn set_replaces_existing_pane_and_restores_filter_database_range() -> Result<()>
     let (initial_local_sheet_id, initial_reference) =
         filter_database_record(&input, "History")?.expect("input filter database name");
     assert_eq!(initial_reference.replace('\'', ""), "History!$A$1:$L$10");
+    assert_eq!(filter_database_hidden(&input, "History")?, Some(true));
 
     let profile = inspect_xlsx_profile(&input)?;
     let plan = ExcelEditPlan {
@@ -276,6 +288,7 @@ fn set_replaces_existing_pane_and_restores_filter_database_range() -> Result<()>
         .expect("filter database name after SetAutoFilter");
     assert_eq!(local_sheet_id, initial_local_sheet_id);
     assert_eq!(raw_reference.replace('\'', ""), "History!$A$1:$C$3");
+    assert_eq!(filter_database_hidden(&output, "History")?, Some(true));
     Ok(())
 }
 
