@@ -3,10 +3,10 @@ use pytools_core::archive_ops::{
     execute_archive_plan, ArchiveResult,
 };
 use serde_json::{json, Value};
-use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
+use std::{fs, io::Read};
 
 fn cases() -> Value {
     serde_json::from_str(include_str!("fixtures/archive_cases.json")).unwrap()
@@ -17,6 +17,126 @@ fn baseline() -> Value {
         "../probe/reports/archive_python_baseline.json"
     ))
     .unwrap()
+}
+
+fn read_xlsx_part(path: &Path, part_name: &str) -> String {
+    let file = fs::File::open(path).unwrap();
+    let mut archive = zip::ZipArchive::new(file).unwrap();
+    let mut part = archive.by_name(part_name).unwrap();
+    let mut xml = String::new();
+    part.read_to_string(&mut xml).unwrap();
+    xml
+}
+
+fn spreadsheet_element(node: roxmltree::Node<'_, '_>, local_name: &str) -> bool {
+    node.tag_name().namespace() == Some("http://schemas.openxmlformats.org/spreadsheetml/2006/main")
+        && node.tag_name().name() == local_name
+}
+
+fn assert_python_archive_report_format(path: &Path) {
+    let worksheet = read_xlsx_part(path, "xl/worksheets/sheet1.xml");
+    let worksheet = roxmltree::Document::parse(&worksheet).unwrap();
+    let header = worksheet
+        .descendants()
+        .find(|node| spreadsheet_element(*node, "c") && node.attribute("r") == Some("A1"))
+        .expect("archive report header cell A1");
+    let style_id = header
+        .attribute("s")
+        .unwrap_or("0")
+        .parse::<usize>()
+        .unwrap();
+
+    let styles = read_xlsx_part(path, "xl/styles.xml");
+    let styles = roxmltree::Document::parse(&styles).unwrap();
+    let cell_xfs = styles
+        .descendants()
+        .find(|node| spreadsheet_element(*node, "cellXfs"))
+        .expect("cellXfs collection");
+    let formats = cell_xfs
+        .children()
+        .filter(|node| spreadsheet_element(*node, "xf"))
+        .collect::<Vec<_>>();
+    let header_format = formats[style_id];
+    let alignment = header_format
+        .children()
+        .find(|node| spreadsheet_element(*node, "alignment"))
+        .expect("archive report header alignment");
+    assert_eq!(alignment.attribute("horizontal"), Some("center"));
+    assert_eq!(alignment.attribute("vertical"), Some("top"));
+    let border_id = header_format
+        .attribute("borderId")
+        .unwrap_or("0")
+        .parse::<usize>()
+        .unwrap();
+    let borders = styles
+        .descendants()
+        .find(|node| spreadsheet_element(*node, "borders"))
+        .expect("borders collection");
+    let borders = borders
+        .children()
+        .filter(|node| spreadsheet_element(*node, "border"))
+        .collect::<Vec<_>>();
+    let border = borders[border_id];
+    for side_name in ["left", "right", "top", "bottom"] {
+        let side = border
+            .children()
+            .find(|node| spreadsheet_element(*node, side_name))
+            .expect("header border side");
+        assert_eq!(side.attribute("style"), Some("thin"));
+        if let Some(color) = side
+            .children()
+            .find(|node| spreadsheet_element(*node, "color"))
+        {
+            let automatic_black = color.attribute("auto") == Some("1");
+            let theme_black = color.attribute("theme") == Some("1")
+                && color
+                    .attribute("tint")
+                    .map(|tint| tint.parse::<f64>().is_ok_and(|value| value == 0.0))
+                    .unwrap_or(true);
+            assert!(
+                automatic_black || theme_black,
+                "archive report {side_name} border should use Excel's default black"
+            );
+        }
+    }
+    let font_id = formats[style_id]
+        .attribute("fontId")
+        .unwrap_or("0")
+        .parse::<usize>()
+        .unwrap();
+    let fonts = styles
+        .descendants()
+        .find(|node| spreadsheet_element(*node, "fonts"))
+        .expect("fonts collection");
+    let fonts = fonts
+        .children()
+        .filter(|node| spreadsheet_element(*node, "font"))
+        .collect::<Vec<_>>();
+    assert!(
+        fonts[font_id]
+            .children()
+            .any(|node| { spreadsheet_element(node, "b") && node.attribute("val") != Some("0") }),
+        "archive report headers should be bold like the Python output"
+    );
+
+    let margins = worksheet
+        .descendants()
+        .find(|node| spreadsheet_element(*node, "pageMargins"))
+        .expect("pageMargins element");
+    for (name, expected) in [
+        ("left", 0.75),
+        ("right", 0.75),
+        ("top", 1.0),
+        ("bottom", 1.0),
+        ("header", 0.5),
+        ("footer", 0.5),
+    ] {
+        let actual = margins.attribute(name).unwrap().parse::<f64>().unwrap();
+        assert!(
+            (actual - expected).abs() < 1e-9,
+            "archive report {name} margin should match Python output"
+        );
+    }
 }
 
 struct TempDir(PathBuf);
@@ -155,6 +275,7 @@ fn assert_preview(name: &str, result: &ArchiveResult, root: &Path, baseline: &Va
         "{name} rows"
     );
     assert!(result.output.is_file(), "{name} report must be written");
+    assert_python_archive_report_format(&result.output);
 }
 
 fn assert_copy(name: &str, result: &ArchiveResult, root: &Path, baseline: &Value) {
@@ -186,6 +307,7 @@ fn assert_copy(name: &str, result: &ArchiveResult, root: &Path, baseline: &Value
         "{name} report rows"
     );
     assert!(result.output.is_file(), "{name} report must be written");
+    assert_python_archive_report_format(&result.output);
     for row in result.rows.iter().filter(|row| row.status == "已复制") {
         let source = Path::new(&row.source_path);
         let target = Path::new(&row.target_path);

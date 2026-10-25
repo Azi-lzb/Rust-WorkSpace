@@ -3,7 +3,7 @@
 use anyhow::{bail, Context, Result};
 use chrono::Local;
 use excel_reader::read_workbook;
-use excel_writer::Workbook;
+use excel_writer::{Format, FormatAlign, FormatBorder, Workbook};
 use serde::Serialize;
 use std::{
     collections::{BTreeSet, HashSet},
@@ -349,6 +349,12 @@ fn write_archive_report(
     let mut workbook = Workbook::new();
     let sheet = workbook.add_worksheet();
     sheet.set_name(sheet_name)?;
+    sheet.set_margins(0.75, 0.75, 1.0, 1.0, 0.5, 0.5);
+    let header_format = Format::new()
+        .set_bold()
+        .set_border(FormatBorder::Thin)
+        .set_align(FormatAlign::Center)
+        .set_align(FormatAlign::Top);
     let headers = if sheet_name == "归档计划" {
         vec![
             "源文件路径",
@@ -370,7 +376,7 @@ fn write_archive_report(
         ]
     };
     for (c, value) in headers.iter().enumerate() {
-        sheet.write_string(0, c as u16, *value)?;
+        sheet.write_string_with_format(0, c as u16, *value, &header_format)?;
     }
     for (r, row) in rows.iter().enumerate() {
         let values = if sheet_name == "归档计划" {
