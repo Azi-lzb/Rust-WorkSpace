@@ -1,0 +1,32 @@
+时间：2026-10-25（Windows 原生环境）
+执行者：Codex Audit migration agent
+修改前 commit：04e4ace
+修改后 commit：待本轮本地提交
+WIP：修改前 AutoFit 功能提交完成且工作树干净；本轮仅修改 Audit history EditPlan 和测试，并更新迁移清单。未修改 DEVELOPMENT_GOAL.md、共享 crate、根 Cargo 配置或用户工作簿。
+
+## 目的
+
+- 落实用户确认的“保留原结果表 PageSettings”要求。
+- S1 历史结果计划仍允许替换管理工作表中的历史数据、样式等约定属性，但不再授权丢弃该工作表的 PageSettings。引擎无法保留时必须拒绝，不能静默重置。
+
+## 修改文件
+
+- audit-core/src/s1_history.rs：从管理页 drop_allowed 属性集合排除 PageSettings；在既有替换计划单测中断言 PageSettings 被保留且不允许丢弃。
+- audit-core/MIGRATION_INVENTORY.md：记录该 preserve 契约。
+- 本记录。
+
+## 测试
+
+- Windows 原生 cargo test --offline --locked -p audit-core history_workbook_edit_plan_replaces_only_the_managed_sheet -j 1：目标测试 1/1 通过，117 个其他库单测按过滤器未运行。
+- 没有调用任何 Excel 修改后端，也没有写入真实工作簿；本测试只验证 Audit 生成的 EditPlan 契约。
+
+## 未执行项与已知问题
+
+- S1 历史工作簿真实写回仍无已验收 editor capability/生产 CLI；旧候选可能因保留项不支持而失败。本次契约变严后，不能保留 PageSettings 的后端应拒绝该请求。
+- S1-F01 整体仍未验证；本轮不涉及公式复制/重算或真实样本链。
+- 目标 Linux、麒麟/UOS、deb 未验证。
+
+## 影响与回滚
+
+- 仅影响 S1 历史工作簿修改 EditPlan 对管理页属性损失的授权。
+- 回滚本地提交可恢复原 drop_allowed 集合及测试；无需恢复用户工作簿。

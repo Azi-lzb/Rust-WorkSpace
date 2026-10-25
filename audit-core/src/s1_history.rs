@@ -219,7 +219,12 @@ pub fn build_s1_history_workbook_edit_plan(
     .collect();
     let mut drop_allowed = BTreeMap::new();
     if replaces_existing_history_sheet {
-        drop_allowed.insert(HISTORY_AUDIT_SHEET.to_owned(), preserve.clone());
+        let dropped_properties = preserve
+            .iter()
+            .copied()
+            .filter(|property| *property != PreservationRequirement::PageSettings)
+            .collect();
+        drop_allowed.insert(HISTORY_AUDIT_SHEET.to_owned(), dropped_properties);
     }
     let edit_plan = ExcelEditPlan {
         request_id: "audit-s1-history-workbook-update".to_owned(),
@@ -1327,9 +1332,24 @@ mod tests {
             plan.preserve
                 .contains(&PreservationRequirement::FormulaText)
         );
+        assert!(
+            plan.preserve
+                .contains(&PreservationRequirement::PageSettings)
+        );
+        assert!(!plan
+            .drop_allowed
+            .get(HISTORY_AUDIT_SHEET)
+            .expect("managed sheet drop allowance")
+            .contains(&PreservationRequirement::PageSettings));
+        let expected_drop_allowance = plan
+            .preserve
+            .iter()
+            .copied()
+            .filter(|property| *property != PreservationRequirement::PageSettings)
+            .collect::<std::collections::BTreeSet<_>>();
         assert_eq!(
             plan.drop_allowed.get(HISTORY_AUDIT_SHEET),
-            Some(&plan.preserve)
+            Some(&expected_drop_allowance)
         );
         assert_eq!(fs::read(&input).unwrap(), original);
         assert!(!output.exists());
