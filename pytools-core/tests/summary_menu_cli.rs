@@ -187,6 +187,9 @@ fn interactive_summary_menu_routes_comment_summary_with_template_and_sources() -
     assert_eq!(history["function"], "summary-comments");
     assert_eq!(history["status"], "succeeded");
     assert_eq!(history["completed_files"], 1);
+    assert_eq!(history["summary"]["saved"], true);
+    assert_eq!(history["summary"]["files"], 1);
+    assert_eq!(history["summary"]["rows"], 3);
     assert!(history["events"].as_array().is_some_and(|events| {
         events.iter().any(|event| {
             event["phase"] == "source_read"

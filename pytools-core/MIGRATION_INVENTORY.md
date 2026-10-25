@@ -809,6 +809,10 @@ Windows 原生 `cargo test --offline --locked -p pytools-core` 全量通过（42
 
 验证（Windows 原生）：1904 合成源簿（纯日期/日期时间/数值混合）PT-6-1 使用区域汇总与 PT-6-2 批注汇总（模板 1904 + 数据区含日期/日期时间单元格）PyCode/Rust 完整工作簿投影均精确一致；源簿前后未变；`cargo test --offline --locked -p pytools-core` 全量 42 项结果 0 failed；`cargo fmt --check` 通过。该修复影响 1904 日期系统源簿（Mac Excel 遗产文件）的汇总输出正确性；常规 1900 簿行为不变。仍为合成证据。
 
+### 2026-10-25 PT-6-2 交互菜单输出计数回归
+
+Windows 原生 `tests/summary_menu_cli.rs::interactive_summary_menu_routes_comment_summary_with_template_and_sources` 现在断言交互菜单处理 1 个输入且成功生成 3 行。输入仍是 `summary_comments` 合成模板与合并子格夹具；同一夹具的数据路径在 `probe/reports/summary_comments_windows_native_parity_20261025.json` 的 `merged non-anchor source cell` 案例中与 PyCode 完整投影精确一致、输出 3 行。本回归只把该行数契约连到菜单历史摘要，不单独声称菜单输出投影重新对拍；真实批注模板及目标系统验收仍未完成。
+
 ### 2026-10-25 PT-4-2/4-3 真实 .xls/.doc 输入端到端尝试与 lo-convert 共享能力请求
 
 按用户"以合成数据继续"的指示构造真实 CDF 输入（合成 xlsx 经 WSL LibreOffice 转出 `source.xls`、中文 txt 转出 `notes.doc`，均为 Composite Document File V2 真实格式），以 2.28 release `pytools`（HEAD `328532c`）+ WSL 构建 lo-convert 运行 `convert-excel`/`convert-word` 端到端。结果：LibreOffice 报 `WrappedTargetRuntimeException`，转换失败——**共享 sidecar 缺陷**，非业务层问题：`sidecar/lo-convert/src/main.rs::run_libreoffice` 把 `-env:UserInstallation` 拼成裸 POSIX 路径且未预建 profile 目录，同文件 `run_libreoffice_recalculate` 的写法（`create_dir_all` + `file_uri`）正确。最小复现与修复方向已按规则登记为共享能力请求（`pytools-core/GPT修改记录/共享能力请求_20261025_lo-convert的UserInstallation路径形态.txt`），sidecar 归 main 治理，pytools-dev 未修改共享代码。
