@@ -138,12 +138,14 @@ dependencies = [
  "excel-writer",
  "ooxml-patch",
  "rayon",
+ "roxmltree",
  "serde",
  "serde_json",
  "sha1",
  "sha2 0.10.9",
  "tokio",
  "umya-spreadsheet",
+ "zip 6.0.0",
 ]
 
 [[package]]

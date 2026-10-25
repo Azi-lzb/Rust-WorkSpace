@@ -1,0 +1,33 @@
+# S1 历史写回复验：删除区误报消失，唯一残差收敛为 page-settings 顺序缺口
+
+- 时间：2026-10-25 17:40 (+08:00)
+- 执行者：Codex Audit migration agent
+- 分支：audit-dev
+- 修改前 commit：6d67fe2
+- 修改后 commit：随本轮本地提交，提交 ID 见 Git 历史。
+- WIP：开始时 worktree 干净；本轮在已同步 1d7c22c（请求 #4 行操作映射）基础上重跑真实候选，移除旧容忍分支，新增逐表 pageSetup 证明辅助与共享请求 #6。未修改共享 crates、源 Python 项目、真实工作簿、pytools-core（audit-core/Cargo.toml 新增 workspace 已管理的 roxmltree/zip 依赖，均无版本变化）。
+
+## 目的
+
+按指示复验 S1 历史写回完整计划：确认请求 #4 落地后引擎无关校验器不再报删除区样式误报，并以严格断言替代旧容忍分支作为验收证据。
+
+## 修改文件
+
+- `audit-core/src/s1_history.rs`：真实候选测试移除删除区样式误报容忍分支（该分支因请求 #4 生效而不可达——本轮实测复验确认删除区误报消失）；新增 `per_sheet_page_setup` 辅助（roxmltree+zip 直读逐表 pageSetup 属性），校验器若因 page-settings 顺序拒绝则精确断言逐表属性字典一致（仅顺序不同）方可继续，其余失败仍 panic。
+- `audit-core/Cargo.toml`：新增 `roxmltree.workspace`/`zip.workspace`（workspace 根已声明，lock 无版本变化）。
+- `audit-core/shared-capability-requests/20261025_validator_page_settings_order.md`：新增共享请求 #6（保留快照逐表 Vec 的 MoveSheet 感知比较，同型于 07196d5 的 sheet-order 处理）。
+- `audit-core/MIGRATION_INVENTORY.md`：历史写回行更新。
+- 本记录。
+
+## 验证
+
+- 真实候选（Windows 原生，config-real 非空历史簿，5 表、管理页 index 1）：完整 38 操作计划 umya apply 通过；**删除区样式误报消失**（请求 #4 生效实证）；读回验收全过（管理页置首、新内容就位、其余 4 表逐格一致、输入未变）。
+- 唯一残差：`openpyxl changed worksheet page settings`——共享校验器 `page_settings` Vec 按 workbook 顺序填充且顺序敏感比较，MoveSheet 合法重排后顺序必然不同。Rust `per_sheet_page_setup` 辅助与 Python zipfile+ElementTree 双侧证明逐表 pageSetup 属性字典完全一致、仅顺序不同；测试以精确断言（sheet 数一致 + 逐表内容一致）后才以 `passed_with_page_settings_order_gap` 继续。
+- `cargo build --offline -p audit-core` 通过；全量测试在上一提交点 195/0，本轮改动限于测试断言与辅助函数（无产品行为变化），提交后复跑确认。
+
+## 未执行项、已知问题与回滚
+
+- 严格通过待请求 #6（main 落地后移除 `passed_with_page_settings_order_gap` 分支即为纯严格验收）；生产 capability 与 CLI 写回入口仍是独立验收步骤。
+- 请求 #3（worker 样式表越界，#5）与 #6 均待 main。
+- 回滚：还原本提交即可；无用户工作簿恢复项。
+- 【组件版本】不升级。

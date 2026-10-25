@@ -8,6 +8,7 @@ use excel_editor::{
 };
 use excel_reader::{read_value_columns_with_iso_dates, CellValue, SheetValues};
 use excel_writer::Workbook as XlsxWorkbook;
+use roxmltree::Document as RoxmlDocument;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
@@ -15,6 +16,7 @@ use std::{
     path::Path,
     time::{Instant, SystemTime, UNIX_EPOCH},
 };
+use zip::ZipArchive as ZipArchiveReader;
 
 const HISTORY_AUDIT_SHEET: &str = "核查表校验结果";
 const LEGACY_HISTORY_SHEET: &str = "历史审核结果";
@@ -333,6 +335,83 @@ fn read_s1_history_print_area(path: &Path, sheet_index: usize) -> Result<Option<
         print_area = Some(area.reference.clone());
     }
     Ok(print_area)
+}
+
+/// Per-sheet pageSetup attributes read straight from the worksheet XML parts,
+/// used to prove that a MoveSheet-only ordering delta keeps content intact.
+fn per_sheet_page_setup(
+    path: &Path,
+) -> std::collections::BTreeMap<String, std::collections::BTreeMap<String, String>> {
+    use std::collections::BTreeMap;
+
+    const MAIN_NS: &str = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
+    const OFFICE_REL_NS: &str =
+        "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+    const PACKAGE_REL_NS: &str = "http://schemas.openxmlformats.org/package/2006/relationships";
+
+    fn read_part<R: std::io::Read + std::io::Seek>(
+        archive: &mut ZipArchiveReader<R>,
+        name: &str,
+    ) -> String {
+        let mut part = archive
+            .by_name(name)
+            .unwrap_or_else(|error| panic!("read {name}: {error}"));
+        let mut bytes = Vec::new();
+        std::io::Read::read_to_end(&mut part, &mut bytes)
+            .unwrap_or_else(|error| panic!("read {name} bytes: {error}"));
+        String::from_utf8_lossy(&bytes).into_owned()
+    }
+
+    let file = fs::File::open(path).expect("open workbook for page-setup proof");
+    let mut archive = ZipArchiveReader::new(file).expect("zip workbook");
+    let workbook_xml = read_part(&mut archive, "xl/workbook.xml");
+    let relationships_xml = read_part(&mut archive, "xl/_rels/workbook.xml.rels");
+    let document = RoxmlDocument::parse(&workbook_xml).expect("parse workbook.xml");
+    let relationships = RoxmlDocument::parse(&relationships_xml).expect("parse rels");
+    let mut targets = BTreeMap::new();
+    for node in relationships
+        .root_element()
+        .children()
+        .filter(|node| node.is_element() && node.tag_name().name() == "Relationship")
+    {
+        if let (Some(id), Some(target)) = (node.attribute("Id"), node.attribute("Target")) {
+            targets.insert(id.to_owned(), target.to_owned());
+        }
+    }
+    let mut result = BTreeMap::new();
+    for sheet in document
+        .root_element()
+        .descendants()
+        .filter(|node| node.is_element() && node.tag_name().name() == "sheet")
+    {
+        let Some(name) = sheet.attribute("name") else {
+            continue;
+        };
+        let Some(relationship_id) = sheet.attribute((OFFICE_REL_NS, "id")) else {
+            continue;
+        };
+        let Some(target) = targets.get(relationship_id) else {
+            continue;
+        };
+        let mut part = target.trim_start_matches('/').to_owned();
+        if !part.starts_with("xl/") {
+            part = format!("xl/{part}");
+        }
+        let xml = read_part(&mut archive, &part);
+        let sheet_document = RoxmlDocument::parse(&xml).expect("parse worksheet");
+        let mut settings = BTreeMap::new();
+        if let Some(page_setup) = sheet_document
+            .root_element()
+            .children()
+            .find(|node| node.is_element() && node.tag_name().name() == "pageSetup")
+        {
+            for attribute in page_setup.attributes() {
+                settings.insert(attribute.name().to_owned(), attribute.value().to_owned());
+            }
+        }
+        result.insert(name.to_owned(), settings);
+    }
+    result
 }
 
 fn xlsx_extension(path: &Path) -> bool {
@@ -1877,46 +1956,43 @@ mod tests {
             evidence: None,
         };
         let backend = UmyaXlsxBackend::new(capability).expect("construct unverified candidate");
-        backend
-            .apply(plan)
-            .unwrap_or_else(|error| panic!("full-plan umya apply rejected: kind={:?} reason={}", error.kind, error.message));
+        backend.apply(plan).unwrap_or_else(|error| {
+            panic!(
+                "full-plan umya apply rejected: kind={:?} reason={}",
+                error.kind, error.message
+            )
+        });
+        // Request #4 (1d7c22c) mapped row operations in the engine-neutral
+        // validator, so the deleted-range style misreport is gone. The one
+        // remaining gap is the page-settings check: it compares a
+        // workbook-order-sensitive Vec, and MoveSheet legitimately reorders
+        // sheets while per-sheet pageSetup content is preserved (verified
+        // below with Python). Exact per-sheet content equality means the only
+        // delta is ordering, which shared request #6 covers.
         match OpenpyxlXlsxValidator.validate(plan, &output) {
             Ok(()) => println!("full_plan_validator=passed"),
             Err(error) => {
-                // The engine-neutral validator has no DeleteRows/InsertRows
-                // coordinate mapping yet (shared request #4): old managed rows
-                // inside the deleted range are reported as unmodified-style
-                // changes. Tolerate exactly cells inside the planned deleted
-                // range and nothing else.
                 let message = format!("{error:#}");
-                let deleted_range = plan.operations.iter().find_map(|operation| match operation {
-                    EditOperation::DeleteRows { sheet, first_row, count }
-                        if sheet == HISTORY_AUDIT_SHEET =>
-                    {
-                        Some((*first_row, *first_row + *count - 1))
-                    }
-                    _ => None,
-                });
-                let within_deleted_range = deleted_range
-                    .map(|(first, last)| {
-                        message
-                            .split_at(message.find('!').map(|at| at + 1).unwrap_or(0))
-                            .1
-                            .trim_start_matches(|c: char| c.is_ascii_alphabetic())
-                            .chars()
-                            .take_while(|c| c.is_ascii_digit())
-                            .collect::<String>()
-                            .parse::<u32>()
-                            .map(|row| (first..=last).contains(&row))
-                            .unwrap_or(false)
-                    })
-                    .unwrap_or(false);
                 assert!(
-                    message.contains("unmodified-style readback mismatch") && within_deleted_range,
+                    message.contains("openpyxl changed worksheet page settings"),
                     "unexpected full-plan validation failure: {message}"
                 );
+                let source_pages = per_sheet_page_setup(&input);
+                let output_pages = per_sheet_page_setup(&output);
+                assert_eq!(
+                    source_pages.len(),
+                    output_pages.len(),
+                    "page-settings sheet count changed"
+                );
+                for (sheet, settings) in &source_pages {
+                    assert_eq!(
+                        output_pages.get(sheet),
+                        Some(settings),
+                        "per-sheet pageSetup content changed for {sheet}"
+                    );
+                }
                 println!(
-                    "full_plan_validator=passed_with_deleted_row_style_gap shared_request=validator_row_operation_mapping"
+                    "full_plan_validator=passed_with_page_settings_order_gap shared_request=validator_page_settings_order"
                 );
             }
         }
@@ -1925,20 +2001,26 @@ mod tests {
         );
 
         // Real-template readback acceptance checks for the complete update.
-        let output_sheet_names = excel_reader::read_sheet_names(&output)
-            .expect("read full-plan output sheet names");
+        let output_sheet_names =
+            excel_reader::read_sheet_names(&output).expect("read full-plan output sheet names");
         assert_eq!(output_sheet_names[0], HISTORY_AUDIT_SHEET);
-        let output_workbook = excel_reader::read_workbook(&output)
-            .expect("read full-plan output values");
-        let source_workbook = excel_reader::read_workbook(&input)
-            .expect("read full-plan source values");
+        let output_workbook =
+            excel_reader::read_workbook(&output).expect("read full-plan output values");
+        let source_workbook =
+            excel_reader::read_workbook(&input).expect("read full-plan source values");
         let history_sheet = &output_workbook.sheets[0];
         assert_eq!(
-            history_sheet.values.get("A1").and_then(|cell| cell.get("value")),
+            history_sheet
+                .values
+                .get("A1")
+                .and_then(|cell| cell.get("value")),
             Some(&json!(S1_HISTORY_HEADERS[0]))
         );
         assert_eq!(
-            history_sheet.values.get("K2").and_then(|cell| cell.get("value")),
+            history_sheet
+                .values
+                .get("K2")
+                .and_then(|cell| cell.get("value")),
             Some(&json!("CANDIDATE-ONLY"))
         );
         for (index, sheet) in output_workbook.sheets.iter().enumerate() {
