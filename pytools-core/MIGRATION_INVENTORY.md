@@ -770,3 +770,9 @@ Windows 原生 `cargo fmt --manifest-path pytools-core/Cargo.toml -- --check`、
 ### 2026-10-25 PT-6-2 真实批注模板与业务 VBA XLSM 只读全树扫描
 
 对原只读项目排除 `.venv`/`build`/`dist`/`_internal`/`cache/test-venv` 后全部 169 份 XLSX/XLSM 做两阶段只读扫描：先按 ZIP 部件清单筛出含 `xl/comments*.xml` 的工作簿（仅 2 份），再以 openpyxl 提取全部批注文本并按 PyCode `summary_321_322` 的标记语义匹配：含 `行区域N/#N` 与 `列区域N/#N` 的可用批注汇总模板为 0，含 `set(` 标记或任一区域标记的文件为 0。此前"没有找到有效真实业务模板"的记录升级为系统性全树负结果；PT-6-2 真实模板仍需用户提供。同批仅有的 2 份 XLSM（cache 下 pytest 产物）均为无效 ZIP（BadZipFile），源树中不存在真实业务含 VBA 的 XLSM；PT-6-1 该项缺口继续依赖用户提供样本。扫描不修改源文件，记录只含计数与结论，不含工作簿名称或单元格内容；该负结果不改变 PT-6-1/PT-6-2 现有合成证据与未验收状态。
+
+### 2026-10-25 PT-6-1 真实业务 VBA XLSM 对拍（用户提供 VBA 工具仓库主簿）
+
+经全树扫描确认原只读树不存在真实业务含 VBA 的 XLSM 后，用户提供同产品族 VBA 工具仓库 https://github.com/Azi-lzb/VBA_Excel_Tools（克隆 HEAD `cea6dfa`）作为样本来源。其主簿 `VbaV2.4.2.xlsm` 为真实业务宏工作簿（14 张工作表、2,338,304 字节 VBA 工程、5 个批注部件均为配置字段说明而非区域标记，不构成 PT-6-2 模板）。以该簿为只读输入运行 PT-6-1 按使用区域汇总：只读 PyCode `run_summary_by_usedrange` 与 Windows 原生 MSVC `pytools summary-used-range`（HEAD `3e9bce0`）完整工作簿投影精确一致，输出 23,976 行（含标题，19 列）单表 `汇总`；两侧输出均为新建 XLSX 且不含 `xl/vbaProject.bin`；源簿前后 SHA-256 与大小/修改时间不变；开发者事件 15 条与保存运行历史一致，实际引擎 Calamine、`excel-reader::read_xlsx_worksheet_extents` 与 `rust_xlsxwriter`。机器报告：`probe/reports/summary_used_range_real_vba_xlsm_parity_20261025.json`。
+
+此项闭合 PT-6-1 自 2026-10-24 起登记的"真实业务含 VBA 的 XLSM"对拍缺口（原项目树经扫描确认不存在此类样本；该样本为同产品族 VBA 工具主簿，属真实业务宏工作簿）。不推断其他 XLSM、其他输入来源或生产默认；PT-6-1 整体仍未完成最终验收（麒麟 V10/UOS V20、glibc 2.28 实机、deb 与离线交付仍未验证）。另经核实：GitHub 上的 py_statistics_tools 为本地只读基线的发布副本，最新公开提交 2026-10-21，本地树更新至 2026-10-23，全部对拍基线继续取自本地只读树。
