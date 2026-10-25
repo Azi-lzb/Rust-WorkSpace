@@ -1,0 +1,30 @@
+# 2026-10-26 S2 真实批次 Windows 原生端到端对拍
+
+## 目的
+
+为 S2-F01 补充真实批次的 Rust CLI 与原 Python 服务对拍证据。原 Python 项目、真实工作簿和配置只读；Rust 与 Python 输出均写入系统临时目录。
+
+## 涉及文件
+
+- `audit-core/probe/reports/s2_real_service_parity_windows_native_20261026.json`：新增脱敏汇总报告。
+- `audit-core/MIGRATION_INVENTORY.md`：登记真实端到端结果，S2-F01 整体仍标记未验证。
+- `audit-core/GPT修改记录/20261026_040549_S2真实批次Windows原生端到端对拍.txt`：本记录。
+
+## 验证结果
+
+- Rust 入口 `open-data-audit s2` 与 Python `PeriodAuditV2Service.run` 均成功；实际运行配置校验、本期/上期导入、数据校验、环比、规则、外部核对、报告写入和保存阶段。
+- 样本为 2026-06 与 2026-03 两期，各 21 个直接子工作簿，全部为 XLS；使用真实 S2 配置和真实外部 XLSX。摘要为 7 家机构、3 张表单、728 项指标、1095 条结果；Rust/Python 各类型、级别和汇总计数一致。
+- 对比三张输出表的 17,520 个单元格，包含 3,173 个数值单元格；值、类型、公式、既有语义样式、有效列宽、行隐藏和工作表设置差异为 0。额外归一 Rust/Python 的默认字体继承、solid fill 背景色表示和分组列宽表示后，完整样式、合并、名称、链接、批注、页面设置、验证/条件格式及嵌入对象差异为 0。
+- 对 42 个期间输入工作簿、配置和外部工作簿共 44 个输入做运行前后 SHA-256 比对，差异 0。Windows 原生复核墙钟 9185 ms 包含哈希、两端执行和比较，不作为性能对比。
+- 运行环境：Windows 原生 x64、Rust 1.99.1、Python 3.12.10、openpyxl 3.1.5；Rust 期间及外部读取使用 Calamine 0.37.0，报告使用 rust_xlsxwriter 0.101.0 并经 Calamine 重开校验。
+
+## 未执行项和限制
+
+- 未运行 S2 全量测试、Linux/glibc 2.28、麒麟/UOS 或 deb 验收；本次仅覆盖一个真实批次。S2-F01 仍未整体验收。
+- 现有 S2 进度事件记录步骤，但不含逐阶段耗时；CLI 的外部读取消息含 Calamine 版本和单项耗时。该日志缺口留待后续局部完善。
+- Audit #8 共享能力问题保持未解决，本次未修改公共 crate、根 Cargo 配置或 Cargo.lock。
+- 构建输出包含既有共享 `excel-editor` 弃用 API 警告；本次没有修改这些共享代码。
+
+## 回滚
+
+仅撤回本报告、本条迁移清单补充和本记录；不改动 Rust 业务实现、源 Python 项目、真实样本及既有未跟踪文件。

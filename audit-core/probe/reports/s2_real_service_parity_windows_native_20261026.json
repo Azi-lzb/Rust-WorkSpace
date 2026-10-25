@@ -1,0 +1,98 @@
+{
+  "status": "passed_for_this_real_batch",
+  "feature": "S2-F01",
+  "operation": "real_service_cli_and_report_parity",
+  "platform": "Windows native x64",
+  "runtime": {
+    "rustc": "1.99.1",
+    "python": "3.12.10",
+    "openpyxl": "3.1.5"
+  },
+  "engines": {
+    "period_workbook_reader": "Calamine 0.37.0 via excel-reader::read_value_columns",
+    "external_workbook_reader": "Calamine 0.37.0",
+    "rust_report_writer": "rust_xlsxwriter 0.101.0",
+    "rust_report_readback_validator": "Calamine 0.37.0"
+  },
+  "sample": {
+    "current_period": "2026-06-30",
+    "previous_period": "2026-03-31",
+    "current_direct_child_workbooks": {
+      "xls": 21,
+      "xlsx": 0
+    },
+    "previous_direct_child_workbooks": {
+      "xls": 21,
+      "xlsx": 0
+    },
+    "real_s2_configuration": true,
+    "real_external_workbook": true,
+    "hashed_workbooks": 42,
+    "hashed_configuration_and_external_workbooks": 2,
+    "changed_input_hashes": 0
+  },
+  "execution": {
+    "rust_entry": "open-data-audit s2",
+    "python_entry": "PeriodAuditV2Service.run",
+    "completed_stages": [
+      "config",
+      "current",
+      "previous",
+      "validate",
+      "period",
+      "rules",
+      "external_read",
+      "external",
+      "export",
+      "save",
+      "complete"
+    ],
+    "rust_exit_code": 0,
+    "python_exit_code": 0,
+    "rust_and_python_summary_difference_count": 0,
+    "summary": {
+      "institutions": 7,
+      "forms": 3,
+      "indicators": 728,
+      "total_findings": 1095,
+      "abnormal_findings": 536,
+      "by_type": {
+        "period": 262,
+        "external": 263,
+        "rules": 3,
+        "quality": 8
+      },
+      "by_severity": {
+        "hard": 521,
+        "soft": 15
+      }
+    },
+    "report_workbook": {
+      "sheet_count": 3,
+      "sheet_names": [
+        "环比规则",
+        "外部核对规则",
+        "校验规则"
+      ],
+      "compared_cells": 17520,
+      "numeric_cells": 3173,
+      "formula_cells": 0,
+      "relative_numeric_tolerance": 1e-15,
+      "cell_and_existing_comparator_difference_count": 0,
+      "normalized_full_style_difference_count": 0,
+      "effective_column_dimension_difference_count": 0,
+      "merge_name_link_comment_page_setting_validation_and_embedded_object_difference_count": 0
+    }
+  },
+  "timing": {
+    "combined_controlled_verification_wall_ms": 9185,
+    "scope": "Includes pre/post SHA-256 collection, Rust CLI execution, Python service execution, and workbook comparison; not a performance benchmark.",
+    "per_stage_elapsed_ms_in_current_s2_progress_events": false
+  },
+  "limitations": [
+    "This verifies one local S2 batch only; other input/error cases and workbook variants remain unverified.",
+    "The CLI and service ran on Windows; Linux/glibc 2.28, target systems, and deb packaging were not tested.",
+    "S2-F01 remains unverified overall.",
+    "Audit shared capability request #8 remains unresolved and was not changed by this run."
+  ]
+}
