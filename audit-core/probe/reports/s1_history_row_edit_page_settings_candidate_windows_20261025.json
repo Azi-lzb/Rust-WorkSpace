@@ -1,0 +1,72 @@
+{
+  "schema_version": 1,
+  "suite": "audit.s1_history_workbook_row_edit_candidate",
+  "status": "rejected_for_full_preservation_contract",
+  "candidate_only": true,
+  "production_capability": "unverified",
+  "real_sample_scope": {
+    "period": "2026-07-31",
+    "workbooks_with_managed_history_sheet": 1,
+    "worksheet_count": 10,
+    "managed_history_sheet_zero_based_index": 6,
+    "python_writer_moves_recreated_history_sheet_to_index": 0,
+    "current_rust_plan": "fail_closed_when_existing_history_sheet_is_not_first"
+  },
+  "synthetic_candidate": {
+    "platform": "windows-x86_64-pc-windows-msvc",
+    "engine": "umya_spreadsheet",
+    "operation_scope": [
+      "delete_rows",
+      "insert_rows",
+      "set_cell_value",
+      "set_column_width",
+      "set_page_settings"
+    ],
+    "omitted_operations": [
+      "set_freeze_panes",
+      "set_auto_filter"
+    ],
+    "omitted_preservation_checks": [
+      "cell_values_and_types",
+      "styles",
+      "row_and_column_dimensions",
+      "relationships"
+    ],
+    "diagnostic_only": true,
+    "preservation_checks": {
+      "page_setup_metadata": "passed_in_diagnostic_subplan",
+      "print_area": {
+        "status": "passed_after_explicit_restore",
+        "source": "核查表校验结果!$A$1:$M$4",
+        "candidate": "核查表校验结果!$A$1:$M$4"
+      },
+      "other_worksheet_values": "unchanged",
+      "source_workbook_bytes": "unchanged"
+    }
+  },
+  "full_candidate_gates": {
+    "umya_spreadsheet": {
+      "status": "rejected",
+      "reason": "backend does not implement freeze-pane or AutoFilter edits"
+    },
+    "openpyxl_worker": {
+      "status": "rejected_before_write",
+      "reason": "DeleteRows and InsertRows are not in the worker/backend supported-operation set"
+    },
+    "strict_rust_readback": {
+      "status": "failed",
+      "observed_reasons": [
+        "planned row deletion was treated as a change to an unmodified source cell",
+        "OOXML relationships changed"
+      ]
+    }
+  },
+  "routing_changed": false,
+  "follow_up": [
+    "shared MoveSheet operation that preserves existing worksheet identity and PageSettings",
+    "verify explicit print-area restoration in the real template and a complete backend",
+    "one editor backend supporting the complete S1 operation batch",
+    "strict validator mapping for planned row insertion and deletion",
+    "real-template readback of sheet order, PageSettings, print area, names, relationships, and unchanged sheets"
+  ]
+}

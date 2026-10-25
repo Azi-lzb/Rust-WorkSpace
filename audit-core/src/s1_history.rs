@@ -4,7 +4,7 @@ use crate::models::Issue;
 use anyhow::{Context, Result, ensure};
 use excel_editor::{
     CellValue as EditCellValue, EditOperation, ExcelEditPlan, PreservationRequirement,
-    WorkbookFormat, inspect_xlsx_profile,
+    PageSettings, WorkbookFormat, inspect_xlsx_profile,
 };
 use excel_reader::{CellValue, SheetValues, read_value_columns_with_iso_dates};
 use excel_writer::Workbook as XlsxWorkbook;
@@ -152,6 +152,10 @@ pub fn build_s1_history_workbook_edit_plan(
         .iter()
         .position(|name| name == HISTORY_AUDIT_SHEET);
     let replaces_existing_history_sheet = existing_history_index.is_some();
+    let existing_history_print_area = existing_history_index
+        .map(|index| read_s1_history_print_area(&input_path, index))
+        .transpose()?
+        .flatten();
     let existing_history_max_row = if let Some(index) = existing_history_index {
         ensure!(
             index == 0,
@@ -225,6 +229,15 @@ pub fn build_s1_history_workbook_edit_plan(
             width: 22.0,
         });
     }
+    if let Some(print_area) = existing_history_print_area {
+        operations.push(EditOperation::SetPageSettings {
+            sheet: HISTORY_AUDIT_SHEET.to_owned(),
+            settings: PageSettings {
+                print_area: Some(print_area),
+                ..PageSettings::default()
+            },
+        });
+    }
 
     let preserve: std::collections::BTreeSet<_> = [
         PreservationRequirement::CellValuesAndTypes,
@@ -265,6 +278,65 @@ pub fn build_s1_history_workbook_edit_plan(
         issue_count: issues.len(),
         replaces_existing_history_sheet,
     })
+}
+
+fn read_s1_history_print_area(path: &Path, sheet_index: usize) -> Result<Option<String>> {
+    let mut print_area = None;
+    for defined_name in excel_reader::read_defined_names(path)
+        .context("读取 S1 历史工作表打印区域")?
+        .into_iter()
+        .filter(|defined_name| defined_name.name.eq_ignore_ascii_case("_xlnm.Print_Area"))
+    {
+        let matches_history_sheet = match &defined_name.scope {
+            excel_reader::DefinedNameScope::Worksheet {
+                local_sheet_id,
+                sheet_name: Some(sheet_name),
+                ..
+            } if *local_sheet_id == sheet_index && sheet_name == HISTORY_AUDIT_SHEET => true,
+            excel_reader::DefinedNameScope::Worksheet {
+                local_sheet_id,
+                sheet_name,
+                ..
+            } if *local_sheet_id == sheet_index => {
+                anyhow::bail!(
+                    "S1 历史工作表打印区域的工作表身份无法确认：{sheet_name:?}"
+                )
+            }
+            excel_reader::DefinedNameScope::UnresolvedWorksheet { local_sheet_id }
+                if *local_sheet_id == sheet_index =>
+            {
+                anyhow::bail!("S1 历史工作表打印区域引用未解析的工作表索引")
+            }
+            excel_reader::DefinedNameScope::InvalidWorksheetScope { raw_local_sheet_id } => {
+                anyhow::bail!(
+                    "S1 工作簿打印区域包含无效的工作表索引：{raw_local_sheet_id:?}"
+                )
+            }
+            excel_reader::DefinedNameScope::Workbook => {
+                anyhow::bail!("S1 工作簿打印区域缺少工作表作用域")
+            }
+            _ => false,
+        };
+        if !matches_history_sheet {
+            continue;
+        }
+        ensure!(
+            print_area.is_none(),
+            "S1 历史工作表存在重复的打印区域定义"
+        );
+        ensure!(
+            defined_name.parse_status == excel_reader::DefinedNameParseStatus::Areas
+                && defined_name.areas.len() == 1,
+            "S1 历史工作表打印区域不是受支持的单一区域"
+        );
+        let area = &defined_name.areas[0];
+        ensure!(
+            area.sheet_name == HISTORY_AUDIT_SHEET && area.sheet_kind == "worksheet",
+            "S1 历史工作表打印区域指向了其他工作表"
+        );
+        print_area = Some(area.reference.clone());
+    }
+    Ok(print_area)
 }
 
 fn xlsx_extension(path: &Path) -> bool {
@@ -1280,6 +1352,14 @@ mod tests {
                 worksheet
                     .write_string(3, 12, "old trailing history cell")
                     .expect("write old trailing managed cell");
+                worksheet
+                    .set_landscape()
+                    .set_paper_size(9)
+                    .set_margins(0.31, 0.42, 0.53, 0.64, 0.15, 0.16)
+                    .set_print_center_horizontally(true);
+                worksheet
+                    .set_print_area(0, 0, 3, 12)
+                    .expect("set history fixture print area");
             }
         }
         workbook.save(path).expect("save history plan fixture");
@@ -1358,6 +1438,13 @@ mod tests {
             EditOperation::SetFreezePanes { sheet, cell: Some(cell) }
                 if sheet == HISTORY_AUDIT_SHEET && cell == "A2"
         )));
+        assert!(plan.operations.iter().any(|operation| matches!(
+            operation,
+            EditOperation::SetPageSettings {
+                sheet,
+                settings: PageSettings { print_area: Some(area), .. },
+            } if sheet == HISTORY_AUDIT_SHEET && area.replace('$', "") == "A1:M4"
+        )));
         assert_eq!(
             plan.operations
                 .iter()
@@ -1421,6 +1508,141 @@ mod tests {
         assert!(result.edit_plan.drop_allowed.is_empty());
         assert!(!output.exists());
         fs::remove_dir_all(directory).expect("remove S1 history plan fixture directory");
+    }
+
+    #[test]
+    #[ignore = "diagnostic partial Umya row-write candidate; does not qualify a production capability"]
+    fn history_workbook_umya_row_replacement_preserves_page_settings_and_print_area_candidate() {
+        let (directory, input) = history_fixture_path("umya_page_settings_candidate");
+        let output = directory.join("updated.xlsx");
+        save_history_plan_fixture(&input, &[HISTORY_AUDIT_SHEET, "业务说明"]);
+        let input_bytes = fs::read(&input).expect("read S1 history candidate fixture");
+        let source_sheet_names = excel_reader::read_sheet_names(&input)
+            .expect("read source candidate worksheet names");
+        let source_print_areas: Vec<_> = excel_reader::read_defined_names(&input)
+            .expect("read source candidate defined names")
+            .into_iter()
+            .filter(|defined_name| defined_name.name.eq_ignore_ascii_case("_xlnm.Print_Area"))
+            .collect();
+        assert_eq!(source_print_areas.len(), 1);
+
+        let mut current = issue("RULE-1", "2026-10", true);
+        current.auditor_opinion = "candidate output".to_owned();
+        let result = build_s1_history_workbook_edit_plan(&input, &output, &[current])
+            .expect("build synthetic S1 history edit plan");
+        let mut candidate_plan = result.edit_plan.clone();
+        candidate_plan.operations.retain(|operation| {
+            !matches!(
+                operation,
+                EditOperation::SetFreezePanes { .. } | EditOperation::SetAutoFilter { .. }
+            )
+        });
+        // This diagnostic subplan omits unsupported edit operations and isolates
+        // page settings and defined names; it cannot qualify the complete plan.
+        for requirement in [
+            PreservationRequirement::CellValuesAndTypes,
+            PreservationRequirement::Styles,
+            PreservationRequirement::RowAndColumnDimensions,
+            PreservationRequirement::Relationships,
+        ] {
+            candidate_plan.preserve.remove(&requirement);
+        }
+        assert!(result.edit_plan.operations.iter().any(|operation| matches!(
+            operation,
+            EditOperation::SetFreezePanes { .. }
+        )));
+        assert!(result.edit_plan.operations.iter().any(|operation| matches!(
+            operation,
+            EditOperation::SetAutoFilter { .. }
+        )));
+        candidate_plan
+            .validate()
+            .expect("validate focused row-replacement candidate plan");
+        let plan = &candidate_plan;
+        let capability = BackendCapability {
+            engine: EngineId::UmyaSpreadsheet,
+            status: CapabilityStatus::Unverified,
+            format: plan.format,
+            operations: plan.operations.iter().map(EditOperation::kind).collect(),
+            supported_features: plan.workbook.features_present.clone(),
+            preserved: plan.preserve.clone(),
+            platform: std::env::consts::OS.to_owned(),
+            evidence: None,
+        };
+        let backend = UmyaXlsxBackend::new(capability).expect("construct unverified candidate");
+        backend.apply(plan).unwrap_or_else(|error| panic!(
+            "focused umya candidate rejected: kind={:?} reason={}",
+            error.kind, error.message
+        ));
+        OpenpyxlXlsxValidator
+            .validate(plan, &output)
+            .expect("validate candidate preservation contract");
+        let mut full_values_plan = plan.clone();
+        full_values_plan
+            .preserve
+            .insert(PreservationRequirement::CellValuesAndTypes);
+        let value_error = OpenpyxlXlsxValidator
+            .validate(&full_values_plan, &output)
+            .expect_err("full value preservation must account for planned row deletion");
+        assert!(value_error.to_string().contains("unmodified cell value changed"));
+        let mut relationships_plan = plan.clone();
+        relationships_plan
+            .preserve
+            .insert(PreservationRequirement::Relationships);
+        let relationship_error = OpenpyxlXlsxValidator
+            .validate(&relationships_plan, &output)
+            .expect_err("full relationship preservation must be verified");
+        assert!(relationship_error
+            .to_string()
+            .contains("changed OOXML relationships"));
+
+        let output_workbook = excel_reader::read_workbook(&output)
+            .expect("read candidate output values");
+        let source_workbook = excel_reader::read_workbook(&input)
+            .expect("read source candidate values");
+        assert_eq!(
+            output_workbook
+                .sheets
+                .iter()
+                .map(|sheet| sheet.name.as_str())
+                .collect::<Vec<_>>(),
+            source_sheet_names.iter().map(String::as_str).collect::<Vec<_>>()
+        );
+        assert_eq!(output_workbook.sheets[1].values, source_workbook.sheets[1].values);
+        let history_sheet = &output_workbook.sheets[0];
+        assert_eq!(
+            history_sheet.values.get("A1").and_then(|cell| cell.get("value")),
+            Some(&json!(S1_HISTORY_HEADERS[0]))
+        );
+        assert_eq!(
+            history_sheet.values.get("K2").and_then(|cell| cell.get("value")),
+            Some(&json!("RULE-1"))
+        );
+        assert_eq!(
+            history_sheet.values.get("M2").and_then(|cell| cell.get("value")),
+            Some(&json!("candidate output"))
+        );
+        assert!(!history_sheet
+            .values
+            .values()
+            .any(|cell| cell.get("value") == Some(&json!("old trailing history cell"))));
+        let output_print_areas: Vec<_> = excel_reader::read_defined_names(&output)
+            .expect("read candidate output defined names")
+            .into_iter()
+            .filter(|defined_name| defined_name.name.eq_ignore_ascii_case("_xlnm.Print_Area"))
+            .collect();
+        assert_eq!(output_print_areas.len(), 1);
+        assert_eq!(
+            output_print_areas[0].areas,
+            source_print_areas[0].areas,
+            "the candidate must restore the original print-area reference after row replacement"
+        );
+        println!(
+            "candidate_print_area_source={} candidate_print_area_output={}",
+            source_print_areas[0].areas[0].reference, output_print_areas[0].areas[0].reference
+        );
+        assert_eq!(fs::read(&input).unwrap(), input_bytes);
+        fs::remove_dir_all(directory).expect("remove S1 history candidate fixture directory");
     }
 
     #[test]
