@@ -4278,6 +4278,7 @@ fn run_s5_audit_run(arguments: S5AuditRunArgs) -> Result<()> {
         arguments.period.trim(),
     )
     .map_err(|failure| anyhow::anyhow!("{}：{}", failure.code, failure.message))?;
+    let source_sha256_before = retrieval.source_sha256().to_owned();
 
     let (outcomes, status_counts) = run_rules(
         &configuration,
@@ -4289,7 +4290,6 @@ fn run_s5_audit_run(arguments: S5AuditRunArgs) -> Result<()> {
     )
     .map_err(|error| anyhow::anyhow!("{error}"))?;
 
-    let source_sha256 = sha1_hex_or_blank(&arguments.source);
     let output_summary = write_run_outputs(
         &S5OutputRequest {
             run_id: &run_id,
@@ -4300,7 +4300,7 @@ fn run_s5_audit_run(arguments: S5AuditRunArgs) -> Result<()> {
             status_counts: &status_counts,
             source_path: &arguments.source,
             source_id: &arguments.source_id,
-            source_sha256_before: &source_sha256,
+            source_sha256_before: &source_sha256_before,
             config_path: &arguments.config,
             config_sha256_before: &configuration.sha256,
             config_version: &configuration.version,
@@ -4344,14 +4344,4 @@ fn run_s5_audit_run(arguments: S5AuditRunArgs) -> Result<()> {
     }
     println!("{output}");
     Ok(())
-}
-
-fn sha1_hex_or_blank(path: &std::path::Path) -> String {
-    use sha2::{Digest, Sha256};
-    let Ok(bytes) = std::fs::read(path) else {
-        return String::new();
-    };
-    let mut hasher = Sha256::new();
-    hasher.update(&bytes);
-    format!("{:x}", hasher.finalize())
 }

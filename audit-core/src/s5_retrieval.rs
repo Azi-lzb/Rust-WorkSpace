@@ -161,6 +161,11 @@ impl S5Retrieval {
         })
     }
 
+    /// SHA-256 captured when the bound source was opened for this run.
+    pub fn source_sha256(&self) -> &str {
+        &self.sha256
+    }
+
     fn metrics_for_path(
         &self,
         business: &str,

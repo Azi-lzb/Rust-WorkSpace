@@ -9,7 +9,7 @@
 
 use crate::s5_service::S5RuleOutcome;
 use excel_writer::{Color, Format, FormatAlign, FormatUnderline, Workbook};
-use serde_json::{json, Value as JsonValue};
+use serde_json::{Value as JsonValue, json};
 use sha2::{Digest, Sha256};
 use std::{
     collections::BTreeMap,
@@ -103,14 +103,52 @@ fn safe_name(value: &str) -> String {
     }
 }
 
-fn file_sha256(path: &Path) -> String {
-    fs::read(path)
-        .map(|bytes| {
-            let mut hasher = Sha256::new();
-            hasher.update(&bytes);
-            format!("{:x}", hasher.finalize())
-        })
-        .unwrap_or_default()
+fn file_sha256(path: &Path) -> Result<String, String> {
+    let bytes = fs::read(path)
+        .map_err(|error| format!("读取文件计算 SHA-256 失败 {}：{error}", path.display()))?;
+    let mut hasher = Sha256::new();
+    hasher.update(&bytes);
+    Ok(format!("{:x}", hasher.finalize()))
+}
+
+fn verify_input_snapshot(path: &Path, expected: &str, label: &str) -> Result<(), String> {
+    let actual = file_sha256(path)?;
+    if actual != expected {
+        return Err(format!("{label}在审核期间发生变化，已停止生成结果"));
+    }
+    Ok(())
+}
+
+fn verify_copied_snapshot(
+    run_dir: &Path,
+    label: &str,
+    expected: &str,
+    actual: Result<String, String>,
+    copy: Result<String, String>,
+) -> Result<(String, String), String> {
+    let result = (|| {
+        let actual = actual?;
+        let copy = copy?;
+        if actual != expected || copy != actual {
+            return Err(format!(
+                "{label}在审核期间发生变化或审核副本校验失败，已停止生成结果"
+            ));
+        }
+        Ok((actual, copy))
+    })();
+    match result {
+        Ok(hashes) => Ok(hashes),
+        Err(message) => {
+            let cleanup = fs::remove_dir_all(run_dir);
+            match cleanup {
+                Ok(()) => Err(message),
+                Err(error) => Err(format!(
+                    "{message}；未验证输出目录清理失败 {}：{error}",
+                    run_dir.display()
+                )),
+            }
+        }
+    }
 }
 
 fn failure_type(status: &str) -> Option<&'static str> {
@@ -310,6 +348,16 @@ pub fn write_run_outputs(
     request: &S5OutputRequest<'_>,
     output_root: &Path,
 ) -> Result<S5WriteOutputsSummary, String> {
+    verify_input_snapshot(
+        request.source_path,
+        request.source_sha256_before,
+        "本期数据源",
+    )?;
+    verify_input_snapshot(
+        request.config_path,
+        request.config_sha256_before,
+        "审核配置",
+    )?;
     let output_root = output_root.to_path_buf();
     fs::create_dir_all(&output_root).map_err(|error| format!("创建输出根目录失败：{error}"))?;
     let run_dir = output_root.join(safe_name(request.run_id));
@@ -336,26 +384,29 @@ pub fn write_run_outputs(
             .map(|extension| format!(".{}", extension.to_string_lossy().to_lowercase()))
             .unwrap_or_default()
     ));
-    if request.source_path.is_file() {
-        fs::copy(request.source_path, &source_copy)
-            .map_err(|error| format!("复制数据源失败：{error}"))?;
-        let sha_after = file_sha256(request.source_path);
-        let sha_copy = file_sha256(&source_copy);
-        manifest.push(S5OutputManifestEntry {
-            role: "current".to_owned(),
-            source_id: request.source_id.to_owned(),
-            source_path: request.source_path.display().to_string(),
-            copy_path: source_copy.display().to_string(),
-            sha256_before: request.source_sha256_before.to_owned(),
-            sha256_after: sha_after.clone(),
-            sha256_copy: sha_copy.clone(),
-            matches_snapshot: request.source_sha256_before == &sha_after && sha_after == sha_copy,
-        });
-        copy_by_source.insert(
-            request.source_path.display().to_string(),
-            source_copy.clone(),
-        );
-    }
+    fs::copy(request.source_path, &source_copy)
+        .map_err(|error| format!("复制数据源失败：{error}"))?;
+    let (sha_after, sha_copy) = verify_copied_snapshot(
+        &run_dir,
+        "本期数据源",
+        request.source_sha256_before,
+        file_sha256(request.source_path),
+        file_sha256(&source_copy),
+    )?;
+    manifest.push(S5OutputManifestEntry {
+        role: "current".to_owned(),
+        source_id: request.source_id.to_owned(),
+        source_path: request.source_path.display().to_string(),
+        copy_path: source_copy.display().to_string(),
+        sha256_before: request.source_sha256_before.to_owned(),
+        sha256_after: sha_after,
+        sha256_copy: sha_copy,
+        matches_snapshot: true,
+    });
+    copy_by_source.insert(
+        request.source_path.display().to_string(),
+        source_copy.clone(),
+    );
 
     let config_copy = copies_dir.join(format!(
         "配置_{}{}",
@@ -366,22 +417,25 @@ pub fn write_run_outputs(
             .map(|extension| format!(".{}", extension.to_string_lossy().to_lowercase()))
             .unwrap_or_default()
     ));
-    if request.config_path.is_file() {
-        fs::copy(request.config_path, &config_copy)
-            .map_err(|error| format!("复制配置失败：{error}"))?;
-        let sha_after = file_sha256(request.config_path);
-        let sha_copy = file_sha256(&config_copy);
-        manifest.push(S5OutputManifestEntry {
-            role: "configuration".to_owned(),
-            source_id: "configuration".to_owned(),
-            source_path: request.config_path.display().to_string(),
-            copy_path: config_copy.display().to_string(),
-            sha256_before: request.config_sha256_before.to_owned(),
-            sha256_after: sha_after.clone(),
-            sha256_copy: sha_copy.clone(),
-            matches_snapshot: request.config_sha256_before == &sha_after && sha_after == sha_copy,
-        });
-    }
+    fs::copy(request.config_path, &config_copy)
+        .map_err(|error| format!("复制配置失败：{error}"))?;
+    let (sha_after, sha_copy) = verify_copied_snapshot(
+        &run_dir,
+        "审核配置",
+        request.config_sha256_before,
+        file_sha256(request.config_path),
+        file_sha256(&config_copy),
+    )?;
+    manifest.push(S5OutputManifestEntry {
+        role: "configuration".to_owned(),
+        source_id: "configuration".to_owned(),
+        source_path: request.config_path.display().to_string(),
+        copy_path: config_copy.display().to_string(),
+        sha256_before: request.config_sha256_before.to_owned(),
+        sha256_after: sha_after,
+        sha256_copy: sha_copy,
+        matches_snapshot: true,
+    });
 
     let result_path = run_dir.join("审核结果.xlsx");
     let mut triggered_rows = 0usize;
@@ -698,4 +752,59 @@ pub fn write_run_outputs(
         triggered_rows,
         failure_rows,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{S5OutputRequest, file_sha256, write_run_outputs};
+    use std::{
+        collections::BTreeMap,
+        fs,
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
+    #[test]
+    fn output_writer_rejects_changed_inputs_before_creating_run_outputs() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "audit_s5_snapshot_guard_{}_{}",
+            std::process::id(),
+            nonce
+        ));
+        fs::create_dir_all(&root).expect("create test root");
+        let source = root.join("source.xlsx");
+        let config = root.join("config.xlsx");
+        let output = root.join("output");
+        fs::write(&source, b"source snapshot changed").expect("write source");
+        fs::write(&config, b"config snapshot").expect("write config");
+        let config_sha = file_sha256(&config).expect("hash config");
+        let source_sha = "0".repeat(64);
+        let counts = BTreeMap::new();
+        let request = S5OutputRequest {
+            run_id: "changed-input",
+            period: "2026-07-31",
+            institution_code: "123",
+            institution_name: "sample",
+            outcomes: &[],
+            status_counts: &counts,
+            source_path: &source,
+            source_id: "CURRENT",
+            source_sha256_before: &source_sha,
+            config_path: &config,
+            config_sha256_before: &config_sha,
+            config_version: "test",
+        };
+
+        let error = write_run_outputs(&request, &output)
+            .expect_err("changed source must not produce a completed output run");
+        assert!(error.contains("本期数据源在审核期间发生变化"));
+        assert!(
+            !output.exists(),
+            "rejected input must not create a run directory"
+        );
+        fs::remove_dir_all(root).expect("remove test root");
+    }
 }

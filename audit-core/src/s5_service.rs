@@ -911,6 +911,13 @@ pub fn run_rules(
     institution_code: &str,
     institution_name: &str,
 ) -> Result<(Vec<S5RuleOutcome>, BTreeMap<String, usize>), EvalError> {
+    validate_business_selection(
+        configuration
+            .rules
+            .iter()
+            .map(|rule| rule.business.as_str()),
+        businesses,
+    )?;
     if period.is_empty() {
         return Err(EvalError::configuration("运行上下文必须提供报告期"));
     }
@@ -1001,4 +1008,75 @@ pub fn run_rules(
         *counts.entry(outcome.status.clone()).or_default() += 1;
     }
     Ok((outcomes, counts))
+}
+
+fn validate_business_selection<'a>(
+    configured: impl IntoIterator<Item = &'a str>,
+    requested: &[String],
+) -> Result<(), EvalError> {
+    let configured: std::collections::BTreeSet<&str> = configured.into_iter().collect();
+    if configured.is_empty() {
+        return Err(EvalError::configuration("审核配置没有已启用规则"));
+    }
+    if requested.is_empty() {
+        return Ok(());
+    }
+    let invalid: Vec<&str> = requested
+        .iter()
+        .filter(|business| business.trim().is_empty() || !configured.contains(business.as_str()))
+        .map(String::as_str)
+        .collect();
+    if invalid.is_empty() {
+        Ok(())
+    } else {
+        let names = invalid
+            .iter()
+            .map(|business| {
+                if business.trim().is_empty() {
+                    "（空业务名）"
+                } else {
+                    business
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("、");
+        Err(EvalError::configuration(format!(
+            "审核配置中没有已启用规则的业务：{names}"
+        )))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_business_selection;
+
+    #[test]
+    fn business_filter_accepts_configured_selection_and_all_businesses() {
+        let configured = ["单位贷款", "个人贷款"];
+        assert!(validate_business_selection(configured, &[]).is_ok());
+        assert!(validate_business_selection(configured, &["单位贷款".to_owned()]).is_ok());
+        assert!(
+            validate_business_selection(
+                configured,
+                &["单位贷款".to_owned(), "个人贷款".to_owned()]
+            )
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn business_filter_rejects_unknown_or_empty_selection() {
+        let configured = ["单位贷款"];
+        let unknown = validate_business_selection(configured, &["单位贷款x".to_owned()])
+            .expect_err("unknown business must not produce an empty successful run");
+        assert!(unknown.message.contains("单位贷款x"));
+
+        let empty = validate_business_selection(configured, &[String::new()])
+            .expect_err("empty business name must be rejected");
+        assert!(empty.message.contains("空业务名"));
+
+        let no_rules = validate_business_selection(std::iter::empty(), &[])
+            .expect_err("a configuration with no enabled rules must not succeed as an empty run");
+        assert!(no_rules.message.contains("没有已启用规则"));
+    }
 }
