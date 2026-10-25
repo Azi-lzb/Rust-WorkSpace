@@ -2086,27 +2086,43 @@ fn first_number(text: &str) -> Option<usize> {
         .ok()
 }
 fn parse_set_name(text: &str) -> Option<String> {
-    let lower = text.to_lowercase();
-    let ascii = lower.find("set(").map(|idx| (idx, 4));
-    let fullwidth = lower.find("set（").map(|idx| (idx, "set（".len()));
-    let (idx, marker_len) = match (ascii, fullwidth) {
-        (Some(left), Some(right)) => {
-            if left.0 <= right.0 {
-                left
-            } else {
-                right
-            }
-        }
-        (Some(value), None) | (None, Some(value)) => value,
-        (None, None) => return None,
-    };
-    let rest = &text[idx + marker_len..];
+    let (idx, marker_len) = ["set(", "set（"]
+        .iter()
+        .filter_map(|marker| find_python_set_marker(text, marker))
+        .min_by_key(|(idx, _)| *idx)?;
+    let rest = text.get(idx + marker_len..)?;
     let end = rest.find([')', '）'])?;
-    let name = &rest[..end];
+    let name = rest.get(..end)?;
     if name.is_empty() {
         return None;
     }
     Some(name.trim().to_owned())
+}
+
+fn find_python_set_marker(text: &str, marker: &str) -> Option<(usize, usize)> {
+    for (start, _) in text.char_indices() {
+        let mut actual = text[start..].char_indices();
+        let mut marker_bytes = 0;
+        let mut matched = true;
+        for expected in marker.chars() {
+            let Some((offset, character)) = actual.next() else {
+                matched = false;
+                break;
+            };
+            let same = character == expected
+                || (expected.is_ascii_alphabetic() && character == expected.to_ascii_uppercase())
+                || (expected == 's' && character == 'ſ');
+            if !same {
+                matched = false;
+                break;
+            }
+            marker_bytes = offset + character.len_utf8();
+        }
+        if matched {
+            return Some((start, marker_bytes));
+        }
+    }
+    None
 }
 fn overlay_template_iso_dates(path: &Path, sheets: &mut [SheetDump]) -> Result<()> {
     let max_columns = sheets
@@ -2917,6 +2933,12 @@ mod comment_region_tests {
         assert_eq!(parse_set_name("set()"), None);
         assert_eq!(parse_set_name("set( )"), Some(String::new()));
         assert_eq!(parse_set_name("SET（区域）"), Some("区域".to_owned()));
+    }
+
+    #[test]
+    fn set_marker_search_uses_original_unicode_byte_offsets() {
+        assert_eq!(parse_set_name("İİset(区域)"), Some("区域".to_owned()));
+        assert_eq!(parse_set_name("ſet(区域)"), Some("区域".to_owned()));
     }
 
     #[test]
