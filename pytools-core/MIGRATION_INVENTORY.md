@@ -858,3 +858,11 @@ WSL 验证：`x86_64-unknown-linux-gnu.2.28` release（HEAD `328532c`）与 deb 
 ### 2026-10-25 PT-6-1 区间截断后空区间 panic 审计修复
 
 独立复核此前 row_end/col_end 截断修复时发现：规则起始数据行在短工作表末尾之后时，截断后的 row_start 大于 row_end；函数未再次检查空区间，并在 Vec 容量计算处发生 usize 下溢 panic。用三行工作表、配置数据区 4–8、列 2 的单元测试在修复前稳定复现。最小修复是在行列上界 clamp 后返回空结果；新增 unit regression。真实规则桥接对拍增加工作表仅到第 39 行、配置区 40–66 的无数据场景，两种行头模式均与 PyCode 一致跳过输出，无 panic；原三规则双模式投影仍 exact。报告为真实业务规则 + 合成源簿，不构成真实报表验收。Windows 原生 fmt、build、边界单测、timeline_menu_cli 回归及对拍通过。未修改共享 crate、原 Python 源项目或真实数据。PT-1-3/1-4 真实源报表、PT-6-2 真实批注模板、PT-4-2/4-3 sidecar 端到端和麒麟/UOS 实机交付仍未验收。
+
+### 2026-10-25 PT-4-2/PT-4-3 LibreOffice profile 修复同步与 CDF 端到端复验
+
+安全同步 main 两个 sidecar 提交：62bcac6（run_libreoffice 与重算共用预建目录 + file URI helper）、857fcad（Word 文本抽取/校验调用也接入该 helper）。复核 sidecar 中全部三个 soffice 启动点均使用 helper，未改共享源码之外的业务逻辑。
+
+WSL Ubuntu/LibreOffice 24.2.7.2，使用既有合成内容生成的真实 CDF 样本（source.xls、notes.doc），在独立输出目录通过真实 PyTools CLI 复验。PT-4-2 convert-excel --engine lo 成功，实际引擎 LibreOffice；sidecar/Rust 独立 Calamine 校验工作表顺序与名称、数据坐标和值、公式文本，数值容差 1e-15；开发者运行历史 status=succeeded、converted=1，源 SHA-256 未变。PT-4-3 convert-word --engine lo 成功；sidecar 检查 DOCX 包并比较源/输出规范化文本，额外与既有正确 DOCX 参考文本逐项拼接对比为精确一致（26 字符）；运行历史 status=succeeded、actual_engines=[LibreOffice]，源 SHA-256 未变。修复前 PT-4-3 首次运行仍因 extract_word_text_lo 裸 profile 参数失败，main 后续提交 857fcad 补齐后同一入口重跑成功。
+
+Windows 原生 cargo test --offline --locked -p lo-convert -j 1：4 个单测通过；集成测试因 Windows 无 soffice 按测试逻辑未执行（test harness 提前返回）。WSL cargo test --offline --locked --target-dir target/pt4-linux-audit -p lo-convert -j 1：4 个单测及实际 LibreOffice 重算集成 1 项通过。WSL 当前代码构建和两条真实产品 CLI 转换均成功。XLS 保真比对覆盖范围不包含样式或所有 OOXML 部件；DOC 输入和 XLS 源均为合成业务内容的真实 CDF 文件，不构成真实用户业务模板验收。PT-4-2/4-3 对业务来源文件、麒麟/UOS、deb/离线交付仍未验收。
