@@ -104,6 +104,156 @@ fn existing_configuration_repair_menu_saves_a_plan_without_modifying_source() ->
         .is_some_and(|items| !items.is_empty()));
     assert!(!action_dir.join("config-candidate.xlsx").exists());
     assert_eq!(fs::read(&config)?, source_before);
+
+    let history_path = fs::read_dir(root.path().join("app/logs"))?
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.path())
+        .find(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with("pytools-config-initialize_or_repair-"))
+        })
+        .context("configuration repair run history missing")?;
+    let history_text = fs::read_to_string(&history_path)?;
+    assert!(!history_text.contains(&config.to_string_lossy().to_string()));
+    let history: Value = serde_json::from_str(&history_text)?;
+    assert_eq!(history["feature_id"], "PT-5-1");
+    assert_eq!(history["status"], "succeeded");
+    assert_eq!(history["metrics"]["operation"], "repair_plan");
+    assert!(
+        history["metrics"]["planned_operations"]
+            .as_u64()
+            .unwrap_or_default()
+            > 0
+    );
+    assert_eq!(history["plan_only"], true);
+    assert_eq!(history["excel_modifier_invoked"], false);
+    assert!(history["actual_engines"]
+        .as_array()
+        .is_some_and(|engines| engines.iter().any(|engine| engine == "calamine")));
+    Ok(())
+}
+
+#[test]
+fn config_menu_history_records_writer_and_view_without_config_contents() -> Result<()> {
+    let root = TestDirectory::new()?;
+    let config = root.path().join("app/config/config.xlsx");
+
+    let initialized = run_menu(&config, "5\n1\n0\n0\n", "developer")?;
+    anyhow::ensure!(
+        initialized.status.success(),
+        "developer config initialization failed: {}",
+        String::from_utf8_lossy(&initialized.stderr)
+    );
+    let initialized_stdout = String::from_utf8_lossy(&initialized.stdout);
+    assert!(initialized_stdout.contains("PT-5 完成：PT-5-1"));
+    let log_dir = root.path().join("app/logs");
+    let init_history_path = fs::read_dir(&log_dir)?
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.path())
+        .find(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with("pytools-config-initialize_or_repair-"))
+        })
+        .context("config initialization history missing")?;
+    let init_history_text = fs::read_to_string(&init_history_path)?;
+    assert!(!init_history_text.contains(&config.to_string_lossy().to_string()));
+    let init_history: Value = serde_json::from_str(&init_history_text)?;
+    assert_eq!(init_history["metrics"]["operation"], "initialized");
+    assert_eq!(init_history["metrics"]["sheets"], 11);
+    assert_eq!(init_history["actual_engines"][0], "rust_xlsxwriter");
+    assert_eq!(init_history["excel_writer_invoked"], true);
+    assert_eq!(init_history["excel_modifier_invoked"], false);
+
+    let viewed = run_menu(&config, "5\n2\n0\n0\n", "developer")?;
+    anyhow::ensure!(
+        viewed.status.success(),
+        "developer config view failed: {}",
+        String::from_utf8_lossy(&viewed.stderr)
+    );
+    let view_history_path = fs::read_dir(&log_dir)?
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.path())
+        .find(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with("pytools-config-view-"))
+        })
+        .context("config view history missing")?;
+    let view_history_text = fs::read_to_string(view_history_path)?;
+    assert!(!view_history_text.contains(&config.to_string_lossy().to_string()));
+    assert!(!view_history_text.contains("原始配置视图"));
+    let view_history: Value = serde_json::from_str(&view_history_text)?;
+    assert_eq!(view_history["feature_id"], "PT-5-2");
+    assert_eq!(view_history["status"], "succeeded");
+    assert_eq!(view_history["metrics"]["sheet_count"], 11);
+    assert!(view_history["actual_engines"]
+        .as_array()
+        .is_some_and(|engines| engines.iter().any(|engine| engine == "calamine")));
+    assert!(view_history["elapsed_ms"].as_u64().is_some());
+    Ok(())
+}
+
+#[test]
+fn config_view_off_keeps_requested_view_but_suppresses_progress_and_history() -> Result<()> {
+    let root = TestDirectory::new()?;
+    let config = root.path().join("app/config/config.xlsx");
+    write_incomplete_config(&config)?;
+
+    let output = run_menu(&config, "5\n2\n0\n0\n", "off")?;
+    anyhow::ensure!(
+        output.status.success(),
+        "off config view failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("配置文件:"));
+    assert!(stdout.contains("Sheet 列表"));
+    assert!(!stdout.contains("PT-5 开始："));
+    assert!(!stdout.contains("PT-5 完成："));
+    assert!(!stdout.contains("开始处理："));
+    assert!(!stdout.contains("处理完成："));
+    assert!(!stdout.contains("用时="));
+    assert!(!root.path().join("app/logs").exists());
+    Ok(())
+}
+
+#[test]
+fn malformed_configuration_repair_logs_failure_without_config_contents() -> Result<()> {
+    let root = TestDirectory::new()?;
+    let config = root.path().join("app/config/config.xlsx");
+    fs::create_dir_all(config.parent().context("configuration parent missing")?)?;
+    fs::write(&config, b"not a workbook")?;
+
+    let output = run_menu(&config, "5\n1\n0\n0\n", "developer")?;
+    anyhow::ensure!(
+        output.status.success(),
+        "developer config repair failure path exited unexpectedly: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let log_dir = root.path().join("app/logs");
+    let history_path = fs::read_dir(&log_dir)?
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.path())
+        .find(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with("pytools-config-initialize_or_repair-"))
+        })
+        .context("failed configuration repair history missing")?;
+    let history_text = fs::read_to_string(history_path)?;
+    assert!(!history_text.contains(&config.to_string_lossy().to_string()));
+    assert!(!history_text.contains("not a workbook"));
+    let history: Value = serde_json::from_str(&history_text)?;
+    assert_eq!(history["feature_id"], "PT-5-1");
+    assert_eq!(history["status"], "failed");
+    assert_eq!(history["error_type"], "config_initialize_or_repair_failed");
+    assert!(history["actual_components"]
+        .as_array()
+        .is_some_and(|components| components
+            .iter()
+            .any(|component| component == "pytools_core::config::build_config_repair_plan")));
     Ok(())
 }
 

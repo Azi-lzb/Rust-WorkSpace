@@ -422,6 +422,188 @@ where
     }
 }
 
+#[derive(Debug)]
+struct ConfigMenuRunFacts {
+    status: &'static str,
+    metrics: serde_json::Value,
+    stages: Vec<serde_json::Value>,
+    actual_engines: Vec<String>,
+    actual_components: Vec<String>,
+    excel_modifier_invoked: bool,
+    excel_writer_invoked: bool,
+    error_type: Option<&'static str>,
+}
+
+impl ConfigMenuRunFacts {
+    fn new() -> Self {
+        Self {
+            status: "succeeded",
+            metrics: serde_json::json!({}),
+            stages: Vec::new(),
+            actual_engines: Vec::new(),
+            actual_components: Vec::new(),
+            excel_modifier_invoked: false,
+            excel_writer_invoked: false,
+            error_type: None,
+        }
+    }
+
+    fn add_engine(&mut self, engine: impl Into<String>) {
+        let engine = engine.into();
+        if !self.actual_engines.contains(&engine) {
+            self.actual_engines.push(engine);
+        }
+    }
+
+    fn add_component(&mut self, component: impl Into<String>) {
+        let component = component.into();
+        if !self.actual_components.contains(&component) {
+            self.actual_components.push(component);
+        }
+    }
+
+    fn add_stage(&mut self, name: &str, elapsed: std::time::Duration) {
+        self.stages.push(serde_json::json!({
+            "name": name,
+            "elapsed_ms": elapsed.as_millis(),
+        }));
+    }
+}
+
+fn finish_config_menu_action<W: Write>(
+    output: &mut W,
+    global: &GlobalConfig,
+    log_view: &str,
+    feature_id: &str,
+    action: &str,
+    label: &str,
+    started_at: &chrono::DateTime<Local>,
+    elapsed_ms: u128,
+    facts: &ConfigMenuRunFacts,
+) -> Result<()> {
+    if log_view == "user" {
+        if facts.status == "failed" {
+            writeln!(output, "处理失败：{label}，耗时 {elapsed_ms} ms。")?;
+        } else if facts.status == "partial" {
+            writeln!(
+                output,
+                "处理完成，但部分配置未能解析：{}，耗时 {elapsed_ms} ms。",
+                config_menu_summary(feature_id, &facts.metrics)
+            )?;
+        } else {
+            writeln!(
+                output,
+                "处理完成：{}，耗时 {elapsed_ms} ms。",
+                config_menu_summary(feature_id, &facts.metrics)
+            )?;
+        }
+    } else if log_view == "developer" {
+        let history_result = write_config_menu_run_history(
+            global, feature_id, action, started_at, elapsed_ms, facts,
+        );
+        match history_result {
+            Ok(path) => writeln!(
+                output,
+                "PT-5 完成：{feature_id}，状态 {}，{}，实际引擎：{}，实际组件：{}，ExcelModifier {}，Excel writer {}，耗时 {elapsed_ms} ms；运行记录：{}",
+                facts.status,
+                config_menu_summary(feature_id, &facts.metrics),
+                if facts.actual_engines.is_empty() { "未调用".to_owned() } else { facts.actual_engines.join(", ") },
+                if facts.actual_components.is_empty() { "未确认".to_owned() } else { facts.actual_components.join(", ") },
+                if facts.excel_modifier_invoked { "已调用" } else { "未调用" },
+                if facts.excel_writer_invoked { "已调用" } else { "未调用" },
+                path.display()
+            )?,
+            Err(error) => writeln!(
+                output,
+                "PT-5 完成：{feature_id}，状态 {}，{}，运行记录写入失败：{error:#}",
+                facts.status,
+                config_menu_summary(feature_id, &facts.metrics)
+            )?,
+        }
+    }
+    Ok(())
+}
+
+fn config_menu_summary(feature_id: &str, metrics: &serde_json::Value) -> String {
+    if feature_id == "PT-5-2" {
+        return format!(
+            "读取 {} 张工作表、{} 行",
+            metrics["sheet_count"].as_u64().unwrap_or_default(),
+            metrics["non_empty_rows"].as_u64().unwrap_or_default()
+        );
+    }
+    match metrics["operation"]
+        .as_str()
+        .unwrap_or("configuration_action")
+    {
+        "initialized" => format!(
+            "新建配置表 {} 张工作表",
+            metrics["sheets"].as_u64().unwrap_or_default()
+        ),
+        "already_complete" => "配置完整，无需修复".to_owned(),
+        "repair_plan" => format!(
+            "生成修复计划 {} 项操作",
+            metrics["planned_operations"].as_u64().unwrap_or_default()
+        ),
+        "candidate_ready" => "候选配置已验证".to_owned(),
+        "committed" => "配置已安全更新".to_owned(),
+        "candidate_retained" => "候选已保留，当前配置未替换".to_owned(),
+        _ => "配置操作未完成".to_owned(),
+    }
+}
+
+fn write_config_menu_run_history(
+    global: &GlobalConfig,
+    feature_id: &str,
+    action: &str,
+    started_at: &chrono::DateTime<Local>,
+    elapsed_ms: u128,
+    facts: &ConfigMenuRunFacts,
+) -> Result<PathBuf> {
+    fs::create_dir_all(&global.log_dir)
+        .with_context(|| format!("create config log directory {}", global.log_dir.display()))?;
+    let mut stages = facts.stages.clone();
+    if stages.is_empty() {
+        stages.push(serde_json::json!({
+            "name": "configuration_menu_action",
+            "elapsed_ms": elapsed_ms,
+        }));
+    }
+    let history = serde_json::json!({
+        "schema_version": 1,
+        "feature_id": feature_id,
+        "action": action,
+        "status": facts.status,
+        "started_at": started_at.to_rfc3339(),
+        "elapsed_ms": elapsed_ms,
+        "stages": stages,
+        "metrics": facts.metrics,
+        "actual_engines": facts.actual_engines,
+        "actual_components": facts.actual_components,
+        "excel_modifier_invoked": facts.excel_modifier_invoked,
+        "excel_writer_invoked": facts.excel_writer_invoked,
+        "plan_only": facts.metrics["execution_mode"] == "plan_only",
+        "error_type": facts.error_type,
+    });
+    let timestamp = Local::now().format("%Y%m%d_%H%M%S_%f");
+    for suffix in 1..=1000 {
+        let suffix = if suffix == 1 {
+            String::new()
+        } else {
+            format!("-{suffix}")
+        };
+        let path = global
+            .log_dir
+            .join(format!("pytools-config-{action}-{timestamp}{suffix}.json"));
+        match write_json_report_create_new(&path, &history) {
+            Ok(()) => return Ok(path),
+            Err(_error) if path.exists() => continue,
+            Err(error) => return Err(error),
+        }
+    }
+    bail!("could not allocate a unique configuration run history filename")
+}
+
 fn run_interactive_config_menu<R, W>(
     input: &mut R,
     output: &mut W,
@@ -447,6 +629,14 @@ where
         };
         match choice.as_str() {
             "1" => {
+                let started_at = Local::now();
+                let started = Instant::now();
+                let mut facts = ConfigMenuRunFacts::new();
+                if log_view == "user" {
+                    writeln!(output, "开始处理：初始化/修复配置表")?;
+                } else if log_view == "developer" {
+                    writeln!(output, "PT-5 开始：PT-5-1 initialize_or_repair")?;
+                }
                 if let Err(error) = run_interactive_config_initialize_or_repair(
                     input,
                     output,
@@ -456,7 +646,10 @@ where
                     log_view,
                     capabilities,
                     platform,
+                    &mut facts,
                 ) {
+                    facts.status = "failed";
+                    facts.error_type = Some("config_initialize_or_repair_failed");
                     if log_view == "developer" {
                         writeln!(output, "[配置操作失败] {error:#}")?;
                     } else {
@@ -466,11 +659,57 @@ where
                         )?;
                     }
                 }
+                finish_config_menu_action(
+                    output,
+                    global,
+                    log_view,
+                    "PT-5-1",
+                    "initialize_or_repair",
+                    "初始化/修复配置表",
+                    &started_at,
+                    started.elapsed().as_millis(),
+                    &facts,
+                )?;
             }
             "2" => {
+                let started_at = Local::now();
                 let view_started = Instant::now();
+                let mut facts = ConfigMenuRunFacts::new();
+                if log_view == "user" {
+                    writeln!(output, "开始处理：读取当前配置")?;
+                } else if log_view == "developer" {
+                    writeln!(output, "PT-5 开始：PT-5-2 view")?;
+                }
+                facts.add_engine("calamine");
+                facts.add_component("pytools_core::config::view_config");
                 match view_config(config_path) {
                     Ok(view) => {
+                        facts.add_engine("calamine");
+                        facts.add_component("pytools_core::config::view_config");
+                        let non_empty_rows = view
+                            .sheets
+                            .iter()
+                            .map(|sheet| {
+                                sheet
+                                    .rows
+                                    .iter()
+                                    .skip(1)
+                                    .filter(|row| {
+                                        row.iter().any(|value| {
+                                            !value.is_null()
+                                                && value
+                                                    .as_str()
+                                                    .is_none_or(|text| !text.is_empty())
+                                        })
+                                    })
+                                    .count() as u64
+                            })
+                            .sum::<u64>();
+                        facts.metrics = serde_json::json!({
+                            "sheet_count": view.sheets.len(),
+                            "non_empty_rows": non_empty_rows,
+                            "global_config_loaded": false,
+                        });
                         writeln!(output, "配置文件: {}", config_path.display())?;
                         if let Ok(modified) =
                             fs::metadata(config_path).and_then(|metadata| metadata.modified())
@@ -506,8 +745,10 @@ where
                             )?;
                             writeln!(output, "实际读取组件: excel-reader / Calamine")?;
                         } else {
+                            facts.add_component("pytools_core::config::load_global");
                             match load_global(config_path) {
                                 Ok(config) => {
+                                    facts.metrics["global_config_loaded"] = serde_json::json!(true);
                                     writeln!(output, "全局配置解析:")?;
                                     writeln!(output, "  输入目录: {}", config.input_dir.display())?;
                                     writeln!(
@@ -522,6 +763,8 @@ where
                                     if log_view == "developer" {
                                         writeln!(output, "  [全局配置解析失败] {error:#}")?;
                                     } else {
+                                        facts.status = "partial";
+                                        facts.error_type = Some("global_config_parse_failed");
                                         writeln!(
                                             output,
                                             "  [全局配置解析失败] 请使用 5-1 初始化/修复配置表。"
@@ -529,6 +772,7 @@ where
                                     }
                                 }
                             }
+                            facts.add_component("pytools_core::config::load_timeline_rules");
                             if let Ok(rules) = load_timeline_rules(config_path) {
                                 let enabled =
                                     rules.iter().filter(|rule| rule.enabled).collect::<Vec<_>>();
@@ -541,6 +785,8 @@ where
                                     )?;
                                 }
                             }
+                            facts.add_component("pytools_core::config::load_institution_mapping");
+                            facts.add_component("pytools_core::config::load_foreign_banks");
                             if let (Ok(mapping), Ok(foreign)) = (
                                 load_institution_mapping(config_path),
                                 load_foreign_banks(config_path),
@@ -552,13 +798,19 @@ where
                                     foreign.len()
                                 )?;
                             }
+                            facts.add_component("pytools_core::config::load_extract_tasks");
                             if let Ok(tasks) = load_extract_tasks(config_path) {
                                 writeln!(output, "工作表提取任务（启用）: {} 条", tasks.len())?;
                             }
                         }
-                        writeln!(output, "用时={}ms", view_started.elapsed().as_millis())?;
+                        if log_view != "off" {
+                            writeln!(output, "用时={}ms", view_started.elapsed().as_millis())?;
+                        }
+                        facts.add_component("pytools_core::config::load_global");
                         refresh_interactive_global(config_path, global, config_error);
                         if let Some(error) = config_error.as_deref() {
+                            facts.status = "partial";
+                            facts.error_type = Some("global_config_refresh_failed");
                             if log_view == "developer" {
                                 writeln!(output, "[全局配置不可用] {error}")?;
                             } else {
@@ -567,9 +819,15 @@ where
                                     "[全局配置不可用] 请使用 5-1 初始化/修复配置表。"
                                 )?;
                             }
+                        } else {
+                            facts.metrics["global_config_loaded"] = serde_json::json!(true);
                         }
                     }
                     Err(_error) if !config_path.is_file() => {
+                        facts.status = "failed";
+                        facts.error_type = Some("config_missing");
+                        facts.metrics =
+                            serde_json::json!({ "sheet_count": 0, "non_empty_rows": 0 });
                         writeln!(
                             output,
                             "[缺失] 配置文件 {} 不存在，请先选择 5-1 初始化/修复配置表。",
@@ -577,6 +835,8 @@ where
                         )?;
                     }
                     Err(error) => {
+                        facts.status = "failed";
+                        facts.error_type = Some("config_view_failed");
                         *config_error = Some(format!("{error:#}"));
                         if log_view == "developer" {
                             writeln!(output, "[读取失败] {error:#}")?;
@@ -588,6 +848,18 @@ where
                         }
                     }
                 }
+                facts.add_stage("configuration_read_and_summary", view_started.elapsed());
+                finish_config_menu_action(
+                    output,
+                    global,
+                    log_view,
+                    "PT-5-2",
+                    "view",
+                    "查看当前配置",
+                    &started_at,
+                    view_started.elapsed().as_millis(),
+                    &facts,
+                )?;
             }
             "0" => return Ok(()),
             _ => writeln!(output, "仅接受 1、2 或 0")?,
@@ -604,6 +876,7 @@ fn run_interactive_config_initialize_or_repair<R, W>(
     log_view: &str,
     capabilities: Option<&Path>,
     platform: Option<&str>,
+    facts: &mut ConfigMenuRunFacts,
 ) -> Result<()>
 where
     R: BufRead,
@@ -619,15 +892,35 @@ where
 
     if !config_path.exists() {
         let initialize_started = Instant::now();
-        writeln!(output, "正在新建 PyTools 配置表……")?;
+        if log_view != "off" {
+            writeln!(output, "正在新建 PyTools 配置表……")?;
+        }
+        facts.add_engine("rust_xlsxwriter");
+        facts.add_component("pytools_core::config::initialize_new_config");
+        facts.excel_writer_invoked = true;
         let result = initialize_new_config(config_path)?;
-        writeln!(
-            output,
-            "[完成] 已新建配置表：{}（{} 张工作表，用时={}ms）",
-            result.path.display(),
-            result.sheets,
-            initialize_started.elapsed().as_millis()
-        )?;
+        facts.metrics = serde_json::json!({
+            "operation": "initialized",
+            "execution_mode": "initialized",
+            "sheets": result.sheets,
+        });
+        facts.add_stage("configuration_initialization", initialize_started.elapsed());
+        if log_view == "off" {
+            writeln!(
+                output,
+                "[完成] 已新建配置表：{}（{} 张工作表）",
+                result.path.display(),
+                result.sheets
+            )?;
+        } else {
+            writeln!(
+                output,
+                "[完成] 已新建配置表：{}（{} 张工作表，用时={}ms）",
+                result.path.display(),
+                result.sheets,
+                initialize_started.elapsed().as_millis()
+            )?;
+        }
         if log_view == "developer" {
             writeln!(output, "实际写入引擎: rust_xlsxwriter")?;
         }
@@ -650,7 +943,19 @@ where
     let plan_path = output_dir.join("repair-plan.json");
     let original_sha256 = sha256_file(config_path)?;
     let plan_started = Instant::now();
+    facts.add_engine("calamine");
+    facts.add_component("pytools_core::config::build_config_repair_plan");
+    facts.add_component("excel_reader::read_xlsx_sheet_names_ooxml");
     let Some(plan) = build_config_repair_plan(config_path, &candidate_path)? else {
+        facts.metrics = serde_json::json!({
+            "operation": "already_complete",
+            "execution_mode": "not_needed",
+            "planned_operations": 0,
+            "plan_file_written": false,
+            "candidate_generated": false,
+            "committed": false,
+        });
+        facts.add_stage("configuration_read_and_repair_plan", plan_started.elapsed());
         writeln!(
             output,
             "[无需修复] 当前配置已经完整：{}",
@@ -659,23 +964,49 @@ where
         refresh_interactive_global(config_path, global, config_error);
         return Ok(());
     };
+    facts.metrics = serde_json::json!({
+        "operation": "repair_plan",
+        "execution_mode": "plan_only",
+        "planned_operations": plan.operations.len(),
+        "plan_file_written": global.emit_plan_files,
+        "candidate_generated": false,
+        "committed": false,
+    });
+    facts.add_stage("configuration_read_and_repair_plan", plan_started.elapsed());
     fs::create_dir_all(&output_dir)?;
     if global.emit_plan_files {
         fs::write(&plan_path, serde_json::to_vec_pretty(&plan)?)?;
-        writeln!(
-            output,
-            "[计划已生成] 共 {} 项操作，用时={}ms：{}",
-            plan.operations.len(),
-            plan_started.elapsed().as_millis(),
-            plan_path.display()
-        )?;
+        if log_view == "off" {
+            writeln!(
+                output,
+                "[计划已生成] 共 {} 项操作：{}",
+                plan.operations.len(),
+                plan_path.display()
+            )?;
+        } else {
+            writeln!(
+                output,
+                "[计划已生成] 共 {} 项操作，用时={}ms：{}",
+                plan.operations.len(),
+                plan_started.elapsed().as_millis(),
+                plan_path.display()
+            )?;
+        }
     } else {
-        writeln!(
-            output,
-            "[计划已生成] 共 {} 项操作，用时={}ms（全局配置 输出附带计划文件=否，计划未落盘）",
-            plan.operations.len(),
-            plan_started.elapsed().as_millis()
-        )?;
+        if log_view == "off" {
+            writeln!(
+                output,
+                "[计划已生成] 共 {} 项操作（全局配置 输出附带计划文件=否，计划未落盘）",
+                plan.operations.len()
+            )?;
+        } else {
+            writeln!(
+                output,
+                "[计划已生成] 共 {} 项操作，用时={}ms（全局配置 输出附带计划文件=否，计划未落盘）",
+                plan.operations.len(),
+                plan_started.elapsed().as_millis()
+            )?;
+        }
     }
 
     let (Some(capabilities), Some(platform)) = (capabilities, platform) else {
@@ -683,6 +1014,7 @@ where
             output,
             "当前为计划模式；源配置未修改，也未生成候选。启动菜单时提供 --capabilities <json> 与 --platform <id>，且二者须匹配已验收能力，才可执行候选。"
         )?;
+        facts.metrics["execution_mode"] = serde_json::json!("plan_only");
         if log_view == "developer" {
             writeln!(
                 output,
@@ -694,15 +1026,32 @@ where
 
     verify_planning_snapshot(config_path, Some(&original_sha256))?;
     let execution_started = Instant::now();
+    facts.excel_modifier_invoked = true;
+    facts.add_component("excel_editor::ExcelModifier");
     let execution = apply_plan_with_capability_file(&plan, capabilities, platform)?;
+    facts.add_engine(execution.engine.to_string());
     let _candidate_view = view_config(&candidate_path)?;
+    facts.add_component("pytools_core::config::view_config");
     let _candidate_global = load_global(&candidate_path)?;
-    writeln!(
-        output,
-        "[候选已验证] {}；源配置仍未替换；执行用时={}ms。",
-        candidate_path.display(),
-        execution_started.elapsed().as_millis()
-    )?;
+    facts.add_component("pytools_core::config::load_global");
+    facts.add_stage("candidate_modify_and_validate", execution_started.elapsed());
+    facts.metrics["operation"] = serde_json::json!("candidate_ready");
+    facts.metrics["execution_mode"] = serde_json::json!("candidate_ready");
+    facts.metrics["candidate_generated"] = serde_json::json!(true);
+    if log_view == "off" {
+        writeln!(
+            output,
+            "[候选已验证] {}；源配置仍未替换。",
+            candidate_path.display()
+        )?;
+    } else {
+        writeln!(
+            output,
+            "[候选已验证] {}；源配置仍未替换；执行用时={}ms。",
+            candidate_path.display(),
+            execution_started.elapsed().as_millis()
+        )?;
+    }
     if log_view == "developer" {
         writeln!(
             output,
@@ -720,24 +1069,44 @@ where
         .is_some_and(|answer| matches!(answer.to_ascii_lowercase().as_str(), "y" | "yes"))
     {
         let commit_started = Instant::now();
+        facts.add_component("pytools_core::config::replace_target_from_candidate");
         let committed =
             replace_target_from_candidate(&candidate_path, config_path, &original_sha256)?;
-        writeln!(
-            output,
-            "[完成] 配置已安全更新：{}；原文件备份：{}；提交用时={}ms",
-            committed.target.display(),
-            committed
-                .backup_path
-                .as_deref()
-                .map(|path| path.display().to_string())
-                .unwrap_or_else(|| "无".to_owned()),
-            commit_started.elapsed().as_millis()
-        )?;
+        facts.metrics["operation"] = serde_json::json!("committed");
+        facts.metrics["execution_mode"] = serde_json::json!("committed");
+        facts.metrics["committed"] = serde_json::json!(true);
+        facts.add_stage("configuration_safe_commit", commit_started.elapsed());
+        if log_view == "off" {
+            writeln!(
+                output,
+                "[完成] 配置已安全更新：{}；原文件备份：{}",
+                committed.target.display(),
+                committed
+                    .backup_path
+                    .as_deref()
+                    .map(|path| path.display().to_string())
+                    .unwrap_or_else(|| "无".to_owned())
+            )?;
+        } else {
+            writeln!(
+                output,
+                "[完成] 配置已安全更新：{}；原文件备份：{}；提交用时={}ms",
+                committed.target.display(),
+                committed
+                    .backup_path
+                    .as_deref()
+                    .map(|path| path.display().to_string())
+                    .unwrap_or_else(|| "无".to_owned()),
+                commit_started.elapsed().as_millis()
+            )?;
+        }
         refresh_interactive_global(config_path, global, config_error);
         if let Some(error) = config_error.as_deref() {
             anyhow::bail!("updated configuration cannot be loaded: {error}");
         }
     } else {
+        facts.metrics["operation"] = serde_json::json!("candidate_retained");
+        facts.metrics["execution_mode"] = serde_json::json!("candidate_retained");
         writeln!(output, "未替换当前配置；候选文件保留在输出目录。")?;
     }
     Ok(())

@@ -653,6 +653,12 @@ Windows 原生 `cargo fmt --manifest-path pytools-core/Cargo.toml -- --check` �
 
 仍未完成真实用户配置文件的修改验收、生产 capability 登记、Windows 桌面交互、目标平台和离线 deb 验收；PT-5-1 修复生产验收继续为未验证。配置查看和菜单集成测试使用合成/本地配置，不写真实业务数据或运行历史。
 
+### 2026-10-25 PT-5-1/PT-5-2 配置菜单双视图历史日志
+
+类别 5 的初始化/修复与查看菜单现接入 user/developer/off：user 输出步骤、摘要计数与总耗时；developer 写入脱敏 JSON 历史，记录状态、实际引擎/组件、阶段耗时及处理计数；off 保留所选业务结果，不显示进度/耗时或创建运行历史。错误路径写入稳定错误类型。Windows 原生 `config_menu_cli` 5/5、`plan_file_output_toggle` 1/1，`cargo fmt --check` 通过。测试覆盖新建 11 表、合成配置修复计划、查看及损坏簿失败，历史不含配置路径或原始内容；无真实 Python 基线重跑，配置业务与 Excel 输出未变更。
+
+只读 VBA 配置夹具 `tests/fixtures/vba_config/VbaV2.4.2.xlsm` 经 PT-5-2 菜单在 developer/off/user 运行：读取 14 张表、3,996 行，开发者历史记录实际 reader `calamine` 且不含夹具路径；该 VBA 版全局配置页无法按 PyCode 格式载入，历史状态为 `partial`（`global_config_refresh_failed`），与既有迁移清单注明的格式边界一致。off/user 工作表列表投影一致。进程墙钟中位数（预热后每视图 3 次，Windows debug CLI）分别为 off 20.606 s、user 20.326 s；差值不足以说明日志性能变化。developer 8.275 s 因展示/配置加载路径不同，不作同口径比较。该运行不构成 PT-5 业务验收；生产 capability、真实 PyCode 配置修改及目标平台仍未验证。
+
 ### 2026-10-25 PT-4-9/PT-4-10 文件排序双视图运行日志
 
 `pytools file-sort-prefix` 与 `pytools remove-file-sort-prefix` 现在支持 `--log-view user|developer|off`，交互菜单类别 4 的第 9/10 项沿用全局视图设置。Rust 业务回调记录配置读取、输出目录准备、逐文件处理、报表写入和任务摘要；开发者事件包含实际组件/引擎、阶段耗时与累计耗时。PT-4-10 按是否读取内容前缀工作簿标记 Calamine，纯文件改名标记 RustFilesystem；报表写入标记 rust_xlsxwriter。用户视图显示处理数量和阶段耗时，off 不输出进度或新建日志，开发者视图保存结构化历史并保留原详细操作日志。两项操作的文件名、统计及报表业务语义未改变。
