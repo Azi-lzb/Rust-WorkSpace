@@ -11248,7 +11248,7 @@ fn print_usage() {
     eprintln!(
         "Usage:\n\
          pytools [menu] [--config <config.xlsx>] [--log-view user|developer|off] [--capabilities <json> --platform <id>]\n\
-         no command opens the migrated menu; available categories: 1 (timeline 1-5), 2 (dedup 1-6), 3 (print 1-4), 4 (conversion and file naming 1-10), 5 (configuration 1/2), 6 (summary 1/2), 7 (batch 7-1/7-8), and 8 (archive 1-5)\n\
+         no command opens the migrated menu; available categories: 1 (timeline 1-5), 2 (dedup 1-6), 3 (print 1-4), 4 (conversion and file naming 1-10), 5 (configuration 1/2), 6 (summary 1/2), 7 (batch 7-1/7-8), 8 (archive 1-5), and 9 (quick tools 1-3)\n\
          timeline-precheck --config <workbook.xlsx>\n\
          timeline-compare --config <workbook.xlsx> --template <workbook.xlsx> [--log-dir <dir>] [--log-view user|developer|off] <source.xlsx>...\n\
          timeline-extract --config <workbook.xlsx> [--output-dir <dir>] [--log-dir <dir>] [--log-view user|developer|off] [--capabilities <json> --platform <id> [--commit-target]] [<source.xlsx>...]\n\

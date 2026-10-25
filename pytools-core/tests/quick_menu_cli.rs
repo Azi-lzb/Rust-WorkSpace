@@ -96,3 +96,22 @@ fn main_menu_routes_all_three_quick_actions_without_starting_a_desktop_app() -> 
     );
     Ok(())
 }
+
+#[test]
+fn cli_help_lists_quick_tools_menu_category() -> Result<()> {
+    let result = Command::new(env!("CARGO_BIN_EXE_pytools"))
+        .arg("--help")
+        .output()?;
+    assert!(
+        result.status.success(),
+        "pytools --help failed: {}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+
+    let usage = String::from_utf8_lossy(&result.stderr);
+    assert!(
+        usage.contains("9 (quick tools 1-3)"),
+        "usage should list the quick tools menu category: {usage}"
+    );
+    Ok(())
+}
