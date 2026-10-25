@@ -26,5 +26,6 @@ pub mod sheet_extract;
 pub mod sheet_rename;
 pub mod submission_check;
 pub mod summary_ops;
+pub mod timeline_extract;
 pub mod timeline_ops;
 pub mod workbook_extract;

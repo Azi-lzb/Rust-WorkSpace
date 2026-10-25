@@ -693,3 +693,11 @@ Windows 原生验证：`cargo fmt --manifest-path pytools-core/Cargo.toml -- --c
 Python 只读基线测试 test_extract_sheets_append_existing_output_keeps_previous_sheets（区域提取）通过 1/1。Rust 真实 CLI 合成回归验证首次新建后再次追加，表名/顺序和值正确；无 capability 与平台不匹配时原目标字节不变；运行历史包含实际引擎/提交阶段且不含单元格值。现有交互菜单以明确确认接入该追加模式；新增端到端测试验证无 capability 时选源前拒绝，以及临时匹配 capability 下通过 pytools menu → 7 → 6 → pytools extract-sheets --append-existing 执行，既有值/公式/批注/合并保留，新表值正确，运行历史不含单元格值。整表追加另验证既有值、公式、批注、合并、粗体样式和行列尺寸保留；新表缓存值、合并、样式、行高/列宽复制，普通无批注版不复制公式文本与批注。Windows 原生 `sheet_extract_area_operation_parity` 11/11、`batch_tools_menu_cli` 16/16、cargo fmt --check 通过。完整机器报告：probe/reports/sheet_extract_append_existing_parity_20261025.json。
 
 本次使用的 Umya CreateSheet + ImportRange capability 仅由测试临时生成，未登记生产 Passed capability。Python 既有测试只覆盖区域追加；整表 Python helper 生成文件的样式重开问题仍按前节记录，本次不宣称整表输出文件级 Python 对拍通过。真实模板、未列举 OOXML 对象、非 XLSX、Windows 原生文件弹窗、目标 Linux/glibc 2.28 与 deb 未验证，PT-7-6 整体验收仍未完成。
+
+### 2026-10-25 PT-1-2 时序提取 Rust 主输出与入口对拍
+
+新增 `timeline_extract` Rust 业务模块，按原 `run_timeline_slim` 复用现有规则引擎，读取配置规则与路径映射，执行行头后缀、跨规则去重、日期和值写出，并以 `rust_xlsxwriter` 生成七列 `时序提取结果`。新增 `timeline-extract` CLI 及真实菜单 `pytools menu → 1 → 2`，提供 user/developer/off 三种日志视图与 PT-1-2 运行历史。读取与写入阶段事件分别记录实际 Calamine 和 rust_xlsxwriter 引擎、处理计数与耗时。错误策略为 continue 时保留已成功输出并报告部分失败；配置了可选目标写入且有对应结果行时，结果明确标记该目标写入尚未执行。
+
+Windows 原生 Rust CLI 与只读 PyCode 基线的合成对拍通过：2 个有效 XLSX、4 个匹配工作表、20 行输出，并包含重复规则、行头后缀、路径映射、数值/文本/布尔/日期值和 1 个损坏输入；工作表名、全部单元格值/类型、表头粗体、数值格式、工作表尺寸及冻结窗格完整投影一致。真实菜单 1→2 分号路径回退的输出与 PyCode 相同；开发者事件流与持久化历史一致。continue 策略保留成功结果并记录损坏输入；fail_fast 策略在首个损坏输入停止且不生成输出。另以启用目标追加的合成配置验证 CLI 明确报告 deferred，既有目标工作簿保持不变。机器报告：`probe/reports/timeline_extract_parity_20261025.json`；可重跑入口：`probe/compare_timeline_extract.py`。
+
+PT-1-2 可选目标簿追加未纳入已确认的 D01 目标写入合同，本轮未执行该操作，不能据此声明完整迁移。证据仅覆盖合成 XLSX 与菜单手工路径回退；原项目真实工作簿、Windows 原生文件对话框、本轮目标簿追加语义、其他格式以及麒麟 V10/UOS V20、glibc 2.28 与 deb 离线验收仍未完成；PT-1-2 状态为未验证。

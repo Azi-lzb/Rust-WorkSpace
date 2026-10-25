@@ -56,6 +56,10 @@ use pytools_core::summary_ops::{
     summarize_by_comments, summarize_by_comments_with_progress, summarize_used_ranges,
     summarize_used_ranges_with_progress, SummaryProgress, SummaryRunEvent,
 };
+use pytools_core::timeline_extract::{
+    run_timeline_extract, run_timeline_extract_with_progress, TimelineExtractProgress,
+    TimelineExtractResult, TimelineExtractRunEvent,
+};
 use pytools_core::timeline_ops::{
     build_wide_target_append_plans, prepare_wide_target_replacement_source,
     run_header_path_compare, run_header_path_compare_with_progress, run_timeline_precheck,
@@ -95,6 +99,7 @@ fn run() -> Result<()> {
         "menu" | "interactive" => run_interactive_menu(arguments),
         "timeline-precheck" => run_timeline_precheck_cli(arguments),
         "timeline-compare" => run_timeline_compare_cli(arguments),
+        "timeline-extract" => run_timeline_extract_cli(arguments),
         "wide-summary" => run_wide_summary_cli(arguments, false),
         "wide-summary-row-suffix" => run_wide_summary_cli(arguments, true),
         "summary-used-range" => run_summary_used_range_cli(arguments),
@@ -245,7 +250,7 @@ where
 {
     loop {
         writeln!(output, "======== PyTools 菜单 ========")?;
-        writeln!(output, "  1  时序工具（已接入 1、3、4、5）")?;
+        writeln!(output, "  1  时序工具（已接入 1-5）")?;
         writeln!(output, "  2  去重工具（检查与生成计划）")?;
         writeln!(output, "  3  打印工具（生成页面设置计划）")?;
         writeln!(output, "  4  转换与文件命名工具")?;
@@ -987,6 +992,7 @@ where
     loop {
         writeln!(output, "------ 时序工具 ------")?;
         writeln!(output, "  1  表头路径比对")?;
+        writeln!(output, "  2  时序提取（精简）")?;
         writeln!(output, "  3  宽表汇总（行头加后缀）")?;
         writeln!(output, "  4  宽表汇总（行头不加后缀）")?;
         writeln!(output, "  5  预校验")?;
@@ -1036,6 +1042,28 @@ where
                 run_timeline_compare_cli(arguments)?;
                 return Ok(());
             }
+            "2" => {
+                let Some(sources) = choose_workbooks(
+                    "选择时序提取源文件（可多选）",
+                    true,
+                    input,
+                    output,
+                    allow_native_dialog,
+                )?
+                else {
+                    writeln!(output, "[已取消]")?;
+                    return Ok(());
+                };
+                let mut arguments = config_cli_arguments(config_path);
+                arguments.extend(summary_cli_arguments(global, log_view));
+                arguments.extend(
+                    sources
+                        .into_iter()
+                        .map(|path| path.to_string_lossy().into_owned()),
+                );
+                run_timeline_extract_cli(arguments)?;
+                return Ok(());
+            }
             "3" | "4" => {
                 let Some(sources) = choose_workbooks(
                     if choice == "3" {
@@ -1075,7 +1103,7 @@ where
                 return Ok(());
             }
             "0" => return Ok(()),
-            _ => writeln!(output, "仅接受 1、3、4、5 或 0")?,
+            _ => writeln!(output, "仅接受 1、2、3、4、5 或 0")?,
         }
     }
 }
@@ -6513,6 +6541,324 @@ fn run_convert_file_cli(arguments: Vec<String>) -> Result<()> {
     Ok(())
 }
 
+fn run_timeline_extract_cli(arguments: Vec<String>) -> Result<()> {
+    let options = parse_cli_arguments(arguments)?;
+    let config = required_path(&options, "config")?;
+    anyhow::ensure!(
+        !options.positional.is_empty(),
+        "provide at least one source workbook path"
+    );
+    let log_view = options
+        .values
+        .get("log-view")
+        .map(String::as_str)
+        .unwrap_or("user");
+    anyhow::ensure!(
+        matches!(log_view, "user" | "developer" | "off"),
+        "--log-view must be user, developer, or off"
+    );
+
+    let run_started = Instant::now();
+    let started_at = Local::now().to_rfc3339();
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or_default();
+    let run_id = format!("pytools-pt-1-2-{}-{nonce}", std::process::id());
+    let mut events = Vec::<TimelineExtractRunEvent>::new();
+    let mut progress = TimelineExtractProgress {
+        total_inputs: options.positional.len(),
+        ..TimelineExtractProgress::default()
+    };
+    let configuration_started = Instant::now();
+    if log_view != "off" {
+        emit_timeline_extract_cli_event(
+            log_view,
+            &mut events,
+            TimelineExtractRunEvent {
+                sequence: 1,
+                timestamp: Local::now().to_rfc3339(),
+                feature_id: "PT-1-2",
+                phase: "configuration_read".to_owned(),
+                status: "started".to_owned(),
+                user_message: "正在读取时序提取配置".to_owned(),
+                progress: progress.clone(),
+                input_index: None,
+                stage_elapsed_ms: None,
+                total_elapsed_ms: run_started.elapsed().as_millis(),
+                components: vec![
+                    "Rust".to_owned(),
+                    "pytools-core".to_owned(),
+                    "excel-reader".to_owned(),
+                    "calamine".to_owned(),
+                ],
+                actual_engine: None,
+                error_type: None,
+            },
+        );
+    }
+    let configuration = (|| -> Result<_> {
+        let global = load_global(&config)?;
+        let rules = pytools_core::config::load_timeline_rules(&config)?;
+        let path_maps = pytools_core::config::load_path_maps(&config)?;
+        Ok((global, rules, path_maps))
+    })();
+    let (global, rules, path_maps) = match configuration {
+        Ok(configuration) => configuration,
+        Err(error) => {
+            if log_view != "off" {
+                progress.failed_inputs = options.positional.len();
+                let sequence = events.len() + 1;
+                emit_timeline_extract_cli_event(
+                    log_view,
+                    &mut events,
+                    TimelineExtractRunEvent {
+                        sequence,
+                        timestamp: Local::now().to_rfc3339(),
+                        feature_id: "PT-1-2",
+                        phase: "configuration_read".to_owned(),
+                        status: "failed".to_owned(),
+                        user_message: "时序提取配置读取失败".to_owned(),
+                        progress: progress.clone(),
+                        input_index: None,
+                        stage_elapsed_ms: Some(configuration_started.elapsed().as_millis()),
+                        total_elapsed_ms: run_started.elapsed().as_millis(),
+                        components: vec![
+                            "Rust".to_owned(),
+                            "pytools-core".to_owned(),
+                            "excel-reader".to_owned(),
+                            "calamine".to_owned(),
+                        ],
+                        actual_engine: Some("calamine".to_owned()),
+                        error_type: Some("configuration_read_error".to_owned()),
+                    },
+                );
+                let log_dir = options
+                    .values
+                    .get("log-dir")
+                    .map(PathBuf::from)
+                    .unwrap_or_else(|| PathBuf::from("logs"));
+                if let Err(history_error) = write_timeline_extract_run_history(
+                    &log_dir,
+                    &run_id,
+                    &started_at,
+                    run_started.elapsed().as_millis(),
+                    None,
+                    "failed",
+                    "configuration_read_error",
+                    &events,
+                ) {
+                    eprintln!(
+                        "pytools: warning: could not save PT-1-2 run history: {history_error:#}"
+                    );
+                }
+            }
+            return Err(error).context("时序提取配置读取失败；请检查配置文件");
+        }
+    };
+    let log_dir = options
+        .values
+        .get("log-dir")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| global.log_dir.clone());
+    if log_view != "off" {
+        let sequence = events.len() + 1;
+        emit_timeline_extract_cli_event(
+            log_view,
+            &mut events,
+            TimelineExtractRunEvent {
+                sequence,
+                timestamp: Local::now().to_rfc3339(),
+                feature_id: "PT-1-2",
+                phase: "configuration_read".to_owned(),
+                status: "completed".to_owned(),
+                user_message: format!(
+                    "时序提取配置已读取：{} 条规则、{} 条路径映射",
+                    rules.len(),
+                    path_maps.len()
+                ),
+                progress: progress.clone(),
+                input_index: None,
+                stage_elapsed_ms: Some(configuration_started.elapsed().as_millis()),
+                total_elapsed_ms: run_started.elapsed().as_millis(),
+                components: vec![
+                    "Rust".to_owned(),
+                    "pytools-core".to_owned(),
+                    "excel-reader".to_owned(),
+                    "calamine".to_owned(),
+                ],
+                actual_engine: Some("calamine".to_owned()),
+                error_type: None,
+            },
+        );
+    }
+
+    let output_dir = options
+        .values
+        .get("output-dir")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| global.output_dir.clone());
+    let mut execution_global = global.clone();
+    execution_global.output_dir = output_dir;
+    let result = if log_view == "off" {
+        run_timeline_extract(&options.positional, &rules, &path_maps, &execution_global)
+    } else {
+        run_timeline_extract_with_progress(
+            &options.positional,
+            &rules,
+            &path_maps,
+            &execution_global,
+            |mut event| {
+                event.sequence = events.len() + 1;
+                event.total_elapsed_ms = run_started.elapsed().as_millis();
+                progress = event.progress.clone();
+                emit_timeline_extract_cli_event(log_view, &mut events, event);
+            },
+        )
+    };
+    if result.is_err()
+        && log_view != "off"
+        && !events.last().is_some_and(|event| event.status == "failed")
+    {
+        let sequence = events.len() + 1;
+        let failure_progress = events
+            .last()
+            .map(|event| event.progress.clone())
+            .unwrap_or(progress);
+        emit_timeline_extract_cli_event(
+            log_view,
+            &mut events,
+            TimelineExtractRunEvent {
+                sequence,
+                timestamp: Local::now().to_rfc3339(),
+                feature_id: "PT-1-2",
+                phase: "run".to_owned(),
+                status: "failed".to_owned(),
+                user_message: "时序提取失败".to_owned(),
+                progress: failure_progress,
+                input_index: None,
+                stage_elapsed_ms: None,
+                total_elapsed_ms: run_started.elapsed().as_millis(),
+                components: vec!["Rust".to_owned(), "pytools-core".to_owned()],
+                actual_engine: None,
+                error_type: Some("timeline_extract_error".to_owned()),
+            },
+        );
+    }
+
+    let history_path = if log_view == "off" {
+        None
+    } else {
+        let status = match result.as_ref() {
+            Err(_) => "failed",
+            Ok(result) if result.failed_files > 0 || result.target_writes_deferred => "partial",
+            Ok(result) if result.path.is_none() => "skipped",
+            Ok(_) => "succeeded",
+        };
+        let error_type = events
+            .iter()
+            .rev()
+            .find_map(|event| event.error_type.as_deref())
+            .unwrap_or("");
+        match write_timeline_extract_run_history(
+            &log_dir,
+            &run_id,
+            &started_at,
+            run_started.elapsed().as_millis(),
+            result.as_ref().ok(),
+            status,
+            error_type,
+            &events,
+        ) {
+            Ok(path) => Some(path),
+            Err(error) => {
+                eprintln!("pytools: warning: could not save PT-1-2 run history: {error:#}");
+                None
+            }
+        }
+    };
+
+    match result {
+        Ok(result) => {
+            let mut output = serde_json::to_value(result)?;
+            if log_view != "off" {
+                output["run_id"] = serde_json::Value::String(run_id);
+                if let Some(path) = history_path {
+                    output["run_log_path"] = serde_json::Value::String(path.display().to_string());
+                    if log_view == "user" {
+                        eprintln!("运行记录已保存：{}", path.display());
+                    }
+                }
+            }
+            println!("{}", serde_json::to_string_pretty(&output)?);
+            Ok(())
+        }
+        Err(error) => Err(error),
+    }
+}
+
+fn emit_timeline_extract_cli_event(
+    log_view: &str,
+    events: &mut Vec<TimelineExtractRunEvent>,
+    event: TimelineExtractRunEvent,
+) {
+    match log_view {
+        "developer" => match serde_json::to_string(&event) {
+            Ok(encoded) => eprintln!("{encoded}"),
+            Err(_) => {
+                eprintln!("{{\"phase\":\"progress_event\",\"status\":\"serialization_failed\"}}")
+            }
+        },
+        "user" => eprintln!("{}", event.user_message),
+        _ => return,
+    }
+    events.push(event);
+}
+
+fn write_timeline_extract_run_history(
+    log_dir: &Path,
+    run_id: &str,
+    started_at: &str,
+    total_elapsed_ms: u128,
+    result: Option<&TimelineExtractResult>,
+    status: &str,
+    error_type: &str,
+    events: &[TimelineExtractRunEvent],
+) -> Result<PathBuf> {
+    let mut actual_engines = Vec::<String>::new();
+    for event in events {
+        if let Some(engine) = event.actual_engine.as_ref() {
+            if !actual_engines.contains(engine) {
+                actual_engines.push(engine.clone());
+            }
+        }
+    }
+    let failure_phase = events
+        .iter()
+        .rev()
+        .find(|event| event.status == "failed")
+        .map(|event| event.phase.clone());
+    let report = serde_json::json!({
+        "schema_version": 1,
+        "product": "pytools",
+        "feature_id": "PT-1-2",
+        "function": "timeline-extract",
+        "run_id": run_id,
+        "started_at": started_at,
+        "status": status,
+        "summary": result,
+        "progress": events.last().map(|event| &event.progress),
+        "total_elapsed_ms": total_elapsed_ms,
+        "actual_engines": actual_engines,
+        "failure_phase": failure_phase,
+        "error_type": if error_type.is_empty() { serde_json::Value::Null } else { serde_json::json!(error_type) },
+        "events": events,
+    });
+    let path = log_dir.join(format!("PT-1-2_{run_id}.run.json"));
+    write_json_report_create_new(&path, &report)?;
+    Ok(path)
+}
+
 fn run_timeline_precheck_cli(arguments: Vec<String>) -> Result<()> {
     let options = parse_cli_arguments(arguments)?;
     let config = required_path(&options, "config")?;
@@ -9244,9 +9590,10 @@ fn print_usage() {
     eprintln!(
         "Usage:\n\
          pytools [menu] [--config <config.xlsx>] [--log-view user|developer|off] [--capabilities <json> --platform <id>]\n\
-         no command opens the migrated menu; available categories: 1 (timeline 1/3/4/5), 2 (dedup 1-6), 3 (print 1-4), 4 (conversion and file naming 1-10), 5 (configuration 1/2), 6 (summary 1/2), 7 (batch 7-1/7-8), and 8 (archive 1-5)\n\
+         no command opens the migrated menu; available categories: 1 (timeline 1-5), 2 (dedup 1-6), 3 (print 1-4), 4 (conversion and file naming 1-10), 5 (configuration 1/2), 6 (summary 1/2), 7 (batch 7-1/7-8), and 8 (archive 1-5)\n\
          timeline-precheck --config <workbook.xlsx>\n\
          timeline-compare --config <workbook.xlsx> --template <workbook.xlsx> [--log-dir <dir>] [--log-view user|developer|off] <source.xlsx>...\n\
+         timeline-extract --config <workbook.xlsx> [--output-dir <dir>] [--log-dir <dir>] [--log-view user|developer|off] <source.xlsx>...\n\
          wide-summary --config <workbook.xlsx> <source.xlsx>...\n\
          wide-summary-row-suffix --config <workbook.xlsx> <source.xlsx>...\n\
          wide-summary target writes produce append-plan JSON; execute with dedup-append-execute and matching capability evidence\n\

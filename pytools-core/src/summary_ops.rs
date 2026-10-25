@@ -2156,7 +2156,7 @@ fn python_number_text(value: &serde_json::Value) -> String {
     value.to_string()
 }
 
-fn python_float_text(number: f64) -> String {
+pub(crate) fn python_float_text(number: f64) -> String {
     let absolute = number.abs();
     if absolute >= 1e16 || (absolute != 0.0 && absolute < 1e-4) {
         let representation = format!("{number:?}");
@@ -2178,7 +2178,7 @@ fn python_float_text(number: f64) -> String {
     representation
 }
 
-fn python_datetime_iso_text(value: &str) -> String {
+pub(crate) fn python_datetime_iso_text(value: &str) -> String {
     use chrono::{NaiveDate, NaiveDateTime};
 
     let datetime = NaiveDateTime::parse_from_str(value, "%Y-%m-%dT%H:%M:%S%.f")
@@ -2192,7 +2192,7 @@ fn python_datetime_iso_text(value: &str) -> String {
     value.replace('T', " ")
 }
 
-fn python_datetime_serial_text(serial: f64) -> Option<String> {
+pub(crate) fn python_datetime_serial_text(serial: f64) -> Option<String> {
     use chrono::{Duration, NaiveDate, NaiveTime};
 
     if !serial.is_finite() {

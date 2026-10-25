@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "suite": "pytools.timeline.extract_python_rust_parity",
+  "status": "passed",
+  "feature_id": "PT-1-2",
+  "platform": "windows-x64-native",
+  "inputs": 3,
+  "valid_inputs": 2,
+  "matched_rule_sheets": 8,
+  "output_rows": 20,
+  "full_workbook_projection_equal": true,
+  "checked": [
+    "sheet name, cell values and types",
+    "numeric, text, boolean, and datetime extraction values",
+    "header bold and cell number formats",
+    "worksheet dimensions and freeze panes",
+    "duplicate-rule global deduplication",
+    "row suffix and path mapping",
+    "developer event stream and persisted history",
+    "menu 1→2 manual multi-file selection and continue-on-error behavior",
+    "configured target append is surfaced as deferred and leaves the target untouched",
+    "fail_fast stops at the first failed workbook and does not create output"
+  ],
+  "rust_engines": [
+    "calamine",
+    "rust_xlsxwriter"
+  ],
+  "elapsed_ms": 67,
+  "deferred_target_write_rules": 0,
+  "differences": [],
+  "notes": [
+    "Synthetic workbooks only; no source-project workbooks were modified.",
+    "Configured target append behavior remains outside the confirmed PT-1-2 target-write contract."
+  ]
+}
