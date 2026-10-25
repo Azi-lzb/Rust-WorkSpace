@@ -15,7 +15,8 @@
 use crate::s5_config::{Configuration, SourceContract};
 use crate::s5_eval::{EvalArgument, EvalErrorKind, EvalValue};
 use crate::s5_external_layout::ExternalLayout;
-use crate::s5_scan::{in_numeric_regions, row_path_candidates, scan_rule_paths, ScanBook};
+use crate::s5_numeric_scope::{NumericScopeError, NumericScopeResolver};
+use crate::s5_scan::{scan_rule_paths_with_numeric_regions, ScanBook};
 use serde_json::{json, Value as JsonValue};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
@@ -86,6 +87,16 @@ impl RetrievalFailure {
     }
 }
 
+impl From<NumericScopeError> for RetrievalFailure {
+    fn from(error: NumericScopeError) -> Self {
+        Self {
+            code: error.code,
+            message: error.message,
+            evidence: error.evidence,
+        }
+    }
+}
+
 const AMOUNT_FACTORS: [(&str, i64); 3] = [("元", 1), ("万元", 10000), ("亿元", 100000000)];
 
 fn amount_factor(unit: &str) -> Option<i64> {
@@ -112,6 +123,7 @@ struct BoundSource {
     institution_name: String,
     sha256: String,
     book: ScanBook,
+    numeric_scope: NumericScopeResolver,
     index_cache: BTreeMap<String, crate::s5_scan::ScanResult>,
 }
 
@@ -120,6 +132,8 @@ impl BoundSource {
         descriptor: S5SourceDescriptor<'_>,
         role: &'static str,
         audit_period: &str,
+        template_path: Option<&Path>,
+        template_dir: Option<&Path>,
     ) -> Result<Self, RetrievalFailure> {
         if descriptor.period.is_empty() {
             return Err(RetrievalFailure::new(
@@ -156,6 +170,11 @@ impl BoundSource {
         let sha256 = format!("{:x}", hasher.finalize());
         let book = ScanBook::open(descriptor.path)
             .map_err(|error| RetrievalFailure::new("SOURCE_UNREADABLE", error))?;
+        let numeric_scope = if role == "external" {
+            NumericScopeResolver::new(None, None)
+        } else {
+            NumericScopeResolver::new(template_path, template_dir)
+        };
         Ok(Self {
             source_path: descriptor.path.to_path_buf(),
             source_id: descriptor.source_id.to_owned(),
@@ -164,6 +183,7 @@ impl BoundSource {
             institution_name: descriptor.institution_name.to_owned(),
             sha256,
             book,
+            numeric_scope,
             index_cache: BTreeMap::new(),
         })
     }
@@ -201,6 +221,8 @@ impl S5Retrieval {
             },
             role,
             audit_period,
+            None,
+            None,
         )?;
         Ok(Self {
             configuration,
@@ -233,12 +255,48 @@ impl S5Retrieval {
         external: Option<S5SourceDescriptor<'_>>,
         audit_period: &str,
     ) -> Result<Self, RetrievalFailure> {
-        let current = BoundSource::bind(current, "current", audit_period)?;
+        Self::bind_with_sources_and_templates(
+            configuration,
+            current,
+            previous,
+            external,
+            audit_period,
+            None,
+            None,
+        )
+    }
+
+    /// Bind S5 period sources with an optional explicit layout template or
+    /// registered template directory for V_CUR/V_PRE numeric-region lookup.
+    pub fn bind_with_sources_and_templates(
+        configuration: Configuration,
+        current: S5SourceDescriptor<'_>,
+        previous: Option<S5SourceDescriptor<'_>>,
+        external: Option<S5SourceDescriptor<'_>>,
+        audit_period: &str,
+        template_path: Option<&Path>,
+        template_dir: Option<&Path>,
+    ) -> Result<Self, RetrievalFailure> {
+        let current = BoundSource::bind(
+            current,
+            "current",
+            audit_period,
+            template_path,
+            template_dir,
+        )?;
         let previous = previous
-            .map(|descriptor| BoundSource::bind(descriptor, "previous", audit_period))
+            .map(|descriptor| {
+                BoundSource::bind(
+                    descriptor,
+                    "previous",
+                    audit_period,
+                    template_path,
+                    template_dir,
+                )
+            })
             .transpose()?;
         let external = external
-            .map(|descriptor| BoundSource::bind(descriptor, "external", audit_period))
+            .map(|descriptor| BoundSource::bind(descriptor, "external", audit_period, None, None))
             .transpose()?;
         if previous
             .as_ref()
@@ -258,6 +316,16 @@ impl S5Retrieval {
             external_has_time_series: None,
             data_quality_warnings: Vec::new(),
         })
+    }
+
+    /// Template projection decisions made lazily while retrieving configured
+    /// current and previous source metrics.
+    pub fn numeric_region_template_selections(&self) -> Vec<JsonValue> {
+        let mut selections = self.current.numeric_scope.selection_records("current");
+        if let Some(previous) = &self.previous {
+            selections.extend(previous.numeric_scope.selection_records("previous"));
+        }
+        selections
     }
 
     /// SHA-256 captured when the current source was opened for this run.
@@ -1106,7 +1174,7 @@ impl S5Retrieval {
         source: &'a mut BoundSource,
         metric: &crate::s5_config::MetricSpec,
         role: &str,
-    ) -> &'a crate::s5_scan::ScanResult {
+    ) -> Result<&'a crate::s5_scan::ScanResult, RetrievalFailure> {
         let cache_key = format!("{}|{}|{}", role, metric.business, metric.sheet);
         if !source.index_cache.contains_key(&cache_key) {
             let key_pairs: Vec<(Vec<String>, Vec<String>)> = configuration
@@ -1115,11 +1183,20 @@ impl S5Retrieval {
                 .filter(|item| item.business == metric.business && item.sheet == metric.sheet)
                 .map(|item| (item.row_path.clone(), item.column_path.clone()))
                 .collect();
-            let result =
-                scan_rule_paths(&source.book, &source.source_path, &metric.sheet, &key_pairs);
+            let data_regions = source
+                .numeric_scope
+                .regions_for_sheet(&source.book, &metric.sheet)
+                .map_err(RetrievalFailure::from)?;
+            let result = scan_rule_paths_with_numeric_regions(
+                &source.book,
+                &source.source_path,
+                &metric.sheet,
+                &key_pairs,
+                &data_regions,
+            );
             source.index_cache.insert(cache_key.clone(), result);
         }
-        &source.index_cache[&cache_key]
+        Ok(&source.index_cache[&cache_key])
     }
 
     /// Mirror of `_locate_template_value` (paths branch) plus `value()` gates.
@@ -1132,7 +1209,7 @@ impl S5Retrieval {
     ) -> Result<(String, String), RetrievalFailure> {
         let key = (metric.row_path.clone(), metric.column_path.clone());
         let (matches, row_found, column_found) = {
-            let index = Self::template_index(configuration, source, metric, role);
+            let index = Self::template_index(configuration, source, metric, role)?;
             let matches = index.locations.get(&key).cloned().unwrap_or_default();
             let row_found = index
                 .row_locations

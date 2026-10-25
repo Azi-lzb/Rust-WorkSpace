@@ -397,6 +397,28 @@ impl ScanBook {
         self.cell_raw_text(sheet, anchor_row, anchor_column)
     }
 
+    /// Read a merged label using the Python `_label` spelling used when
+    /// matching complete numeric-region header blocks.
+    pub fn merged_label(&self, sheet: &str, row: usize, column: usize) -> String {
+        let (anchor_row, anchor_column) = self.anchor(sheet, row, column);
+        self.cell_label(sheet, anchor_row, anchor_column)
+    }
+
+    /// Whether OOXML/CALAMINE exposed a stored value or formula at this cell.
+    /// This distinguishes an explicitly stored empty string from a missing
+    /// cell in the cross-sheet header-axis compatibility check.
+    pub fn cell_has_stored_value(&self, sheet: &str, row: usize, column: usize) -> bool {
+        let address = address_of(row, column);
+        self.dump
+            .sheets
+            .iter()
+            .find(|candidate| candidate.name == sheet)
+            .is_some_and(|sheet_dump| {
+                sheet_dump.values.contains_key(&address)
+                    || sheet_dump.formulas.contains_key(&address)
+            })
+    }
+
     /// Cell count probe for diagnostics.
     pub fn sheet_value_count(&self, sheet: &str) -> usize {
         self.dump
@@ -928,6 +950,18 @@ pub fn scan_rule_paths(
     sheet_name: &str,
     key_pairs: &[(Vec<String>, Vec<String>)],
 ) -> ScanResult {
+    scan_rule_paths_with_numeric_regions(book, template_path, sheet_name, key_pairs, &[])
+}
+
+/// Scan configuration paths, restricting candidate data cells to the
+/// template-projected numeric regions when the caller has a layout binding.
+pub fn scan_rule_paths_with_numeric_regions(
+    book: &ScanBook,
+    template_path: &Path,
+    sheet_name: &str,
+    key_pairs: &[(Vec<String>, Vec<String>)],
+    data_regions: &[NamedRegion],
+) -> ScanResult {
     let structure_regions = crate::s5_layout::structure_regions(template_path)
         .get(sheet_name)
         .cloned()
@@ -953,10 +987,6 @@ pub fn scan_rule_paths(
     } else {
         structure_regions
     };
-    // Unbound template books carry no 数字区域, so data_regions is empty and
-    // every region row is eligible (whole-sheet compatibility fallback).
-    let data_regions: Vec<NamedRegion> = Vec::new();
-
     let row_paths: std::collections::BTreeSet<Vec<String>> = key_pairs
         .iter()
         .map(|(row_path, _)| row_path.clone())
@@ -1047,7 +1077,7 @@ pub fn scan_rule_paths(
                 let last_row = search.max_row.min(row.saturating_sub(1));
                 for column in first_column..=search.max_col {
                     if !data_regions.is_empty()
-                        && !in_numeric_regions(book, sheet_name, row, column, &data_regions)
+                        && !in_numeric_regions(book, sheet_name, row, column, data_regions)
                     {
                         continue;
                     }

@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "feature": "S5-F01 numeric-region template projection",
+  "status": "verified_subslice",
+  "platform": "Windows native",
+  "reader": "Calamine via excel-reader with namespace-aware defined names",
+  "real_sample_parity": {
+    "python_baseline": "s1audit_configured.numeric_scope.project_numeric_regions",
+    "rust_implementation": "audit_core::s5_numeric_scope::NumericScopeResolver",
+    "source_sample_count": 1,
+    "template_sample_count": 1,
+    "python_region_count": 4,
+    "rust_region_count": 4,
+    "coordinate_differences": 0,
+    "coordinates": [
+      { "min_row": 5, "min_col": 5, "max_row": 190, "max_col": 6 },
+      { "min_row": 5, "min_col": 4, "max_row": 15, "max_col": 6 },
+      { "min_row": 5, "min_col": 3, "max_row": 90, "max_col": 9 },
+      { "min_row": 5, "min_col": 3, "max_row": 65, "max_col": 7 }
+    ],
+    "source_unchanged": true,
+    "template_unchanged": true,
+    "integrity_check": "Rust manual test compares pre/post SHA-256; neither input changed"
+  },
+  "synthetic_cli_coverage": {
+    "test": "s5_audit_cli_projects_numeric_regions_from_the_selected_template_catalog",
+    "result": "passed",
+    "cases": [
+      "unique catalog match restricts retrieval to projected numeric cells",
+      "unbound compatibility path preserves the previous ambiguity result",
+      "equal-score template candidates report an error",
+      "explicit template takes precedence over catalog ties",
+      "default template catalog is resolved from BASE_AUDIT_DATA_DIR"
+    ]
+  },
+  "limits": [
+    "The real sample verifies projection coordinates only; a real-sample S5 rules-to-output audit was not run in this slice.",
+    "S5-F01 remains unverified overall.",
+    "Audit shared capability request #8 remains unresolved."
+  ]
+}

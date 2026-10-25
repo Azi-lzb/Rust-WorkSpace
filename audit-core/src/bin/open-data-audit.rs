@@ -619,6 +619,14 @@ struct S5AuditRunArgs {
     #[arg(long)]
     source: PathBuf,
 
+    /// Explicit layout template used to project S5 numeric regions.
+    #[arg(long)]
+    template_path: Option<PathBuf>,
+
+    /// Directory of layout templates for automatic numeric-region matching.
+    #[arg(long)]
+    template_dir: Option<PathBuf>,
+
     /// Logical source id recorded on retrieval evidence.
     #[arg(long, default_value = "CURRENT")]
     source_id: String,
@@ -4351,6 +4359,18 @@ fn run_s5_config_check(arguments: S5ConfigCheckArgs) -> Result<()> {
     Ok(())
 }
 
+fn default_s5_template_dir() -> Option<PathBuf> {
+    let base_data_dir = std::env::var_os("BASE_AUDIT_DATA_DIR")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| {
+            std::env::var_os("USERPROFILE")
+                .or_else(|| std::env::var_os("HOME"))
+                .map(|home| PathBuf::from(home).join(".audit-tools"))
+        })?;
+    Some(base_data_dir.join("s5").join("templates"))
+}
+
 fn run_s5_audit_run(arguments: S5AuditRunArgs) -> Result<()> {
     anyhow::ensure!(
         arguments.config.is_file(),
@@ -4362,6 +4382,29 @@ fn run_s5_audit_run(arguments: S5AuditRunArgs) -> Result<()> {
         "S5 本期数据源工作簿不存在：{}",
         arguments.source.display()
     );
+    if let Some(template_path) = &arguments.template_path {
+        anyhow::ensure!(
+            template_path.is_file(),
+            "S5 数字区域布局模板工作簿不存在：{}",
+            template_path.display()
+        );
+    }
+    if let Some(template_dir) = &arguments.template_dir {
+        anyhow::ensure!(
+            template_dir.is_dir(),
+            "S5 数字区域布局模板目录不存在：{}",
+            template_dir.display()
+        );
+    }
+    let default_template_dir = if arguments.template_dir.is_none() {
+        default_s5_template_dir()
+    } else {
+        None
+    };
+    let template_dir = arguments
+        .template_dir
+        .as_deref()
+        .or(default_template_dir.as_deref());
     if let Some(previous_source) = &arguments.previous_source {
         anyhow::ensure!(
             previous_source.is_file(),
@@ -4430,6 +4473,9 @@ fn run_s5_audit_run(arguments: S5AuditRunArgs) -> Result<()> {
                 "period": arguments.period,
                 "businesses": arguments.businesses,
                 "source_roles": source_roles,
+                "template_path": arguments.template_path,
+                "template_dir": template_dir,
+                "numeric_region_template_engine": "Calamine via excel-reader + namespace-aware defined names",
                 "previous_period": arguments.previous_period,
                 "external_source_id": arguments.external_source_id,
                 "engine": "rust_s5_configured_audit",
@@ -4438,8 +4484,13 @@ fn run_s5_audit_run(arguments: S5AuditRunArgs) -> Result<()> {
         );
     } else {
         eprintln!(
-            "正在执行 S5 配置化审核（Rust 配置加载、{}来源读取与规则求值）；报告期 {}",
+            "正在执行 S5 配置化审核（Rust 配置加载、{}来源读取与规则求值{}）；报告期 {}",
             source_roles.join("、"),
+            if arguments.template_path.is_some() || template_dir.is_some() {
+                "、数字区域模板投影"
+            } else {
+                ""
+            },
             arguments.period
         );
     }
@@ -4472,7 +4523,7 @@ fn run_s5_audit_run(arguments: S5AuditRunArgs) -> Result<()> {
             institution_code: &arguments.org_code,
             institution_name: &arguments.org_name,
         });
-    let mut retrieval = S5Retrieval::bind_with_sources(
+    let mut retrieval = S5Retrieval::bind_with_sources_and_templates(
         configuration.clone(),
         S5SourceDescriptor {
             path: &arguments.source,
@@ -4484,6 +4535,8 @@ fn run_s5_audit_run(arguments: S5AuditRunArgs) -> Result<()> {
         previous_descriptor,
         external_descriptor,
         arguments.period.trim(),
+        arguments.template_path.as_deref(),
+        template_dir,
     )
     .map_err(|failure| anyhow::anyhow!("{}：{}", failure.code, failure.message))?;
     let source_sha256_before = retrieval.source_sha256().to_owned();
@@ -4543,6 +4596,40 @@ fn run_s5_audit_run(arguments: S5AuditRunArgs) -> Result<()> {
     .map_err(|error| anyhow::anyhow!("{error}"))?;
 
     let elapsed_ms = started.elapsed().as_millis();
+    let numeric_region_template_selections = retrieval.numeric_region_template_selections();
+    if !arguments.developer_view && !numeric_region_template_selections.is_empty() {
+        let selected_templates: Vec<&serde_json::Value> = numeric_region_template_selections
+            .iter()
+            .filter(|selection| selection["template"] != "兼容回退")
+            .collect();
+        let fallback_selections: Vec<&serde_json::Value> = numeric_region_template_selections
+            .iter()
+            .filter(|selection| selection["template"] == "兼容回退")
+            .collect();
+        let selection_elapsed_ms = |selections: &[&serde_json::Value]| -> u128 {
+            selections
+                .iter()
+                .filter_map(|selection| selection["elapsed_ms"].as_u64())
+                .map(u128::from)
+                .sum()
+        };
+        let selected_template_count = selected_templates.len();
+        let template_elapsed_ms = selection_elapsed_ms(&selected_templates);
+        let fallback_elapsed_ms = selection_elapsed_ms(&fallback_selections);
+        if selected_template_count > 0 {
+            eprintln!(
+                "数字区域模板投影完成：{} 个工作表，Calamine via excel-reader，耗时 {} ms",
+                selected_template_count, template_elapsed_ms
+            );
+        }
+        if !fallback_selections.is_empty() {
+            eprintln!(
+                "未匹配到数字区域布局模板：{} 个工作表按全表兼容范围检索，耗时 {} ms",
+                fallback_selections.len(),
+                fallback_elapsed_ms
+            );
+        }
+    }
     let output = serde_json::json!({
         "status": "completed",
         "run_id": run_id,
@@ -4577,6 +4664,7 @@ fn run_s5_audit_run(arguments: S5AuditRunArgs) -> Result<()> {
                 "run_id": run_id,
                 "elapsed_ms": elapsed_ms,
                 "source_roles": source_roles,
+                "numeric_region_templates": numeric_region_template_selections,
             }))?
         );
     }

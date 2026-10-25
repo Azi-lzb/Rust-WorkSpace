@@ -1,0 +1,46 @@
+# S5-F01 数字区域模板投影接入与真实样本核验
+
+## 修改信息
+
+- 时间：2026-10-26 01:41:00（Asia/Shanghai）
+- 执行者：Codex
+- 修改前 commit：`24ecc0226db36a0610dbb062ed4057cd3d52ccbb`
+- 修改后 commit：本记录随本次功能提交；以 Git 提交历史为准（提交前不可取得）。
+- WIP：开始时确认位于 `audit-dev`，HEAD 与 `origin/audit-dev` 一致。保留本地未跟踪交接材料、临时目录和既有全量配置报告；它们未修改且不纳入本次提交。
+
+## 目的与变更
+
+把 Python `numeric_scope.resolve_numeric_regions` / `project_numeric_regions` 的模板绑定数值区域投影接入 Rust S5 取数。改动仅在 Audit 业务层及测试，不修改共享 crate、根 Cargo 配置、原 Python 源码或真实工作簿。
+
+- `audit-core/src/s5_numeric_scope.rs`：读取模板数字区域和结构命名区域；按 Python 的候选模板评分选择模板；用完整合并表头唯一投影数字区域；缓存每个工作表的投影；明确返回缺失/歧义错误，并在未匹配模板时保留既有全表兼容行为。
+- `audit-core/src/s5_retrieval.rs`、`audit-core/src/s5_scan.rs`、`audit-core/src/lib.rs`：把当前/上期来源的投影区域用于配置路径定位，外部来源沿用原布局路线。
+- `audit-core/src/bin/open-data-audit.rs`：`s5-audit-run` 增加 `--template-path` 与 `--template-dir`，默认目录遵循 `BASE_AUDIT_DATA_DIR` / 用户目录约定；日志区分模板投影与全表兼容回退，并报告实际引擎和耗时。
+- `audit-core/tests/s5_previous_source_cli.rs`：覆盖自动目录匹配、显式模板优先、并列候选失败、默认目录、无模板兼容行为及投影范围限制。
+- `audit-core/MIGRATION_INVENTORY.md`：记录此子切片的实现和边界。
+- `audit-core/probe/reports/s5_numeric_scope_template_projection_real_windows_native_20261026.json`：保存脱敏真实坐标对拍和输入未变化证据。
+
+未改变配置格式、VBA 或共享 Excel 能力；Audit 共享能力请求 #8 仍未解决。
+
+## 验证
+
+- `cargo fmt --all -- --check`：通过。
+- `git diff --check`：通过；Git 显示现有工作树文件的换行符转换提示。
+- Windows 原生 `cargo test --offline --locked -q -p audit-core --test s5_previous_source_cli --test s5_retrieve_parity --test s5_rule_parity --test s5_run_parity --test s5_outputs_parity --test s5_config_check_parity --test s5_layout_parity`：退出码 0；`s5_previous_source_cli` 为 16 passed、1 ignored，其余被选中的人工 parity runner 按环境要求 ignored。
+- Rust 只读真实样本测试 `projects_numeric_regions_from_real_workbook_pair`：1 passed。一个真实源工作簿与一个配置模板投影 4 个区域；源与模板测试前后 SHA-256 相同。
+- Python `s1audit_configured.numeric_scope.project_numeric_regions` 与 Rust 投影坐标逐项一致：`R5C5:R190C6`、`R5C4:R15C6`、`R5C3:R90C9`、`R5C3:R65C7`（报告使用坐标字段，不保存本机路径、工作簿名称、工作表名或业务值）。
+- 合成 CLI 的绑定模板结果定位为 `D6`，当前/上期读数、状态和范围外诱饵值过滤断言通过；无模板仍产生兼容的结构歧义结果。
+
+## 未执行与已知问题
+
+- 真实工作簿本轮只验证模板区域投影坐标，没有用该样本执行完整 S5 规则审核并对拍输出；S5-F01 整体仍未验证。
+- 上期真实样本绑定、多来源、输入哈希降级/结构快照、S5 GUI、Linux/glibc 2.28、deb、麒麟 V10/UOS V20 未验证。
+- Audit 共享能力请求 #8 保持未解决。本功能不修改 Excel-Core，也不代表 #8 可用。
+
+## 删除与回滚
+
+- 删除清单：无；没有覆盖或删除用户材料，源 Python 和真实工作簿保持只读。
+- 回滚：本功能提交可用 `git revert <提交 SHA>` 撤销；不要 reset、clean 或 force push。
+
+## 【组件版本】
+
+不升级；按当前 workspace 规则，本项目 crate 版本以 Cargo 配置为准，不采用旧产品 Sx-Fxx 组件版本制度。

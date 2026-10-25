@@ -64,6 +64,126 @@ fn write_source(path: &Path, value: f64) {
     workbook.save(path).expect("save source workbook");
 }
 
+fn write_numeric_scope_template(path: &Path) {
+    let mut workbook = excel_writer::Workbook::new();
+    let sheet = workbook
+        .add_worksheet()
+        .set_name("贷款表")
+        .expect("name numeric-scope template sheet");
+    for (row, column, value) in [
+        (1, 2, "余额"),
+        (1, 3, "余额"),
+        (2, 2, "本期"),
+        (2, 3, "上期"),
+        (3, 0, "贷款产品类别"),
+        (3, 1, "经营贷款"),
+    ] {
+        sheet
+            .write_string(row, column, value)
+            .expect("write numeric-scope template labels");
+    }
+    sheet
+        .write_number(3, 2, 120.0)
+        .expect("write template current value");
+    sheet
+        .write_number(3, 3, 100.0)
+        .expect("write template previous value");
+    workbook
+        .define_name("表结构区域_1", "='贷款表'!$A$4:$B$4")
+        .expect("define template row axis");
+    workbook
+        .define_name("列索引区域_2", "='贷款表'!$C$2:$D$3")
+        .expect("define template column axis");
+    workbook
+        .define_name("数字区域_1", "='贷款表'!$C$4:$D$4")
+        .expect("define template numeric region");
+    workbook.save(path).expect("save numeric-scope template");
+}
+
+fn write_numeric_scope_source(path: &Path, current_value: f64) {
+    let mut workbook = excel_writer::Workbook::new();
+    let sheet = workbook
+        .add_worksheet()
+        .set_name("贷款表")
+        .expect("name numeric-scope source sheet");
+    for (row, column, value) in [
+        (3, 3, "余额"),
+        (3, 4, "余额"),
+        (3, 6, "余额"),
+        (4, 3, "本期"),
+        (4, 4, "上期"),
+        (4, 6, "本期"),
+        (5, 1, "贷款产品类别"),
+        (5, 2, "经营贷款"),
+        (7, 1, "贷款产品类别"),
+        (7, 2, "经营贷款"),
+    ] {
+        sheet
+            .write_string(row, column, value)
+            .expect("write numeric-scope source labels");
+    }
+    sheet
+        .write_number(5, 3, current_value)
+        .expect("write source current value");
+    sheet
+        .write_number(5, 4, 100.0)
+        .expect("write source previous value");
+    sheet
+        .write_number(5, 6, 999.0)
+        .expect("write decoy numeric value outside template region");
+    sheet
+        .write_number(7, 3, 777.0)
+        .expect("write decoy duplicate row-path value");
+    workbook.save(path).expect("save numeric-scope source");
+}
+
+fn run_numeric_scope_cli(
+    config: &Path,
+    current: &Path,
+    previous: &Path,
+    template_path: Option<&Path>,
+    template_dir: Option<&Path>,
+    base_data_dir: Option<&Path>,
+    output_dir: &Path,
+) -> Output {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_open-data-audit"));
+    command
+        .arg("s5-audit-run")
+        .arg("--config")
+        .arg(config)
+        .arg("--source")
+        .arg(current)
+        .arg("--source-id")
+        .arg("CUR")
+        .arg("--previous-source")
+        .arg(previous)
+        .arg("--previous-period")
+        .arg("2025-06-30")
+        .arg("--period")
+        .arg("2026-08-31")
+        .arg("--org-code")
+        .arg("I001")
+        .arg("--org-name")
+        .arg("合成机构")
+        .arg("--business")
+        .arg("单位贷款")
+        .arg("--output-dir")
+        .arg(output_dir)
+        .arg("--run-id")
+        .arg("numeric-scope")
+        .arg("--developer-view");
+    if let Some(template_path) = template_path {
+        command.arg("--template-path").arg(template_path);
+    }
+    if let Some(template_dir) = template_dir {
+        command.arg("--template-dir").arg(template_dir);
+    }
+    if let Some(base_data_dir) = base_data_dir {
+        command.env("BASE_AUDIT_DATA_DIR", base_data_dir);
+    }
+    command.output().expect("run numeric-scope S5 audit CLI")
+}
+
 #[test]
 fn s5_scan_stringifies_numeric_boolean_and_formula_labels() {
     let directory = temporary_directory();
@@ -547,6 +667,11 @@ fn run_cli(
     output_dir: &Path,
     developer_view: bool,
 ) -> Output {
+    let empty_template_dir = current
+        .parent()
+        .expect("current source parent directory")
+        .join("empty-s5-layout-templates");
+    fs::create_dir_all(&empty_template_dir).expect("create empty S5 layout template directory");
     let mut command = Command::new(env!("CARGO_BIN_EXE_open-data-audit"));
     command
         .arg("s5-audit-run")
@@ -554,6 +679,8 @@ fn run_cli(
         .arg(config)
         .arg("--source")
         .arg(current)
+        .arg("--template-dir")
+        .arg(empty_template_dir)
         .arg("--source-id")
         .arg("CUR")
         .arg("--period")
@@ -1008,6 +1135,165 @@ fn s5_audit_cli_reads_and_copies_configured_external_source() {
     assert_eq!(missing_summary["status_counts"]["RETRIEVAL_FAILED"], 1);
 
     fs::remove_dir_all(directory).expect("remove synthetic external CLI files");
+}
+
+#[test]
+fn s5_audit_cli_projects_numeric_regions_from_the_selected_template_catalog() {
+    let directory = temporary_directory();
+    let template_dir = directory.join("templates");
+    let empty_template_dir = directory.join("empty-templates");
+    fs::create_dir_all(&template_dir).expect("create numeric-scope template directory");
+    fs::create_dir_all(&empty_template_dir).expect("create empty template directory");
+    let current = directory.join("current.xlsx");
+    let previous = directory.join("previous.xlsx");
+    let config = directory.join("config.xlsx");
+    let template = template_dir.join("loan-template.xlsx");
+    write_numeric_scope_source(&current, 121.0);
+    write_numeric_scope_source(&previous, 100.0);
+    write_config(&config, false, false);
+    write_numeric_scope_template(&template);
+
+    let unbound = run_numeric_scope_cli(
+        &config,
+        &current,
+        &previous,
+        None,
+        Some(&empty_template_dir),
+        None,
+        &directory.join("out-unbound"),
+    );
+    assert!(
+        unbound.status.success(),
+        "{}",
+        String::from_utf8_lossy(&unbound.stderr)
+    );
+    let unbound_summary: Value =
+        serde_json::from_slice(&unbound.stdout).expect("valid unbound CLI JSON");
+    assert_eq!(unbound_summary["status_counts"]["STRUCTURE_ERROR"], 1);
+    assert_eq!(unbound_summary["failure_rows"], 1);
+
+    let bound = run_numeric_scope_cli(
+        &config,
+        &current,
+        &previous,
+        None,
+        Some(&template_dir),
+        None,
+        &directory.join("out-bound"),
+    );
+    assert!(
+        bound.status.success(),
+        "{}",
+        String::from_utf8_lossy(&bound.stderr)
+    );
+    let summary: Value = serde_json::from_slice(&bound.stdout).expect("valid bound CLI JSON");
+    assert_eq!(summary["status_counts"]["TRIGGERED"], 1);
+    assert_eq!(summary["triggered_rows"], 1);
+    assert_eq!(summary["failure_rows"], 0);
+    let result_path = PathBuf::from(
+        summary["output_files"]["result_workbook"]
+            .as_str()
+            .expect("result workbook path"),
+    );
+    let result_workbook = read_workbook(&result_path).expect("read numeric-scope result workbook");
+    let result_sheet = result_workbook
+        .sheets
+        .iter()
+        .find(|sheet| sheet.name == "审核结果")
+        .expect("result sheet");
+    assert_eq!(
+        CellValue::from_probe_json(&result_sheet.values["J2"]).expect("current value"),
+        CellValue::Number(121.0)
+    );
+    assert_eq!(
+        CellValue::from_probe_json(&result_sheet.values["K2"]).expect("previous value"),
+        CellValue::Number(100.0)
+    );
+    assert_eq!(
+        CellValue::from_probe_json(&result_sheet.values["F2"]).expect("retrieval location"),
+        CellValue::Text("D6".to_owned())
+    );
+    let events: Vec<Value> = String::from_utf8_lossy(&bound.stderr)
+        .lines()
+        .map(|line| serde_json::from_str(line).expect("valid progress JSON"))
+        .collect();
+    let template_selections = events
+        .iter()
+        .find(|event| event["status"] == "completed")
+        .expect("completed progress event")["numeric_region_templates"]
+        .as_array()
+        .expect("numeric-region template selections");
+    assert_eq!(template_selections.len(), 2);
+    assert!(template_selections
+        .iter()
+        .all(|selection| selection["template"] == "loan-template.xlsx"));
+    assert!(template_selections.iter().all(|selection| {
+        selection["engine"] == "Calamine via excel-reader + namespace-aware defined names"
+    }));
+
+    fs::copy(&template, template_dir.join("duplicate-template.xlsx"))
+        .expect("create tied template candidate");
+    let ambiguous = run_numeric_scope_cli(
+        &config,
+        &current,
+        &previous,
+        None,
+        Some(&template_dir),
+        None,
+        &directory.join("out-ambiguous"),
+    );
+    assert!(
+        ambiguous.status.success(),
+        "{}",
+        String::from_utf8_lossy(&ambiguous.stderr)
+    );
+    let ambiguous_summary: Value =
+        serde_json::from_slice(&ambiguous.stdout).expect("valid ambiguous CLI JSON");
+    assert_eq!(ambiguous_summary["status_counts"]["STRUCTURE_ERROR"], 1);
+    assert_eq!(ambiguous_summary["failure_rows"], 1);
+
+    let explicit = run_numeric_scope_cli(
+        &config,
+        &current,
+        &previous,
+        Some(&template),
+        Some(&template_dir),
+        None,
+        &directory.join("out-explicit"),
+    );
+    assert!(
+        explicit.status.success(),
+        "{}",
+        String::from_utf8_lossy(&explicit.stderr)
+    );
+    let explicit_summary: Value =
+        serde_json::from_slice(&explicit.stdout).expect("valid explicit-template CLI JSON");
+    assert_eq!(explicit_summary["status_counts"]["TRIGGERED"], 1);
+
+    let base_data_dir = directory.join("default-data");
+    let default_template_dir = base_data_dir.join("s5").join("templates");
+    fs::create_dir_all(&default_template_dir).expect("create default S5 template directory");
+    fs::copy(&template, default_template_dir.join("loan-template.xlsx"))
+        .expect("copy template to default catalog fixture");
+    let default_catalog = run_numeric_scope_cli(
+        &config,
+        &current,
+        &previous,
+        None,
+        None,
+        Some(&base_data_dir),
+        &directory.join("out-default-catalog"),
+    );
+    assert!(
+        default_catalog.status.success(),
+        "{}",
+        String::from_utf8_lossy(&default_catalog.stderr)
+    );
+    let default_summary: Value = serde_json::from_slice(&default_catalog.stdout)
+        .expect("valid default-template-catalog CLI JSON");
+    assert_eq!(default_summary["status_counts"]["TRIGGERED"], 1);
+
+    fs::remove_dir_all(directory).expect("remove numeric-scope CLI files");
 }
 
 #[test]
