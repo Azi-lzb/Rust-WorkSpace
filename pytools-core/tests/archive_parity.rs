@@ -291,3 +291,133 @@ fn date_archive_cli_accepts_the_python_compatible_extension_filter_config() {
     );
     assert!(Path::new(report["output"].as_str().unwrap()).is_file());
 }
+
+#[test]
+fn date_archive_preview_uses_python_windows_path_order_before_target_planning() {
+    let root = TempDir::new("date-windows-path-order");
+    let input = root.0.join("input");
+    for (directory, file_name) in [
+        ("a", "20261026_report.xlsx"),
+        ("a", "20261026_report_1.xlsx"),
+        ("B", "20261026_report.xlsx"),
+    ] {
+        let path = input.join(directory).join(file_name);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, b"fixture").unwrap();
+    }
+
+    let result = archive_by_date_preview(
+        std::slice::from_ref(&input),
+        &root.0.join("target"),
+        &root.0.join("out"),
+        None,
+    )
+    .unwrap();
+
+    let sources = result
+        .rows
+        .iter()
+        .map(|row| relative(&row.source_path, &input))
+        .collect::<Vec<_>>();
+    let expected_sources = if cfg!(windows) {
+        [
+            "a/20261026_report.xlsx",
+            "a/20261026_report_1.xlsx",
+            "B/20261026_report.xlsx",
+        ]
+    } else {
+        [
+            "B/20261026_report.xlsx",
+            "a/20261026_report.xlsx",
+            "a/20261026_report_1.xlsx",
+        ]
+    };
+    assert_eq!(sources, expected_sources);
+
+    let targets = result
+        .rows
+        .iter()
+        .map(|row| relative(&row.target_path, &root.0))
+        .collect::<Vec<_>>();
+    let expected_targets = if cfg!(windows) {
+        [
+            "target/202610/20261026_report.xlsx",
+            "target/202610/20261026_report_1.xlsx",
+            "target/202610/20261026_report_2.xlsx",
+        ]
+    } else {
+        [
+            "target/202610/20261026_report.xlsx",
+            "target/202610/20261026_report_1.xlsx",
+            "target/202610/20261026_report_1_1.xlsx",
+        ]
+    };
+    assert_eq!(targets, expected_targets);
+}
+
+#[test]
+fn date_archive_preview_uses_native_path_case_rules_for_target_collisions() {
+    let root = TempDir::new("date-target-case-collision");
+    let input = root.0.join("input");
+    for (directory, file_name) in [("a", "20261026_report.xlsx"), ("b", "20261026_REPORT.xlsx")] {
+        let path = input.join(directory).join(file_name);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, b"fixture").unwrap();
+    }
+
+    let result = archive_by_date_preview(
+        std::slice::from_ref(&input),
+        &root.0.join("target"),
+        &root.0.join("out"),
+        None,
+    )
+    .unwrap();
+    let targets = result
+        .rows
+        .iter()
+        .map(|row| relative(&row.target_path, &root.0))
+        .collect::<Vec<_>>();
+    let expected = if cfg!(windows) {
+        [
+            "target/202610/20261026_report.xlsx",
+            "target/202610/20261026_REPORT_1.xlsx",
+        ]
+    } else {
+        [
+            "target/202610/20261026_report.xlsx",
+            "target/202610/20261026_REPORT.xlsx",
+        ]
+    };
+    assert_eq!(targets, expected);
+}
+
+#[test]
+fn date_archive_preview_preserves_dots_inside_the_file_stem_when_suffixing() {
+    let root = TempDir::new("date-target-multidot-name");
+    let input = root.0.join("input");
+    for directory in ["a", "B"] {
+        let path = input.join(directory).join("20261026_report.v2.xlsx");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, b"fixture").unwrap();
+    }
+
+    let result = archive_by_date_preview(
+        std::slice::from_ref(&input),
+        &root.0.join("target"),
+        &root.0.join("out"),
+        None,
+    )
+    .unwrap();
+    let targets = result
+        .rows
+        .iter()
+        .map(|row| relative(&row.target_path, &root.0))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        targets,
+        [
+            "target/202610/20261026_report.v2.xlsx",
+            "target/202610/20261026_report.v2_1.xlsx",
+        ]
+    );
+}

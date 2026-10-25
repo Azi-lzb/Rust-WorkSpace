@@ -467,6 +467,9 @@ fn collect_files(paths: &[PathBuf]) -> (Vec<PathBuf>, Vec<PathBuf>) {
     for path in paths {
         if path.is_dir() {
             let mut children = walk_files(path);
+            #[cfg(windows)]
+            children.sort_by_cached_key(|child| child.to_string_lossy().to_lowercase());
+            #[cfg(not(windows))]
             children.sort();
             for child in children {
                 let key = child.canonicalize().unwrap_or_else(|_| child.clone());
@@ -655,19 +658,31 @@ fn sanitize_folder(text: &str) -> String {
 fn next_target(raw: &Path, planned: &mut HashSet<PathBuf>) -> PathBuf {
     let mut candidate = raw.to_path_buf();
     let mut i = 1;
-    while candidate.exists() || planned.contains(&candidate) {
-        candidate = raw.with_file_name(format!(
+    while candidate.exists() || planned.contains(&planned_path_key(&candidate)) {
+        let mut candidate_name = format!(
             "{}_{}",
             raw.file_stem().unwrap_or_default().to_string_lossy(),
             i
-        ));
-        if let Some(ext) = raw.extension() {
-            candidate.set_extension(ext);
+        );
+        if let Some(extension) = raw.extension() {
+            candidate_name.push('.');
+            candidate_name.push_str(&extension.to_string_lossy());
         }
+        candidate = raw.with_file_name(candidate_name);
         i += 1;
     }
-    planned.insert(candidate.clone());
+    planned.insert(planned_path_key(&candidate));
     candidate
+}
+fn planned_path_key(path: &Path) -> PathBuf {
+    #[cfg(windows)]
+    {
+        PathBuf::from(path.to_string_lossy().to_lowercase())
+    }
+    #[cfg(not(windows))]
+    {
+        path.to_path_buf()
+    }
 }
 fn copy_with_metadata(source: &Path, target: &Path) -> Result<PathBuf> {
     use std::io::Write;
