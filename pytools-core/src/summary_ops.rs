@@ -440,7 +440,10 @@ fn summarize_used_ranges_inner(
         };
         let compatibility_normalization_used = read_result.compatibility_normalization_used;
         let normalized_cell_count = read_result.normalized_cell_count;
-        let dump = read_result.workbook;
+        let mut dump = read_result.workbook;
+        if excel_reader::uses_1904_date_system(&path)? {
+            shift_datetime_serials_to_1900_epoch(&mut dump);
+        }
         read_elapsed_during_write += read_started.elapsed();
         let (reader_components, reader_engine) = if compatibility_normalization_used {
             unknown_error_token_cells_normalized += normalized_cell_count;
@@ -1044,7 +1047,7 @@ fn summarize_by_comments_inner(
             None,
         );
         let read_started = Instant::now();
-        let dump = match read_workbook(source) {
+        let mut dump = match read_workbook(source) {
             Ok(dump) => dump,
             Err(error) => {
                 progress.failed_files += 1;
@@ -1067,6 +1070,9 @@ fn summarize_by_comments_inner(
                     .with_context(|| format!("read comment-summary source {}", source.display()));
             }
         };
+        if excel_reader::uses_1904_date_system(source)? {
+            shift_datetime_serials_to_1900_epoch(&mut dump);
+        }
         read_elapsed += read_started.elapsed();
         files_hit += 1;
         progress.processed_files = files_hit;
@@ -1780,6 +1786,27 @@ fn column_letters(mut col: usize) -> String {
     }
     out
 }
+/// Calamine keeps numeric date cells on the source workbook's date epoch, so
+/// serials read from a 1904-date-system workbook must shift by 1462 days
+/// before they are written into the summary's fresh 1900-epoch workbook.
+/// PyCode reaches the same result because openpyxl reads epoch-aware datetimes.
+fn shift_datetime_serials_to_1900_epoch(dump: &mut excel_reader::WorkbookDump) {
+    const DAY_SHIFT_1904_TO_1900: f64 = 1462.0;
+    for sheet in &mut dump.sheets {
+        for value in sheet.values.values_mut() {
+            if value.get("type").and_then(serde_json::Value::as_str) != Some("datetime_serial") {
+                continue;
+            }
+            if let Some(serial) = value.get("value").and_then(serde_json::Value::as_f64) {
+                *value = serde_json::json!({
+                    "type": "datetime_serial",
+                    "value": serial + DAY_SHIFT_1904_TO_1900,
+                });
+            }
+        }
+    }
+}
+
 fn write_probe_value(
     ws: &mut Worksheet,
     row: u32,

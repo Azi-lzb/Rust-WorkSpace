@@ -802,3 +802,9 @@ Windows 原生 `cargo test --offline --locked -p pytools-core` 全量通过（42
 同轮以 `target/deb/pytools_0.1.0-20261025_amd64.deb` 制品解包出的 `/usr/bin/pytools` 运行真实 `summary-used-range`，对原项目只读 `xlsx/1.报表分口径.xlsx` 与 PyCode 完整工作簿投影对拍精确一致：7,462 行 × 213 列（含标题），1,212 个错误单元格由 OOXML Patch 保留，14 条开发者事件与保存历史一致，输入 SHA-256 前后相同。此前真实对拍均用裸构建二进制，本次把"deb 制品本身"与真实负载对拍挂钩。机器记录并入 `probe/reports/summary_used_range_real_parity_20261025.json` 的 `deb_artifact_real_sample_validation_20261025`。该验证仍属 WSL 阶段，麒麟 V10/UOS V20 实机安装与离线交付验收仍归 main + 目标实机。
 
 同日补充：现实合成套件新增宽表 set 区域与列路径冲突场景（`wide_summary_sets_and_conflicts`）。单规则配置 `set区域=集团@B2;期间@B1`（双 set 列），源簿一为正常锚点、一为空锚点（set 列输出 None，两侧一致）；两条列头精确映射把编号后的 `存款_余额_1`/`存款_余额_2` 映射到同一标准路径 `公共存款`——因 PyCode 的列头编号发生在路径映射之前，该构造确定性地触发真实重复列路径冲突。PyCode/Rust 完整投影与有效样式精确一致：输出仅一个 `公共存款` 列头（`col_order`/`seen_columns` 去重），单元格保留首值（10.25 而非 999，PyCode `保留首值` 与 Rust `contains_key` 跳过语义吻合）。此前该冲突路径从未被对拍覆盖。本轮无生产代码改动；套件夹具目录创建与报告 datetime 序列化两个脚本问题已修。仍为合成证据，真实样本与平台验收边界不变。
+
+### 2026-10-25 PT-6-1/PT-6-2 1904 日期系统数据单元格缺陷修复
+
+按用户"以合成数据继续"的指示，新增 1904 日期系统（`workbookPr date1904="1"`）带日期数据单元格的合成源簿对拍，发现并修复真实缺陷：Calamine 保持源簿日期序列原样输出（1904 簿即 1904 基准序列），而汇总新簿为 1900 基准，Rust 此前把序列原样写入，导致 1904 源簿的日期整体偏移 1462 天（2026-06-30 输出为 2022-06-29）；PyCode 经 openpyxl 读取 epoch 感知日期，无此问题。既有夹具无 1904 日期数据单元格，该路径从未被覆盖（此前 PT-6-2 的 1904 记录只覆盖模板日期表头的 ISO 投影路径）。修复 `summary_ops.rs`：使用区域汇总（`read_workbook_with_unknown_error_tokens_as_text` 读取点）与批注汇总（`read_workbook` 读取点）在读入后按共享 reader `uses_1904_date_system` 判定，1904 源簿的全部 `datetime_serial` 值 +1462 后再进入汇总（新辅助 `shift_datetime_serials_to_1900_epoch`）；duration 序列与 epoch 无关，不调整。
+
+验证（Windows 原生）：1904 合成源簿（纯日期/日期时间/数值混合）PT-6-1 使用区域汇总与 PT-6-2 批注汇总（模板 1904 + 数据区含日期/日期时间单元格）PyCode/Rust 完整工作簿投影均精确一致；源簿前后未变；`cargo test --offline --locked -p pytools-core` 全量 42 项结果 0 failed；`cargo fmt --check` 通过。该修复影响 1904 日期系统源簿（Mac Excel 遗产文件）的汇总输出正确性；常规 1900 簿行为不变。仍为合成证据。
