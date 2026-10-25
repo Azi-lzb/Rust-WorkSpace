@@ -1,0 +1,16 @@
+时间：2026-10-25 20:49（Asia/Shanghai）
+执行者：Codex（pytools-dev）
+
+目的：补验 PT-9 快捷工具在 Windows 原生环境实际打开 output 文件夹的入口行为。
+
+修改文件：
+- `pytools-core/MIGRATION_INVENTORY.md`：补记本次 Windows 文件夹打开证据与剩余边界。
+- 本修改记录。
+
+验证：`cargo build --offline --locked -p pytools-core --bin pytools` 通过（既有弃用/未使用警告）。使用 Rust `config-init` 在 `%TEMP%` 生成临时配置，再调用实际 `pytools open-output-dir --config <临时配置>`；命令退出码 0，配置解析的 `output` 目录已创建，Windows `Shell.Application` 枚举到 `LocationURL` 精确对应目标目录的 Explorer 窗口。未读取、打开或修改真实业务文件。
+
+限制：本次只验证 `open-output-dir` 的 Windows 文件夹入口；`open-config`、`open-latest-output` 的实际文件关联打开和 Linux 桌面仍未实测，PT-9 整体仍未验收。麒麟 V10/UOS V20 交付状态不变。
+
+无生产 Rust 代码、共享 crate、配置或 Cargo 文件改动；无用户数据删除。临时配置及空输出目录留在 `%TEMP%` 下，本轮清理操作被本地命令策略拒绝。
+
+回滚：删除本修改记录并还原迁移清单中 PT-9 状态行即可；本次未提交业务实现。
