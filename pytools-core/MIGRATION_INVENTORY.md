@@ -24,6 +24,8 @@
 
 PT-6-1 另于 2026-10-25 在 Windows MSVC HEAD `13c83fb` 经真实 `pytools menu → 6 → 1` 手工分号路径回退处理 2 份原项目只读 XLSX（1,102 行），PyCode 与 Rust 完整工作簿投影精确一致；在后续 HEAD `0500b20` 通过同一真实菜单打开 Win32 原生多选对话框处理 2 份只读 XLSX（1,167 行），完整投影同样精确一致，运行历史成功且源文件未改变，实际引擎为 Calamine 与 rust_xlsxwriter。两种路径的机器证据见 `probe/reports/summary_used_range_real_menu_parity_20261025.json`。
 
+PT-6-1 的完整 `compare_summary_tools.py` 组合对拍于 2026-10-25 在 Windows MSVC HEAD `26d0d9e` 补齐：改用只读 NoComPyTools 项目自带虚拟环境（Python 3.12.10、openpyxl 3.1.5、python-calamine 0.9.0）作为对拍解释器，同进程导入 PyCode 与 nocompytools 基线，未安装依赖、未修改源项目。合成段全部断言通过并落盘 `probe/reports/summary_used_range_parity_20261025.json`，其中 NoCom 组合比较登记为既有变体差异（PyCode 20 行、NoCom 19 行，值/类型/样式/维度差异与 2026-10-24 变体记录一致），不改变 PyCode 基线；主进程在合成报告写入后因会话中断被终止，真实样本段随后单独运行现有 `compare_real_used_range_sample()` 补齐并通过：13 份只读 XLSX、96 张工作表、203,580 行四批完整投影精确一致，源文件 SHA-256 前后一致，批次事件 26/14/27/63 与保存历史一致，实际引擎 Calamine 与 rust_xlsxwriter，报告更新至 `probe/reports/summary_used_range_real_parity_20261025.json`。NoCom 独有行为仍按待确认处理；该对拍不构成生产验收。
+
 ## 输入与转换矩阵
 
 | 格式 | 计划 | 验收状态 |
@@ -742,3 +744,13 @@ Windows 原生验证：`cargo fmt --manifest-path pytools-core/Cargo.toml -- --c
 Windows 原生 `cargo fmt --manifest-path pytools-core/Cargo.toml -- --check`、`cargo build --offline --locked -p pytools-core --bin pytools -j 1` 通过；`cargo test --offline --locked -p pytools-core --test timeline_menu_cli -j 1` 12/12 通过。只读 PyCode/Rust 自动对拍脚本新增两种行头模式的无位置参数案例：各扫描根目录与嵌套目录内的 2 份 `.xlsx`，跳过 `~$` 文件和未配置 `.xlsb`，汇总工作簿完整投影一致，开发者历史计数和发现事件正确，源/锁文件/配置未变。报告：`probe/reports/wide_summary_parity_20261023.json`；重跑过程中保留原有 3 条原生文件对话框证据。
 
 原 PyCode 配置与其源树工作簿的只读预检没有发现可产生宽表输出的真实输入；本次仅能确认合成样本行为。生产 capability 未登记，真实业务匹配样本、麒麟 V10/UOS V20、glibc 2.28 与离线 deb 未验证，PT-1-3/PT-1-4 整体仍未验收。
+
+### 2026-10-25 PT-6-1 NoCom 组合合成对拍与当前 HEAD 真实样本复验
+
+2026-10-25 早前的 Windows 复验（见上节）未能运行完整 `compare_summary_tools.py`，原因是当时所用 PyTools Python venv 缺少 NoCom 基线所需的 `python_calamine`。本轮改用只读 NoComPyTools 项目自带虚拟环境的解释器（Python 3.12.10、openpyxl 3.1.5、python-calamine 0.9.0）作为对拍解释器，同进程导入 `PyCode.core.summary_321_322` 与 `nocompytools.core.summary_321_322`；未安装依赖、未修改只读源项目。Rust 侧为 Windows 原生 MSVC `target/debug/pytools.exe`（pytools-dev HEAD `26d0d9e`，rustc 1.99.1，`cargo build --offline --locked`）。
+
+合成段全部断言通过：2 个合成工作簿 19 行 PyCode/Rust 完整投影精确一致，7 个常见错误值由 OOXML Patch 保留；.xls/.xlsb 扩展名过滤事件未调用 reader；VBA 启用 XLSM 夹具通过且新汇总簿不含宏部件；偏移区域、合并批注锚点、重复行区域标记和未知 `#DATA!` 文本化场景均通过。NoCom 组合比较按既有变体差异登记（`nocom_pytools_output_matches_rust_for_this_xlsx_sample=false`；PyCode 20 行、NoCom 19 行，差异字段为 worksheet_dimensions 与汇总 values/types/styles，与 2026-10-24 全量变体对拍的方向一致）。机器报告为新增 `probe/reports/summary_used_range_parity_20261025.json`。
+
+主进程在合成报告写入后、真实样本段 Rust 批次执行中被会话中断终止；真实样本段随后以同一解释器与 CLI 单独运行现有 `compare_real_used_range_sample()` 补齐并通过：原项目只读 `xlsx/` 目录 13 份 XLSX 分 4 批，96 张工作表、203,580 行完整投影精确一致，输入前后 SHA-256 相同，批次开发者事件 26/14/27/63 均与保存运行历史一致；批次 2 的 1,212 个错误单元格由既有 OOXML Patch 保留；实际引擎为 Calamine 与 rust_xlsxwriter。报告更新至 `probe/reports/summary_used_range_real_parity_20261025.json`。运行耗时仅记录该次 Windows debug 环境，不作跨实现性能结论。
+
+本结果补齐 PT-6-1 自 2026-10-24 起登记的完整组合对拍缺口；NoCom 独有行为仍为待确认变体差异，不并入 PyCode 生产基线，也不构成生产验收。原项目业务含 VBA 的 XLSM 样本、麒麟 V10/UOS V20 实机、glibc 2.28、deb 与离线交付仍未验收，PT-6-1 整体仍未完成最终验收。
