@@ -312,6 +312,9 @@ pub fn extract_cells_from_matrix<T: SheetValue>(
     // truncate instead of failing.
     let row_end = row_end.min(rows.saturating_sub(1));
     let col_end = col_end.min(column_count.saturating_sub(1));
+    if row_start > row_end || col_start > col_end {
+        return Ok(Vec::new());
+    }
 
     let header_texts = collect_header_rows(
         sheet,
@@ -594,5 +597,58 @@ mod path_map_tests {
                 case["id"].as_str().unwrap()
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod configured_range_boundary_tests {
+    use super::*;
+
+    #[test]
+    fn configured_data_start_after_sheet_tail_returns_no_cells() {
+        let sheet = vec![
+            vec![Some("标题".to_owned()), Some("数据".to_owned())],
+            vec![Some("地区".to_owned()), Some("余额".to_owned())],
+            vec![None, None],
+        ];
+        let rule = TimelineRule {
+            enabled: true,
+            name: "short-sheet".to_owned(),
+            wb_keyword: String::new(),
+            sheet_keyword: String::new(),
+            row_header_col: 1,
+            col_header_row: 2,
+            row_header_cols: vec![1],
+            row_header_col_specified: true,
+            col_header_rows: vec![2],
+            required_col_headers: Vec::new(),
+            required_row_headers: Vec::new(),
+            data_row_start: 4,
+            data_row_end: Some(8),
+            data_col_start: 2,
+            data_col_end: Some(2),
+            skip_keywords: Vec::new(),
+            target_wb_path: None,
+            target_sheet: None,
+            target_write_enabled: false,
+            set_items: Vec::new(),
+            set_parse_error: String::new(),
+            target_dedup_cols: Vec::new(),
+            output_row_no: false,
+        };
+
+        let cells = extract_cells_from_matrix(
+            &sheet,
+            &[],
+            "sample.xlsx",
+            &rule,
+            "Report",
+            &[],
+            false,
+            &HashMap::new(),
+        )
+        .expect("a data range starting after the sheet should produce no rows");
+
+        assert!(cells.is_empty());
     }
 }

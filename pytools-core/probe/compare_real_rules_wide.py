@@ -52,7 +52,7 @@ def make_bridge_config(path: Path, output: Path) -> None:
     bridge.save(path)
 
 
-def make_monthly_source(path: Path) -> None:
+def make_monthly_source(path: Path, *, include_data: bool = True) -> None:
     """Hits 中外资本外币分地区: 双列头 38/39, 行头 B 列, 数据 40-66 有界."""
     workbook = Workbook()
     sheet = workbook.active
@@ -63,12 +63,13 @@ def make_monthly_source(path: Path) -> None:
         sheet.cell(row=38, column=column, value=header)
     for column, header in ((3, "余额"), (4, "增量"), (5, "本息"), (6, "余额")):
         sheet.cell(row=39, column=column, value=header)
-    institutions = ["甲市", "乙市", "丙市", "丁市"]
-    for index in range(8):
-        row = 40 + index
-        sheet.cell(row=row, column=2, value=institutions[index % len(institutions)])
-        for column in range(3, 7):
-            sheet.cell(row=row, column=column, value=100.5 + index * column)
+    if include_data:
+        institutions = ["甲市", "乙市", "丙市", "丁市"]
+        for index in range(8):
+            row = 40 + index
+            sheet.cell(row=row, column=2, value=institutions[index % len(institutions)])
+            for column in range(3, 7):
+                sheet.cell(row=row, column=column, value=100.5 + index * column)
     # bounded data region ends at 66; leave 48-66 empty like a real report tail
     path.parent.mkdir(parents=True, exist_ok=True)
     workbook.save(path)
@@ -141,6 +142,36 @@ def python_side(config: Path, sources: list[Path], row_suffix: bool):
         logging.shutdown()
 
 
+def run_short_data_boundary_case(root: Path, row_suffix: bool) -> dict[str, object]:
+    case = root / ("short_data_suffix" if row_suffix else "short_data_no_suffix")
+    source = case / "sources" / "20260609_月报空数据段.xlsx"
+    make_monthly_source(source, include_data=False)
+    config = case / "config.xlsx"
+    output = case / "output"
+    make_bridge_config(config, output)
+
+    python_output = python_side(config, [source], row_suffix)
+    rust_output, plans = cws.run_rust_sources(config, [source], row_suffix)
+    if plans:
+        raise AssertionError(f"short data-range case unexpectedly produced plans: {plans}")
+    if python_output is None or rust_output is None:
+        if python_output is not None or rust_output is not None:
+            raise AssertionError(
+                f"short data-range output presence differs: python={python_output}, rust={rust_output}"
+            )
+        output_projection = "both skipped output"
+    else:
+        cws.assert_parity(python_output, rust_output)
+        output_projection = "exact"
+    return {
+        "row_suffix": row_suffix,
+        "configured_data_rows": "40-66",
+        "source_last_row": 39,
+        "python_rust_output_projection": output_projection,
+        "rust_panicked_or_failed": False,
+    }
+
+
 def main() -> int:
     import datetime as dt
 
@@ -158,6 +189,7 @@ def main() -> int:
         sources = [monthly, inclusive, survey]
 
         results = []
+        short_data_boundary_results = []
         for row_suffix in (False, True):
             case = root / ("suffix" if row_suffix else "no_suffix")
             output = case / "output"
@@ -181,6 +213,9 @@ def main() -> int:
                     "dimensions": projection["dimensions"],
                 }
             )
+            short_data_boundary_results.append(
+                run_short_data_boundary_case(root, row_suffix)
+            )
 
         report = {
             "schema_version": 1,
@@ -194,6 +229,7 @@ def main() -> int:
             },
             "sources": "synthetic workbooks crafted to hit 中外资本外币分地区 / 普惠分地区 / 分地区统计研究调研问卷",
             "modes": results,
+            "short_data_before_configured_start": short_data_boundary_results,
             "limitations": [
                 "Rules are real business configuration; source workbooks are synthetic.",
                 "Not real-sample acceptance; outputs were temporary.",

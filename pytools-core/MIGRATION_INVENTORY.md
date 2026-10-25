@@ -854,3 +854,7 @@ WSL 验证：`x86_64-unknown-linux-gnu.2.28` release（HEAD `328532c`）与 deb 
 ### 2026-10-25 真实参数去重追加对拍（交接前安全检查点完成）
 
 以 VBA 簿 17 条真实去重任务的参数形态（源表名、键列 [3,4] 与 [1,3,5,7,8]、空写入模式、多任务共享同一目标簿）+ 合成源/目标文件建立桥接对拍 `probe/compare_real_dedup_tasks.py`：两侧同读桥接配置 xlsx，PyCode 走菜单层同款 dict→DedupTask 转换后 `run_append_by_config`，Rust 走真实两步产品流 `dedup-append-plan` → `dedup-append-execute --commit-target`（既有目标自动按计划内操作/特征/保留契约声明 probe capability）。结果：第一轮各追加 10 行、第二轮双双 0 追加（幂等），两轮后目标工作簿全表投影**精确一致**；五键列含空白键行两侧一致跳过；批内重复保留首值一致。机器报告 `probe/reports/real_shape_dedup_parity_20261025.json`。仍为真实参数形态 × 合成文件证据，不构成真实样本验收。此为 ZCode→Codex 交接前最后一个完成项。
+
+### 2026-10-25 PT-6-1 区间截断后空区间 panic 审计修复
+
+独立复核此前 row_end/col_end 截断修复时发现：规则起始数据行在短工作表末尾之后时，截断后的 row_start 大于 row_end；函数未再次检查空区间，并在 Vec 容量计算处发生 usize 下溢 panic。用三行工作表、配置数据区 4–8、列 2 的单元测试在修复前稳定复现。最小修复是在行列上界 clamp 后返回空结果；新增 unit regression。真实规则桥接对拍增加工作表仅到第 39 行、配置区 40–66 的无数据场景，两种行头模式均与 PyCode 一致跳过输出，无 panic；原三规则双模式投影仍 exact。报告为真实业务规则 + 合成源簿，不构成真实报表验收。Windows 原生 fmt、build、边界单测、timeline_menu_cli 回归及对拍通过。未修改共享 crate、原 Python 源项目或真实数据。PT-1-3/1-4 真实源报表、PT-6-2 真实批注模板、PT-4-2/4-3 sidecar 端到端和麒麟/UOS 实机交付仍未验收。

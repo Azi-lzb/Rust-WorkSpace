@@ -57,6 +57,22 @@
       ]
     }
   ],
+  "short_data_before_configured_start": [
+    {
+      "row_suffix": false,
+      "configured_data_rows": "40-66",
+      "source_last_row": 39,
+      "python_rust_output_projection": "both skipped output",
+      "rust_panicked_or_failed": false
+    },
+    {
+      "row_suffix": true,
+      "configured_data_rows": "40-66",
+      "source_last_row": 39,
+      "python_rust_output_projection": "both skipped output",
+      "rust_panicked_or_failed": false
+    }
+  ],
   "limitations": [
     "Rules are real business configuration; source workbooks are synthetic.",
     "Not real-sample acceptance; outputs were temporary."
