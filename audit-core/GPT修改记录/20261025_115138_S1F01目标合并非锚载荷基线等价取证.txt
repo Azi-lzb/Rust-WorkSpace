@@ -1,0 +1,36 @@
+# S1-F01 目标合并非锚载荷基线等价取证
+
+- 时间：2026-10-25 11:51 (+08:00)
+- 执行者：Codex Audit migration agent
+- 分支：audit-dev
+- 修改前 commit：322f10c
+- 修改后 commit：随本轮本地证据提交，提交 ID 见 Git 历史。
+- WIP：开始时 worktree 干净；验证结束时仅新增取证脚本、脱敏报告、共享能力请求、迁移清单小节和本记录。未修改 DEVELOPMENT_GOAL.md、源 Python 项目、真实工作簿、pytools-core、共享 crates、Cargo.lock 或根 Cargo 配置。
+
+## 目的
+
+回答 `s1_formula_copy_candidate_openpyxl_windows_native_20261025.json` 遗留的关键未验证项：真实目标簿中 4 个复制区之外的 855 个合并非锚载荷，Python 基线写后是否保留。该答案决定共享 `target_merged_non_anchor_payload` 守卫的严格目标侧检查相对 Python 基线是否为多余保护，并为 main 的范围化决策提供可复现证据。
+
+## 修改文件
+
+- `audit-core/tests/compare/probe_s1_target_payload_baseline.py`：新增只读取证脚本。输入先复制到临时目录；按共享守卫同一语义（合并且非锚 + `<f>`/非空 `<v>`/非空内联 `<is>`）清点载荷；两条写穿路径分别复刻既有 Python 基线调用和纯 openpyxl load+save；报告仅含聚合计数，不含路径、工作簿/工作表名、坐标、值或公式文本。
+- `audit-core/probe/reports/s1_formula_copy_target_payload_baseline_20261025.json`：新增脱敏机器报告。
+- `audit-core/shared-capability-requests/20261025_openpyxl_target_merged_payload_baseline_equivalence.md`：新增共享能力请求（接口、阻塞、期望行为、证据、复现方式、不采纳分支）。
+- `audit-core/MIGRATION_INVENTORY.md`：新增"S1-F01 目标合并非锚载荷基线等价取证"小节。
+- 本记录。
+
+## 验证
+
+- 样本与口径：2026-07-31 批次单位贷款模板族 7 本带缓存审核副本；模板 Defined Names 校验区域_001..004 展开 4 个复制区，交叉核对 5,487 区内格、1,072 个复制公式、55 个区内批注，与既有 `s1_formula_copy_candidate_umya_windows_native_20261025.json` 口径一致；映射按既有配方使用 config-real 配置的字节级临时副本（无"模块化功能"表时两侧均按内置默认解析）。
+- 结果（7/7 一致）：每本原始目标簿 855 个合并非锚载荷，复制区内 0、区外 855，31 个载荷合并区域、37 个合并区域总数；Python 基线（`copy_formula_ranges_from_template`，本质 openpyxl load+修改+save）写后载荷保留 0/855、新增 0；纯 openpyxl load+save 保留 0/855、新增 0；两条路径输出的合并区域均 37→37 不变；Python 基线输出非空公式缓存为 0（openpyxl 保存不写缓存，与既有 Umya 报告 `python_formula_cache_nonempty_count: 0` 一致）；7/7 输入字节未变。
+- 结论：既有 Python 产品基线本来就不保留这些载荷；openpyxl worker 的丢弃与基线逐格等价。守卫的目标侧全局检查防御的内容损失与已验收 Python 行为完全相同；但即使预检放行，共享读回校验器仍会在这些单元格报 `unmodified cell value changed`，因此需要 main 侧计划级 opt-in 同时覆盖预检与读回校验。
+- 共享能力请求已按"接口、当前阻塞、期望行为、测试证据、复现方式"格式落盘；本轮不修改共享 crates，也不假定 main 已收到消息。
+
+## 未执行项、已知问题与回滚
+
+- 未重跑 Rust openpyxl worker 候选（守卫仍在，预期仍 7/7 写前拒绝）；未执行对象级写后对拍、公式重算、目标 Linux/deb 或麒麟 V10/UOS V20 验收。
+- 本取证不改变任何能力状态或生产路由；S1-F01 整体仍未验证。
+- MoveSheet 共享能力阻塞维持现状，等 main 提供安全共享提交。
+- 取证脚本的公式缓存计数采用 `<f>`+非空 `<v>` 的 XML 口径（样本 1 为 989），与既有报告的缓存计数口径（983）不完全相同，仅作样本特征参考，不参与结论。
+- 回滚：删除新增脚本、报告、共享请求、迁移清单小节和本记录即可；没有用户工作簿恢复项。
+- 【组件版本】不升级。
