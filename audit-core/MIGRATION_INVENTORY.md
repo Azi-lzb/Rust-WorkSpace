@@ -95,6 +95,10 @@
 
 Windows 原生 Python/Rust 对拍将 `config-real` 的非空历史簿接入 2026-07 S1 审核 CLI：7 组源簿/既有公式结果副本均由模板推荐器匹配同一当前模板；每组读取 9 行历史，7 组共 159 条当前 Issue，Python/Rust 当前 Issue、历史分类输入、当前结果簿与独立历史结果簿差异均为 0，历史输出共 222 行，所有输入均未改变。脱敏汇总见 `probe/reports/s1_f01_nonempty_history_real_batch_windows_native_20261025.json`。该历史簿未匹配当前模板（推荐 `matched=false`，confidence 0.63），且本批未观察到历史 Issue ID 重叠；因此只证明真实非空历史读取和无重叠合流路径，不证明同业务连续性/重复归类。使用已有公式结果副本，未运行 Rust 公式复制/重算；只新建独立历史结果簿，没有改写既有历史簿，既有 PageSettings 保留未验证。S1-F01 整体仍未验证。
 
+### S1-F02 等线全角列宽真实样本校准
+
+Windows 原生 Microsoft Excel/Python 与 Rust 对拍将全角字宽估算由 15px 校准为 14px；7 个真实源簿、27 张源表的输出表名/结构/值/类型/数字格式/字体/对齐/筛选/冻结差异均为 0，列宽最大差从 3.07421875 降至 0.7890625 字符，仍有 48 列宽不同，不能视为格式契约通过。合成任意行/固定行/历史/兜底对拍的值与样式差异为 0，列宽仍有估算差异。完整列宽精确性及 S1-F02 保持未验证；本次真实输入未变，输出位于临时目录。证据见 `probe/reports/s1_f02_dengxian_width_calibration_real_windows_native_20261025.json`。
+
 ## Rust 前端接入状态
 
 - 源项目 `core/frontend/web/index.html` 和 `core/frontend/assets/app-icon.{png,ico}` 已原样复制到 `frontend/`；HTML 与源文件 SHA-256 一致。源项目只读，没有修改。

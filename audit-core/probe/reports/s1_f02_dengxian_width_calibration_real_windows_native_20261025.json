@@ -1,0 +1,58 @@
+{
+  "schema_version": 1,
+  "suite": "audit.s1_f02_dengxian_column_width_real_calibration",
+  "status": "partial",
+  "scope": {
+    "sample_period": "2026-07-31",
+    "business_area": "personal-loan",
+    "feature": "任意行汇总",
+    "source_workbooks": 7,
+    "source_sheets": 27,
+    "custom_mapping_applied": false,
+    "platform": "Windows 11 x86_64-pc-windows-msvc"
+  },
+  "change": {
+    "full_width_glyph_estimate_before_pixels": 15,
+    "full_width_glyph_estimate_after_pixels": 14,
+    "prior_real_max_delta_characters": 3.07421875,
+    "current_real_max_delta_characters": 0.7890625,
+    "differing_column_count": 48,
+    "column_widths_exact": false
+  },
+  "execution": {
+    "python_baseline_engine": "Microsoft Excel",
+    "rust_entrypoint": "open-data-audit s1-region-summary",
+    "rust_reader": "calamine+namespace_aware_ooxml",
+    "rust_writer": "rust_xlsxwriter 0.101.0",
+    "rust_elapsed_ms": 922,
+    "outputs_written_to_temporary_directory": true
+  },
+  "comparison": {
+    "sheet_name_mismatches": 0,
+    "dimension_mismatches": 0,
+    "value_mismatches": 0,
+    "number_format_mismatches": 0,
+    "font_mismatches": 0,
+    "alignment_mismatches": 0,
+    "header_style_mismatches": 0,
+    "filter_mismatches": 0,
+    "freeze_mismatches": 0
+  },
+  "synthetic_regression": {
+    "status": "passed_with_column_width_variance",
+    "main_max_delta_characters": 0.859375,
+    "history_max_delta_characters": 1.07421875,
+    "fallback_max_delta_characters": 1.0,
+    "fixed_row_max_delta_characters": 1.0,
+    "values_types_and_styles_mismatches": 0
+  },
+  "inputs_unchanged": true,
+  "temporary_outputs_removed": true,
+  "raw_business_values_or_paths_persisted": false,
+  "production_route_changed": false,
+  "limitations": [
+    "Real column widths are closer but still not exact; S1-F02 remains unverified.",
+    "Only this Windows real sample was tested; custom mappings, Linux targets, 麒麟 V10, 统信 V20, and deb packaging were not tested.",
+    "The real sample timings are observations only and do not justify an engine routing change."
+  ]
+}

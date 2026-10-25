@@ -922,11 +922,12 @@ fn summary_text_width_pixels(text: &str) -> u32 {
 fn summary_character_width_pixels(character: char) -> u32 {
     let codepoint = character as u32;
     if !character.is_ascii() {
-        return if is_east_asian_wide(character) { 15 } else { 8 };
+        return if is_east_asian_wide(character) { 14 } else { 8 };
     }
 
     // ASCII widths mirror rust_xlsxwriter's Excel metrics for its default
-    // autofit simulation; full-width glyphs use the 11-point DengXian width.
+    // autofit simulation; 14px full-width glyphs match the real 11-point
+    // DengXian Excel AutoFit sample more closely than the previous 15px estimate.
     match codepoint {
         0x20 | 0x27 => 3,
         0x2C | 0x2E | 0x3A | 0x3B | 0x49 | 0x60 | 0x69 | 0x6A | 0x6C => 4,
@@ -1816,8 +1817,8 @@ mod tests {
 
         let widths = summary_output_column_width_pixels(&group);
         assert_eq!(summary_character_width_pixels('A'), 9);
-        assert_eq!(summary_character_width_pixels('广'), 15);
-        assert_eq!(widths[2], 67);
+        assert_eq!(summary_character_width_pixels('广'), 14);
+        assert_eq!(widths[2], 63);
         assert_eq!(
             summary_autofit_cell_width_pixels(&CellValue::Text("A".to_owned()), true),
             32

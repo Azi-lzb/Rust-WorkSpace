@@ -1,0 +1,39 @@
+# S1-F02 全角列宽像素校准与真实复验
+
+- 时间：2026-10-25 10:30（Asia/Shanghai）
+- 执行者：Codex Audit migration agent
+- 分支：audit-dev
+- 修改前 commit：`7d69af1`
+- 修改后 commit：本记录随本轮提交，提交号由 Git 历史追溯。
+- WIP：开始时 worktree 干净。仅修改 Audit 源文件并新增脱敏证据；未修改 `DEVELOPMENT_GOAL.md`、源 Python 项目、真实工作簿、`pytools-core/**`、共享 crates、`Cargo.lock` 或根 Cargo 配置。
+
+## 目的与变更
+
+根据上轮真实 Windows Excel AutoFit 结果定点校准 `s1-region-summary` 的 DengXian 11 全角字符宽度估算，将 15px 调为 14px。该修改缩小列宽偏差，不改变读取器、writer、生产路由或其他格式属性。
+
+修改文件：
+
+- `audit-core/src/s1_region_summary.rs`：调整全角宽度及定向单测断言。
+- `audit-core/probe/reports/s1_f02_dengxian_width_calibration_real_windows_native_20261025.json`：记录脱敏合成/真实样本对拍结果。
+- `audit-core/MIGRATION_INVENTORY.md`：补充 S1-F02 当前证据和限制。
+- 本记录。
+
+## 验证
+
+- Windows 原生 `cargo test --offline --locked -p audit-core --lib -j 1 s1_region_summary::tests::summary_output_width_uses_full_width_cjk_pixels_and_preserves_ascii_metrics`：1/1 通过。
+- `cargo test --offline --locked -p audit-core --test s1_region_summary_cli -j 1`：5/5 通过。
+- `cargo build --offline --locked -p audit-core --bin open-data-audit -j 1`：通过。
+- `rustfmt --edition 2024 --check audit-core/src/s1_region_summary.rs`、`git diff --check`：通过。
+- `compare_s1_region_summary.py` Windows Excel/Python 合成对拍通过；主/历史/兜底/固定行最大列宽差分别为 0.859375、1.07421875、1.0、1.0 字符，值/类型/样式差异为 0。
+- Windows 原生真实对拍：Microsoft Excel/Python 与 Rust `open-data-audit s1-region-summary`，7 个源簿、27 张源表、4 张输出表；值、类型、数字格式、字体、对齐、表头、筛选、冻结和结构差异均为 0。最大列宽差从旧实现的 12.92578125，经上一轮 15px 校准的 3.07421875，降为 0.7890625 字符；仍有 48 列不完全一致。7 个输入及模板哈希前后相同；临时输出已清理。
+- 报告不保存文件路径、源文件名、单元格值或哈希。性能读数仅为本次样本，不用于路由决策。
+
+## 未执行项与已知问题
+
+- 列宽仍不精确；S1-F02 整体继续标记为未验证。
+- 只验证本次 Windows 样本；自定义映射、目标 Linux、麒麟 V10、统信 V20、deb 和 GUI 未验收。
+- S1-F01 公式复制/重算及既有历史簿原位写回未涉及，继续沿现有 fail-closed 与共享 Editor 协调状态处理。
+
+## 回滚
+
+回退本地提交可恢复原 15px 估算及对应单测，并移除本轮清单/报告/记录；真实输入未被修改。
