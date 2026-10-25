@@ -625,6 +625,8 @@ Windows 原生 Rust 验证：`cargo fmt --manifest-path pytools-core/Cargo.toml 
 
 Windows 原生验证：`cargo fmt --manifest-path pytools-core/Cargo.toml -- --check` 通过；`cargo build --offline --locked -q -p pytools-core --bin pytools` 通过；`cargo test --offline --locked -p pytools-core --lib comment_region_tests` 3/3；`--test summary_comments_cli --test summary_menu_cli -j 1` 5/5 与 4/4；`py -3.12 pytools-core/probe/compare_summary_comments_template_header.py` 完整投影 exact。证据限合成模板，不代替真实有效批注区域模板、麒麟 V10/UOS V20、glibc 2.28 或离线 deb 验收；PT-6-2 仍未通过生产验收。
 
+另补数值表头 Python float 格式边界对拍：`1e-5`、`1e20`、`1e-4` 经 `summary-comments` CLI 回归与只读 PyCode 完整工作簿投影比较一致，输出 3 行、4×11，`different_fields` 为空。该证据限合成 XLSX，不扩大到所有 Excel 数值词法形式。
+
 后续持续时间表头最小复现发现共享 reader 类型信息缺口：合成 XLSX 的 `[h]:mm:ss.000` 模板单元格由只读 PyCode/openpyxl 读取为 timedelta，表头文本例如 `1 day, 2:03:04.123000`；当前 Rust 日期投影把相同序列值格式化成 1900 日历日期。问题涉及共享 `excel-reader` 对日历日期和持续时间的区分，已向 main 提供复现和最小修改需求；PyTools 暂不自行解析 OOXML 样式绕过 reader，持续时间表头仍未验证。
 
 ### 2026-10-25 PT-5-1/PT-5-2 配置工具交互菜单接入

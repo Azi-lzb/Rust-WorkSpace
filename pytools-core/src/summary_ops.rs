@@ -2151,9 +2151,31 @@ fn python_number_text(value: &serde_json::Value) -> String {
             // exposes the value as f64.
             return format!("{number:.0}");
         }
-        return number.to_string();
+        return python_float_text(number);
     }
     value.to_string()
+}
+
+fn python_float_text(number: f64) -> String {
+    let absolute = number.abs();
+    if absolute >= 1e16 || (absolute != 0.0 && absolute < 1e-4) {
+        let representation = format!("{number:?}");
+        if let Some((mantissa, exponent)) = representation.split_once('e') {
+            if let Ok(exponent) = exponent.parse::<i32>() {
+                let mantissa = mantissa.strip_suffix(".0").unwrap_or(mantissa);
+                let sign = if exponent < 0 { '-' } else { '+' };
+                let magnitude = format!("{:02}", exponent.abs());
+                return format!("{mantissa}e{sign}{magnitude}");
+            }
+        }
+        return representation;
+    }
+
+    let mut representation = number.to_string();
+    if !representation.contains('.') && !representation.contains('e') {
+        representation.push_str(".0");
+    }
+    representation
 }
 
 fn python_datetime_iso_text(value: &str) -> String {
@@ -2316,6 +2338,22 @@ mod comment_region_tests {
         assert_eq!(
             probe_text(&serde_json::json!({"type":"number", "value":10.5})),
             "10.5"
+        );
+        assert_eq!(
+            probe_text(&serde_json::json!({"type":"number", "value":1e-5})),
+            "1e-05"
+        );
+        assert_eq!(
+            probe_text(&serde_json::json!({"type":"number", "value":1e-7})),
+            "1e-07"
+        );
+        assert_eq!(
+            probe_text(&serde_json::json!({"type":"number", "value":1e-4})),
+            "0.0001"
+        );
+        assert_eq!(
+            probe_text(&serde_json::json!({"type":"number", "value":1e20})),
+            "1e+20"
         );
         assert_eq!(
             probe_text(&serde_json::json!({

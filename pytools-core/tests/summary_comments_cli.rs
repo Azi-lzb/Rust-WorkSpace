@@ -311,6 +311,16 @@ fn summary_comments_cli_preserves_formula_and_blank_template_headers() -> Result
         Some(&serde_json::json!("2026-06-30 00:00:00")),
         "date template header should use Python's datetime string representation"
     );
+    for (address, expected) in [("H1", "1e-05"), ("I1", "1e+20"), ("J1", "0.0001")] {
+        assert_eq!(
+            sheet
+                .values
+                .get(address)
+                .and_then(|value| value.get("value")),
+            Some(&serde_json::json!(expected)),
+            "numeric template header at {address} should use Python's float string representation"
+        );
+    }
     assert_eq!(fs::read(&source)?, source_before, "source workbook changed");
 
     fs::remove_dir_all(root)?;
@@ -518,6 +528,9 @@ fn create_formula_header_template(path: &Path) -> Result<()> {
         let date = rust_xlsxwriter::ExcelDateTime::from_ymd(2026, 6, 30)?;
         let date_format = rust_xlsxwriter::Format::new().set_num_format("yyyy-mm-dd");
         worksheet.write_datetime_with_format(0, 5, &date, &date_format)?;
+        worksheet.write_number(0, 6, 1e-5)?;
+        worksheet.write_number(0, 7, 1e20)?;
+        worksheet.write_number(0, 8, 1e-4)?;
         worksheet.insert_note(1, 0, &rust_xlsxwriter::Note::new("行区域1"))?;
         worksheet.insert_note(3, 0, &rust_xlsxwriter::Note::new("行区域#1"))?;
         worksheet.insert_note(0, 1, &rust_xlsxwriter::Note::new("列区域1"))?;
@@ -528,6 +541,18 @@ fn create_formula_header_template(path: &Path) -> Result<()> {
         worksheet.insert_note(1, 4, &rust_xlsxwriter::Note::new("列区域#3"))?;
         worksheet.insert_note(0, 5, &rust_xlsxwriter::Note::new("列区域4"))?;
         worksheet.insert_note(1, 5, &rust_xlsxwriter::Note::new("列区域#4"))?;
+        for (column, marker) in [(6, 5), (7, 6), (8, 7)] {
+            worksheet.insert_note(
+                0,
+                column,
+                &rust_xlsxwriter::Note::new(format!("列区域{marker}")),
+            )?;
+            worksheet.insert_note(
+                1,
+                column,
+                &rust_xlsxwriter::Note::new(format!("列区域#{marker}")),
+            )?;
+        }
     }
     workbook
         .save(path)

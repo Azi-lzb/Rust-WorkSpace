@@ -54,6 +54,10 @@ def create_template(path: Path) -> None:
     sheet["F1"] = dt.datetime(2026, 6, 30)
     sheet["F1"].comment = Comment("列区域4", "probe")
     sheet["F2"].comment = Comment("列区域#4", "probe")
+    for column, marker, value in [("G", 5, 1e-5), ("H", 6, 1e20), ("I", 7, 1e-4)]:
+        sheet[f"{column}1"] = value
+        sheet[f"{column}1"].comment = Comment(f"列区域{marker}", "probe")
+        sheet[f"{column}2"].comment = Comment(f"列区域#{marker}", "probe")
     workbook.save(path)
     workbook.close()
 
@@ -122,7 +126,7 @@ def main() -> int:
         python_dimensions, rust_dimensions = assert_equivalent(
             python_output,
             rust_output,
-            "PT-6-2 formula and blank template header semantics",
+            "PT-6-2 template header coercion",
         )
         differences = projection_difference_fields(python_output, rust_output)
         if differences:
@@ -140,6 +144,9 @@ def main() -> int:
                 or boolean_header.value != "True"
                 or output_sheet["F1"].value != "10"
                 or output_sheet["G1"].value != "2026-06-30 00:00:00"
+                or output_sheet["H1"].value != "1e-05"
+                or output_sheet["I1"].value != "1e+20"
+                or output_sheet["J1"].value != "0.0001"
             ):
                 raise AssertionError("Rust template header semantics changed")
         finally:
@@ -172,6 +179,7 @@ def main() -> int:
                 "blank template header falls back to its Excel column letter",
                 "boolean template header uses Python string capitalization",
                 "numeric and date template headers use Python string conversion",
+                "numeric headers match Python scientific-notation thresholds, exponent signs, and padding",
             ],
             "comparison": {
                 "workbook_projection": "exact",

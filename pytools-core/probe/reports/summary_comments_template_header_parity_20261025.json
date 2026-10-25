@@ -23,7 +23,8 @@
     "formula template header remains formula text in the output workbook",
     "blank template header falls back to its Excel column letter",
     "boolean template header uses Python string capitalization",
-    "numeric and date template headers use Python string conversion"
+    "numeric and date template headers use Python string conversion",
+    "numeric headers match Python scientific-notation thresholds, exponent signs, and padding"
   ],
   "comparison": {
     "workbook_projection": "exact",
@@ -44,14 +45,14 @@
       {
         "name": "Branch_A",
         "rows": 4,
-        "columns": 8
+        "columns": 11
       }
     ],
     "python_dimensions": [
       {
         "name": "Branch_A",
         "rows": 4,
-        "columns": 8
+        "columns": 11
       }
     ],
     "reader_engine": "calamine",
