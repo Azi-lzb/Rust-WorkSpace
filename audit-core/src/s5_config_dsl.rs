@@ -89,7 +89,7 @@ pub enum UnaryOperator {
 }
 
 impl UnaryOperator {
-    fn as_str(self) -> &'static str {
+    pub(crate) fn as_str(self) -> &'static str {
         match self {
             Self::Not => "NOT",
             Self::Plus => "+",
@@ -115,7 +115,7 @@ pub enum BinaryOperator {
 }
 
 impl BinaryOperator {
-    fn as_str(self) -> &'static str {
+    pub(crate) fn as_str(self) -> &'static str {
         match self {
             Self::And => "AND",
             Self::Or => "OR",
@@ -132,7 +132,7 @@ impl BinaryOperator {
         }
     }
 
-    fn is_comparison(self) -> bool {
+    pub(crate) fn is_comparison(self) -> bool {
         matches!(
             self,
             Self::Equal

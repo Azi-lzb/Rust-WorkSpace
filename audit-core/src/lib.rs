@@ -42,6 +42,7 @@ pub mod s5_business;
 pub mod s5_config;
 pub mod s5_config_check;
 pub mod s5_config_dsl;
+pub mod s5_eval;
 pub mod s5_period_recognition;
 pub mod s5_template_matching;
 pub mod template;

@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "suite": "audit.s5_eval_parity",
+  "status": "completed",
+  "sample_scope": {
+    "synthetic_cases": 22,
+    "real_stub_cases": 57,
+    "cases_total": 79,
+    "stub_contract": "every dictionary variable and V call evaluates to number 1"
+  },
+  "comparison": {
+    "matched": 79,
+    "mismatch_ids": [],
+    "mismatch_count": 0,
+    "error_cases": 3
+  },
+  "verification": {
+    "rust_runner": "audit-core/tests/s5_eval_parity.rs",
+    "python_baseline": "s1audit_configured.dsl.evaluate",
+    "inputs_unchanged": true,
+    "raw_expressions_or_messages_persisted": false,
+    "capability_status": "unverified",
+    "production_route_eligible": false
+  },
+  "limitations": [
+    "V_CUR/V_PRE/V_EXT retrieval is stubbed with deterministic number-1 values; real retrieval semantics belong to the rule engine service slice.",
+    "Evidence merging is exercised only with empty evidence in the cross-language run; merge order is covered by Rust unit tests.",
+    "The decimal mode uses an internal digit-vector decimal with a 28-significant-digit context; Python decimal values that overflow the working range fail with an explicit error."
+  ]
+}
