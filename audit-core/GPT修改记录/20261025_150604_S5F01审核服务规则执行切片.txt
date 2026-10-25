@@ -1,0 +1,39 @@
+# S5-F01 审核服务规则执行切片
+
+- 时间：2026-10-25 15:06 (+08:00)
+- 执行者：Codex Audit migration agent
+- 分支：audit-dev
+- 修改前 commit：853ec16
+- 修改后 commit：随本轮本地提交，提交 ID 见 Git 历史。
+- WIP：开始时 worktree 干净；验证结束时仅新增服务模块、对拍测试、Python 比较器、脱敏报告、清单更新和本记录；另放宽 s5_eval 构造器可见性并给 EvalError 增加 code 侧信道、s5_retrieval 的 to_eval_error 携带取数错误码。未修改共享 crates、源 Python 项目、真实工作簿、pytools-core、Cargo.toml 或 Cargo.lock。
+
+## 目的
+
+把配置、取数与求值串成 `engine.AuditEngine._evaluate_rule` 的完整规则语义（状态机、描述渲染、evidence 汇总、错误分类、检索追踪），打通"配置→规则→取数→求值→结果"主链路的单规则级实现，并以真实配置+真实审核副本完成 Python/Rust 对拍。
+
+## 修改文件
+
+- `audit-core/src/s5_service.rs`：新增服务模块（S5RuleOutcome、`RuleHooks`（RefCell 变量/检索缓存、变量栈、追踪）、`evaluate_rule` 主流程、`render_description`/`display_value`（binary64 `.15g` 语义）、`error_code` 前缀提取、结构/配置错误码集合分类、`unique_evidence`/缓存 evidence 聚合）。
+- `audit-core/src/s5_eval.rs`：`EvalError` 增加 `code` 字段与 `with_code`；`evaluation`/`configuration` 构造器放宽为 pub（供服务层使用，无行为变化）。
+- `audit-core/src/s5_retrieval.rs`：`to_eval_error` 携带 `RetrievalFailure.code`。
+- `audit-core/tests/s5_rule_parity.rs`：env 驱动的 `#[ignore]` 对拍运行器（JSONL 规则请求 → 结果 JSONL）。
+- `audit-core/tests/compare/compare_s5_rule.py`：Python 比较器（AuditEngine._evaluate_rule 直调，双份输入同一临时目录；值/变量按浮点归一、evidence 去 raw_type、追踪路径字符串化；报告仅聚合计数）。
+- `audit-core/probe/reports/s5_rule_evaluation_windows_real_20261025.json`：新增脱敏机器报告。
+- `audit-core/src/lib.rs`：注册 `s5_service`。
+- `audit-core/MIGRATION_INVENTORY.md`：S5-F01 行更新并新增切片小节。
+- 本记录。
+
+## 验证
+
+- 编译与测试：`cargo build --offline -p audit-core` 通过；`cargo test --offline --locked -p audit-core` 全量 195 通过、0 失败（一次并行的 s2 测试 metadata 报错经全量重跑确认为并发瞬态）。
+- 跨语言对拍（Windows 原生）：真实 config-real 配置 + 真实单位贷款机构审核副本（同一临时目录），前 6 条启用规则（单位贷款）——状态、triggered、error_code/error_message、描述渲染、当前/对比/差值与单位/precision、变量、evidence（22 字段含 conversion）、检索追踪行全字段差异 0；状态覆盖真实的 PASSED/TRIGGERED 分布。
+- 对拍中修正的比较器归一（非产品代码）：Rust 数值字符串→浮点归一、error_code 空串/空值等价、trace 行 row_path/column_path 按字符串比较。
+- 输入未变；报告不含路径、工作表名或业务值。
+
+## 未执行项、已知问题与回滚
+
+- 未迁移：适用范围 @当前行 的批量展开（engine 的 scope_path 机制）、多规则编排 run()/ledger 与 hashes、结果输出（outputs）、V_EXT 外部取数与 external_layout、外部文件地址扫描、数字区域模板投影、CLI 接线；S5-F01 整体仍未验证。
+- 已知边界：binary64 描述渲染按 Python `.15g` 实现常见区间（科学计数 E 记法仅在指数越界时出现，真实业务数值均落在定点区间）；取数为单绑定无契约路径（真实配置形态）。
+- 共享请求状态：请求 #3（载荷基线等价）与 #4（校验器行操作映射）仍未响应。
+- 回滚：删除新增模块/测试/比较器/报告，还原 s5_eval.rs/s5_retrieval.rs、lib.rs、清单与本记录即可；无用户工作簿恢复项。
+- 【组件版本】不升级。

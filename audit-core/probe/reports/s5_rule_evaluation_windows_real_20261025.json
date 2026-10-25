@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "suite": "audit.s5_rule_evaluation_parity",
+  "status": "completed",
+  "sample_scope": {
+    "business": "单位贷款",
+    "rules_sampled": 6,
+    "files_copied_to_temporary": true
+  },
+  "comparison": {
+    "matched": 6,
+    "mismatch_rules": [],
+    "mismatch_count": 0,
+    "python_status_distribution": {
+      "PASSED": 1,
+      "TRIGGERED": 5
+    }
+  },
+  "verification": {
+    "rust_runner": "audit-core/tests/s5_rule_parity.rs",
+    "python_baseline": "s1audit_configured.engine.AuditEngine._evaluate_rule",
+    "inputs_unchanged": true,
+    "raw_values_persisted": false,
+    "capability_status": "unverified",
+    "production_route_eligible": false
+  },
+  "limitations": [
+    "No applicability-scope (@当前行) expansion: real configuration rules without scopes are covered; scope expansion belongs to the batch orchestration slice.",
+    "Retrieval is the single-binding current-source path without contracts, matching the real configuration shape."
+  ]
+}

@@ -33,21 +33,31 @@ pub enum EvalErrorKind {
 pub struct EvalError {
     pub kind: EvalErrorKind,
     pub message: String,
+    /// Optional retrieval error code (e.g. SHEET_NOT_FOUND) carried through
+    /// the call_value hook for service-level status classification.
+    pub code: Option<String>,
 }
 
 impl EvalError {
-    fn evaluation(message: impl Into<String>) -> Self {
+    pub fn evaluation(message: impl Into<String>) -> Self {
         Self {
             kind: EvalErrorKind::Evaluation,
             message: message.into(),
+            code: None,
         }
     }
 
-    fn configuration(message: impl Into<String>) -> Self {
+    pub fn configuration(message: impl Into<String>) -> Self {
         Self {
             kind: EvalErrorKind::Configuration,
             message: message.into(),
+            code: None,
         }
+    }
+
+    pub fn with_code(mut self, code: impl Into<String>) -> Self {
+        self.code = Some(code.into());
+        self
     }
 }
 
@@ -84,7 +94,13 @@ impl PartialEq for Decimal28 {
 
 impl Decimal28 {
     pub fn is_integral(&self) -> bool {
-        self.exponent >= 0 || self.digits.iter().rev().take((-self.exponent) as usize).all(|digit| *digit == 0)
+        self.exponent >= 0
+            || self
+                .digits
+                .iter()
+                .rev()
+                .take((-self.exponent) as usize)
+                .all(|digit| *digit == 0)
     }
 
     pub fn zero() -> Self {
@@ -1586,7 +1602,6 @@ mod eval_tests {
         }
     }
 }
-
 
 /// Parse plain-notation decimal text for the retrieval layer.
 pub fn parse_decimal28(text: &str) -> Result<Decimal28, String> {

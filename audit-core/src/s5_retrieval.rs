@@ -45,6 +45,7 @@ impl RetrievalFailure {
         crate::s5_eval::EvalError {
             kind: EvalErrorKind::Evaluation,
             message: self.message,
+            code: Some(self.code),
         }
     }
 }
