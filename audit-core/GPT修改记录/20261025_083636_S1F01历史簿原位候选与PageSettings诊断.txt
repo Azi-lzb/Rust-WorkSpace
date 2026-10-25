@@ -2,7 +2,7 @@
 执行者：Codex Audit migration agent
 分支：audit-dev
 修改前 commit：865965f
-修改后 commit：待本地提交
+修改后 commit：e4eaaaa（Audit 计划与候选证据）
 WIP：开始时 worktree 干净。未修改 DEVELOPMENT_GOAL.md、真实工作簿、源 Python 项目、pytools-core、共享 crates、Cargo.lock 或根 Cargo 配置。
 
 ## 目的
