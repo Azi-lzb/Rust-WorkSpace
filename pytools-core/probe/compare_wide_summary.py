@@ -286,6 +286,7 @@ def python_baseline(
     row_suffix: bool,
     *,
     source_paths: list[Path] | None = None,
+    use_default_source_scan: bool = False,
 ) -> tuple[Path | None, Path]:
     sys.path.insert(0, str(PYTOOLS_SOURCE / "PyCode"))
     from core.config_xlsx import GlobalConfig, TimelineRule
@@ -324,7 +325,11 @@ def python_baseline(
             [],
             global_config,
             row_suffix,
-            source_paths=source_paths if source_paths is not None else [source],
+            source_paths=(
+                None
+                if use_default_source_scan
+                else source_paths if source_paths is not None else [source]
+            ),
         )
         return summary, output / "target.xlsx"
     finally:
@@ -354,6 +359,104 @@ def run_rust_sources(
         except json.JSONDecodeError:
             continue
     raise RuntimeError(f"Rust CLI did not return JSON: {stdout}\n{stderr}")
+
+
+def run_rust_default_sources(
+    config: Path, row_suffix: bool
+) -> tuple[Path | None, list[Path], Path]:
+    cli = "wide-summary-row-suffix" if row_suffix else "wide-summary"
+    completed = run_rust_command(
+        [cli, "--config", rust_path_argument(config), "--log-view", "developer"]
+    )
+    stdout = completed.stdout.decode("utf-8-sig", errors="replace").replace("\x00", "")
+    stderr = completed.stderr.decode("utf-8-sig", errors="replace").replace("\x00", "")
+    for line in reversed(stdout.splitlines()):
+        try:
+            result = json.loads(line)
+            output = rust_path_result(result["output"]) if result.get("output") else None
+            plans = [
+                rust_path_result(path)
+                for path in result.get("target_append_plans", [])
+            ]
+            run_log_path = result.get("run_log_path")
+            if not run_log_path:
+                raise AssertionError("default source scan did not save developer run history")
+            return output, plans, rust_path_result(run_log_path)
+        except json.JSONDecodeError:
+            continue
+    raise RuntimeError(f"Rust default source scan did not return JSON: {stdout}\n{stderr}")
+
+
+def run_default_input_scan_case(root: Path, row_suffix: bool) -> dict[str, object]:
+    case = root / ("default_scan_suffix" if row_suffix else "default_scan_no_suffix")
+    input_dir = case / "input"
+    nested_dir = input_dir / "nested"
+    nested_dir.mkdir(parents=True)
+    root_source = input_dir / "sample_root_2024-06-30.xlsx"
+    nested_source = nested_dir / "sample_nested_2024-07-31.xlsx"
+    locked_source = input_dir / "~$sample_locked_2024-08-31.xlsx"
+    unsupported_source = input_dir / "sample_unsupported.xlsb"
+    make_input(root_source)
+    make_input(nested_source)
+    make_input(locked_source)
+    unsupported_source.write_bytes(b"not an XLSB workbook")
+    for source, value in ((root_source, 101.0), (nested_source, 202.0)):
+        workbook = load_workbook(source)
+        workbook["Report"]["B5"] = value
+        workbook.save(source)
+        workbook.close()
+
+    python_output = case / "python_output"
+    rust_output = case / "rust_output"
+    config = case / "config.xlsx"
+    make_config(config, rust_output, input_dir, rust_output / "target.xlsx")
+    source_bytes = {
+        path: path.read_bytes()
+        for path in (root_source, nested_source, locked_source, unsupported_source, config)
+    }
+    baseline, _ = python_baseline(
+        root_source,
+        python_output,
+        row_suffix,
+        use_default_source_scan=True,
+    )
+    actual, plans, history_path = run_rust_default_sources(config, row_suffix)
+    if baseline is None or actual is None:
+        raise AssertionError(
+            f"default source scan did not produce output: baseline={baseline}, rust={actual}"
+        )
+    assert_parity(baseline, actual)
+    history = json.loads(history_path.read_text(encoding="utf-8"))
+    if (
+        history.get("total_inputs") != 2
+        or history.get("completed_inputs") != 2
+        or history.get("failed_inputs") != 0
+    ):
+        raise AssertionError(f"unexpected default scan counts in Rust history: {history}")
+    discovery_events = [
+        event
+        for event in history.get("events", [])
+        if event.get("phase") == "source_discovery"
+    ]
+    if len(discovery_events) != 2 or discovery_events[-1].get("progress", {}).get("total_inputs") != 2:
+        raise AssertionError(f"source discovery event missing or incorrect: {discovery_events}")
+    if any(path.read_bytes() != before for path, before in source_bytes.items()):
+        raise AssertionError("default source scan modified an input, lock file, or configuration")
+    if len(plans) != 1:
+        raise AssertionError(f"expected one plan for default-scanned inputs, got {plans}")
+    return {
+        "row_suffix": row_suffix,
+        "source_selection": "PyCode source_paths=None and Rust CLI without positional paths",
+        "python_eligible_sources": 2,
+        "rust_eligible_sources": history["total_inputs"],
+        "nested_directory": "included",
+        "excel_lock_file": "excluded",
+        "unsupported_xlsb": "excluded by configured .xlsx extension",
+        "summary_projection": "exact Python/Rust parity",
+        "developer_history_source_discovery_events": len(discovery_events),
+        "source_and_config_unchanged": True,
+        "target_append_plan_count": len(plans),
+    }
 
 
 def run_input_filter_case(root: Path) -> dict[str, object]:
@@ -978,6 +1081,13 @@ def cleanup_probe_directory(path: Path) -> None:
 def main() -> int:
     if not PYTOOLS_SOURCE.is_dir():
         raise FileNotFoundError(f"PyCode source not found: {PYTOOLS_SOURCE}")
+    summary_report_path = WORKSPACE / "pytools-core" / "probe" / "reports" / "wide_summary_parity_20261023.json"
+    existing_native_dialog_scenarios = []
+    if summary_report_path.is_file():
+        existing_report = json.loads(summary_report_path.read_text(encoding="utf-8"))
+        existing_native_dialog_scenarios = existing_report.get(
+            "native_file_dialog_menu_scenarios", []
+        )
     with tempfile.TemporaryDirectory(prefix="pytools-wide-probe-", ignore_cleanup_errors=True) as temp:
         root = Path(temp)
         summary_cases = [
@@ -991,6 +1101,10 @@ def main() -> int:
             ),
         ]
         input_filter_case = run_input_filter_case(root)
+        default_input_scan_cases = [
+            run_default_input_scan_case(root, False),
+            run_default_input_scan_case(root, True),
+        ]
         existing_cases = [
             run_existing_target_case(root, False),
             run_existing_target_case(root, True),
@@ -1065,6 +1179,8 @@ def main() -> int:
                     "date in the input filename",
                     "configured target worksheet",
                     "cached formula value with no parsable input date",
+                    "recursive configured-input default scan",
+                    "Excel lock-file and unsupported-extension exclusion",
                 ],
             },
             "environment": report["environment"],
@@ -1077,9 +1193,10 @@ def main() -> int:
             },
             "scenarios": summary_cases,
             "input_filter_case": input_filter_case,
+            "default_input_scan_cases": default_input_scan_cases,
+            "native_file_dialog_menu_scenarios": existing_native_dialog_scenarios,
             "limitations": report["limitations"],
         }
-        summary_report_path = WORKSPACE / "pytools-core" / "probe" / "reports" / "wide_summary_parity_20261023.json"
         summary_report_path.write_text(
             json.dumps(summary_report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
         )
@@ -1117,6 +1234,7 @@ def main() -> int:
                     "input_filter_report": str(input_filter_report_path),
                     "summary_cases": len(summary_cases),
                     "input_filter_case": input_filter_case,
+                    "default_input_scan_cases": len(default_input_scan_cases),
                     "existing_target_cases": len(existing_cases),
                 },
                 ensure_ascii=False,

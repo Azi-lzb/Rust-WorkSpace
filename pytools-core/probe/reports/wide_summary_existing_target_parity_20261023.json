@@ -56,17 +56,17 @@
       "target_execution_summary": {
         "appended_rows": 2,
         "duplicate_rows_filtered": 1,
-        "elapsed_ms": 49,
+        "elapsed_ms": 46,
         "function": "append_target_execute",
         "stages": [
           {
-            "elapsed_ms": 25,
+            "elapsed_ms": 28,
             "engine": "rust_xlsxwriter",
             "name": "new_workbook_write_and_reopen",
             "status": "succeeded"
           },
           {
-            "elapsed_ms": 23,
+            "elapsed_ms": 16,
             "name": "target_commit",
             "status": "succeeded"
           }
@@ -105,17 +105,17 @@
       "target_execution_summary": {
         "appended_rows": 3,
         "duplicate_rows_filtered": 0,
-        "elapsed_ms": 47,
+        "elapsed_ms": 44,
         "function": "append_target_execute",
         "stages": [
           {
-            "elapsed_ms": 29,
+            "elapsed_ms": 27,
             "engine": "rust_xlsxwriter",
             "name": "new_workbook_write_and_reopen",
             "status": "succeeded"
           },
           {
-            "elapsed_ms": 17,
+            "elapsed_ms": 16,
             "name": "target_commit",
             "status": "succeeded"
           }
@@ -154,17 +154,17 @@
       "target_execution_summary": {
         "appended_rows": 2,
         "duplicate_rows_filtered": 1,
-        "elapsed_ms": 39,
+        "elapsed_ms": 45,
         "function": "append_target_execute",
         "stages": [
           {
-            "elapsed_ms": 24,
+            "elapsed_ms": 25,
             "engine": "rust_xlsxwriter",
             "name": "new_workbook_write_and_reopen",
             "status": "succeeded"
           },
           {
-            "elapsed_ms": 14,
+            "elapsed_ms": 19,
             "name": "target_commit",
             "status": "succeeded"
           }
@@ -195,22 +195,22 @@
       "execution_summary": {
         "appended_rows": 1,
         "duplicate_rows_filtered": 2,
-        "elapsed_ms": 287,
+        "elapsed_ms": 262,
         "function": "append_target_execute",
         "stages": [
           {
-            "elapsed_ms": 172,
+            "elapsed_ms": 132,
             "engine": "umya_spreadsheet",
             "name": "excel_modify",
             "status": "succeeded"
           },
           {
-            "elapsed_ms": 22,
+            "elapsed_ms": 26,
             "name": "replacement_contract_validation",
             "status": "succeeded"
           },
           {
-            "elapsed_ms": 53,
+            "elapsed_ms": 60,
             "name": "target_commit",
             "status": "succeeded"
           }
@@ -263,22 +263,22 @@
       "execution_summary": {
         "appended_rows": 2,
         "duplicate_rows_filtered": 1,
-        "elapsed_ms": 212,
+        "elapsed_ms": 351,
         "function": "append_target_execute",
         "stages": [
           {
-            "elapsed_ms": 101,
+            "elapsed_ms": 178,
             "engine": "umya_spreadsheet",
             "name": "excel_modify",
             "status": "succeeded"
           },
           {
-            "elapsed_ms": 20,
+            "elapsed_ms": 35,
             "name": "replacement_contract_validation",
             "status": "succeeded"
           },
           {
-            "elapsed_ms": 49,
+            "elapsed_ms": 79,
             "name": "target_commit",
             "status": "succeeded"
           }

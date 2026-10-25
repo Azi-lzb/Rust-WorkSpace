@@ -24,6 +24,7 @@ pub mod region_sum;
 pub mod rule_engine;
 pub mod sheet_extract;
 pub mod sheet_rename;
+pub mod source_discovery;
 pub mod submission_check;
 pub mod summary_ops;
 pub mod timeline_extract;

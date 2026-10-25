@@ -17,7 +17,9 @@
       "duplicate row labels",
       "date in the input filename",
       "configured target worksheet",
-      "cached formula value with no parsable input date"
+      "cached formula value with no parsable input date",
+      "recursive configured-input default scan",
+      "Excel lock-file and unsupported-extension exclusion"
     ]
   },
   "environment": {
@@ -68,17 +70,17 @@
       "target_execution_summary": {
         "appended_rows": 2,
         "duplicate_rows_filtered": 1,
-        "elapsed_ms": 49,
+        "elapsed_ms": 46,
         "function": "append_target_execute",
         "stages": [
           {
-            "elapsed_ms": 25,
+            "elapsed_ms": 28,
             "engine": "rust_xlsxwriter",
             "name": "new_workbook_write_and_reopen",
             "status": "succeeded"
           },
           {
-            "elapsed_ms": 23,
+            "elapsed_ms": 16,
             "name": "target_commit",
             "status": "succeeded"
           }
@@ -117,17 +119,17 @@
       "target_execution_summary": {
         "appended_rows": 3,
         "duplicate_rows_filtered": 0,
-        "elapsed_ms": 47,
+        "elapsed_ms": 44,
         "function": "append_target_execute",
         "stages": [
           {
-            "elapsed_ms": 29,
+            "elapsed_ms": 27,
             "engine": "rust_xlsxwriter",
             "name": "new_workbook_write_and_reopen",
             "status": "succeeded"
           },
           {
-            "elapsed_ms": 17,
+            "elapsed_ms": 16,
             "name": "target_commit",
             "status": "succeeded"
           }
@@ -166,17 +168,17 @@
       "target_execution_summary": {
         "appended_rows": 2,
         "duplicate_rows_filtered": 1,
-        "elapsed_ms": 39,
+        "elapsed_ms": 45,
         "function": "append_target_execute",
         "stages": [
           {
-            "elapsed_ms": 24,
+            "elapsed_ms": 25,
             "engine": "rust_xlsxwriter",
             "name": "new_workbook_write_and_reopen",
             "status": "succeeded"
           },
           {
-            "elapsed_ms": 14,
+            "elapsed_ms": 19,
             "name": "target_commit",
             "status": "succeeded"
           }
@@ -197,11 +199,33 @@
     "source_and_config_unchanged": true,
     "target_append_plan_count": 1
   },
-  "limitations": [
-    "No sanitized real business sample was available.",
-    "Temporary capability evidence is test-only and does not register a production route.",
-    "麒麟/UOS glibc 2.28 deb remains unverified.",
-    "The cached-formula scenario validates reading and projecting a stored formula result; it does not perform or validate formula recalculation."
+  "default_input_scan_cases": [
+    {
+      "row_suffix": false,
+      "source_selection": "PyCode source_paths=None and Rust CLI without positional paths",
+      "python_eligible_sources": 2,
+      "rust_eligible_sources": 2,
+      "nested_directory": "included",
+      "excel_lock_file": "excluded",
+      "unsupported_xlsb": "excluded by configured .xlsx extension",
+      "summary_projection": "exact Python/Rust parity",
+      "developer_history_source_discovery_events": 2,
+      "source_and_config_unchanged": true,
+      "target_append_plan_count": 1
+    },
+    {
+      "row_suffix": true,
+      "source_selection": "PyCode source_paths=None and Rust CLI without positional paths",
+      "python_eligible_sources": 2,
+      "rust_eligible_sources": 2,
+      "nested_directory": "included",
+      "excel_lock_file": "excluded",
+      "unsupported_xlsb": "excluded by configured .xlsx extension",
+      "summary_projection": "exact Python/Rust parity",
+      "developer_history_source_discovery_events": 2,
+      "source_and_config_unchanged": true,
+      "target_append_plan_count": 1
+    }
   ],
   "native_file_dialog_menu_scenarios": [
     {
@@ -286,5 +310,11 @@
       "source_and_configuration_bytes_unchanged": true,
       "production_acceptance": false
     }
+  ],
+  "limitations": [
+    "No sanitized real business sample was available.",
+    "Temporary capability evidence is test-only and does not register a production route.",
+    "麒麟/UOS glibc 2.28 deb remains unverified.",
+    "The cached-formula scenario validates reading and projecting a stored formula result; it does not perform or validate formula recalculation."
   ]
 }

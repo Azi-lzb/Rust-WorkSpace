@@ -1,0 +1,33 @@
+时间：2026-10-25 11:15:43 Asia/Shanghai
+执行者：Codex
+分支/工作树：pytools-dev / C:\Users\AZI\Desktop\VibeCode\pytools-dev
+修改前 commit：135704f（工作树已有同一功能的未提交 Rust 实现；本轮先检查并在原改动上补齐）
+修改后 commit：记录生成时尚未提交；本项提交后由 Git 历史标识。
+WIP：此前未提交改动仅包含本功能的 source discovery helper、宽表 CLI 接线和集成测试；已逐项检查并保留。没有覆盖其他工作。
+
+目的：将原 PyCode `run_wide_summary(..., source_paths=None)` 的默认递归输入发现接入 Rust 宽表 CLI；保持显式路径调用行为。
+
+文件与变化：
+- `pytools-core/src/source_discovery.rs`：新增配置输入目录递归发现，按配置扩展名筛选、忽略 `~$` 锁文件、排序。
+- `pytools-core/src/lib.rs`：导出 source discovery 模块。
+- `pytools-core/src/timeline_extract.rs`：保留 `discover_timeline_extract_sources` 公开兼容入口，并委托给通用 helper。
+- `pytools-core/src/bin/pytools.rs`：宽表 CLI 在没有位置源文件参数时扫描配置目录；日志视图记录扫描阶段、发现数和耗时，并保持连续事件序号；CLI 用法更新。
+- `pytools-core/tests/timeline_menu_cli.rs`：新增两种行头模式的真实 CLI 默认扫描集成测试。
+- `pytools-core/probe/compare_wide_summary.py`：调用只读 PyCode 默认扫描，并与无位置参数的 Rust CLI 对拍；检查历史计数、事件、输入不变。
+- `pytools-core/probe/reports/wide_summary_parity_20261023.json`、`wide_summary_existing_target_parity_20261023.json`：记录本次完整合成对拍结果；写回时保留之前的 3 条原生文件对话框证据。
+- `pytools-core/MIGRATION_INVENTORY.md`：补充迁移证据与限制。
+
+配置/业务影响：未改配置格式、规则、Excel 引擎或既有显式路径路由。Python/Rust 都按配置输入目录、`.xlsx` 扩展名执行默认发现，忽略锁文件。本变更只迁移业务输入选择行为，不包含 Excel 修改能力；未登记生产 capability。pytools-core 组件版本为 0.1.0，本轮未改版本。
+
+验证：
+- Windows 原生 `cargo fmt --manifest-path pytools-core/Cargo.toml -- --check`：通过。
+- Windows 原生 `cargo build --offline --locked -p pytools-core --bin pytools -j 1`：通过。
+- Windows 原生 `cargo test --offline --locked -p pytools-core --test timeline_menu_cli -j 1`：12/12 通过。
+- Windows Python 3.12.10 / openpyxl 3.1.5 只读基线与原生 Rust CLI 完整运行 `pytools-core/probe/compare_wide_summary.py`：通过。新增两种行头模式的默认扫描均发现 2 个已配置 XLSX；根/嵌套文件参与、锁文件与 `.xlsb` 排除；摘要工作簿投影精确一致；源文件、锁文件和配置字节未变；developer 历史记录两条发现事件与总输入数 2。
+- 同一探针原有的输入筛选、汇总、候选/目标对拍仍通过；旧报告中的 3 条原生文件对话框证据被保留。
+- 原 PyCode 配置/源树工作簿只读预检没有找到可产生宽表结果的真实输入；真实业务匹配样本、PT-1-3/1-4 完整生产验收、Windows 桌面弹窗本轮未验证；麒麟 V10/UOS V20、glibc 2.28、deb 和离线交付未执行。
+- 编译输出中的 shared `excel-editor` deprecated API 与 `pytools-core` 既有 unused import 警告未处理；均不属于本次修改范围。
+
+删除清单：无。
+已知限制：本次证据使用合成 XLSX，不能宣称真实业务、生产 capability 或目标 Linux 交付验收通过。没有改 Audit、共享 crate、根 Cargo 配置或 Cargo.lock。
+回滚提示：若需回滚，以本项本地提交号执行 `git revert <commit>`；不需要 reset/clean。

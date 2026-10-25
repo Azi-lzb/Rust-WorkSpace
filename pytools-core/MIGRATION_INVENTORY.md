@@ -734,3 +734,11 @@ Windows 原生 `pytools.exe menu --config ... --log-view developer` 分别经 `p
 Windows 原生验证：`cargo fmt --manifest-path pytools-core/Cargo.toml -- --check` 通过；`cargo test --offline --locked -p pytools-core --lib comment_region_tests -j 1` 4/4、`cargo test --offline --locked -p pytools-core --test summary_comments_cli -j 1` 5/5 通过。只读 PyCode 与真实 `pytools summary-comments` CLI 的完整工作簿投影对拍通过，6 行数据、两个输出页签 `Branch_A`（4×11）和 `branch_a1`（4×5），值/类型、样式、页面属性均无差异；合成输入未改变。机器报告：`probe/reports/summary_comments_template_header_parity_20261025.json`。
 
 该修复不改变 PT-6-2 的数据读取、规则或引擎路由；仍只有合成标记模板，没有找到有效真实业务模板。麒麟 V10/UOS V20、glibc 2.28、deb 与离线交付仍未验收，PT-6-2 整体状态保持未验证。
+
+### 2026-10-25 PT-1-3/PT-1-4 宽表 CLI 默认输入目录发现
+
+`wide-summary` 与 `wide-summary-row-suffix` 现可省略位置源文件参数，按配置输入目录递归发现匹配 `source_exts` 的文件；扩展名大小写不敏感，忽略 Excel `~$` 锁文件并按路径排序。显式源文件参数行为保持不变。扫描逻辑抽到 `source_discovery::discover_configured_source_files`，并由现有 `timeline-extract` 默认扫描入口复用；`discover_timeline_extract_sources` 保留为旧 Rust 调用方的兼容委托。启用 user/developer 日志时记录发现阶段和耗时，developer 历史包含发现数量，后续事件序号保持连续。
+
+Windows 原生 `cargo fmt --manifest-path pytools-core/Cargo.toml -- --check`、`cargo build --offline --locked -p pytools-core --bin pytools -j 1` 通过；`cargo test --offline --locked -p pytools-core --test timeline_menu_cli -j 1` 12/12 通过。只读 PyCode/Rust 自动对拍脚本新增两种行头模式的无位置参数案例：各扫描根目录与嵌套目录内的 2 份 `.xlsx`，跳过 `~$` 文件和未配置 `.xlsb`，汇总工作簿完整投影一致，开发者历史计数和发现事件正确，源/锁文件/配置未变。报告：`probe/reports/wide_summary_parity_20261023.json`；重跑过程中保留原有 3 条原生文件对话框证据。
+
+原 PyCode 配置与其源树工作簿的只读预检没有发现可产生宽表输出的真实输入；本次仅能确认合成样本行为。生产 capability 未登记，真实业务匹配样本、麒麟 V10/UOS V20、glibc 2.28 与离线 deb 未验证，PT-1-3/PT-1-4 整体仍未验收。

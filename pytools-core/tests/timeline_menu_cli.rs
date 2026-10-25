@@ -204,6 +204,82 @@ fn wide_summary_cli_filters_missing_and_unconfigured_extensions_before_reading()
 }
 
 #[test]
+fn wide_summary_cli_discovers_default_sources_for_both_row_modes() -> Result<()> {
+    let root = TestDirectory::new()?;
+    let config = create_timeline_config(root.path())?;
+    let input_dir = root.path().join("app").join("input");
+    let nested_dir = input_dir.join("nested");
+    fs::create_dir_all(&nested_dir)?;
+
+    create_wide_source(
+        &input_dir.join("sample root source.xlsx"),
+        "默认发现根目录",
+        21.0,
+    )?;
+    create_wide_source(
+        &nested_dir.join("sample nested source.XLSX"),
+        "默认发现子目录",
+        31.0,
+    )?;
+    create_wide_source(
+        &input_dir.join("~$sample locked source.xlsx"),
+        "锁文件必须跳过",
+        41.0,
+    )?;
+    fs::write(
+        input_dir.join("sample unsupported source.xlsb"),
+        b"not xlsb",
+    )?;
+
+    for command in ["wide-summary", "wide-summary-row-suffix"] {
+        let output = Command::new(env!("CARGO_BIN_EXE_pytools"))
+            .arg(command)
+            .arg("--config")
+            .arg(&config)
+            .arg("--log-view")
+            .arg("developer")
+            .output()
+            .with_context(|| format!("run {command} with configured source discovery"))?;
+        assert!(
+            output.status.success(),
+            "{command} default source discovery failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let report: Value = serde_json::from_slice(&output.stdout)?;
+        let summary_path = report["output"]
+            .as_str()
+            .map(PathBuf::from)
+            .with_context(|| format!("{command} output path missing"))?;
+        let summary = read_workbook(&summary_path)?;
+        assert_eq!(summary.sheets.len(), 1);
+        assert!(summary.sheets[0].values.len() > 10);
+
+        let history: Value = serde_json::from_slice(&fs::read(
+            report["run_log_path"]
+                .as_str()
+                .with_context(|| format!("{command} run history path missing"))?,
+        )?)?;
+        assert_eq!(history["total_inputs"], 2);
+        assert_eq!(history["completed_inputs"], 2);
+        assert_eq!(history["failed_inputs"], 0);
+        let events = history["events"]
+            .as_array()
+            .context("wide-summary events missing")?;
+        assert!(events.iter().any(|event| {
+            event["phase"] == "source_discovery"
+                && event["status"] == "completed"
+                && event["progress"]["total_inputs"] == 2
+        }));
+        assert!(events
+            .iter()
+            .enumerate()
+            .all(|(index, event)| { event["sequence"].as_u64() == Some(index as u64 + 1) }));
+    }
+    Ok(())
+}
+
+#[test]
 fn timeline_extract_cli_discovers_default_sources_recursively_and_skips_lock_files() -> Result<()> {
     let root = TestDirectory::new()?;
     let config = create_timeline_config(root.path())?;

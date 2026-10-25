@@ -52,14 +52,15 @@ use pytools_core::region_sum::{
 };
 use pytools_core::sheet_extract::{is_full_sheet_task, run_extract_sheets_candidate_with_progress};
 use pytools_core::sheet_rename::{build_sheet_rename_plan, run_batch_sheet_rename_candidate};
+use pytools_core::source_discovery::discover_configured_source_files;
 use pytools_core::submission_check::run_submission_check;
 use pytools_core::summary_ops::{
     summarize_by_comments, summarize_by_comments_with_progress, summarize_used_ranges,
     summarize_used_ranges_with_progress, SummaryProgress, SummaryRunEvent,
 };
 use pytools_core::timeline_extract::{
-    discover_timeline_extract_sources, run_timeline_extract, run_timeline_extract_with_progress,
-    TimelineExtractProgress, TimelineExtractResult, TimelineExtractRunEvent,
+    run_timeline_extract, run_timeline_extract_with_progress, TimelineExtractProgress,
+    TimelineExtractResult, TimelineExtractRunEvent,
 };
 use pytools_core::timeline_ops::{
     build_wide_target_append_plans, prepare_wide_target_replacement_source,
@@ -6905,7 +6906,7 @@ fn run_timeline_extract_cli_report(
                 },
             );
         }
-        match discover_timeline_extract_sources(&global) {
+        match discover_configured_source_files(&global) {
             Ok(sources) => {
                 progress.total_inputs = sources.len();
                 if log_view != "off" {
@@ -7740,20 +7741,87 @@ fn run_wide_summary_cli_report(
         std::process::id()
     );
     let mut events = Vec::<WideSummaryRunEvent>::new();
-    let wide_result = if log_view == "off" {
-        run_wide_summary(&options.positional, &rules, &maps, &global, row_suffix)
+    let source_paths = if options.positional.is_empty() {
+        let discovery_started = Instant::now();
+        if log_view != "off" {
+            let event = new_wide_summary_cli_event(
+                &events,
+                &run_started,
+                feature_id,
+                0,
+                "source_discovery",
+                "started",
+                "正在扫描配置输入目录中的宽表源文件",
+                None,
+                0,
+                &["pytools-core", "std::fs"],
+                None,
+                None,
+            );
+            emit_wide_summary_event(log_view, &mut events, event);
+        }
+        match discover_configured_source_files(&global) {
+            Ok(sources) => {
+                if log_view != "off" {
+                    let event = new_wide_summary_cli_event(
+                        &events,
+                        &run_started,
+                        feature_id,
+                        sources.len(),
+                        "source_discovery",
+                        "completed",
+                        format!("已发现 {} 个宽表源文件", sources.len()),
+                        Some(discovery_started.elapsed().as_millis()),
+                        0,
+                        &["pytools-core", "std::fs"],
+                        None,
+                        None,
+                    );
+                    emit_wide_summary_event(log_view, &mut events, event);
+                }
+                Ok(sources)
+            }
+            Err(error) => {
+                if log_view != "off" {
+                    let event = new_wide_summary_cli_event(
+                        &events,
+                        &run_started,
+                        feature_id,
+                        0,
+                        "source_discovery",
+                        "failed",
+                        "扫描宽表输入目录失败",
+                        Some(discovery_started.elapsed().as_millis()),
+                        0,
+                        &["pytools-core", "std::fs"],
+                        None,
+                        Some("source_discovery_error"),
+                    );
+                    emit_wide_summary_event(log_view, &mut events, event);
+                }
+                Err(error.context("扫描宽表输入目录失败"))
+            }
+        }
     } else {
-        run_wide_summary_with_progress(
-            &options.positional,
+        Ok(options.positional.clone())
+    };
+    let wide_result = match source_paths {
+        Ok(source_paths) if log_view == "off" => {
+            run_wide_summary(&source_paths, &rules, &maps, &global, row_suffix)
+        }
+        Ok(source_paths) => run_wide_summary_with_progress(
+            &source_paths,
             &rules,
             &maps,
             &global,
             row_suffix,
             |mut event| {
+                event.sequence = events.len() + 1;
                 event.total_elapsed_ms = run_started.elapsed().as_millis();
                 emit_wide_summary_event(log_view, &mut events, event);
             },
-        )
+        ),
+        Err(error) => Err(error),
     };
     let total_inputs = events
         .last()
@@ -10118,8 +10186,8 @@ fn print_usage() {
          timeline-precheck --config <workbook.xlsx>\n\
          timeline-compare --config <workbook.xlsx> --template <workbook.xlsx> [--log-dir <dir>] [--log-view user|developer|off] <source.xlsx>...\n\
          timeline-extract --config <workbook.xlsx> [--output-dir <dir>] [--log-dir <dir>] [--log-view user|developer|off] [--capabilities <json> --platform <id> [--commit-target]] [<source.xlsx>...]\n\
-         wide-summary --config <workbook.xlsx> <source.xlsx>...\n\
-         wide-summary-row-suffix --config <workbook.xlsx> <source.xlsx>...\n\
+         wide-summary --config <workbook.xlsx> [<source.xlsx>...]\n\
+         wide-summary-row-suffix --config <workbook.xlsx> [<source.xlsx>...]\n\
          wide-summary target writes produce append-plan JSON; execute with dedup-append-execute and matching capability evidence\n\
          summary-used-range [--output-dir <dir>] [--log-dir <dir>] [--log-view user|developer|off] <workbook>...\n\
          summary-comments --template <workbook.xlsx> [--output-dir <dir>] [--log-dir <dir>] [--log-view user|developer|off] <source.xlsx>...\n\
