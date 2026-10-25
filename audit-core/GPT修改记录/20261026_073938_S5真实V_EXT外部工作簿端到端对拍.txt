@@ -1,0 +1,37 @@
+# S5-F01 真实 V_EXT 外部工作簿端到端对拍
+
+- 时间：2026-10-26 07:39（Asia/Shanghai）
+- 执行者：Codex Audit migration agent
+- 分支：`audit-dev`
+- 修改前 commit：`ea2ca2368dbe6be4e5427156d9025cb972c5f074`
+- 修改后 commit：随本记录提交；SHA 可由 Git 历史追溯。
+- WIP：修改前 tracked 工作区干净；保留既有未跟踪 `HANDOFF_ZCODE_TO_CODEX.md`、`.pytest-tmp-v3/` 和本机报告。原 Python 项目、config-real 与 2026-07-31 真实工作簿只读；比较器将配置/源/外部工作簿复制进临时目录，模板目录亦先复制到临时目录。
+- 【组件版本】：`audit-core` 仍为 0.1.0，不升级。
+
+## 目的与变更
+
+以真实业务配置、真实单位贷款审核副本、真实外部大集中工作簿和真实模板目录，对 S5 `V_EXT` 单外部来源绑定路径做 Windows 原生端到端 Python/Rust 对拍。该验证补充此前多外部来源选择只有合成数据的证据；它不改变 production capability 状态，也不表示多物理外部来源已真实验收。
+
+- `audit-core/probe/reports/s5_vext_real_external_single_source_parity_windows_native_20261026.json`：保存脱敏对拍摘要，不含原始业务值或机构名称。
+- `audit-core/MIGRATION_INVENTORY.md`：记录真实单外部来源证据及剩余边界。
+
+没有修改 Rust 业务代码、共享 crates、根 Cargo 配置、Cargo.lock、`pytools-core/**`、`DEVELOPMENT_GOAL.md`、原 Python 项目或真实输入工作簿。
+
+## 验证
+
+- Windows 原生 `cargo build --locked -p audit-core --bin open-data-audit`：通过。编译输出有既存 deprecated API 与 unused warnings。
+- Windows 原生 `open-data-audit s5-config-check --scope current_business`，使用 config-real 审核配置、对应真实单位贷款模板和真实外部工作簿：`valid=true`、`complete=true`；377 条启用规则通过；静态模板地址 532/532、外部指标表头 1/1 定位成功。
+- Windows 原生 `compare_s5_outputs.py` 驱动 Python `AuditEngine.run`（Python 3.12.10、openpyxl 样式基线）和当前 `open-data-audit s5-audit-run` CLI：真实配置、审核副本、单个外部工作簿和临时模板目录均复制/读取；完整结果工作簿、审核副本、总账/清单比较 `diff_count=0`。Python/Rust 状态计数均为 PASSED 373、TRIGGERED 3、STRUCTURE_ERROR 1；比较器记录输入未变且 `raw_values_persisted=false`。
+- 证据 JSON：`audit-core/probe/reports/s5_vext_real_external_single_source_parity_windows_native_20261026.json`。
+
+## 未执行与已知问题
+
+- 仅有一个真实外部工作簿和一个真实审核副本；真实多外部来源绑定、不同来源缓存隔离仍未验收。
+- 条件格式/数据质量非空输出、结构快照、哈希完整性降级未覆盖。
+- Linux、glibc 2.28、deb、麒麟 V10、UOS V20 未验证。S5-F01 整体仍未验收，生产 capability 保持 unverified。
+- Audit 共享能力请求 #8（MoveSheet/历史关系快照）仍未解决。
+
+## 删除与回滚
+
+- 没有删除或改写原始输入；比较器自身的临时运行输出已自动清理。隔离模板副本与脱敏临时报告仍留在 `C:\Users\AZI\AppData\Local\Temp\audit-s5-vext-real-20261026`（21 个模板副本、2 份不含原始值的摘要）；执行策略拒绝了本轮临时目录清理命令。
+- 回滚本次验证记录提交即可撤销仓库内报告与清单条目，不涉及业务代码回滚。

@@ -224,4 +224,6 @@ Windows 原生真实单位贷款审核副本、config-real 配置及模板目录
 
 Windows 原生 `s5-audit-run` 与原 Python `AuditEngine.run` 对拍覆盖业务回退、显式 `source=`、同业务候选歧义及未匹配来源。三组完整结果/工作簿/副本/清单差异均为 0，输入未变；歧义组状态计数为 `CONFIG_ERROR=1`、`RETRIEVAL_FAILED=1`。报告：`probe/reports/s5_multiple_external_sources_business_fallback_synthetic_parity_windows_native_20261026.json`、`probe/reports/s5_multiple_external_sources_explicit_synthetic_parity_windows_native_20261026.json`、`probe/reports/s5_multiple_external_sources_ambiguous_synthetic_parity_windows_native_20261026.json`。旧单外部来源契约、动态时序布局和多本期来源回归均通过。
 
-该切片只有 Windows 合成样本证据；真实多外部文件、真实用户配置端到端、Linux/deb、glibc 2.28、麒麟 V10/UOS V20 和完整 S5-F01 尚未验收，生产 capability 仍为 unverified。Audit 共享能力请求 #8 仍未解决。
+多外部来源选择本身目前仍只有 Windows 合成对拍。另用 config-real 真实审核配置、2026-07-31 批次的一本单位贷款审核副本、真实大集中外部工作簿及临时复制的模板目录，完成单外部来源端到端验证：`s5-config-check --scope current_business` 为 valid/complete，377 条启用规则通过，静态模板地址 532/532、外部指标表头 1/1；`s5-audit-run` CLI 与 Python 3.12.10 `AuditEngine.run` 完整输出对拍差异 0，状态计数均为 PASSED 373、TRIGGERED 3、STRUCTURE_ERROR 1，输入未变且报告不保存原始值。报告：`probe/reports/s5_vext_real_external_single_source_parity_windows_native_20261026.json`。
+
+该真实运行仅覆盖一个物理外部工作簿和一个单位贷款审核副本；多物理外部来源真实验收、条件格式/数据质量非空路径、结构快照/哈希完整性降级、Linux/deb、glibc 2.28、麒麟 V10/UOS V20 与完整 S5-F01 仍未验收，生产 capability 仍为 unverified。Audit 共享能力请求 #8 仍未解决。
