@@ -371,6 +371,24 @@ class StyleTableIntegrityTest(unittest.TestCase):
             self.integrity(target)
         self.assertIn("beyond its", str(caught.exception))
 
+    def test_out_of_range_column_dimension_style_is_rejected(self):
+        target = self.root / "column-style-oob.xlsx"
+        self._workbook_with_styles(
+            target,
+            cellxfs_body='<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>',
+            declared_count=1,
+            sheet_xml=(
+                '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+                '<x:worksheet xmlns:x="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+                '<x:cols><x:col min="1" max="1" style="1"/></x:cols>'
+                '<x:sheetData><x:row r="1"><x:c r="A1" t="inlineStr"><x:is><x:t>x</x:t>'
+                '</x:is></x:c></x:row></x:sheetData></x:worksheet>'
+            ),
+        )
+        with self.assertRaises(Exception) as caught:
+            self.integrity(target)
+        self.assertIn("cell style 1 beyond its 1 cellXfs entries", str(caught.exception))
+
     def test_count_mismatch_is_rejected(self):
         target = self.root / "mismatch.xlsx"
         self._workbook_with_styles(

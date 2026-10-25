@@ -646,49 +646,140 @@ def _apply_operation(workbook: Any, cached_workbook: Any, operation: Dict[str, A
 def _verify_style_table_integrity(output_path: Path) -> None:
     """Reject a saved workbook whose cell style references exceed its style table.
 
-    A styles table with fewer xf entries than the highest s= index referenced
-    by any worksheet makes Excel/umya fall back to the default style and
-    silently drop that cell's formatting semantics. Component-style
-    assignment has been observed to produce such output on a real template;
-    the worker must fail loudly instead of publishing a corrupted candidate.
+    A styles table with fewer xf entries than a worksheet cell, row, or column
+    style reference makes Excel/umya fall back to the default style and
+    silently drop formatting semantics. Component-style assignment has been
+    observed to produce such output on a real template; the worker must fail
+    loudly instead of publishing a corrupted candidate.
+
+    Parse the OOXML parts with namespace-aware parsers. Column dimensions refer
+    to a cell style through their style attribute, not s.
     """
-    import re
     import zipfile as _zipfile
+
+    namespace = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+    et_style_sheet_tag = "{{{}}}styleSheet".format(namespace)
+    et_cell_xfs_tag = "{{{}}}cellXfs".format(namespace)
+    et_xf_tag = "{{{}}}xf".format(namespace)
+    expat_namespace = namespace + "}"
+    expat_worksheet_tag = expat_namespace + "worksheet"
+    expat_cell_tag = expat_namespace + "c"
+    expat_row_tag = expat_namespace + "row"
+    expat_column_tag = expat_namespace + "col"
+
+    def checked_style_index(value: str, part_name: str, element_name: str) -> int:
+        try:
+            index = int(value)
+        except ValueError:
+            raise WorkerError(
+                "style_table_corrupted",
+                "saved workbook has an invalid {} style reference in {}".format(
+                    element_name, part_name
+                ),
+            )
+        if index < 0:
+            raise WorkerError(
+                "style_table_corrupted",
+                "saved workbook has a negative {} style reference in {}".format(
+                    element_name, part_name
+                ),
+            )
+        return index
 
     try:
         with _zipfile.ZipFile(str(output_path)) as archive:
-            styles_xml = archive.read("xl/styles.xml").decode("utf-8")
-            match = re.search(r'<cellXfs\b[^>]*\bcount="(\d+)"[^>]*>(.*?)</cellXfs>', styles_xml, re.S)
-            if match is None:
+            styles_root = ElementTree.fromstring(archive.read("xl/styles.xml"))
+            if styles_root.tag != et_style_sheet_tag:
                 raise WorkerError(
                     "style_table_corrupted",
-                    "saved workbook has no recognizable cellXfs style table",
+                    "saved workbook styles part has an unexpected root element",
                 )
-            declared_count = int(match.group(1))
-            xf_elements = len(re.findall(r"<xf\b", match.group(2)))
-            highest = -1
-            for name in archive.namelist():
-                if not re.match(r"xl/worksheets/sheet\d+\.xml$", name):
-                    continue
-                sheet_xml = archive.read(name).decode("utf-8")
-                for style_ref in re.finditer(r'\bs="(\d+)"', sheet_xml):
-                    highest = max(highest, int(style_ref.group(1)))
+            cell_xfs_parts = [
+                child for child in styles_root if child.tag == et_cell_xfs_tag
+            ]
+            if len(cell_xfs_parts) != 1:
+                raise WorkerError(
+                    "style_table_corrupted",
+                    "saved workbook has no unique cellXfs style table",
+                )
+            cell_xfs = cell_xfs_parts[0]
+            try:
+                declared_count = int(cell_xfs.attrib["count"])
+            except (KeyError, ValueError):
+                raise WorkerError(
+                    "style_table_corrupted",
+                    "saved workbook cellXfs has no valid count attribute",
+                )
+            if declared_count < 0:
+                raise WorkerError(
+                    "style_table_corrupted",
+                    "saved workbook cellXfs has a negative count attribute",
+                )
+            xf_elements = sum(child.tag == et_xf_tag for child in cell_xfs)
+            worksheet_parts = [
+                part_name
+                for part_name in archive.namelist()
+                if posixpath.dirname(part_name) == "xl/worksheets"
+                and part_name.endswith(".xml")
+            ]
+            if not worksheet_parts:
+                raise WorkerError(
+                    "style_table_corrupted",
+                    "saved workbook has no worksheet XML parts to validate",
+                )
+            for part_name in worksheet_parts:
+                parser = expat.ParserCreate(namespace_separator="}")
+                root_seen = False
+
+                def check_worksheet_element(
+                    element_name: str, attributes: Dict[str, str]
+                ) -> None:
+                    nonlocal root_seen
+                    if not root_seen:
+                        root_seen = True
+                        if element_name != expat_worksheet_tag:
+                            raise WorkerError(
+                                "style_table_corrupted",
+                                "saved workbook worksheet part has an unexpected root element: "
+                                + part_name,
+                            )
+                    if element_name in (expat_cell_tag, expat_row_tag):
+                        attribute_name = "s"
+                    elif element_name == expat_column_tag:
+                        attribute_name = "style"
+                    else:
+                        return
+                    value = attributes.get(attribute_name)
+                    if value is None:
+                        return
+                    style_index = checked_style_index(value, part_name, element_name)
+                    if style_index >= xf_elements:
+                        raise WorkerError(
+                            "style_table_corrupted",
+                            "saved workbook references cell style {} beyond its {} cellXfs entries in {}".format(
+                                style_index, xf_elements, part_name
+                            ),
+                        )
+
+                parser.StartElementHandler = check_worksheet_element
+                with archive.open(part_name) as worksheet_xml:
+                    parser.ParseFile(worksheet_xml)
+                if not root_seen:
+                    raise WorkerError(
+                        "style_table_corrupted",
+                        "saved workbook worksheet part is empty: " + part_name,
+                    )
     except WorkerError:
         raise
     except Exception as error:
-        raise WorkerError("save_failed", "style-table integrity check failed: " + str(error))
+        raise WorkerError(
+            "style_table_corrupted", "style-table integrity check failed: " + str(error)
+        )
     if declared_count != xf_elements:
         raise WorkerError(
             "style_table_corrupted",
             "saved workbook cellXfs declares count={} but carries {} xf entries".format(
                 declared_count, xf_elements
-            ),
-        )
-    if highest >= xf_elements:
-        raise WorkerError(
-            "style_table_corrupted",
-            "saved workbook references cell style {} beyond its {} cellXfs entries; formatting would silently fall back to the default style".format(
-                highest, xf_elements
             ),
         )
 

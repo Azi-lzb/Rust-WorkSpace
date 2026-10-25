@@ -2650,13 +2650,9 @@ fn update_sheet_filter_database(
     let address = format!("{sheet}!{}", absolute_range(range)?);
     let target = &mut workbook.get_sheet_collection_mut()[sheet_index];
     // umya's DefinedName::set_address appends to the parsed address list and
-    // offers no way to reset it, so the name is rebuilt wholesale. The hidden
-    // flag is preserved only when the original carried it.
-    let existing_hidden = target
-        .defined_names()
-        .iter()
-        .find(|name| name.name() == "_xlnm._FilterDatabase")
-        .map(|name| name.hidden());
+    // offers no way to reset it, so the name is rebuilt wholesale. Excel and
+    // openpyxl always serialize _FilterDatabase as hidden, including when the
+    // AutoFilter is newly added.
     target
         .defined_names_mut()
         .retain(|name| name.name() != "_xlnm._FilterDatabase");
@@ -2664,9 +2660,7 @@ fn update_sheet_filter_database(
     name.set_name("_xlnm._FilterDatabase");
     name.set_address(address);
     name.set_local_sheet_id(sheet_index as u32);
-    if existing_hidden == Some(true) {
-        name.set_hidden(true);
-    }
+    name.set_hidden(true);
     target.add_defined_names(name);
     Ok(())
 }
