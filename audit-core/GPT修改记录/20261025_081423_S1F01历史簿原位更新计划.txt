@@ -1,0 +1,33 @@
+时间：2026-10-25（Windows 原生环境）
+执行者：Codex Audit migration agent
+修改前 commit：8c77911
+修改后 commit：待本轮本地提交
+WIP：本轮开始时 Audit worktree 干净；未修改 DEVELOPMENT_GOAL.md、共享 crate、Cargo.lock、根 Cargo 配置或真实工作簿。
+
+## 目的
+
+- 落实用户确认的原结果表 PageSettings 保留要求。既有历史工作表原位更新，不再删除重建后丢失页面设置。
+- 为维持旧 Python 在既有工作簿中的首位结果表顺序，若既有管理页不在首位则写计划前失败关闭；不存在管理页时仍按首位新建。
+- 计划要求完整保留 PageSettings、工作表身份/顺序及其他未计划属性；引擎不能满足时应拒绝，不得静默重置。
+
+## 修改文件
+
+- audit-core/src/s1_history.rs：读取既有工作表范围；针对既有首位历史页生成 DeleteRows + InsertRows 后重写 13 列历史数据；不再生成 DeleteSheet/CreateSheetAt，不授权丢弃任何保留项。新增非首位拒绝测试。
+- audit-core/MIGRATION_INVENTORY.md：更新为原位计划与仍未验收状态。
+- 本记录。
+
+## 测试
+
+- Windows 原生 cargo test --offline --locked -p audit-core --lib history_workbook_edit_plan_ -j 1：新建缺失页、既有页原位更新、非首位页拒绝 3/3 通过。
+- 既有输入夹具按字节保持不变，未生成输出文件。
+
+## 未执行项与已知问题
+
+- 尚未执行 ExcelModifier 后端；尚未证实 DeleteRows/InsertRows 能在真实模板中完整保留 PageSettings、打印区域/边距及其他 OOXML 对象。S1 历史工作簿真实写回仍未验证。
+- 新计划使用 InsertRows，需先从 main 安全同步已存在的目标工作表行插入实现，再做候选对拍；本轮未更改共享实现、未登记 Passed 能力。
+- 尚未用用户 2026-07-31 真实批次复验；GUI、Linux、麒麟/UOS、deb 未验证。S1-F01 整体仍未验证。
+
+## 影响与回滚
+
+- 改变既有历史管理页的修改策略：数据行原位替换并保留 sheet/PageSettings；若 sheet 非首位则拒绝。
+- 回滚本地提交可恢复 DeleteSheet/CreateSheetAt 计划及对应测试/记录；不需要恢复真实工作簿。

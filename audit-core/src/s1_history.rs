@@ -89,10 +89,11 @@ pub struct S1HistoryWorkbookEditPlan {
 }
 
 /// Build the ExcelModifier batch corresponding to Python's
-/// `write_history_xlsx`: replace only the managed history worksheet, keep other
-/// workbook sheets under the preservation contract, and place the new history
-/// sheet first. This prepares Audit business data and does not execute an
-/// editor or qualify a production capability.
+/// `write_history_xlsx`. Existing managed history rows are replaced in place so
+/// their PageSettings and worksheet identity can be preserved; if the existing
+/// sheet is not already first, fail closed because the current EditPlan cannot
+/// both reorder it and copy its PageSettings. This prepares Audit business data
+/// and does not execute an editor or qualify a production capability.
 pub fn build_s1_history_workbook_edit_plan(
     input_path: impl AsRef<Path>,
     output_path: impl AsRef<Path>,
@@ -147,19 +148,46 @@ pub fn build_s1_history_workbook_edit_plan(
     );
     let sheet_names =
         excel_reader::read_sheet_names(&input_path).context("读取 S1 历史工作簿工作表名称")?;
-    let replaces_existing_history_sheet =
-        sheet_names.iter().any(|name| name == HISTORY_AUDIT_SHEET);
+    let existing_history_index = sheet_names
+        .iter()
+        .position(|name| name == HISTORY_AUDIT_SHEET);
+    let replaces_existing_history_sheet = existing_history_index.is_some();
+    let existing_history_max_row = if let Some(index) = existing_history_index {
+        ensure!(
+            index == 0,
+            "已有 S1 历史工作表不在首位；当前拒绝重排以保留其 PageSettings"
+        );
+        excel_reader::read_xlsx_worksheet_extents(&input_path)
+            .context("读取 S1 历史工作表范围")?
+            .into_iter()
+            .find(|extent| extent.name == HISTORY_AUDIT_SHEET)
+            .map_or(0, |extent| extent.max_row)
+    } else {
+        0
+    };
 
     let mut operations = Vec::new();
     if replaces_existing_history_sheet {
-        operations.push(EditOperation::DeleteSheet {
+        if existing_history_max_row > 1 {
+            operations.push(EditOperation::DeleteRows {
+                sheet: HISTORY_AUDIT_SHEET.to_owned(),
+                first_row: 2,
+                count: (existing_history_max_row - 1) as u32,
+            });
+        }
+        if !issues.is_empty() {
+            operations.push(EditOperation::InsertRows {
+                sheet: HISTORY_AUDIT_SHEET.to_owned(),
+                first_row: 2,
+                count: issues.len() as u32,
+            });
+        }
+    } else {
+        operations.push(EditOperation::CreateSheetAt {
             name: HISTORY_AUDIT_SHEET.to_owned(),
+            index: 0,
         });
     }
-    operations.push(EditOperation::CreateSheetAt {
-        name: HISTORY_AUDIT_SHEET.to_owned(),
-        index: 0,
-    });
     for (column, value) in s1_history_header_row().into_iter().enumerate() {
         operations.push(EditOperation::SetCellValue {
             sheet: HISTORY_AUDIT_SHEET.to_owned(),
@@ -217,15 +245,7 @@ pub fn build_s1_history_workbook_edit_plan(
     ]
     .into_iter()
     .collect();
-    let mut drop_allowed = BTreeMap::new();
-    if replaces_existing_history_sheet {
-        let dropped_properties = preserve
-            .iter()
-            .copied()
-            .filter(|property| *property != PreservationRequirement::PageSettings)
-            .collect();
-        drop_allowed.insert(HISTORY_AUDIT_SHEET.to_owned(), dropped_properties);
-    }
+    let drop_allowed = BTreeMap::new();
     let edit_plan = ExcelEditPlan {
         request_id: "audit-s1-history-workbook-update".to_owned(),
         input: input_path,
@@ -1253,6 +1273,14 @@ mod tests {
             worksheet
                 .write_string(0, 0, format!("{sheet_name} existing"))
                 .expect("write history plan fixture cell");
+            if *sheet_name == HISTORY_AUDIT_SHEET {
+                worksheet
+                    .write_string(1, 0, "old history row")
+                    .expect("write old managed history row");
+                worksheet
+                    .write_string(3, 12, "old trailing history cell")
+                    .expect("write old trailing managed cell");
+            }
         }
         workbook.save(path).expect("save history plan fixture");
     }
@@ -1281,12 +1309,25 @@ mod tests {
         assert!(plan.workbook.inventory_complete);
         assert!(matches!(
             plan.operations.first(),
-            Some(EditOperation::DeleteSheet { name }) if name == HISTORY_AUDIT_SHEET
+            Some(EditOperation::DeleteRows {
+                sheet,
+                first_row: 2,
+                count: 3,
+            }) if sheet == HISTORY_AUDIT_SHEET
         ));
         assert!(matches!(
             plan.operations.get(1),
-            Some(EditOperation::CreateSheetAt { name, index: 0 }) if name == HISTORY_AUDIT_SHEET
+            Some(EditOperation::InsertRows {
+                sheet,
+                first_row: 2,
+                count: 1,
+            }) if sheet == HISTORY_AUDIT_SHEET
         ));
+        assert!(!plan.operations.iter().any(|operation| matches!(
+            operation,
+            EditOperation::DeleteSheet { name } | EditOperation::CreateSheetAt { name, .. }
+                if name == HISTORY_AUDIT_SHEET
+        )));
         assert!(plan.operations.iter().any(|operation| matches!(
             operation,
             EditOperation::SetCellValue {
@@ -1336,24 +1377,25 @@ mod tests {
             plan.preserve
                 .contains(&PreservationRequirement::PageSettings)
         );
-        assert!(!plan
-            .drop_allowed
-            .get(HISTORY_AUDIT_SHEET)
-            .expect("managed sheet drop allowance")
-            .contains(&PreservationRequirement::PageSettings));
-        let expected_drop_allowance = plan
-            .preserve
-            .iter()
-            .copied()
-            .filter(|property| *property != PreservationRequirement::PageSettings)
-            .collect::<std::collections::BTreeSet<_>>();
-        assert_eq!(
-            plan.drop_allowed.get(HISTORY_AUDIT_SHEET),
-            Some(&expected_drop_allowance)
-        );
+        assert!(plan.drop_allowed.is_empty());
         assert_eq!(fs::read(&input).unwrap(), original);
         assert!(!output.exists());
         fs::remove_dir_all(directory).expect("remove S1 history plan fixture directory");
+    }
+
+    #[test]
+    fn history_workbook_edit_plan_refuses_to_reorder_existing_managed_sheet() {
+        let (directory, input) = history_fixture_path("non_first_history");
+        let output = directory.join("updated.xlsx");
+        save_history_plan_fixture(&input, &["业务说明", HISTORY_AUDIT_SHEET]);
+        let original = fs::read(&input).expect("read non-first history fixture");
+
+        let error = build_s1_history_workbook_edit_plan(&input, &output, &[])
+            .expect_err("preserve the current PageSettings rather than reorder the sheet");
+        assert!(error.to_string().contains("不在首位"));
+        assert_eq!(fs::read(&input).unwrap(), original);
+        assert!(!output.exists());
+        fs::remove_dir_all(directory).expect("remove non-first history fixture directory");
     }
 
     #[test]
