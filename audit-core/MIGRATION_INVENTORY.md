@@ -87,6 +87,10 @@
 
 其他功能清单状态不因这些局部迁移对拍而改变，仍按上文逐项保持未验证/待确认。
 
+### S1-F01 真实配置映射补充验证
+
+用户提供的真实逐笔配置与个人贷款命名区域模板，经 Windows 原生 Python/Rust 完整规则定义和模板健康检查对拍，差异为 0（895 条规则、4 个公式复制区、8 个结构区）；模板未改变。脱敏报告：`probe/reports/s1_template_rule_discovery_config_real_windows_native_20261025.json`。该证据只覆盖真实配置加载与模板规则发现，公式复制、历史簿写回、公式重算及完整 S1-F01 仍未验证。
+
 ## Rust 前端接入状态
 
 - 源项目 `core/frontend/web/index.html` 和 `core/frontend/assets/app-icon.{png,ico}` 已原样复制到 `frontend/`；HTML 与源文件 SHA-256 一致。源项目只读，没有修改。

@@ -1,0 +1,32 @@
+# S1-F01 真实配置映射与模板规则对拍
+
+- 时间：2026-10-25 09:20（Asia/Shanghai）
+- 执行者：Codex Audit migration agent
+- 分支：audit-dev
+- 修改前 commit：`6399e25`
+- 修改后 commit：本记录随本轮提交，提交号由 Git 历史追溯。
+- WIP：开始时工作树干净；未修改 `DEVELOPMENT_GOAL.md`、源 Python 项目、真实工作簿、`pytools-core/**`、共享 crates、`Cargo.lock` 或根 Cargo 配置。
+
+## 目的
+
+按用户提供的 `config-real` 检查真实 S1 配置，不使用内置映射替代。验证 Rust `s1-template-rules --mapping-config` 对真实映射表的读取是否与原 Python 规则发现结果一致。
+
+## 修改文件
+
+- `audit-core/probe/reports/s1_template_rule_discovery_config_real_windows_native_20261025.json`：新增脱敏 Python/Rust 对拍摘要，不含工作簿路径、公式文本或规则明细。
+- `audit-core/MIGRATION_INVENTORY.md`：记录真实配置映射对拍范围与未覆盖边界。
+- 本记录。
+
+## 验证
+
+- 使用 Windows 原生 Rust `open-data-audit s1-template-rules --mapping-config` 和源项目只读 Python 比较器；引擎为 `calamine+namespace_aware_ooxml`。
+- 真实规则定义与模板健康检查差异 0：895 条规则、4 个复制区、4 个结果提取区、8 个结构区；模板输入前后未变。
+- 本样本 Python 比较耗时 785 ms，Rust CLI 耗时 584 ms；仅记录该样本，不用于推断或改变默认引擎路由。
+- 未运行 Excel 修改、公式重算或用户文件写回；`DEVELOPMENT_GOAL.md` 未修改。
+
+## 未执行项、已知问题与回滚
+
+- 公式复制仍无真实工作簿写回保留项验收；历史页重排仍受共享 `excel-editor` 缺少 MoveSheet 能力阻塞；完整 S1-F01 保持未验证。
+- 本地提交后不推送：待推送差异含有既有 `DEVELOPMENT_GOAL.md` 改动，按当前指示先保留远程状态。
+- 回滚：可独立回退本报告、迁移清单补充和本记录；无代码、配置或用户文件变更。
+- 组件版本：不升级。
