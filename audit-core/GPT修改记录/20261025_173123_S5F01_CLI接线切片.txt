@@ -1,0 +1,32 @@
+# S5-F01 CLI 接线切片（s5-audit-run 真实入口端到端对拍）
+
+- 时间：2026-10-25 17:31 (+08:00)
+- 执行者：Codex Audit migration agent
+- 分支：audit-dev
+- 修改前 commit：586c212
+- 修改后 commit：随本轮本地提交，提交 ID 见 Git 历史。
+- WIP：开始时 worktree 干净；本轮新增 CLI 子命令与运行函数、清单小节和本记录。未修改共享 crates、源 Python 项目、真实工作簿、pytools-core、Cargo.lock 版本（sha2/roxmltree/zip 均为 workspace 已管理依赖）。
+
+## 目的
+
+把 S5-F01 已对拍的链路（配置加载→取数→编排→输出）接成产品 CLI 入口 `s5-audit-run`，以真实配置+真实审核副本完成入口级端到端验证与 Python 基线文件级对拍。
+
+## 修改文件
+
+- `audit-core/src/bin/open-data-audit.rs`：新增 `S5AuditRun` 子命令（clap Args：config/source/source_id/period/org-code/org-name/business×N/output-dir/run-id/developer-view）与 `run_s5_audit_run` 运行函数（输入校验、run_id 缺省时间戳、配置加载、单绑定取数、run_rules、write_run_outputs、JSON 汇总输出与 developer-view 进度事件）；新增 sha256 摘要辅助。
+- `audit-core/MIGRATION_INVENTORY.md`：S5-F01 行更新并新增 CLI 接线小节。
+- 本记录。
+
+## 验证
+
+- 编译与测试：`cargo build --offline -p audit-core` 通过；`cargo test --offline --locked -p audit-core` 全量 195 通过、0 失败。
+- 真实入口端到端（Windows 原生）：`open-data-audit.exe s5-audit-run` 直跑真实 config-real 配置 + 真实单位贷款机构审核副本——377 条规则结果完成（PASSED 80/TRIGGERED 134/STRUCTURE_ERROR 162/RETRIEVAL_FAILED 1，与既有 run 编排对拍一致），5.2s 产出运行目录（审核副本/审核结果.xlsx/运行总账.json）。
+- CLI 产物 vs Python `AuditEngine.run(output_dir=...)` 基线文件级对拍 0 差异：审核副本集合与字节一致、审核结果.xlsx 全字段（复用 compare_s5_outputs 的事实读取器：值/类型/格式/超链接/列宽/行高/样式/页面设置）、总账 run_status/status_counts 与清单（路径按 basename 归一）一致。首轮对比的副本命名差异确认为调试脚本输入命名不同（source.xlsx vs 原名），非产品缺陷；同名输入复跑归零。
+- 输入未变；真实工作簿只读。
+
+## 未执行项、已知问题与回滚
+
+- CLI 链路当前为单绑定本期源：上期/外部源绑定、V_EXT 真实取数、配置校验入口（validate_s5_config）、输入哈希降级、结构快照、数据质量告警未接入 `s5-audit-run`；S5-F01 整体仍未验证。
+- 共享请求 #5（worker 样式表越界）与 #6（page_settings 顺序）仍待 main。
+- 回滚：还原本提交即可；无用户工作簿恢复项。
+- 【组件版本】不升级。

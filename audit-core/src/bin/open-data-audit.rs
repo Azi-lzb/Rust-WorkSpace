@@ -36,7 +36,11 @@ use audit_core::{
     s2_service::{run_s2_audit, S2ProgressEvent, S2RunRequest},
     s2_summary::S2AuditSummary,
     s3_explanation_export::export_selected_explanations,
+    s5_config::load_configuration,
+    s5_outputs::{write_run_outputs, S5OutputRequest},
     s5_period_recognition::{detect_s5_period, s5_file_period_hint},
+    s5_retrieval::S5Retrieval,
+    s5_service::run_rules,
     s5_template_matching::match_s5_template,
     web_bridge::serve_web_ui,
 };
@@ -69,6 +73,8 @@ enum Command {
     S5FilePeriodHints(S5FilePeriodHintsArgs),
     /// Match selected S5 XLSX workbooks to one template by worksheet names.
     S5MatchTemplate(S5MatchTemplateArgs),
+    /// Run the S5 configured audit for one business against a bound source workbook.
+    S5AuditRun(S5AuditRunArgs),
     /// Run the S2 period-report audit and create its three-sheet result workbook.
     S2(S2Args),
     /// Export S3-F02 comparison rows selected for institution explanation.
@@ -601,6 +607,49 @@ struct S5MatchTemplateArgs {
 }
 
 #[derive(Debug, Args)]
+struct S5AuditRunArgs {
+    /// S5 audit configuration workbook (审核规则 plus optional catalog sheets).
+    #[arg(long)]
+    config: PathBuf,
+
+    /// Bound current-period source workbook.
+    #[arg(long)]
+    source: PathBuf,
+
+    /// Logical source id recorded on retrieval evidence.
+    #[arg(long, default_value = "CURRENT")]
+    source_id: String,
+
+    /// Reporting period, e.g. 2026-07-31.
+    #[arg(long)]
+    period: String,
+
+    /// Institution code recorded on results and evidence.
+    #[arg(long, default_value = "")]
+    org_code: String,
+
+    /// Institution name recorded on results.
+    #[arg(long, default_value = "")]
+    org_name: String,
+
+    /// Business name to execute. Repeat for multiple businesses; defaults to all.
+    #[arg(long = "business")]
+    businesses: Vec<String>,
+
+    /// Directory that receives the run outputs (审核副本/审核结果.xlsx/运行总账.json).
+    #[arg(long)]
+    output_dir: PathBuf,
+
+    /// Stable run identifier; defaults to a timestamp-based id.
+    #[arg(long)]
+    run_id: Option<String>,
+
+    /// Emit developer-view JSON progress.
+    #[arg(long, default_value_t = false)]
+    developer_view: bool,
+}
+
+#[derive(Debug, Args)]
 struct S3ExportExplanationsArgs {
     /// S3 comparison workbook containing the output-explanation selection column.
     #[arg(long)]
@@ -644,6 +693,9 @@ fn run() -> Result<()> {
         }
         Command::S5MatchTemplate(arguments) => {
             run_s5_match_template(arguments)?;
+        }
+        Command::S5AuditRun(arguments) => {
+            run_s5_audit_run(arguments)?;
         }
         Command::Serve(arguments) => {
             let config_path = arguments.config.unwrap_or_else(default_s2_config_path);
@@ -4171,4 +4223,135 @@ fn decode_sheet_name(value: &str) -> String {
     } else {
         value.to_owned()
     }
+}
+
+fn run_s5_audit_run(arguments: S5AuditRunArgs) -> Result<()> {
+    anyhow::ensure!(
+        arguments.config.is_file(),
+        "S5 审核配置工作簿不存在：{}",
+        arguments.config.display()
+    );
+    anyhow::ensure!(
+        arguments.source.is_file(),
+        "S5 本期数据源工作簿不存在：{}",
+        arguments.source.display()
+    );
+    anyhow::ensure!(
+        !arguments.period.trim().is_empty(),
+        "运行上下文必须提供报告期"
+    );
+
+    let run_id = arguments
+        .run_id
+        .clone()
+        .unwrap_or_else(|| format!("s5-{}", chrono::Local::now().format("%Y%m%d_%H%M%S")));
+    let started = Instant::now();
+    if arguments.developer_view {
+        eprintln!(
+            "{}",
+            serde_json::to_string(&serde_json::json!({
+                "type": "progress",
+                "product": "open-data-audit",
+                "feature": "S5-F01",
+                "step": "audit_run",
+                "status": "started",
+                "run_id": run_id,
+                "period": arguments.period,
+                "businesses": arguments.businesses,
+                "engine": "rust_s5_configured_audit",
+                "started_at": chrono::Local::now().to_rfc3339()
+            }))?
+        );
+    } else {
+        eprintln!("正在执行 S5 配置化审核（Rust 配置加载 + 规则求值）…");
+    }
+
+    let configuration = load_configuration(&arguments.config, false, "")
+        .map_err(|error| anyhow::anyhow!("{error}"))?;
+    let mut retrieval = S5Retrieval::bind(
+        configuration.clone(),
+        "current",
+        &arguments.source,
+        &arguments.source_id,
+        arguments.period.trim(),
+        &arguments.org_code,
+        arguments.period.trim(),
+    )
+    .map_err(|failure| anyhow::anyhow!("{}：{}", failure.code, failure.message))?;
+
+    let (outcomes, status_counts) = run_rules(
+        &configuration,
+        &mut retrieval,
+        arguments.period.trim(),
+        &arguments.businesses,
+        &arguments.org_code,
+        &arguments.org_name,
+    )
+    .map_err(|error| anyhow::anyhow!("{error}"))?;
+
+    let source_sha256 = sha1_hex_or_blank(&arguments.source);
+    let output_summary = write_run_outputs(
+        &S5OutputRequest {
+            run_id: &run_id,
+            period: arguments.period.trim(),
+            institution_code: &arguments.org_code,
+            institution_name: &arguments.org_name,
+            outcomes: &outcomes,
+            status_counts: &status_counts,
+            source_path: &arguments.source,
+            source_id: &arguments.source_id,
+            source_sha256_before: &source_sha256,
+            config_path: &arguments.config,
+            config_sha256_before: &configuration.sha256,
+            config_version: &configuration.version,
+        },
+        &arguments.output_dir,
+    )
+    .map_err(|error| anyhow::anyhow!("{error}"))?;
+
+    let elapsed_ms = started.elapsed().as_millis();
+    let output = serde_json::json!({
+        "status": "completed",
+        "run_id": run_id,
+        "period": arguments.period,
+        "businesses": arguments.businesses,
+        "rule_results": outcomes.len(),
+        "status_counts": status_counts,
+        "output_files": {
+            "result_workbook": output_summary.output_files.result_workbook,
+            "run_ledger": output_summary.output_files.run_ledger,
+            "audit_copies": output_summary.output_files.audit_copies,
+            "configuration_copy": output_summary.output_files.configuration_copy,
+        },
+        "triggered_rows": output_summary.triggered_rows,
+        "failure_rows": output_summary.failure_rows,
+        "engine": "rust_s5_configured_audit",
+        "elapsed_ms": elapsed_ms,
+    });
+    if arguments.developer_view {
+        eprintln!(
+            "{}",
+            serde_json::to_string(&serde_json::json!({
+                "type": "progress",
+                "product": "open-data-audit",
+                "feature": "S5-F01",
+                "step": "audit_run",
+                "status": "completed",
+                "run_id": run_id,
+                "elapsed_ms": elapsed_ms,
+            }))?
+        );
+    }
+    println!("{output}");
+    Ok(())
+}
+
+fn sha1_hex_or_blank(path: &std::path::Path) -> String {
+    use sha2::{Digest, Sha256};
+    let Ok(bytes) = std::fs::read(path) else {
+        return String::new();
+    };
+    let mut hasher = Sha256::new();
+    hasher.update(&bytes);
+    format!("{:x}", hasher.finalize())
 }
