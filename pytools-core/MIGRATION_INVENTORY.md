@@ -519,6 +519,14 @@ Windows 原生测试：`cargo test --offline --locked -p pytools-core --lib comm
 
 真实业务样本、生产 ExcelModifier capability、计划执行菜单、结构化用户/开发者/off 日志、麒麟/UOS、glibc 2.28 和 deb 仍未验证。
 
+### 2026-10-25 PT-2 去重菜单双视图日志接入
+
+将主菜单 `--log-view` 传入 PT-2-1 至 PT-2-6 六项入口。user 视图输出开始/结束、重复/追加/预校验计数及总耗时；developer 视图写入 `日志目录/pytools-dedup-<action>-<timestamp>.json`，记录 PT 编号、状态、阶段耗时、业务计数、Rust/Calamine/OOXML 实际组件，且不写输入文件名或路径；off 不输出进度、不创建运行历史。该组六项仍为计划或预校验模式，明确记录 ExcelModifier 与 Excel writer 均未调用，不改变原有业务结果或生产 capability。
+
+Windows 原生 `cargo fmt --manifest-path pytools-core/Cargo.toml -- --check` 通过；`cargo test --offline --locked -p pytools-core --test dedup_menu_cli --test dedup_comment_delete_umya --test dedup_append_execution -j 1` 共 10 项通过。菜单测试覆盖六项 user 入口输出与源不变，另覆盖 PT-2-1 developer 结构化历史、计数和不含输入路径，以及 off 不增历史。未重新运行 Python/Rust 底层语义对拍；本轮仅接线日志与拆分 CLI 报告构造函数，既有合成语义基线 `probe/reports/dedup_parity_20261023.json` 未变。
+
+真实工作簿、生产 capability、计划执行菜单、麒麟/UOS、glibc 2.28 与 deb 仍未验收。
+
 ### 2026-10-24 PT-3 打印交互菜单接入
 
 增量主菜单类别 3 已接入 3-1 按批注保留格式、3-2 按批注快速复制、3-3 按配置准备打印文件和 3-4 配置预校验。评论标记的两种计划分别映射保留批注/样式和快速模式；配置输出保持 plan-only，未生成候选文件，也不渲染或导出 PDF。Windows 原生 Rust 菜单集成测试 1/1 验证四个入口、两个打印区域、模式属性、目标未创建和配置预校验；底层 PyCode/Rust 合成对拍见 probe/reports/print_comment_plan_parity_20261023.json、print_comment_execution_parity_20261023.json、print_precheck_parity_20261023.json 和 print_config_execution_parity_20261023.json。

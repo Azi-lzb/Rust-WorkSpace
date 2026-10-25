@@ -51,6 +51,9 @@ fn interactive_dedup_menu_routes_all_six_actions_without_committing_edits() -> R
 
     let comment_check = run_menu(&config, &format!("2\n1\n{}\n0\n", source.display()))?;
     assert!(comment_check.status.success());
+    let comment_check_output = String::from_utf8_lossy(&comment_check.stdout);
+    assert!(comment_check_output.contains("开始处理：按批注检查重复并生成计划"));
+    assert!(comment_check_output.contains("发现 1 条重复行，计划操作 3 项"));
     let comment_check_json = output_json(&comment_check)?;
     assert_eq!(comment_check_json["duplicate_rows"], 1);
     assert_eq!(comment_check_json["execution"], "plan_only");
@@ -165,6 +168,79 @@ fn interactive_dedup_menu_routes_all_six_actions_without_committing_edits() -> R
         source_before,
         "source remains unchanged"
     );
+    let log_dir = root.path().join("logs");
+    assert!(!log_dir.exists() || fs::read_dir(log_dir)?.next().is_none());
+    Ok(())
+}
+
+#[test]
+fn interactive_dedup_menu_writes_developer_history_and_off_suppresses_it() -> Result<()> {
+    let root = TestDirectory::new()?;
+    let config = create_dedup_config(root.path())?;
+    let source = root.path().join("source.xlsx");
+    create_duplicate_source(&source)?;
+    let input = format!("2\n1\n{}\n0\n", source.display());
+
+    let developer = run_menu_with_view(&config, &input, "developer")?;
+    assert!(
+        developer.status.success(),
+        "developer menu failed: {}",
+        String::from_utf8_lossy(&developer.stderr)
+    );
+    assert!(String::from_utf8_lossy(&developer.stdout).contains("PT-2 完成：PT-2-1"));
+    let developer_report = output_json(&developer)?;
+    assert_eq!(developer_report["duplicate_rows"], 1);
+
+    let log_dir = root.path().join("logs");
+    let histories = fs::read_dir(&log_dir)?
+        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+        .filter(|path| {
+            path.extension()
+                .is_some_and(|extension| extension == "json")
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(histories.len(), 1);
+    let history_text = fs::read_to_string(&histories[0])?;
+    let history: Value = serde_json::from_str(&history_text)?;
+    assert_eq!(history["feature_id"], "PT-2-1");
+    assert_eq!(history["action"], "comment_check");
+    assert_eq!(history["status"], "succeeded");
+    assert_eq!(history["metrics"]["duplicate_rows"], 1);
+    assert_eq!(history["metrics"]["hit_sheets"], 1);
+    assert_eq!(history["metrics"]["planned_operations"], 3);
+    assert!(history["elapsed_ms"].as_u64().is_some());
+    assert!(history["stages"]
+        .as_array()
+        .is_some_and(|stages| !stages.is_empty()));
+    assert!(history["actual_engines"]
+        .as_array()
+        .is_some_and(|engines| engines
+            .iter()
+            .any(|engine| engine == "Calamine via excel-reader")));
+    assert_eq!(history["excel_modifier_invoked"], false);
+    assert_eq!(history["excel_writer_invoked"], false);
+    assert!(!history_text.contains("source.xlsx"));
+    assert!(!history_text.contains(&root.path().to_string_lossy().to_string()));
+
+    let off = run_menu_with_view(&config, &input, "off")?;
+    assert!(
+        off.status.success(),
+        "off menu failed: {}",
+        String::from_utf8_lossy(&off.stderr)
+    );
+    let off_output = String::from_utf8_lossy(&off.stdout);
+    assert!(!off_output.contains("开始处理："));
+    assert!(!off_output.contains("PT-2 开始："));
+    let history_count = fs::read_dir(&log_dir)?
+        .filter_map(|entry| entry.ok())
+        .filter(|entry| {
+            entry
+                .path()
+                .extension()
+                .is_some_and(|extension| extension == "json")
+        })
+        .count();
+    assert_eq!(history_count, 1);
     Ok(())
 }
 
@@ -245,12 +321,16 @@ fn create_dedup_config(root: &Path) -> Result<PathBuf> {
 }
 
 fn run_menu(config: &Path, input: &str) -> Result<Output> {
+    run_menu_with_view(config, input, "user")
+}
+
+fn run_menu_with_view(config: &Path, input: &str, log_view: &str) -> Result<Output> {
     let mut child = Command::new(env!("CARGO_BIN_EXE_pytools"))
         .arg("menu")
         .arg("--config")
         .arg(config)
         .arg("--log-view")
-        .arg("user")
+        .arg(log_view)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

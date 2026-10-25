@@ -302,9 +302,14 @@ where
                 capabilities,
                 platform,
             )?,
-            "2" => {
-                run_interactive_dedup_menu(input, output, config_path, global, allow_native_dialog)?
-            }
+            "2" => run_interactive_dedup_menu(
+                input,
+                output,
+                config_path,
+                global,
+                log_view,
+                allow_native_dialog,
+            )?,
             "3" => run_interactive_print_menu(
                 input,
                 output,
@@ -1492,6 +1497,7 @@ fn run_interactive_dedup_menu<R, W>(
     output: &mut W,
     config_path: &Path,
     global: &GlobalConfig,
+    log_view: &str,
     allow_native_dialog: bool,
 ) -> Result<()>
 where
@@ -1551,7 +1557,26 @@ where
                 let plan_path = action_output_dir.join("plan.json");
                 arguments.push("--plan-output".to_owned());
                 arguments.push(plan_path.to_string_lossy().into_owned());
-                run_dedup_comment_plan(arguments)?;
+                let (feature_id, action, label) = if choice == "1" {
+                    ("PT-2-1", "comment_check", "按批注检查重复并生成计划")
+                } else {
+                    ("PT-2-2", "comment_delete", "按批注删除重复并生成计划")
+                };
+                run_dedup_menu_action(
+                    output,
+                    global,
+                    log_view,
+                    feature_id,
+                    action,
+                    label,
+                    &[
+                        "Rust duplicate planning",
+                        "Calamine via excel-reader",
+                        "OOXML comments and workbook profile metadata",
+                    ],
+                    arguments,
+                    dedup_comment_plan_result,
+                )?;
                 return Ok(());
             }
             "3" | "4" => {
@@ -1572,7 +1597,26 @@ where
                         "delete".to_owned()
                     },
                 ]);
-                run_dedup_config_plan(arguments)?;
+                let (feature_id, action, label) = if choice == "3" {
+                    ("PT-2-3", "config_check", "按配置检查重复并生成计划")
+                } else {
+                    ("PT-2-4", "config_delete", "按配置删除重复并生成计划")
+                };
+                run_dedup_menu_action(
+                    output,
+                    global,
+                    log_view,
+                    feature_id,
+                    action,
+                    label,
+                    &[
+                        "Rust duplicate planning",
+                        "Calamine via excel-reader",
+                        "OOXML workbook profile metadata",
+                    ],
+                    arguments,
+                    dedup_config_plan_result,
+                )?;
                 return Ok(());
             }
             "5" => {
@@ -1582,17 +1626,251 @@ where
                     "--output-dir".to_owned(),
                     action_output_dir.to_string_lossy().into_owned(),
                 ]);
-                run_dedup_append_plan(arguments)?;
+                run_dedup_menu_action(
+                    output,
+                    global,
+                    log_view,
+                    "PT-2-5",
+                    "config_append",
+                    "按配置追加到目标并生成计划",
+                    &[
+                        "Rust append planning",
+                        "Calamine via excel-reader",
+                        "OOXML workbook profile metadata",
+                    ],
+                    arguments,
+                    dedup_append_plan_result,
+                )?;
                 return Ok(());
             }
             "6" => {
-                run_dedup_precheck(config_cli_arguments(config_path))?;
+                run_dedup_menu_action(
+                    output,
+                    global,
+                    log_view,
+                    "PT-2-6",
+                    "config_precheck",
+                    "按配置预校验去重任务",
+                    &["Rust configuration validation", "Calamine via excel-reader"],
+                    config_cli_arguments(config_path),
+                    dedup_precheck_result,
+                )?;
                 return Ok(());
             }
             "0" => return Ok(()),
             _ => writeln!(output, "仅接受 1、2、3、4、5、6 或 0")?,
         }
     }
+}
+
+fn run_dedup_menu_action<W: Write>(
+    output: &mut W,
+    global: &GlobalConfig,
+    log_view: &str,
+    feature_id: &str,
+    action: &str,
+    label: &str,
+    actual_components: &[&str],
+    arguments: Vec<String>,
+    run: fn(Vec<String>) -> Result<serde_json::Value>,
+) -> Result<()> {
+    let started_at = Local::now();
+    let started = Instant::now();
+    match log_view {
+        "user" => writeln!(output, "开始处理：{label}")?,
+        "developer" => writeln!(output, "PT-2 开始：{feature_id} {action}")?,
+        _ => {}
+    }
+
+    let report = match run(arguments) {
+        Ok(report) => report,
+        Err(error) => {
+            let elapsed_ms = started.elapsed().as_millis();
+            if log_view == "developer" {
+                match write_dedup_menu_run_history(
+                    global,
+                    feature_id,
+                    action,
+                    "failed",
+                    &started_at,
+                    elapsed_ms,
+                    &serde_json::json!({}),
+                    &[],
+                    Some("dedup_operation_failed"),
+                ) {
+                    Ok(path) => writeln!(output, "PT-2 失败：{feature_id}，耗时 {elapsed_ms} ms；运行记录：{}；错误：{error:#}", path.display())?,
+                    Err(log_error) => writeln!(output, "PT-2 失败：{feature_id}，耗时 {elapsed_ms} ms；运行记录写入失败：{log_error:#}；错误：{error:#}")?,
+                }
+            } else if log_view == "user" {
+                writeln!(output, "处理失败：{label}。")?;
+            }
+            return Err(error);
+        }
+    };
+
+    let elapsed_ms = started.elapsed().as_millis();
+    let metrics = dedup_menu_metrics(&report);
+    let failed_precheck =
+        action == "config_precheck" && metrics["failed_tasks"].as_u64().unwrap_or_default() > 0;
+    let status = if failed_precheck {
+        "failed"
+    } else {
+        "succeeded"
+    };
+
+    match log_view {
+        "user" => writeln!(
+            output,
+            "处理完成：{}，耗时 {elapsed_ms} ms。",
+            dedup_menu_summary(action, &metrics)
+        )?,
+        "developer" => {
+            match write_dedup_menu_run_history(
+                global,
+                feature_id,
+                action,
+                status,
+                &started_at,
+                elapsed_ms,
+                &metrics,
+                actual_components,
+                failed_precheck.then_some("dedup_precheck_failures"),
+            ) {
+                Ok(path) => writeln!(output, "PT-2 完成：{feature_id}，{}，实际组件：{}，ExcelModifier 未调用，耗时 {elapsed_ms} ms；运行记录：{}", dedup_menu_summary(action, &metrics), actual_components.join(", "), path.display())?,
+                Err(error) => writeln!(output, "PT-2 完成：{feature_id}，{}，实际组件：{}，ExcelModifier 未调用，耗时 {elapsed_ms} ms；运行记录写入失败：{error:#}", dedup_menu_summary(action, &metrics), actual_components.join(", "))?,
+            }
+        }
+        _ => {}
+    }
+
+    writeln!(output, "{}", serde_json::to_string_pretty(&report)?)?;
+    if failed_precheck {
+        bail!(
+            "dedup precheck found {} failure(s)",
+            metrics["failed_tasks"].as_u64().unwrap_or_default()
+        );
+    }
+    Ok(())
+}
+
+fn dedup_menu_metrics(report: &serde_json::Value) -> serde_json::Value {
+    let items = report
+        .as_array()
+        .map(|items| items.iter().collect::<Vec<_>>())
+        .unwrap_or_else(|| vec![report]);
+    let mut duplicate_rows = 0u64;
+    let mut hit_sheets = 0u64;
+    let mut skipped_tasks = 0u64;
+    let mut appended_rows = 0u64;
+    let mut duplicate_rows_filtered = 0u64;
+    let mut planned_operations = 0u64;
+    for item in &items {
+        let details = item.get("report").unwrap_or(item);
+        duplicate_rows += details["duplicate_rows"].as_u64().unwrap_or_default();
+        hit_sheets += details["hit_sheets"].as_u64().unwrap_or_default();
+        skipped_tasks += details["skipped_tasks"]
+            .as_u64()
+            .or_else(|| item["task_skipped"].as_u64())
+            .unwrap_or_default();
+        appended_rows += item["appended_rows"].as_u64().unwrap_or_default();
+        duplicate_rows_filtered += item["duplicate_rows_filtered"].as_u64().unwrap_or_default();
+        planned_operations += details["plan"]["operations"]
+            .as_array()
+            .map_or(0, |operations| operations.len() as u64);
+    }
+    serde_json::json!({
+        "processed_groups": items.len(),
+        "duplicate_rows": duplicate_rows,
+        "hit_sheets": hit_sheets,
+        "skipped_tasks": skipped_tasks,
+        "appended_rows": appended_rows,
+        "duplicate_rows_filtered": duplicate_rows_filtered,
+        "planned_operations": planned_operations,
+        "passed_tasks": report["ok"].as_u64().unwrap_or_default(),
+        "warning_tasks": report["warn"].as_u64().unwrap_or_default(),
+        "failed_tasks": report["fail"].as_u64().unwrap_or_default(),
+    })
+}
+
+fn dedup_menu_summary(action: &str, metrics: &serde_json::Value) -> String {
+    if action == "config_precheck" {
+        return format!(
+            "通过 {} 项、警告 {} 项、失败 {} 项",
+            metrics["passed_tasks"].as_u64().unwrap_or_default(),
+            metrics["warning_tasks"].as_u64().unwrap_or_default(),
+            metrics["failed_tasks"].as_u64().unwrap_or_default()
+        );
+    }
+    if action == "config_append" {
+        return format!(
+            "处理 {} 个目标，追加 {} 行，过滤重复 {} 行，跳过 {} 项",
+            metrics["processed_groups"].as_u64().unwrap_or_default(),
+            metrics["appended_rows"].as_u64().unwrap_or_default(),
+            metrics["duplicate_rows_filtered"]
+                .as_u64()
+                .unwrap_or_default(),
+            metrics["skipped_tasks"].as_u64().unwrap_or_default()
+        );
+    }
+    format!(
+        "处理 {} 个工作簿组，命中 {} 张表，发现 {} 条重复行，计划操作 {} 项",
+        metrics["processed_groups"].as_u64().unwrap_or_default(),
+        metrics["hit_sheets"].as_u64().unwrap_or_default(),
+        metrics["duplicate_rows"].as_u64().unwrap_or_default(),
+        metrics["planned_operations"].as_u64().unwrap_or_default()
+    )
+}
+
+fn write_dedup_menu_run_history(
+    global: &GlobalConfig,
+    feature_id: &str,
+    action: &str,
+    status: &str,
+    started_at: &chrono::DateTime<Local>,
+    elapsed_ms: u128,
+    metrics: &serde_json::Value,
+    actual_components: &[&str],
+    error_type: Option<&str>,
+) -> Result<PathBuf> {
+    fs::create_dir_all(&global.log_dir)
+        .with_context(|| format!("create dedup log directory {}", global.log_dir.display()))?;
+    let timestamp = Local::now().format("%Y%m%d_%H%M%S_%f");
+    let history = serde_json::json!({
+        "schema_version": 1,
+        "feature_id": feature_id,
+        "action": action,
+        "status": status,
+        "started_at": started_at.to_rfc3339(),
+        "elapsed_ms": elapsed_ms,
+        "stages": [{"name": if action == "config_precheck" { "configuration_precheck" } else { "workbook_read_and_plan" }, "elapsed_ms": elapsed_ms}],
+        "metrics": metrics,
+        "actual_engines": actual_components,
+        "excel_modifier_invoked": false,
+        "excel_writer_invoked": false,
+        "plan_only": action != "config_precheck",
+        "error_type": error_type,
+    });
+    for suffix in 1..=1000 {
+        let suffix = if suffix == 1 {
+            String::new()
+        } else {
+            format!("-{suffix}")
+        };
+        let path = global
+            .log_dir
+            .join(format!("pytools-dedup-{action}-{timestamp}{suffix}.json"));
+        match OpenOptions::new().write(true).create_new(true).open(&path) {
+            Ok(mut file) => {
+                serde_json::to_writer_pretty(&mut file, &history)?;
+                file.write_all(b"\n")?;
+                file.sync_all()?;
+                return Ok(path);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error).with_context(|| format!("create {}", path.display())),
+        }
+    }
+    bail!("unable to allocate a unique dedup run history path")
 }
 
 fn unique_menu_output_dir(output_root: &Path, action: &str) -> PathBuf {
@@ -3241,6 +3519,12 @@ fn run_config_repair_plan_cli(arguments: Vec<String>) -> Result<()> {
 }
 
 fn run_dedup_comment_plan(arguments: Vec<String>) -> Result<()> {
+    let result = dedup_comment_plan_result(arguments)?;
+    println!("{}", serde_json::to_string_pretty(&result)?);
+    Ok(())
+}
+
+fn dedup_comment_plan_result(arguments: Vec<String>) -> Result<serde_json::Value> {
     let options = parse_cli_arguments(arguments)?;
     let input = required_path(&options, "input")?;
     let output = required_path(&options, "output")?;
@@ -3284,8 +3568,7 @@ fn run_dedup_comment_plan(arguments: Vec<String>) -> Result<()> {
             result["execution"] = serde_json::json!(execution);
         }
     }
-    println!("{}", serde_json::to_string_pretty(&result)?);
-    Ok(())
+    Ok(result)
 }
 
 /// 全局配置 `输出附带计划文件=否` 时跳过计划 JSON 等开发期附带文件的落盘，
@@ -3297,6 +3580,12 @@ fn plan_files_enabled(config: &Path) -> bool {
 }
 
 fn run_dedup_config_plan(arguments: Vec<String>) -> Result<()> {
+    let result = dedup_config_plan_result(arguments)?;
+    println!("{}", serde_json::to_string_pretty(&result)?);
+    Ok(())
+}
+
+fn dedup_config_plan_result(arguments: Vec<String>) -> Result<serde_json::Value> {
     let options = parse_cli_arguments(arguments)?;
     let config = required_path(&options, "config")?;
     let output_dir = options
@@ -3360,23 +3649,36 @@ fn run_dedup_config_plan(arguments: Vec<String>) -> Result<()> {
             "execution": execution,
         }));
     }
-    println!("{}", serde_json::to_string_pretty(&results)?);
-    Ok(())
+    Ok(serde_json::Value::Array(results))
 }
 
 fn run_dedup_precheck(arguments: Vec<String>) -> Result<()> {
-    let options = parse_cli_arguments(arguments)?;
-    let config = required_path(&options, "config")?;
-    let tasks = pytools_core::config::load_dedup_tasks(config)?;
-    let report = precheck_dedup_tasks(&tasks);
+    let report = dedup_precheck_result(arguments)?;
     println!("{}", serde_json::to_string_pretty(&report)?);
-    if report.fail > 0 {
-        bail!("dedup precheck found {} failure(s)", report.fail);
+    if report["fail"].as_u64().unwrap_or_default() > 0 {
+        bail!(
+            "dedup precheck found {} failure(s)",
+            report["fail"].as_u64().unwrap_or_default()
+        );
     }
     Ok(())
 }
 
+fn dedup_precheck_result(arguments: Vec<String>) -> Result<serde_json::Value> {
+    let options = parse_cli_arguments(arguments)?;
+    let config = required_path(&options, "config")?;
+    let tasks = pytools_core::config::load_dedup_tasks(config)?;
+    let report = precheck_dedup_tasks(&tasks);
+    Ok(serde_json::to_value(report)?)
+}
+
 fn run_dedup_append_plan(arguments: Vec<String>) -> Result<()> {
+    let report = dedup_append_plan_result(arguments)?;
+    println!("{}", serde_json::to_string_pretty(&report)?);
+    Ok(())
+}
+
+fn dedup_append_plan_result(arguments: Vec<String>) -> Result<serde_json::Value> {
     let options = parse_cli_arguments(arguments)?;
     let config = required_path(&options, "config")?;
     let global = load_global(&config)?;
@@ -3413,8 +3715,7 @@ fn run_dedup_append_plan(arguments: Vec<String>) -> Result<()> {
             "execution": if report.target_existed { "requires apply-edit-plan capability evidence" } else { "run dedup-append-execute" },
         }));
     }
-    println!("{}", serde_json::to_string_pretty(&output)?);
-    Ok(())
+    Ok(serde_json::Value::Array(output))
 }
 
 fn run_dedup_append_execute(arguments: Vec<String>) -> Result<()> {
