@@ -69,6 +69,54 @@ fn missing_configuration_bootstraps_through_menu_and_can_be_viewed() -> Result<(
 }
 
 #[test]
+fn default_menu_configuration_is_created_beside_executable_not_working_directory() -> Result<()> {
+    let root = TestDirectory::new()?;
+    let application_dir = root.path().join("installed-app");
+    let launch_dir = root.path().join("launch-from-here");
+    fs::create_dir_all(&application_dir)?;
+    fs::create_dir_all(&launch_dir)?;
+
+    let source_executable = Path::new(env!("CARGO_BIN_EXE_pytools"));
+    let executable_name = source_executable
+        .file_name()
+        .context("PyTools executable has no file name")?;
+    let copied_executable = application_dir.join(executable_name);
+    fs::copy(source_executable, &copied_executable)
+        .context("copy PyTools executable into temporary install layout")?;
+
+    let mut child = Command::new(&copied_executable)
+        .args(["menu", "--log-view", "off"])
+        .current_dir(&launch_dir)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .context("start menu without an explicit configuration path")?;
+    child
+        .stdin
+        .take()
+        .context("default-path menu stdin missing")?
+        .write_all(b"5\n1\n0\n0\n")
+        .context("initialize the default menu configuration")?;
+    let output = child
+        .wait_with_output()
+        .context("wait for default-path menu")?;
+    anyhow::ensure!(
+        output.status.success(),
+        "default-path menu failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let expected_config = application_dir.join("config/config.xlsx");
+    assert!(expected_config.is_file());
+    assert!(!launch_dir.join("config/config.xlsx").exists());
+    let workbook = read_workbook(&expected_config)?;
+    assert_eq!(workbook.sheets.len(), 11);
+    assert_eq!(workbook.sheets[0].name, "全局配置");
+    Ok(())
+}
+
+#[test]
 fn existing_configuration_repair_menu_saves_a_plan_without_modifying_source() -> Result<()> {
     let root = TestDirectory::new()?;
     let config = root.path().join("app/config/config.xlsx");
