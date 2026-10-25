@@ -1,0 +1,34 @@
+时间：2026-10-25 09:03（Asia/Shanghai）
+执行者：Codex Audit migration agent
+分支：audit-dev
+修改前 commit：4bc069a
+修改后 commit：b827550
+WIP：开始时 worktree 干净。未修改 DEVELOPMENT_GOAL.md、真实工作簿、源 Python 项目、pytools-core、共享 crates、Cargo.lock 或根 Cargo 配置。
+
+## 目的
+
+按用户指引检查原项目 `config-real`，找到非空 S1 历史簿并完成真实 Python/Rust 只读读取对拍；记录该工作簿在现有业务更新计划中的顺序阻塞。没有执行工作簿写回、没有登记 capability 或改变生产路由。
+
+## 修改文件
+
+- `audit-core/probe/reports/s1_history_nonempty_config_real_read_parity_windows_native_20261025.json`：保存脱敏对拍摘要，不含路径、业务行值或哈希。
+- `audit-core/MIGRATION_INVENTORY.md`：记录 29 个 XLSX 中 1 个非空簿、9 行历史、0 差异，以及历史页 index 1 的写回前置边界。
+- 本记录。
+
+## 验证
+
+- 以 Windows Python 3.12.10 / openpyxl 3.1.5 运行旧 Python `read_history_xlsx` 基线，只用于比较，不是隔离 openpyxl worker。`config-real` 下 29 个 XLSX 扫描成功，0 次读取异常，找到 1 份非空历史簿，共 9 行。
+- Windows 原生 Rust `open-data-audit` 与旧 Python 基线完成对拍：`status=passed`、reader=Calamine、真实历史 9 行、字段差异 0；输入 SHA-256 执行前后相同。合成标准表、指定表、旧表用例也均通过。
+- 只读检查该工作簿有 5 张表，管理历史页在 index 1。当前 `build_s1_history_workbook_edit_plan` 对非首位历史页明确 fail-closed；未调用 Editor 写入。原 Python 行为将历史页重建至 index 0，现有共享接口无 MoveSheet，且用户要求保留既有 PageSettings。
+- 对拍报告不记录真实文件名、路径、业务值或哈希。
+
+## 未执行项与已知问题
+
+- 非空真实历史簿的写回、页面设置/打印区域/其他工作表保真对拍仍未执行；S1 历史写回继续 Unverified。
+- 公式复制和公式重算未执行。完整 S1-F01 仍需单一 Editor 完整批次及显式计算链验证。
+- Linux/deb、麒麟 V10 与统信 UOS V20 未验收。
+
+## 删除清单与回滚
+
+- 未改写真实样本或源 Python 项目。回滚时移除本报告和本记录、恢复 inventory 该句即可。
+- 【组件版本】不升级。
