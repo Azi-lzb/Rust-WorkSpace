@@ -766,3 +766,7 @@ Windows 原生 `cargo fmt --manifest-path pytools-core/Cargo.toml -- --check`、
 ### 2026-10-25 PT-1-3/PT-1-4 相对配置目录发现覆盖与真实样本预检复核
 
 复检原 PyCode 只读配置：`全局配置/输入目录` 为相对路径 `input`（按 PyCode 语义相对配置上上级目录解析），该目录在原项目中不存在；结合此前对源树工作簿的只读预检结论，PT-1-3/PT-1-4 仍无可命中业务规则的真实样本，状态不变。Rust `load_global` 的 base/相对路径解析与 PyCode `config_xlsx.load_global`（`cfg_path.parent.parent`）语义一致，但新增的默认源发现此前只用绝对路径配置测试过；本次补相对配置目录组合覆盖：配置写入相对值 `input`/`output`/`logs` 时，两种行头模式的默认发现按配置相对目录扫描根与嵌套子目录、跳过 `~$` 锁文件和未配置 `.xlsb`，汇总簿与运行历史分别落在配置相对的 `output`、`logs` 目录。新增集成测试 `wide_summary_cli_resolves_relative_configured_directories_for_discovery`；Windows 原生 `cargo test --offline --locked -p pytools-core --test timeline_menu_cli` 13/13 通过，`cargo fmt --check` 通过。该项为合成配置夹具行为，不改变 PT-1-3/PT-1-4 未有真实样本、未验收的状态。
+
+### 2026-10-25 PT-6-2 真实批注模板与业务 VBA XLSM 只读全树扫描
+
+对原只读项目排除 `.venv`/`build`/`dist`/`_internal`/`cache/test-venv` 后全部 169 份 XLSX/XLSM 做两阶段只读扫描：先按 ZIP 部件清单筛出含 `xl/comments*.xml` 的工作簿（仅 2 份），再以 openpyxl 提取全部批注文本并按 PyCode `summary_321_322` 的标记语义匹配：含 `行区域N/#N` 与 `列区域N/#N` 的可用批注汇总模板为 0，含 `set(` 标记或任一区域标记的文件为 0。此前"没有找到有效真实业务模板"的记录升级为系统性全树负结果；PT-6-2 真实模板仍需用户提供。同批仅有的 2 份 XLSM（cache 下 pytest 产物）均为无效 ZIP（BadZipFile），源树中不存在真实业务含 VBA 的 XLSM；PT-6-1 该项缺口继续依赖用户提供样本。扫描不修改源文件，记录只含计数与结论，不含工作簿名称或单元格内容；该负结果不改变 PT-6-1/PT-6-2 现有合成证据与未验收状态。
