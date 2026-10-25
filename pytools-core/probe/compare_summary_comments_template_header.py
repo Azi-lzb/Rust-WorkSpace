@@ -58,6 +58,11 @@ def create_template(path: Path) -> None:
         sheet[f"{column}1"] = value
         sheet[f"{column}1"].comment = Comment(f"列区域{marker}", "probe")
         sheet[f"{column}2"].comment = Comment(f"列区域#{marker}", "probe")
+    case_variant = workbook.create_sheet("branch_a")
+    case_variant["A2"].comment = Comment("行区域1", "probe")
+    case_variant["A4"].comment = Comment("行区域#1", "probe")
+    case_variant["B1"].comment = Comment("列区域1", "probe")
+    case_variant["C1"].comment = Comment("列区域#1", "probe")
     workbook.save(path)
     workbook.close()
 
@@ -69,6 +74,10 @@ def create_source(path: Path) -> None:
     for row in range(2, 5):
         sheet.cell(row, 2).value = row * 10
         sheet.cell(row, 3).value = row * 100
+    case_variant = workbook.create_sheet("branch_a")
+    for row in range(2, 5):
+        case_variant.cell(row, 2).value = row * 1000
+        case_variant.cell(row, 3).value = row * 10000
     workbook.save(path)
     workbook.close()
 
@@ -135,7 +144,7 @@ def main() -> int:
         output_book = load_workbook(rust_output, data_only=False)
         try:
             output_sheet = output_book["Branch_A"]
-            if output_book.sheetnames != ["Branch_A"]:
+            if output_book.sheetnames != ["Branch_A", "branch_a1"]:
                 raise AssertionError("Rust output sheet name did not match PyCode normalization")
             formula_header = output_sheet["C1"]
             blank_header = output_sheet["D1"]
@@ -156,8 +165,8 @@ def main() -> int:
 
         if before != source_fingerprints([template, source]):
             raise AssertionError("the generated source input changed")
-        if rust_result.get("rows") != 3:
-            raise AssertionError("summary row count differs from the three-row input region")
+        if rust_result.get("rows") != 6:
+            raise AssertionError("summary row count differs from the two three-row input regions")
 
         report = {
             "schema_version": 1,
@@ -179,8 +188,8 @@ def main() -> int:
                 "format": "xlsx",
                 "date_system": "1904",
                 "sample_count": 2,
-                "template_source_sheet_name": "  Branch_A  ",
-                "expected_output_sheet_name": "Branch_A",
+                "template_source_sheet_names": ["  Branch_A  ", "branch_a"],
+                "expected_output_sheet_names": ["Branch_A", "branch_a1"],
             },
             "behaviors": [
                 "formula template header remains formula text in the output workbook",
@@ -189,6 +198,7 @@ def main() -> int:
                 "numeric and date template headers use Python string conversion",
                 "numeric headers match Python scientific-notation thresholds, exponent signs, and padding",
                 "template sheet output names trim surrounding whitespace like PyCode",
+                "case-insensitive output sheet collisions use openpyxl numeric suffix behavior",
             ],
             "comparison": {
                 "workbook_projection": "exact",

@@ -18,8 +18,14 @@
     "format": "xlsx",
     "date_system": "1904",
     "sample_count": 2,
-    "template_source_sheet_name": "  Branch_A  ",
-    "expected_output_sheet_name": "Branch_A"
+    "template_source_sheet_names": [
+      "  Branch_A  ",
+      "branch_a"
+    ],
+    "expected_output_sheet_names": [
+      "Branch_A",
+      "branch_a1"
+    ]
   },
   "behaviors": [
     "formula template header remains formula text in the output workbook",
@@ -27,7 +33,8 @@
     "boolean template header uses Python string capitalization",
     "numeric and date template headers use Python string conversion",
     "numeric headers match Python scientific-notation thresholds, exponent signs, and padding",
-    "template sheet output names trim surrounding whitespace like PyCode"
+    "template sheet output names trim surrounding whitespace like PyCode",
+    "case-insensitive output sheet collisions use openpyxl numeric suffix behavior"
   ],
   "comparison": {
     "workbook_projection": "exact",
@@ -43,12 +50,17 @@
   },
   "execution": {
     "status": "succeeded",
-    "summary_rows": 3,
+    "summary_rows": 6,
     "output_dimensions": [
       {
         "name": "Branch_A",
         "rows": 4,
         "columns": 11
+      },
+      {
+        "name": "branch_a1",
+        "rows": 4,
+        "columns": 5
       }
     ],
     "python_dimensions": [
@@ -56,6 +68,11 @@
         "name": "Branch_A",
         "rows": 4,
         "columns": 11
+      },
+      {
+        "name": "branch_a1",
+        "rows": 4,
+        "columns": 5
       }
     ],
     "reader_engine": "calamine",

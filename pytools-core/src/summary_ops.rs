@@ -2269,42 +2269,88 @@ fn disambiguate(names: &[String]) -> Vec<String> {
 }
 
 fn comment_summary_sheet_names(names: &[String]) -> Vec<String> {
-    let mut used = BTreeSet::new();
+    let mut safe_names = BTreeSet::new();
+    let mut created_names = Vec::with_capacity(names.len());
     names
         .iter()
         .map(|name| {
-            let mut sanitized = name
-                .trim()
-                .chars()
-                .map(|character| {
-                    if matches!(character, ':' | '\\' | '/' | '?' | '*' | '[' | ']') {
-                        '_'
-                    } else {
-                        character
-                    }
-                })
-                .take(31)
-                .collect::<String>();
-            if sanitized.is_empty() {
-                sanitized = "Sheet".to_owned();
-            }
-            if used.insert(sanitized.clone()) {
-                return sanitized;
-            }
-
-            let base = sanitized.chars().take(28).collect::<String>();
-            for suffix in 2usize.. {
-                let candidate = format!("{base}_{suffix}")
-                    .chars()
-                    .take(31)
-                    .collect::<String>();
-                if used.insert(candidate.clone()) {
-                    return candidate;
-                }
-            }
-            unreachable!("worksheet names are bounded by Excel's 31-character limit")
+            let safe_name = safe_comment_sheet_name(name, &mut safe_names);
+            let created_name = openpyxl_unique_sheet_name(&created_names, &safe_name);
+            created_names.push(created_name.clone());
+            created_name
         })
         .collect()
+}
+
+fn safe_comment_sheet_name(name: &str, used: &mut BTreeSet<String>) -> String {
+    let mut sanitized = name
+        .trim()
+        .chars()
+        .map(|character| {
+            if matches!(character, ':' | '\\' | '/' | '?' | '*' | '[' | ']') {
+                '_'
+            } else {
+                character
+            }
+        })
+        .take(31)
+        .collect::<String>();
+    if sanitized.is_empty() {
+        sanitized = "Sheet".to_owned();
+    }
+    if used.insert(sanitized.clone()) {
+        return sanitized;
+    }
+
+    let base = sanitized.chars().take(28).collect::<String>();
+    for suffix in 2usize.. {
+        let candidate = format!("{base}_{suffix}")
+            .chars()
+            .take(31)
+            .collect::<String>();
+        if used.insert(candidate.clone()) {
+            return candidate;
+        }
+    }
+    unreachable!("worksheet names are bounded by Excel's 31-character limit")
+}
+
+fn openpyxl_unique_sheet_name(existing_names: &[String], proposed: &str) -> String {
+    let proposed_lower = proposed.to_lowercase();
+    if existing_names
+        .iter()
+        .all(|name| name.to_lowercase() != proposed_lower)
+    {
+        return proposed.to_owned();
+    }
+
+    let mut highest_suffix = 0usize;
+    for existing in existing_names {
+        let existing_lower = existing.to_lowercase();
+        if let Some(suffix) = existing_lower.strip_prefix(&proposed_lower) {
+            if !suffix.is_empty() && suffix.chars().all(|character| character.is_ascii_digit()) {
+                if let Ok(value) = suffix.parse::<usize>() {
+                    highest_suffix = highest_suffix.max(value);
+                }
+            }
+        }
+    }
+
+    let mut suffix = highest_suffix.saturating_add(1).max(1);
+    loop {
+        let candidate = format!("{proposed}{suffix}");
+        let candidate_lower = candidate.to_lowercase();
+        if existing_names
+            .iter()
+            .all(|name| name.to_lowercase() != candidate_lower)
+        {
+            return candidate;
+        }
+        suffix = suffix.saturating_add(1);
+        if suffix == usize::MAX {
+            unreachable!("finite worksheet collection cannot exhaust numeric suffixes")
+        }
+    }
 }
 
 #[cfg(test)]
@@ -2428,6 +2474,12 @@ mod comment_region_tests {
                 "A".repeat(31),
                 format!("{}_2", "A".repeat(28)),
             ]
+        );
+
+        let case_variant_names = vec![" Region ".to_owned(), "region".to_owned()];
+        assert_eq!(
+            comment_summary_sheet_names(&case_variant_names),
+            vec!["Region".to_owned(), "region1".to_owned()]
         );
     }
 }

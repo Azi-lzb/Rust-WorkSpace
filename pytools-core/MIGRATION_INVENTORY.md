@@ -721,8 +721,8 @@ Windows 原生 `pytools.exe menu --config ... --log-view developer` 分别经 `p
 
 ### 2026-10-25 PT-6-2 输出工作表名称与 PyCode 对齐
 
-用合成模板复现 PyCode 与 Rust 的页签名差异：模板和源簿页签名为 `  Branch_A  ` 时，PyCode 将汇总输出页签规范化为 `Branch_A`，此前 Rust 保留首尾空格。`summary-comments` 现对输出页签执行与 PyCode 一致的首尾空白清理、非法字符替换、31 字符截断、空名回退及重复名后缀；源工作表匹配和值仍使用原页签名。
+用合成模板复现并修正两项页签差异：`  Branch_A  ` 输出时去除首尾空白；`  Region `/`region` 因 Excel 页签名大小写不敏感而冲突时，Rust 与 PyCode/openpyxl 一样生成 `Region`、`region1`，不再保存失败。`summary-comments` 现对输出页签执行与源实现一致的首尾空白清理、非法字符替换、31 字符截断、空名回退、`_2` 重名后缀及 openpyxl 大小写冲突数字后缀；源工作表匹配和值仍使用原页签名。
 
-Windows 原生验证：`cargo fmt --manifest-path pytools-core/Cargo.toml -- --check` 通过；`cargo test --offline --locked -p pytools-core --lib comment_region_tests -j 1` 4/4、`cargo test --offline --locked -p pytools-core --test summary_comments_cli -j 1` 5/5 通过。只读 PyCode 与真实 `pytools summary-comments` CLI 的完整工作簿投影对拍通过，3 行数据、4×11 输出尺寸、输出页签 `Branch_A`、值/类型、样式、页面属性均无差异；合成输入未改变。机器报告：`probe/reports/summary_comments_template_header_parity_20261025.json`。
+Windows 原生验证：`cargo fmt --manifest-path pytools-core/Cargo.toml -- --check` 通过；`cargo test --offline --locked -p pytools-core --lib comment_region_tests -j 1` 4/4、`cargo test --offline --locked -p pytools-core --test summary_comments_cli -j 1` 5/5 通过。只读 PyCode 与真实 `pytools summary-comments` CLI 的完整工作簿投影对拍通过，6 行数据、两个输出页签 `Branch_A`（4×11）和 `branch_a1`（4×5），值/类型、样式、页面属性均无差异；合成输入未改变。机器报告：`probe/reports/summary_comments_template_header_parity_20261025.json`。
 
 该修复不改变 PT-6-2 的数据读取、规则或引擎路由；仍只有合成标记模板，没有找到有效真实业务模板。麒麟 V10/UOS V20、glibc 2.28、deb 与离线交付仍未验收，PT-6-2 整体状态保持未验证。
