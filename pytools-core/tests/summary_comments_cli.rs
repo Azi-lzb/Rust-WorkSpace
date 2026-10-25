@@ -387,6 +387,85 @@ fn summary_comments_cli_ignores_empty_set_marker_like_pycode() -> Result<()> {
 }
 
 #[test]
+fn summary_comments_cli_preserves_excel_errors_and_textualizes_unknown_error_tokens() -> Result<()>
+{
+    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/summary_comments");
+    let template = fixtures.join("error_tokens_template.xlsx");
+    let source = fixtures.join("error_tokens_source.xlsx");
+    let template_before = fs::read(&template)?;
+    let source_before = fs::read(&source)?;
+    let root = unique_test_dir();
+    fs::create_dir_all(&root)?;
+
+    let output = run_cli(&template, &[&source], &root, Some("developer"))?;
+    assert!(
+        output.status.success(),
+        "summary-comments CLI failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report = parse_stdout(&output)?;
+    assert_eq!(report["saved"], true);
+    assert_eq!(report["rows"], 6);
+    assert_eq!(
+        report["execution"]["reader_engine"],
+        "calamine + OOXML error-token normalization"
+    );
+    assert_eq!(
+        report["execution"]["writer_engine"],
+        "rust_xlsxwriter + OOXML Patch"
+    );
+    assert_eq!(
+        report["execution"]["unknown_error_token_cells_normalized"],
+        2
+    );
+    assert_eq!(report["execution"]["ooxml_error_cells_patched"], 2);
+
+    let output_path = output_workbook(&report)?;
+    let workbook = read_workbook(&output_path)?;
+    for sheet_name in ["模板", "Branch_B"] {
+        let sheet = workbook
+            .sheets
+            .iter()
+            .find(|sheet| sheet.name == sheet_name)
+            .with_context(|| format!("summary output worksheet {sheet_name:?} is missing"))?;
+        assert_eq!(
+            sheet.values.get("D2"),
+            Some(&serde_json::json!({"type":"error", "value":"Div0"})),
+            "known Excel errors must remain error-typed on {sheet_name}"
+        );
+        assert_eq!(
+            sheet.values.get("E2"),
+            Some(&serde_json::json!({"type":"string", "value":"#DATA!"})),
+            "unsupported error tokens must match PyCode text behavior on {sheet_name}"
+        );
+    }
+
+    let history = read_history(&report)?;
+    assert!(history["events"].as_array().unwrap().iter().any(|event| {
+        event["phase"] == "source_read_compatibility"
+            && event["status"] == "succeeded"
+            && event["actual_engine"] == "calamine + OOXML error-token normalization"
+    }));
+    assert!(history["events"].as_array().unwrap().iter().any(|event| {
+        event["phase"] == "ooxml_error_patch"
+            && event["status"] == "succeeded"
+            && event["actual_engine"] == "OOXML Patch"
+    }));
+    let history_text = fs::read_to_string(
+        report["run_log_path"]
+            .as_str()
+            .context("run log path missing")?,
+    )?;
+    assert!(!history_text.contains("#DATA!"));
+    assert!(!history_text.contains("#DIV/0!"));
+    assert_eq!(fs::read(&template)?, template_before, "template changed");
+    assert_eq!(fs::read(&source)?, source_before, "source workbook changed");
+
+    fs::remove_dir_all(root)?;
+    Ok(())
+}
+
+#[test]
 fn summary_comments_cli_records_template_validation_failure() -> Result<()> {
     let root = unique_test_dir();
     fs::create_dir_all(&root)?;

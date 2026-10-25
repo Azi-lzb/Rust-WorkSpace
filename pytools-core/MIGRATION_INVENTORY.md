@@ -649,6 +649,14 @@ Windows 原生验证：`cargo fmt --manifest-path pytools-core/Cargo.toml -- --c
 
 后续持续时间表头最小复现发现共享 reader 类型信息缺口：合成 XLSX 的 `[h]:mm:ss.000` 模板单元格由只读 PyCode/openpyxl 读取为 timedelta，表头文本例如 `1 day, 2:03:04.123000`；当前 Rust 日期投影把相同序列值格式化成 1900 日历日期。问题涉及共享 `excel-reader` 对日历日期和持续时间的区分，已向 main 提供复现和最小修改需求；PyTools 暂不自行解析 OOXML 样式绕过 reader，持续时间表头仍未验证。
 
+### 2026-10-25 PT-6-2 错误值读取与 Excel 类型保留修复
+
+使用合成批注模板和双工作表源簿发现两项 PyCode/Rust 差异：普通 Calamine 读取会因未知 `#DATA!` OOXML 错误 token 失败；已知 `#DIV/0!` 虽可读取，却被 Rust 写成字符串 `Div0`。Rust 现通过已有 opt-in `read_workbook_with_unknown_error_tokens_as_text` 兼容读取，将未知 token 按 PyCode 写为文本；已知 Excel 错误值先从 rust_xlsxwriter 输出省略，再按输出工作表和单元格坐标执行 namespace-aware OOXML Patch，并重读输出验证 error 类型和值。开发者历史记录兼容读取和补丁引擎、阶段耗时，不记录原始单元格值。
+
+Windows MSVC `pytools summary-comments` 与只读 PyCode 完整投影对拍精确一致；“模板”回退工作表与精确匹配的 `Branch_B` 工作表均保留 `#DIV/0!` 为 Excel error，并将 `#DATA!` 输出为字符串。报告：`probe/reports/summary_comments_error_tokens_parity_20261025.json`；可复跑探针：`probe/compare_summary_comments_error_tokens.py`。Windows `summary_comments_cli` 6/6、`summary_used_range_error` 5/5、`summary_menu_cli` 4/4 通过。
+
+仅为合成 XLSX 证据；无已授权真实批注区域模板，PT-6-2 真实样本及麒麟 V10/UOS V20、glibc 2.28 和离线 deb 仍未验收。未修改共享 crate 或只读 Python 项目。
+
 ### 2026-10-25 PT-5-1/PT-5-2 配置工具交互菜单接入
 
 主菜单新增类别 5，并按只读 PyCode `main.py` 的 5-1/5-2 入口接入现有 Rust 配置能力。配置缺失或无法加载时仍可打开菜单；其他依赖配置的业务类别会提示先处理配置。5-1 在缺少配置时通过 Rust `initialize_new_config` 新建 11 张表；配置已存在时生成修复计划并保留原文件。只有显式提供匹配 capability/platform 才经 ExcelModifier 生成并校验候选，用户再输入 `y` 后才按原文件规划快照安全替换，保留备份。5-2 每次从磁盘读取，用户视图展示工作表维度、全局路径、启用规则/映射/提取任务摘要，开发者视图附原始配置结构及实际读取组件；打印阶段用时。没有已验收的生产修复 capability，因此菜单不默认修改现有配置。

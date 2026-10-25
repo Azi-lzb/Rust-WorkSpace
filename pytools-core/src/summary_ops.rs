@@ -151,6 +151,7 @@ impl SummaryProgressEmitter<'_> {
 
 #[derive(Clone, Debug)]
 struct PendingErrorCell {
+    sheet_name: String,
     address: String,
     reader_value: String,
     excel_value: &'static str,
@@ -516,6 +517,7 @@ fn summarize_used_ranges_inner(
                                     .unwrap_or_default()
                                     .to_owned();
                                 error_cells.push(PendingErrorCell {
+                                    sheet_name: "汇总".to_owned(),
                                     address: format!("{}{}", column_letters(col + 3), out_row + 1),
                                     excel_value: excel_error_value(&reader_value)?,
                                     reader_value,
@@ -1008,6 +1010,7 @@ fn summarize_by_comments_inner(
         None,
     );
     let mut files_hit = 0usize;
+    let mut unknown_error_token_cells_normalized = 0usize;
     for (input_index, source) in sources.iter().enumerate() {
         if !supported(source) || !source.is_file() {
             let reason = if supported(source) {
@@ -1047,8 +1050,8 @@ fn summarize_by_comments_inner(
             None,
         );
         let read_started = Instant::now();
-        let mut dump = match read_workbook(source) {
-            Ok(dump) => dump,
+        let read_result = match read_workbook_with_unknown_error_tokens_as_text(source) {
+            Ok(read_result) => read_result,
             Err(error) => {
                 progress.failed_files += 1;
                 emitter.emit(
@@ -1070,10 +1073,36 @@ fn summarize_by_comments_inner(
                     .with_context(|| format!("read comment-summary source {}", source.display()));
             }
         };
+        let compatibility_normalization_used = read_result.compatibility_normalization_used;
+        let normalized_cell_count = read_result.normalized_cell_count;
+        let mut dump = read_result.workbook;
         if excel_reader::uses_1904_date_system(source)? {
             shift_datetime_serials_to_1900_epoch(&mut dump);
         }
         read_elapsed += read_started.elapsed();
+        let (reader_components, reader_engine) = if compatibility_normalization_used {
+            unknown_error_token_cells_normalized += normalized_cell_count;
+            emitter.emit(
+                "source_read_compatibility",
+                "succeeded",
+                format!("已按文本兼容读取 {normalized_cell_count} 个未知错误值"),
+                &progress,
+                Some(source),
+                Some(read_started.elapsed()),
+                USED_RANGE_COMPAT_READ_COMPONENTS,
+                Some("calamine + OOXML error-token normalization"),
+                None,
+            );
+            (
+                USED_RANGE_COMPAT_READ_COMPONENTS,
+                "calamine + OOXML error-token normalization",
+            )
+        } else {
+            (
+                COMMENT_READ_COMPONENTS,
+                "calamine + namespace-aware OOXML supplement",
+            )
+        };
         files_hit += 1;
         progress.processed_files = files_hit;
         emitter.emit(
@@ -1087,8 +1116,8 @@ fn summarize_by_comments_inner(
             &progress,
             Some(source),
             Some(source_read_started.elapsed()),
-            COMMENT_READ_COMPONENTS,
-            Some("calamine + namespace-aware OOXML supplement"),
+            reader_components,
+            Some(reader_engine),
             None,
         );
 
@@ -1204,13 +1233,17 @@ fn summarize_by_comments_inner(
             files: files_hit,
             path: None,
             execution: Some(SummaryExecution {
-                reader_engine: Some("calamine"),
+                reader_engine: Some(if unknown_error_token_cells_normalized > 0 {
+                    "calamine + OOXML error-token normalization"
+                } else {
+                    "calamine"
+                }),
                 writer_engine: None,
                 read_elapsed_ms: read_elapsed.as_millis(),
                 write_elapsed_ms: 0,
                 total_elapsed_ms: started.elapsed().as_millis(),
                 ooxml_error_cells_patched: 0,
-                unknown_error_token_cells_normalized: 0,
+                unknown_error_token_cells_normalized,
             }),
         };
         emitter.emit(
@@ -1300,10 +1333,11 @@ fn summarize_by_comments_inner(
         Some("rust_xlsxwriter"),
         None,
     );
+    let output_sheet_names = comment_summary_sheet_names(&spec_order);
+    let mut error_cells = Vec::new();
     let workbook_result = (|| -> Result<Workbook> {
         let mut workbook = Workbook::new();
         let header_format = Format::new().set_bold();
-        let output_sheet_names = comment_summary_sheet_names(&spec_order);
         for (name, sheet_name) in spec_order.iter().zip(&output_sheet_names) {
             let rows = &data[name];
             let ws = workbook.add_worksheet();
@@ -1319,6 +1353,20 @@ fn summarize_by_comments_inner(
             }
             for (row, values) in rows.iter().enumerate() {
                 for (col, value) in values.iter().enumerate() {
+                    if value.get("type").and_then(serde_json::Value::as_str) == Some("error") {
+                        let reader_value = value
+                            .get("value")
+                            .and_then(serde_json::Value::as_str)
+                            .unwrap_or_default()
+                            .to_owned();
+                        error_cells.push(PendingErrorCell {
+                            sheet_name: sheet_name.clone(),
+                            address: format!("{}{}", column_letters(col + 1), row + 2),
+                            excel_value: excel_error_value(&reader_value)?,
+                            reader_value,
+                        });
+                        continue;
+                    }
                     write_json(ws, (row + 1) as u32, col as u16, value)?;
                 }
             }
@@ -1369,7 +1417,16 @@ fn summarize_by_comments_inner(
         Some("rust_xlsxwriter"),
         None,
     );
-    if let Err(error) = workbook.save(&path) {
+    let staging_path = if error_cells.is_empty() {
+        None
+    } else {
+        Some(staging_path_for(&path)?)
+    };
+    let save_path = staging_path.as_deref().unwrap_or(&path);
+    if let Err(error) = workbook.save(save_path) {
+        if let Some(staging_path) = &staging_path {
+            let _ = fs::remove_file(staging_path);
+        }
         emitter.emit(
             "output_save",
             "failed",
@@ -1381,7 +1438,7 @@ fn summarize_by_comments_inner(
             Some("rust_xlsxwriter"),
             Some("output_save_error"),
         );
-        return Err(error).with_context(|| format!("save comment summary {}", path.display()));
+        return Err(error).with_context(|| format!("save comment summary {}", save_path.display()));
     }
     emitter.emit(
         "output_save",
@@ -1395,6 +1452,53 @@ fn summarize_by_comments_inner(
         None,
     );
 
+    if let Some(staging_path) = staging_path {
+        let patch_started = Instant::now();
+        emitter.emit(
+            "ooxml_error_patch",
+            "started",
+            format!("正在保留 {} 个 Excel 错误值", error_cells.len()),
+            &progress,
+            None,
+            None,
+            &["ooxml-patch"],
+            Some("OOXML Patch"),
+            None,
+        );
+        let patch_result = patch_error_cells(&staging_path, &path, &error_cells);
+        let _ = fs::remove_file(&staging_path);
+        if let Err(error) = patch_result {
+            emitter.emit(
+                "ooxml_error_patch",
+                "failed",
+                "Excel 错误值保留失败",
+                &progress,
+                None,
+                Some(patch_started.elapsed()),
+                &["ooxml-patch"],
+                Some("OOXML Patch"),
+                Some("ooxml_patch_error"),
+            );
+            return Err(error).with_context(|| {
+                format!(
+                    "preserve Excel error values in comment summary {}",
+                    path.display()
+                )
+            });
+        }
+        emitter.emit(
+            "ooxml_error_patch",
+            "succeeded",
+            "Excel 错误值已保留",
+            &progress,
+            None,
+            Some(patch_started.elapsed()),
+            &["ooxml-patch"],
+            Some("OOXML Patch"),
+            None,
+        );
+    }
+
     progress.processed_rows = total_rows;
     let write_elapsed = write_started.elapsed();
     let result = SummaryResult {
@@ -1403,13 +1507,21 @@ fn summarize_by_comments_inner(
         files: files_hit,
         path: Some(path),
         execution: Some(SummaryExecution {
-            reader_engine: Some("calamine"),
-            writer_engine: Some("rust_xlsxwriter"),
+            reader_engine: Some(if unknown_error_token_cells_normalized > 0 {
+                "calamine + OOXML error-token normalization"
+            } else {
+                "calamine"
+            }),
+            writer_engine: Some(if error_cells.is_empty() {
+                "rust_xlsxwriter"
+            } else {
+                "rust_xlsxwriter + OOXML Patch"
+            }),
             read_elapsed_ms: read_elapsed.as_millis(),
             write_elapsed_ms: write_elapsed.as_millis(),
             total_elapsed_ms: started.elapsed().as_millis(),
-            ooxml_error_cells_patched: 0,
-            unknown_error_token_cells_normalized: 0,
+            ooxml_error_cells_patched: error_cells.len(),
+            unknown_error_token_cells_normalized,
         }),
     };
     emitter.emit(
@@ -1449,7 +1561,7 @@ fn excel_error_value(reader_value: &str) -> Result<&'static str> {
         "Num" => Ok("#NUM!"),
         "Ref" => Ok("#REF!"),
         "Value" => Ok("#VALUE!"),
-        other => anyhow::bail!("unsupported Calamine error value {other:?} in used-range summary"),
+        other => anyhow::bail!("unsupported Calamine error value {other:?} in summary"),
     }
 }
 
@@ -1479,13 +1591,27 @@ fn patch_error_cells(source: &Path, output: &Path, errors: &[PendingErrorCell]) 
     );
     let mut output_created = false;
     let result = (|| -> Result<()> {
-        let (worksheet_part, replacement) = {
+        let replacements = {
             let mut archive = ZipArchive::new(fs::File::open(source)?)
                 .with_context(|| format!("open staged XLSX {}", source.display()))?;
-            let part = resolve_summary_worksheet_part(&mut archive)?;
-            let original = read_zip_part(&mut archive, &part)?;
-            let replacement = patch_worksheet_error_cells(&original, errors)?;
-            (part, replacement)
+            let mut errors_by_sheet: BTreeMap<&str, Vec<PendingErrorCell>> = BTreeMap::new();
+            for error in errors {
+                errors_by_sheet
+                    .entry(&error.sheet_name)
+                    .or_default()
+                    .push(error.clone());
+            }
+            let mut replacements = BTreeMap::new();
+            for (sheet_name, sheet_errors) in errors_by_sheet {
+                let part = resolve_summary_worksheet_part(&mut archive, sheet_name)?;
+                let original = read_zip_part(&mut archive, &part)?;
+                let replacement = patch_worksheet_error_cells(&original, &sheet_errors)?;
+                anyhow::ensure!(
+                    replacements.insert(part.clone(), replacement).is_none(),
+                    "multiple worksheets resolve to the same package part {part}"
+                );
+            }
+            replacements
         };
 
         let target = OpenOptions::new()
@@ -1496,7 +1622,7 @@ fn patch_error_cells(source: &Path, output: &Path, errors: &[PendingErrorCell]) 
         output_created = true;
         let mut writer = ZipWriter::new(target);
         let mut archive = ZipArchive::new(fs::File::open(source)?)?;
-        let mut patched_parts = 0usize;
+        let mut patched_parts = BTreeSet::new();
         for index in 0..archive.len() {
             let mut entry = archive.by_index(index)?;
             let name = entry.name().to_owned();
@@ -1509,16 +1635,18 @@ fn patch_error_cells(source: &Path, output: &Path, errors: &[PendingErrorCell]) 
                 continue;
             }
             writer.start_file(&name, options)?;
-            if name == worksheet_part {
-                writer.write_all(&replacement)?;
-                patched_parts += 1;
+            if let Some(replacement) = replacements.get(&name) {
+                writer.write_all(replacement)?;
+                patched_parts.insert(name);
             } else {
                 std::io::copy(&mut entry, &mut writer)?;
             }
         }
         anyhow::ensure!(
-            patched_parts == 1,
-            "expected one summary worksheet part, patched {patched_parts}"
+            patched_parts.len() == replacements.len(),
+            "expected to patch {} summary worksheet parts, patched {}",
+            replacements.len(),
+            patched_parts.len()
         );
         writer.finish()?;
         validate_error_cells(output, errors)?;
@@ -1530,7 +1658,10 @@ fn patch_error_cells(source: &Path, output: &Path, errors: &[PendingErrorCell]) 
     result
 }
 
-fn resolve_summary_worksheet_part(archive: &mut ZipArchive<fs::File>) -> Result<String> {
+fn resolve_summary_worksheet_part(
+    archive: &mut ZipArchive<fs::File>,
+    sheet_name: &str,
+) -> Result<String> {
     let workbook = read_zip_part(archive, "xl/workbook.xml")?;
     let relationships = read_zip_part(archive, "xl/_rels/workbook.xml.rels")?;
     let workbook_text = std::str::from_utf8(&workbook).context("workbook.xml must be UTF-8")?;
@@ -1544,9 +1675,9 @@ fn resolve_summary_worksheet_part(archive: &mut ZipArchive<fs::File>) -> Result<
         .descendants()
         .find(|node| {
             is_xml_element(*node, SPREADSHEET_MAIN_NS, "sheet")
-                && node.attribute("name") == Some("汇总")
+                && node.attribute("name") == Some(sheet_name)
         })
-        .context("generated summary worksheet '汇总' is missing")?;
+        .with_context(|| format!("generated summary worksheet {sheet_name:?} is missing"))?;
     let relationship_id = sheet
         .attribute((OFFICE_REL_NS, "id"))
         .context("summary worksheet relationship id is missing")?;
@@ -1691,12 +1822,17 @@ fn patch_worksheet_error_cells(xml: &[u8], errors: &[PendingErrorCell]) -> Resul
 fn validate_error_cells(workbook: &Path, errors: &[PendingErrorCell]) -> Result<()> {
     let dump = read_workbook(workbook)
         .with_context(|| format!("reopen patched summary workbook {}", workbook.display()))?;
-    let sheet = dump
-        .sheets
-        .iter()
-        .find(|sheet| sheet.name == "汇总")
-        .context("reopened summary worksheet is missing")?;
     for error in errors {
+        let sheet = dump
+            .sheets
+            .iter()
+            .find(|sheet| sheet.name == error.sheet_name)
+            .with_context(|| {
+                format!(
+                    "reopened summary worksheet {:?} is missing",
+                    error.sheet_name
+                )
+            })?;
         let cell = sheet
             .values
             .get(&error.address)
