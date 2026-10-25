@@ -12,7 +12,7 @@
 //! `_convert_value`'s `EvalValue.number` default); the evaluate runtime
 //! applies `_with_numeric_mode` when variables resolve.
 
-use crate::s5_config::Configuration;
+use crate::s5_config::{Configuration, SourceContract};
 use crate::s5_eval::{EvalArgument, EvalErrorKind, EvalValue};
 use crate::s5_scan::{in_numeric_regions, row_path_candidates, scan_rule_paths, ScanBook};
 use serde_json::{json, Value as JsonValue};
@@ -100,6 +100,7 @@ pub struct S5SourceDescriptor<'a> {
     pub source_id: &'a str,
     pub period: &'a str,
     pub institution_code: &'a str,
+    pub institution_name: &'a str,
 }
 
 struct BoundSource {
@@ -107,6 +108,7 @@ struct BoundSource {
     source_id: String,
     source_period: String,
     institution_code: String,
+    institution_name: String,
     sha256: String,
     book: ScanBook,
     index_cache: BTreeMap<String, crate::s5_scan::ScanResult>,
@@ -127,7 +129,11 @@ impl BoundSource {
         if matches!(role, "current" | "external") && descriptor.period != audit_period {
             return Err(RetrievalFailure::new(
                 "PERIOD_CONTRACT_MISMATCH",
-                "本期来源期间与本次审核期间不一致",
+                if role == "external" {
+                    "外部来源期间与本次审核期间不一致"
+                } else {
+                    "本期来源期间与本次审核期间不一致"
+                },
             ));
         }
         if role == "previous" && descriptor.period == audit_period {
@@ -154,6 +160,7 @@ impl BoundSource {
             source_id: descriptor.source_id.to_owned(),
             source_period: descriptor.period.to_owned(),
             institution_code: descriptor.institution_code.to_owned(),
+            institution_name: descriptor.institution_name.to_owned(),
             sha256,
             book,
             index_cache: BTreeMap::new(),
@@ -166,6 +173,7 @@ pub struct S5Retrieval {
     configuration: Configuration,
     current: BoundSource,
     previous: Option<BoundSource>,
+    external: Option<BoundSource>,
 }
 
 impl S5Retrieval {
@@ -185,6 +193,7 @@ impl S5Retrieval {
                 source_id,
                 period: source_period,
                 institution_code,
+                institution_name: "",
             },
             role,
             audit_period,
@@ -193,6 +202,7 @@ impl S5Retrieval {
             configuration,
             current,
             previous: None,
+            external: None,
         })
     }
 
@@ -204,9 +214,24 @@ impl S5Retrieval {
         previous: Option<S5SourceDescriptor<'_>>,
         audit_period: &str,
     ) -> Result<Self, RetrievalFailure> {
+        Self::bind_with_sources(configuration, current, previous, None, audit_period)
+    }
+
+    /// Bind the configured current, previous, and one external source using
+    /// the currently migrated single-source-per-role path.
+    pub fn bind_with_sources(
+        configuration: Configuration,
+        current: S5SourceDescriptor<'_>,
+        previous: Option<S5SourceDescriptor<'_>>,
+        external: Option<S5SourceDescriptor<'_>>,
+        audit_period: &str,
+    ) -> Result<Self, RetrievalFailure> {
         let current = BoundSource::bind(current, "current", audit_period)?;
         let previous = previous
             .map(|descriptor| BoundSource::bind(descriptor, "previous", audit_period))
+            .transpose()?;
+        let external = external
+            .map(|descriptor| BoundSource::bind(descriptor, "external", audit_period))
             .transpose()?;
         if previous
             .as_ref()
@@ -221,6 +246,7 @@ impl S5Retrieval {
             configuration,
             current,
             previous,
+            external,
         })
     }
 
@@ -232,6 +258,11 @@ impl S5Retrieval {
     /// SHA-256 captured for the selected previous source, when present.
     pub fn previous_source_sha256(&self) -> Option<&str> {
         self.previous.as_ref().map(|source| source.sha256.as_str())
+    }
+
+    /// SHA-256 captured for the selected external source, when present.
+    pub fn external_source_sha256(&self) -> Option<&str> {
+        self.external.as_ref().map(|source| source.sha256.as_str())
     }
 
     fn metrics_for_path(
@@ -284,15 +315,12 @@ impl S5Retrieval {
         rule_default_sheet: &str,
         rule_default_source: &str,
     ) -> Result<EvalValue, RetrievalFailure> {
+        if function_name == "V_EXT" {
+            return self.retrieve_external(args, keywords, rule_business);
+        }
         let role = match function_name {
             "V_CUR" => "current",
             "V_PRE" => "previous",
-            "V_EXT" => {
-                return Err(RetrievalFailure::new(
-                    "SOURCE_NOT_SELECTED",
-                    format!("没有找到业务 {rule_business} 对应的external数据源"),
-                ));
-            }
             _ => return Err(RetrievalFailure::new("SOURCE_NOT_FOUND", "未知取值函数")),
         };
         let source = if role == "current" {
@@ -430,6 +458,465 @@ impl S5Retrieval {
             &metric.layout_version,
             &metric.evidence,
         )
+    }
+
+    fn retrieve_external(
+        &self,
+        args: &[EvalArgument],
+        keywords: &BTreeMap<String, String>,
+        rule_business: &str,
+    ) -> Result<EvalValue, RetrievalFailure> {
+        let source = self.external.as_ref().ok_or_else(|| {
+            RetrievalFailure::new(
+                "SOURCE_NOT_SELECTED",
+                format!("没有找到业务 {rule_business} 对应的external数据源"),
+            )
+        })?;
+        if let Some(requested_source) = keywords
+            .get("source")
+            .filter(|source_id| !source_id.trim().is_empty())
+            .filter(|source_id| source_id.as_str() != source.source_id)
+        {
+            return Err(RetrievalFailure::new(
+                "SOURCE_NOT_SELECTED",
+                format!("未选择或未登记逻辑数据源：{requested_source}"),
+            ));
+        }
+        let [EvalArgument::Text(metric_argument)] = args else {
+            return Err(RetrievalFailure::new(
+                "VALUE_TYPE_INVALID",
+                "外部取值函数需要一个指标标题",
+            ));
+        };
+        let metric_header = metric_argument.trim();
+        let metric_matches: Vec<_> = self
+            .configuration
+            .external_metrics
+            .iter()
+            .filter(|metric| {
+                metric.source_id == source.source_id && metric.metric_header == metric_header
+            })
+            .collect();
+        if metric_matches.len() != 1 {
+            let code = if metric_matches.is_empty() {
+                "METRIC_NOT_FOUND"
+            } else {
+                "METRIC_AMBIGUOUS"
+            };
+            return Err(RetrievalFailure::new(
+                code,
+                "外部指标目录未能唯一找到被引用的指标",
+            ));
+        }
+        let metric = metric_matches[0];
+        if !metric.confirmed {
+            return Err(RetrievalFailure::new(
+                "METRIC_NOT_CONFIRMED",
+                "外部指标口径尚未确认",
+            ));
+        }
+        let contract = self
+            .configuration
+            .source_contracts
+            .iter()
+            .find(|contract| contract.source_id == source.source_id)
+            .ok_or_else(|| {
+                RetrievalFailure::new(
+                    "SOURCE_LAYOUT_UNVERIFIED",
+                    "未配置外部来源映射契约，动态布局识别尚未迁移",
+                )
+            })?;
+        if contract.mapping_sheet == "参照表" {
+            return Err(RetrievalFailure::new(
+                "MAPPING_SHEET_MISSING",
+                "旧参照表已停用，请将机构映射统一维护在外部文件的机构参照表",
+            ));
+        }
+        if !source
+            .book
+            .sheet_names()
+            .iter()
+            .any(|name| name == &contract.mapping_sheet)
+        {
+            return Err(RetrievalFailure::new(
+                "MAPPING_SHEET_MISSING",
+                "外部数据源缺少配置的机构映射工作表",
+            ));
+        }
+        let source_period = self.validate_external_contract(source, contract)?;
+        let identity_column = Self::external_header_column(
+            source,
+            &contract.mapping_sheet,
+            contract.mapping_header_row,
+            &contract.mapping_identity_field,
+        )?;
+        let target_column = Self::external_header_column(
+            source,
+            &contract.mapping_sheet,
+            contract.mapping_header_row,
+            &contract.mapping_target_field,
+        )?;
+        if self.current.institution_code.is_empty() {
+            return Err(RetrievalFailure::new(
+                "INSTITUTION_CONTRACT_MISSING",
+                "运行上下文没有当前机构代码，不能执行外部映射",
+            ));
+        }
+        let mapping_rows: Vec<(usize, String)> = (contract.mapping_data_start_row as usize
+            ..=source.book.sheet_max_row(&contract.mapping_sheet))
+            .filter_map(|row| {
+                let identity =
+                    source
+                        .book
+                        .cell_raw_text(&contract.mapping_sheet, row, identity_column);
+                (identity.trim() == self.current.institution_code).then(|| {
+                    let report_item =
+                        source
+                            .book
+                            .cell_raw_text(&contract.mapping_sheet, row, target_column);
+                    (row, report_item.trim().to_owned())
+                })
+            })
+            .collect();
+        if mapping_rows.is_empty() {
+            return Err(RetrievalFailure::new(
+                "IDENTITY_NOT_MAPPED",
+                "当前机构未在外部映射表中找到",
+            ));
+        }
+        if mapping_rows.len() != 1 || mapping_rows[0].1.is_empty() {
+            return Err(RetrievalFailure::new(
+                "IDENTITY_MAPPING_AMBIGUOUS",
+                "当前机构映射缺失或匹配多行，无法唯一确定报表项目",
+            ));
+        }
+        let (mapping_row, report_item) = &mapping_rows[0];
+        let sheet_name = keywords
+            .get("sheet")
+            .filter(|sheet| !sheet.trim().is_empty())
+            .map(|sheet| sheet.as_str())
+            .unwrap_or(&contract.default_sheet);
+        if sheet_name.is_empty()
+            || !source
+                .book
+                .sheet_names()
+                .iter()
+                .any(|name| name == sheet_name)
+        {
+            return Err(RetrievalFailure::new(
+                "SHEET_NOT_FOUND",
+                "外部数据源缺少配置指定的数据工作表",
+            ));
+        }
+        let data_row = (contract.data_start_row as usize..=source.book.sheet_max_row(sheet_name))
+            .filter(|row| {
+                source
+                    .book
+                    .cell_raw_text(sheet_name, *row, contract.data_key_column as usize)
+                    .trim()
+                    == report_item
+            })
+            .collect::<Vec<_>>();
+        if data_row.is_empty() {
+            return Err(RetrievalFailure::new(
+                "REPORT_ITEM_NOT_FOUND",
+                "外部数据表中不存在映射得到的报表项目",
+            ));
+        }
+        if data_row.len() > 1 {
+            return Err(RetrievalFailure::new(
+                "REPORT_ITEM_DUPLICATE",
+                "外部数据表中映射得到的报表项目重复",
+            ));
+        }
+        let metric_columns: Vec<usize> = (contract.metric_first_column as usize
+            ..=source.book.sheet_max_col(sheet_name))
+            .filter(|column| {
+                source
+                    .book
+                    .cell_raw_text(sheet_name, contract.metric_header_row as usize, *column)
+                    .trim()
+                    == metric_header
+            })
+            .collect();
+        if metric_columns.is_empty() {
+            return Err(RetrievalFailure::new(
+                "METRIC_NOT_FOUND",
+                "外部数据表中不存在配置指标标题",
+            ));
+        }
+        if metric_columns.len() > 1 {
+            return Err(RetrievalFailure::new(
+                "METRIC_AMBIGUOUS",
+                "外部数据表的指标标题重复",
+            ));
+        }
+        let (row, column) = (data_row[0], metric_columns[0]);
+        if source.book.sheet_has_formula(sheet_name, row, column) {
+            return Err(RetrievalFailure::new(
+                "SOURCE_FORMULA_UNVERIFIED",
+                "源数据目标单元格包含公式，未确认其重算缓存，不能作为审核输入",
+            )
+            .with_evidence(
+                sheet_name,
+                &format!("{}{}", column_letter_local(column), row),
+            ));
+        }
+        let (raw_type, raw_value) = source.book.stored_value(sheet_name, row, column);
+        if raw_type == "error" {
+            return Err(RetrievalFailure::new(
+                "VALUE_TYPE_INVALID",
+                "源数据单元格包含 Excel 错误值",
+            )
+            .with_evidence(
+                sheet_name,
+                &format!("{}{}", column_letter_local(column), row),
+            ));
+        }
+        let mapping_cell = format!(
+            "{}{}:{}{}",
+            column_letter_local(identity_column),
+            mapping_row,
+            column_letter_local(target_column),
+            mapping_row
+        );
+        let evidence = json!({
+            "source_id": source.source_id,
+            "source_path": source.source_path.display().to_string(),
+            "source_sha256": source.sha256,
+            "sheet": sheet_name,
+            "cell": format!("{}{}", column_letter_local(column), row),
+            "raw_value": raw_value,
+            "source_unit": metric.source_unit,
+            "standard_unit": metric.standard_unit,
+            "source_period": source_period,
+            "source_contract_version": contract.version,
+            "metric_layout_version": "",
+            "metric_definition_evidence": metric.evidence,
+            "institution_code": self.current.institution_code,
+            "precision": metric.precision,
+            "mapping_sheet": contract.mapping_sheet,
+            "mapping_cell": mapping_cell,
+            "mapping_key": self.current.institution_code,
+            "report_item": report_item,
+            "metric_header": metric_header,
+            "mapping_method": "",
+        });
+        convert_value(
+            &raw_value,
+            &metric.data_type,
+            &metric.metric_type,
+            &metric.source_unit,
+            &metric.standard_unit,
+            &metric.storage_scale,
+            metric.allow_blank,
+            metric.precision,
+            evidence,
+        )
+    }
+
+    fn external_header_column(
+        source: &BoundSource,
+        sheet_name: &str,
+        header_row: i64,
+        header: &str,
+    ) -> Result<usize, RetrievalFailure> {
+        if header.is_empty() {
+            return Err(RetrievalFailure::new(
+                "SOURCE_CONTRACT_MISSING",
+                "外部映射字段名未配置",
+            ));
+        }
+        let matches: Vec<usize> = (1..=source.book.sheet_max_col(sheet_name))
+            .filter(|column| {
+                source
+                    .book
+                    .cell_raw_text(sheet_name, header_row as usize, *column)
+                    .trim()
+                    == header
+            })
+            .collect();
+        if matches.is_empty() {
+            return Err(RetrievalFailure::new(
+                "MAPPING_FIELD_NOT_FOUND",
+                "外部映射表缺少配置字段",
+            ));
+        }
+        if matches.len() > 1 {
+            return Err(RetrievalFailure::new(
+                "MAPPING_FIELD_AMBIGUOUS",
+                "外部映射表配置字段重复",
+            ));
+        }
+        Ok(matches[0])
+    }
+
+    fn external_identity_value(
+        source: &BoundSource,
+        contract: &SourceContract,
+        label: &str,
+    ) -> Result<String, RetrievalFailure> {
+        if contract.identity_sheet.is_empty() || label.is_empty() {
+            return Ok(String::new());
+        }
+        if !source
+            .book
+            .sheet_names()
+            .iter()
+            .any(|name| name == &contract.identity_sheet)
+        {
+            return Err(RetrievalFailure::new(
+                "IDENTITY_NOT_FOUND",
+                "身份契约指定的工作表不存在",
+            ));
+        }
+        let mut matches = std::collections::BTreeSet::new();
+        let max_row = source.book.sheet_max_row(&contract.identity_sheet);
+        let max_column = source.book.sheet_max_col(&contract.identity_sheet);
+        for row in 1..=max_row {
+            for column in 1..=max_column {
+                if source
+                    .book
+                    .merged_raw_text(&contract.identity_sheet, row, column)
+                    .trim()
+                    != label
+                {
+                    continue;
+                }
+                let right = if column < max_column {
+                    source
+                        .book
+                        .merged_raw_text(&contract.identity_sheet, row, column + 1)
+                } else {
+                    String::new()
+                };
+                let below = if row < max_row {
+                    source
+                        .book
+                        .merged_raw_text(&contract.identity_sheet, row + 1, column)
+                } else {
+                    String::new()
+                };
+                let candidate = if right.trim().is_empty() {
+                    below
+                } else {
+                    right
+                };
+                if !candidate.trim().is_empty() {
+                    matches.insert(candidate.trim().to_owned());
+                }
+            }
+        }
+        if matches.len() > 1 {
+            return Err(RetrievalFailure::new(
+                "IDENTITY_AMBIGUOUS",
+                "来源文件中的身份字段存在多项不同值",
+            ));
+        }
+        Ok(matches.into_iter().next().unwrap_or_default())
+    }
+
+    fn validate_external_contract(
+        &self,
+        source: &BoundSource,
+        contract: &SourceContract,
+    ) -> Result<String, RetrievalFailure> {
+        let identity =
+            Self::external_identity_value(source, contract, &contract.institution_code_label)?;
+        let code = if source.institution_code.is_empty() {
+            identity.clone()
+        } else {
+            source.institution_code.clone()
+        };
+        if !source.institution_code.is_empty()
+            && !identity.is_empty()
+            && source.institution_code != identity
+        {
+            return Err(RetrievalFailure::new(
+                "INSTITUTION_MISMATCH",
+                "文件机构身份与运行选择的机构不一致",
+            ));
+        }
+        if !code.is_empty()
+            && !self.current.institution_code.is_empty()
+            && code != self.current.institution_code
+        {
+            return Err(RetrievalFailure::new(
+                "INSTITUTION_MISMATCH",
+                "来源文件机构身份与本次审核机构不一致",
+            ));
+        }
+        if contract.institution_required && code.is_empty() {
+            return Err(RetrievalFailure::new(
+                "INSTITUTION_CONTRACT_MISSING",
+                "来源契约要求机构身份，但文件或运行参数均未提供",
+            ));
+        }
+        let name_from_file =
+            Self::external_identity_value(source, contract, &contract.institution_name_label)?;
+        if !source.institution_name.is_empty()
+            && !name_from_file.is_empty()
+            && source.institution_name != name_from_file
+        {
+            return Err(RetrievalFailure::new(
+                "INSTITUTION_MISMATCH",
+                "文件机构名称与运行绑定机构名称不一致",
+            ));
+        }
+        if !self.current.institution_name.is_empty()
+            && !name_from_file.is_empty()
+            && self.current.institution_name != name_from_file
+        {
+            return Err(RetrievalFailure::new(
+                "INSTITUTION_MISMATCH",
+                "来源文件机构名称与本次审核机构不一致",
+            ));
+        }
+        let period_from_file =
+            Self::external_identity_value(source, contract, &contract.period_label)?;
+        if !source.source_period.is_empty()
+            && !contract.period_label.is_empty()
+            && !period_from_file.is_empty()
+            && source.source_period != period_from_file
+        {
+            return Err(RetrievalFailure::new(
+                "PERIOD_CONTRACT_MISMATCH",
+                "文件期间与运行绑定期间不一致",
+            ));
+        }
+        let period = if source.source_period.is_empty() {
+            period_from_file
+        } else {
+            source.source_period.clone()
+        };
+        if !contract.expected_period.is_empty()
+            && !period.is_empty()
+            && contract.expected_period != period
+        {
+            return Err(RetrievalFailure::new(
+                "PERIOD_CONTRACT_MISMATCH",
+                "来源期间与数据源契约要求不一致",
+            ));
+        }
+        if contract.period_required && period.is_empty() {
+            return Err(RetrievalFailure::new(
+                "PERIOD_CONTRACT_MISSING",
+                "来源契约要求报告期，但文件未提供可验证期间",
+            ));
+        }
+        if period.is_empty() {
+            return Err(RetrievalFailure::new(
+                "PERIOD_CONTRACT_MISSING",
+                "来源未提供可验证的报告期",
+            ));
+        }
+        if !self.current.source_period.is_empty() && period != self.current.source_period {
+            return Err(RetrievalFailure::new(
+                "PERIOD_CONTRACT_MISMATCH",
+                "外部来源期间与本次审核期间不一致",
+            ));
+        }
+        Ok(period)
     }
 
     fn template_index<'a>(

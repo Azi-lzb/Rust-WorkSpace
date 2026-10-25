@@ -177,6 +177,10 @@ main 落地请求 #3/#4 后，S1 公式复制业务计划（`s1_formula_copy`）
 - main 公共修复：`9f0cacf` 已同步为 `fc6b121`，逐表 OOXML 快照按工作表名比较；交接报告中的 `d2da5a1` 不存在，实际修复为 `d2da501866a4aca7d2a4132b5c2ed0d2116d4f42`，已同步为 `a5e0233`。Worker 越界样式索引现在会被拒绝，未修复其样式映射。
 - S1-F01 历史写回：真实 config-real 样本 5 表、9 行历史；`UmyaXlsxBackend::apply` 通过。同步 main 的空 `pageSetUpPr` 默认归一修复 `cc64e15` 后，完整计划继续失败于关系快照：工作簿新增 `sharedStrings`，管理历史表原有 9 个超链接关系消失（原 Python 会删除并重建该表），批注/VML 关系 ID 重编号。不得全局忽略关系差异；共享请求 #7 的页面设置问题已解决，剩余差异登记于 `shared-capability-requests/20261025_umya_movesheet_relationship_validation.md`。源 SHA-256 不变；历史写回仍 Unverified。
 - S1-F01 公式复制：worker 样式表守卫已同步且 worker 定向回归 10 passed；真实 worker 输出仍可能因 `cellXfs` 引用越界被拒绝，Umya 路线仍有 1,036 项真实对拍差异；没有可用生产编辑引擎，整项未验收。
-- S5-F01 V_PRE CLI 切片：`s5-audit-run` 新增可选 `--previous-source`、`--previous-source-id`、`--previous-period`，审核结果总账登记并校验上期副本哈希；未提供上期时保留 Python `SOURCE_NOT_SELECTED` 失败结果。合成 Windows Python/Rust 对拍核对结果表值、状态、超链接目标和当前/上期副本清单，差异 0，见 `probe/reports/s5_vpre_cli_synthetic_parity_20261025.json`。仅覆盖单个上期来源的无契约绑定路径；真实上期样本、数据源契约校验、多来源选择、V_EXT、结构快照、数据质量告警及全配置/多业务验收仍缺，S5-F01 整体未验证。
+- S5-F01 V_PRE CLI 切片：`s5-audit-run` 新增可选 `--previous-source`、`--previous-source-id`、`--previous-period`，审核结果总账登记并校验上期副本哈希；未提供上期时保留 Python `SOURCE_NOT_SELECTED` 失败结果。合成 Windows Python/Rust 对拍核对结果表值、状态、超链接目标和当前/上期副本清单，差异 0，见 `probe/reports/s5_vpre_cli_synthetic_parity_20261025.json`。仅覆盖单个上期来源的无契约绑定路径；真实上期样本、数据源契约校验、多来源选择、V_EXT 动态布局/时间序列、结构快照、数据质量告警及全配置/多业务验收仍缺，S5-F01 整体未验证。
 - S5-F01：此前 Windows CLI 与 Python `AuditEngine.run` 377 条结果及输出文件对拍差异 0 的真实证据仍仅覆盖单位贷款单业务切片。新增业务筛选拒绝未知/无启用规则业务，输出 writer 在写出前后验证源与配置快照，防止空业务或输入变化生成完成态输出；定向测试通过、CLI check 通过。
 - 平台：本轮仅完成 Windows 原生编译/测试及 Windows 隔离 openpyxl worker 回归；WSL Python、Linux 目标、glibc 2.28、deb、麒麟 V10/UOS V20 均未验证。
+
+### S5-F01 V_EXT 单来源配置契约 CLI 切片（Windows 合成对拍）
+
+`s5-audit-run` 新增可选 `--external-source`/`--external-source-id`，在现有配置的外部来源契约下绑定单个来源，验证机构/期间身份、映射工作表与字段唯一性、报表项目和指标列唯一性；拒绝公式/错误值，并把外部来源副本及 SHA-256 纳入审核总账。无映射契约时明确返回 `SOURCE_LAYOUT_UNVERIFIED`，不猜测动态布局。Windows 原生合成 XLSX 与 Python `AuditEngine.run` CLI 对拍：审核结果表值/状态、超链接目标及本期/外部副本清单哈希差异 0，见 `probe/reports/s5_vext_contract_cli_synthetic_parity_20261025.json`。对拍发现并修复 Decimal 精确除法保留小数位差异；当前回归断言覆盖 `15000000.00 / 10000 -> 1500.00` 和零差额显示。此切片不代表 S5-F01 完成：未用真实外部样本；多来源、动态布局、时间序列、数据质量告警、Linux/deb/麒麟/UOS 仍未验证。Audit 共享请求 #8 未变更、仍未解决。

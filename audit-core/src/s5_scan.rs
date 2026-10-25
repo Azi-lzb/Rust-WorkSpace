@@ -168,6 +168,43 @@ impl ScanBook {
             .unwrap_or_else(|| ("empty".to_owned(), String::new()))
     }
 
+    /// Read the stored cell representation used by configuration and mapping
+    /// labels. Formula text is retained here because callers are locating
+    /// labels; referenced data values must still pass `sheet_has_formula`.
+    pub fn cell_raw_text(&self, sheet: &str, row: usize, column: usize) -> String {
+        self.dump
+            .sheets
+            .iter()
+            .find(|candidate| candidate.name == sheet)
+            .and_then(|sheet_dump| {
+                let address = address_of(row, column);
+                sheet_dump.formulas.get(&address).cloned().or_else(|| {
+                    sheet_dump
+                        .values
+                        .get(&address)
+                        .map(|value| match value.get("value") {
+                            Some(serde_json::Value::String(text)) => text.clone(),
+                            Some(serde_json::Value::Number(number)) => number.to_string(),
+                            Some(serde_json::Value::Bool(flag)) => {
+                                if *flag {
+                                    "是".to_owned()
+                                } else {
+                                    "否".to_owned()
+                                }
+                            }
+                            _ => String::new(),
+                        })
+                })
+            })
+            .unwrap_or_default()
+    }
+
+    /// Read a merged cell through its anchor, matching `_Workbook.merged_value`.
+    pub fn merged_raw_text(&self, sheet: &str, row: usize, column: usize) -> String {
+        let (anchor_row, anchor_column) = self.anchor(sheet, row, column);
+        self.cell_raw_text(sheet, anchor_row, anchor_column)
+    }
+
     /// Cell count probe for diagnostics.
     pub fn sheet_value_count(&self, sheet: &str) -> usize {
         self.dump

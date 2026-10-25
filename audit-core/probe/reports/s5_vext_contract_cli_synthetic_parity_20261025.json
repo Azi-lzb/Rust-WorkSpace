@@ -1,0 +1,28 @@
+{
+  "feature": "S5-F01 V_EXT single configured source and output audit-copy manifest",
+  "platform": "Windows 11 native x86_64; Python 3.12.10 / openpyxl 3.1.5; local Rust debug CLI",
+  "input_class": "synthetic XLSX fixtures generated from the read-only Python test helpers",
+  "comparison": {
+    "result_workbook_sheet_names": "equal",
+    "result_workbook_cell_values": "equal",
+    "result_workbook_result_rows": 1,
+    "result_workbook_hyperlink_destinations": "equal after combining OOXML target and location",
+    "status_counts": {
+      "TRIGGERED": 1
+    },
+    "current_external_copy_manifest_sha256": "equal",
+    "current_external_difference_values": [
+      "1500",
+      "1500",
+      "0"
+    ]
+  },
+  "differences": 0,
+  "limitations": [
+    "Synthetic fixtures only; no real external source pair was used in this check.",
+    "Only a single external source with an explicit mapping contract is supported in this slice.",
+    "Dynamic external-layout discovery, time-series behavior and quality warnings remain unimplemented.",
+    "No Linux, deb, Kylin, UOS, formula-cache, multiple external source, or external mapping boundary fixture was exercised.",
+    "This slice does not complete S5-F01 or resolve Audit shared-capability request #8."
+  ]
+}

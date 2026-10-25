@@ -633,6 +633,14 @@ struct S5AuditRunArgs {
     #[arg(long, requires = "previous_source")]
     previous_period: Option<String>,
 
+    /// Optional configured external source workbook for V_EXT calls.
+    #[arg(long)]
+    external_source: Option<PathBuf>,
+
+    /// Logical source id for --external-source; required when that source is selected.
+    #[arg(long, requires = "external_source")]
+    external_source_id: Option<String>,
+
     /// Reporting period, e.g. 2026-07-31.
     #[arg(long)]
     period: String,
@@ -4268,6 +4276,25 @@ fn run_s5_audit_run(arguments: S5AuditRunArgs) -> Result<()> {
             "--previous-source-id requires --previous-source"
         );
     }
+    if let Some(external_source) = &arguments.external_source {
+        anyhow::ensure!(
+            external_source.is_file(),
+            "S5 外部数据源工作簿不存在：{}",
+            external_source.display()
+        );
+        anyhow::ensure!(
+            arguments
+                .external_source_id
+                .as_deref()
+                .is_some_and(|source_id| !source_id.trim().is_empty()),
+            "--external-source-id must be supplied with --external-source"
+        );
+    } else {
+        anyhow::ensure!(
+            arguments.external_source_id.is_none(),
+            "--external-source-id requires --external-source"
+        );
+    }
     anyhow::ensure!(
         !arguments.period.trim().is_empty(),
         "运行上下文必须提供报告期"
@@ -4278,6 +4305,13 @@ fn run_s5_audit_run(arguments: S5AuditRunArgs) -> Result<()> {
         .clone()
         .unwrap_or_else(|| format!("s5-{}", chrono::Local::now().format("%Y%m%d_%H%M%S")));
     let started = Instant::now();
+    let mut source_roles = vec!["current"];
+    if arguments.previous_source.is_some() {
+        source_roles.push("previous");
+    }
+    if arguments.external_source.is_some() {
+        source_roles.push("external");
+    }
     if arguments.developer_view {
         eprintln!(
             "{}",
@@ -4290,16 +4324,19 @@ fn run_s5_audit_run(arguments: S5AuditRunArgs) -> Result<()> {
                 "run_id": run_id,
                 "period": arguments.period,
                 "businesses": arguments.businesses,
-                "source_roles": if arguments.previous_source.is_some() { vec!["current", "previous"] } else { vec!["current"] },
+                "source_roles": source_roles,
                 "previous_period": arguments.previous_period,
+                "external_source_id": arguments.external_source_id,
                 "engine": "rust_s5_configured_audit",
                 "started_at": chrono::Local::now().to_rfc3339()
             }))?
         );
-    } else if arguments.previous_source.is_some() {
-        eprintln!("正在执行 S5 配置化审核（Rust 配置加载 + 本期/上期来源读取与规则求值）；本期 {}，上期 {}", arguments.period, arguments.previous_period.as_deref().unwrap_or_default());
     } else {
-        eprintln!("正在执行 S5 配置化审核（Rust 配置加载 + 规则求值）…");
+        eprintln!(
+            "正在执行 S5 配置化审核（Rust 配置加载、{}来源读取与规则求值）；报告期 {}",
+            source_roles.join("、"),
+            arguments.period
+        );
     }
 
     let configuration = load_configuration(&arguments.config, false, "")
@@ -4308,6 +4345,7 @@ fn run_s5_audit_run(arguments: S5AuditRunArgs) -> Result<()> {
         .previous_source_id
         .clone()
         .unwrap_or_else(|| arguments.source_id.clone());
+    let external_source_id = arguments.external_source_id.clone().unwrap_or_default();
     let previous_descriptor = arguments
         .previous_source
         .as_deref()
@@ -4317,16 +4355,29 @@ fn run_s5_audit_run(arguments: S5AuditRunArgs) -> Result<()> {
             source_id: &previous_source_id,
             period: period.trim(),
             institution_code: &arguments.org_code,
+            institution_name: &arguments.org_name,
         });
-    let mut retrieval = S5Retrieval::bind_with_previous(
+    let external_descriptor = arguments
+        .external_source
+        .as_deref()
+        .map(|path| S5SourceDescriptor {
+            path,
+            source_id: &external_source_id,
+            period: arguments.period.trim(),
+            institution_code: &arguments.org_code,
+            institution_name: &arguments.org_name,
+        });
+    let mut retrieval = S5Retrieval::bind_with_sources(
         configuration.clone(),
         S5SourceDescriptor {
             path: &arguments.source,
             source_id: &arguments.source_id,
             period: arguments.period.trim(),
             institution_code: &arguments.org_code,
+            institution_name: &arguments.org_name,
         },
         previous_descriptor,
+        external_descriptor,
         arguments.period.trim(),
     )
     .map_err(|failure| anyhow::anyhow!("{}：{}", failure.code, failure.message))?;
@@ -4342,19 +4393,29 @@ fn run_s5_audit_run(arguments: S5AuditRunArgs) -> Result<()> {
     )
     .map_err(|error| anyhow::anyhow!("{error}"))?;
 
-    let previous_output_sources: Vec<S5OutputSource<'_>> = arguments
-        .previous_source
-        .as_deref()
-        .zip(retrieval.previous_source_sha256())
-        .map(|(path, sha256_before)| {
-            vec![S5OutputSource {
-                role: "previous",
-                path,
-                source_id: &previous_source_id,
-                sha256_before,
-            }]
-        })
-        .unwrap_or_default();
+    let mut additional_output_sources = Vec::new();
+    if let (Some(path), Some(sha256_before)) = (
+        arguments.previous_source.as_deref(),
+        retrieval.previous_source_sha256(),
+    ) {
+        additional_output_sources.push(S5OutputSource {
+            role: "previous",
+            path,
+            source_id: &previous_source_id,
+            sha256_before,
+        });
+    }
+    if let (Some(path), Some(sha256_before)) = (
+        arguments.external_source.as_deref(),
+        retrieval.external_source_sha256(),
+    ) {
+        additional_output_sources.push(S5OutputSource {
+            role: "external",
+            path,
+            source_id: &external_source_id,
+            sha256_before,
+        });
+    }
     let output_summary = write_run_outputs(
         &S5OutputRequest {
             run_id: &run_id,
@@ -4366,7 +4427,7 @@ fn run_s5_audit_run(arguments: S5AuditRunArgs) -> Result<()> {
             source_path: &arguments.source,
             source_id: &arguments.source_id,
             source_sha256_before: &source_sha256_before,
-            additional_sources: &previous_output_sources,
+            additional_sources: &additional_output_sources,
             config_path: &arguments.config,
             config_sha256_before: &configuration.sha256,
             config_version: &configuration.version,
@@ -4381,8 +4442,9 @@ fn run_s5_audit_run(arguments: S5AuditRunArgs) -> Result<()> {
         "run_id": run_id,
         "period": arguments.period,
         "previous_period": arguments.previous_period,
+        "external_source_id": arguments.external_source_id,
         "businesses": arguments.businesses,
-        "source_roles": if arguments.previous_source.is_some() { vec!["current", "previous"] } else { vec!["current"] },
+        "source_roles": source_roles,
         "rule_results": outcomes.len(),
         "status_counts": status_counts,
         "output_files": {
@@ -4407,6 +4469,7 @@ fn run_s5_audit_run(arguments: S5AuditRunArgs) -> Result<()> {
                 "status": "completed",
                 "run_id": run_id,
                 "elapsed_ms": elapsed_ms,
+                "source_roles": source_roles,
             }))?
         );
     }

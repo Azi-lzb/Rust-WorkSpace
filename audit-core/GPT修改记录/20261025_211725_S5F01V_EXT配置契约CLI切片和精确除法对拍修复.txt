@@ -1,0 +1,28 @@
+【时间】2026-10-25 21:17（Asia/Shanghai）
+【执行者】Codex
+【修改前 commit】95de4f8fc49b89182a32fdfcd86f6d64690c7c48
+【修改后 commit】本次功能提交，SHA 由对应 Git 历史追溯
+【WIP】开始时存在未提交的 S5 V_EXT CLI/取数/测试工作；在其基础上完成，不覆盖。HANDOFF_ZCODE_TO_CODEX.md 保持未跟踪且未修改。
+
+【目的】迁移 S5 V_EXT 的单个显式外部来源、配置契约取数及 CLI 输出链，并修复 Python/Rust 对拍发现的金额换算后十进制尾数差异。
+【修改文件】
+- audit-core/src/bin/open-data-audit.rs：增加 --external-source/--external-source-id，传入取数绑定、运行日志角色及输出副本清单。
+- audit-core/src/s5_retrieval.rs、audit-core/src/s5_scan.rs：绑定一个外部来源，按已登记来源契约校验机构/期间、映射字段、报表项目及指标标题；不支持未配置契约的动态布局，拒绝公式和错误单元格。
+- audit-core/src/s5_eval.rs：精确 Decimal 除法保留 Python Decimal 的首选小数位；相减为零时保留运算尺度。
+- audit-core/tests/s5_previous_source_cli.rs：验证外部来源读取、失败路径、来源副本/哈希和零差额说明。
+- audit-core/probe/reports/s5_vext_contract_cli_synthetic_parity_20261025.json：Windows Python/Rust 合成 CLI 对拍报告。
+- audit-core/MIGRATION_INVENTORY.md：记录 V_EXT 当前子集及未完成范围。
+- 本记录。
+
+【组件版本】audit-core 0.1.0；不升级，遵循 Workspace Cargo 版本策略，不新增 Sx-Fxx 组件版本制度。
+【验证】
+- cargo fmt --all -- --check：通过。
+- cargo test --offline --locked -p audit-core --lib s5_eval::eval_tests::decimal_ -- --nocapture：4 passed。
+- cargo build --offline --locked -p audit-core --bin open-data-audit：通过。
+- cargo test --offline --locked -p audit-core --test s5_previous_source_cli -- --nocapture：2 passed。
+- Windows 11 x86_64，Python 3.12.10/openpyxl 3.1.5 对拍 Rust CLI；合成 XLSX 的结果值、工作表、状态、超链接目标及本期/外部副本哈希差异 0。报告：probe/reports/s5_vext_contract_cli_synthetic_parity_20261025.json。
+
+【未执行/已知问题】仅一个显式 V_EXT 来源及配置契约路径；真实外部样本、动态布局、多来源、时间序列、数据质量告警、公式重算缓存、Linux/deb、麒麟 V10/UOS V20 未验证。S5-F01 整体仍未验收。Audit 共享能力请求 #8 未变更、仍未解决。
+【源数据】原 Python 源项目和真实业务文件只读；本次对拍只生成临时合成工作簿。
+【删除清单】无。
+【回滚】如需撤销该独立功能，审阅后对本功能提交执行 git revert <commit-sha>；保留本地交接文件及其它提交。

@@ -178,6 +178,9 @@ impl Decimal28 {
     /// Python `str(Decimal)` for the plain-notation values reachable here.
     pub fn to_canonical_string(&self) -> String {
         if self.digits.is_empty() {
+            if self.exponent < 0 {
+                return format!("0.{}", "0".repeat((-self.exponent) as usize));
+            }
             return "0".to_owned();
         }
         let mut text: String = self
@@ -360,7 +363,13 @@ impl Decimal28 {
             Self::add_magnitude(&left, &right)
         } else {
             match Self::magnitude_compare(&left, &right) {
-                std::cmp::Ordering::Equal => return Self::zero(),
+                std::cmp::Ordering::Equal => {
+                    return Self {
+                        negative: false,
+                        digits: Vec::new(),
+                        exponent,
+                    }
+                }
                 std::cmp::Ordering::Greater => {
                     let digits = Self::subtract_magnitude(&left, &right);
                     return Self {
@@ -417,6 +426,7 @@ impl Decimal28 {
         if self.is_zero() {
             return Self::zero();
         }
+        let preferred_exponent = self.exponent - other.exponent;
         let dividend = self.magnitude();
         let divisor = other.magnitude();
         let target_digits = CONTEXT_DIGITS + 2;
@@ -475,8 +485,13 @@ impl Decimal28 {
         }
         // value = quotient_integer × 10^(self.exp - other.exp - (consumed -
         // dividend_digits)) with `consumed` the pulled prefix length.
-        let exponent_base =
+        let mut exponent_base =
             self.exponent - other.exponent - (source_index as i32) + (dividend.len() as i32);
+        if exact_termination && exponent_base > preferred_exponent {
+            let scale_padding = (exponent_base - preferred_exponent) as usize;
+            quotient.extend(std::iter::repeat(0).take(scale_padding));
+            exponent_base = preferred_exponent;
+        }
         Self::round_significant(
             quotient,
             self.negative != other.negative,
@@ -1575,6 +1590,32 @@ mod eval_tests {
         let b = Decimal28::parse("0.2").expect("parse");
         assert_eq!(a.add(&b).to_canonical_string(), "0.3");
         assert_eq!(a.multiply(&b).to_canonical_string(), "0.02");
+    }
+
+    #[test]
+    fn decimal_subtraction_preserves_scale_when_result_is_zero() {
+        let current = Decimal28::parse("1500").expect("parse current value");
+        let external = Decimal28::parse("1500.00").expect("parse external value");
+        assert_eq!(current.add(&external.neg()).to_canonical_string(), "0.00");
+        assert_eq!(
+            Decimal28::parse("0.00")
+                .expect("parse scaled zero")
+                .to_canonical_string(),
+            "0.00"
+        );
+    }
+
+    #[test]
+    fn decimal_exact_division_keeps_python_preferred_scale() {
+        let converted = Decimal28::parse("15000000.00")
+            .expect("parse scaled amount")
+            .divide(&Decimal28::from_i64(10000));
+        assert_eq!(converted.to_canonical_string(), "1500.00");
+
+        let half = Decimal28::parse("1.00")
+            .expect("parse scaled numerator")
+            .divide(&Decimal28::from_i64(2));
+        assert_eq!(half.to_canonical_string(), "0.50");
     }
 
     #[test]
