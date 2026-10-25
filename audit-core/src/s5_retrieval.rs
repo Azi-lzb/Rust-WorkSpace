@@ -176,6 +176,7 @@ pub struct S5Retrieval {
     previous: Option<BoundSource>,
     external: Option<BoundSource>,
     external_layout: Option<ExternalLayout>,
+    data_quality_warnings: Vec<JsonValue>,
 }
 
 impl S5Retrieval {
@@ -206,6 +207,7 @@ impl S5Retrieval {
             previous: None,
             external: None,
             external_layout: None,
+            data_quality_warnings: Vec::new(),
         })
     }
 
@@ -251,6 +253,7 @@ impl S5Retrieval {
             previous,
             external,
             external_layout: None,
+            data_quality_warnings: Vec::new(),
         })
     }
 
@@ -267,6 +270,11 @@ impl S5Retrieval {
     /// SHA-256 captured for the selected external source, when present.
     pub fn external_source_sha256(&self) -> Option<&str> {
         self.external.as_ref().map(|source| source.sha256.as_str())
+    }
+
+    /// Dynamic external-source quality warnings to include in the result and ledger.
+    pub fn data_quality_warnings(&self) -> &[JsonValue] {
+        &self.data_quality_warnings
     }
 
     fn metrics_for_path(
@@ -736,24 +744,34 @@ impl S5Retrieval {
             .as_ref()
             .expect("external source checked above");
         if self.external_layout.is_none() {
-            self.external_layout = Some(
-                ExternalLayout::discover(&source.book)
-                    .map_err(|failure| RetrievalFailure::new(&failure.code, failure.message))?,
-            );
+            let layout = ExternalLayout::discover(&source.book)
+                .map_err(|failure| RetrievalFailure::new(&failure.code, failure.message))?;
+            let source_path = source.source_path.clone();
+            let institution_name = self.current.institution_name.clone();
+            let institution_code = self.current.institution_code.clone();
+            let warnings: Vec<JsonValue> = layout
+                .warnings
+                .iter()
+                .map(|warning| {
+                    external_data_warning(
+                        &source_path,
+                        &institution_name,
+                        &institution_code,
+                        &warning.sheet,
+                        &warning.location,
+                        &warning.message,
+                    )
+                })
+                .collect();
+            self.external_layout = Some(layout);
+            for warning in warnings {
+                push_data_quality_warning(&mut self.data_quality_warnings, warning);
+            }
         }
         let layout = self
             .external_layout
             .as_ref()
             .expect("layout is populated before retrieval");
-        if let Some(warning) = layout.warnings.first() {
-            return Err(RetrievalFailure::new(
-                "EXTERNAL_LAYOUT_WARNING_UNMIGRATED",
-                format!(
-                    "工作表“{}”{}：{}；数据质量提示尚未接入 S5 结果与总账",
-                    warning.sheet, warning.location, warning.message
-                ),
-            ));
-        }
         let lookup = layout
             .resolve(
                 &self.current.institution_code,
@@ -767,45 +785,59 @@ impl S5Retrieval {
             .as_ref()
             .expect("external source checked above");
         let cell = format!("{}{}", column_letter_local(lookup.column), lookup.row);
-        if source
+        let formula_cell = source
             .book
-            .sheet_has_formula(&lookup.sheet, lookup.row, lookup.column)
-        {
-            return Err(RetrievalFailure::new(
-                "SOURCE_FORMULA_UNVERIFIED",
-                "源数据目标单元格包含公式，未确认其重算缓存，不能作为审核输入",
+            .sheet_has_formula(&lookup.sheet, lookup.row, lookup.column);
+        let (raw_type, raw_value) = if formula_cell {
+            (
+                "string".to_owned(),
+                source
+                    .book
+                    .cell_raw_text(&lookup.sheet, lookup.row, lookup.column),
             )
-            .with_evidence(&lookup.sheet, &cell));
-        }
-        let (raw_type, raw_value) =
+        } else {
             source
                 .book
-                .stored_value(&lookup.sheet, lookup.row, lookup.column);
+                .stored_value(&lookup.sheet, lookup.row, lookup.column)
+        };
         let mut conversion_value = raw_value.clone();
         if matches!(
             metric.data_type.as_str(),
             "number" | "decimal" | "integer" | "numeric"
         ) {
-            if !matches!(raw_type.as_str(), "number" | "string") || raw_value.trim().is_empty() {
-                return Err(RetrievalFailure::new(
-                    "EXTERNAL_DATA_WARNING_UNMIGRATED",
-                    format!(
-                        "外部指标“{metric_header}”在 {}!{} 为空或不是可用数值；动态取数的数据质量告警尚未迁移",
-                        lookup.sheet, cell
+            let normalized_value = raw_value.trim().replace(',', "");
+            let issue = if raw_value.trim().is_empty() {
+                Some("指标单元格为空白".to_owned())
+            } else if !matches!(raw_type.as_str(), "number" | "integer" | "string") && !formula_cell
+            {
+                Some(format!(
+                    "指标单元格内容“{}”不是数值",
+                    external_value_preview(&raw_value)
+                ))
+            } else if crate::s5_eval::parse_decimal28(&normalized_value).is_err() {
+                Some(format!(
+                    "指标单元格内容“{}”不是数值",
+                    external_value_preview(&raw_value)
+                ))
+            } else {
+                None
+            };
+            if let Some(issue) = issue {
+                let warning = external_data_warning(
+                    &source.source_path,
+                    &self.current.institution_name,
+                    &self.current.institution_code,
+                    &lookup.sheet,
+                    &cell,
+                    &format!(
+                        "报表项目“{}”的指标“{}”{}，已按 0 参与审核；请核查是否误删或改动了数据。",
+                        lookup.report_item, metric_header, issue
                     ),
-                )
-                .with_evidence(&lookup.sheet, &cell));
-            }
-            conversion_value = raw_value.replace(',', "");
-            if crate::s5_eval::parse_decimal28(&conversion_value).is_err() {
-                return Err(RetrievalFailure::new(
-                    "EXTERNAL_DATA_WARNING_UNMIGRATED",
-                    format!(
-                        "外部指标“{metric_header}”在 {}!{} 不是有效数值；动态取数的数据质量告警尚未迁移",
-                        lookup.sheet, cell
-                    ),
-                )
-                .with_evidence(&lookup.sheet, &cell));
+                );
+                push_data_quality_warning(&mut self.data_quality_warnings, warning);
+                conversion_value = "0".to_owned();
+            } else {
+                conversion_value = normalized_value;
             }
         } else if matches!(metric.data_type.as_str(), "text" | "string")
             && !raw_value.is_empty()
@@ -1240,6 +1272,44 @@ fn column_letter_local(mut column: usize) -> String {
         column = (column - 1) / 26;
     }
     letters.into_iter().collect()
+}
+
+fn external_data_warning(
+    source_path: &Path,
+    institution_name: &str,
+    institution_code: &str,
+    sheet: &str,
+    location: &str,
+    message: &str,
+) -> JsonValue {
+    json!({
+        "institution_name": institution_name,
+        "institution_code": institution_code,
+        "source_file": source_path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_default(),
+        "sheet": sheet,
+        "location": location,
+        "message": message,
+    })
+}
+
+fn push_data_quality_warning(warnings: &mut Vec<JsonValue>, warning: JsonValue) {
+    if !warnings.contains(&warning) {
+        warnings.push(warning);
+    }
+}
+
+fn external_value_preview(value: &str) -> String {
+    let normalized = value.replace('\r', " ").replace('\n', " ");
+    let mut characters = normalized.chars();
+    let preview: String = characters.by_ref().take(77).collect();
+    if characters.next().is_some() {
+        format!("{preview}...")
+    } else {
+        preview
+    }
 }
 
 /// Mirror of `_convert_value`.

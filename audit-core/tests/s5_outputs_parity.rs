@@ -72,6 +72,7 @@ fn runs_s5_outputs_parity_item() {
         institution_name: &request.institution_name,
         outcomes: &outcomes,
         status_counts: &counts,
+        data_quality_warnings: &[],
         source_path: &request.source,
         source_id: &request.source_id,
         source_sha256_before: &source_sha,

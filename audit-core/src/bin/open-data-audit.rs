@@ -4424,6 +4424,7 @@ fn run_s5_audit_run(arguments: S5AuditRunArgs) -> Result<()> {
             institution_name: &arguments.org_name,
             outcomes: &outcomes,
             status_counts: &status_counts,
+            data_quality_warnings: retrieval.data_quality_warnings(),
             source_path: &arguments.source,
             source_id: &arguments.source_id,
             source_sha256_before: &source_sha256_before,
@@ -4455,6 +4456,7 @@ fn run_s5_audit_run(arguments: S5AuditRunArgs) -> Result<()> {
         },
         "triggered_rows": output_summary.triggered_rows,
         "failure_rows": output_summary.failure_rows,
+        "data_quality_warning_count": output_summary.data_quality_warning_count,
         "engine": "rust_s5_configured_audit",
         "elapsed_ms": elapsed_ms,
     });

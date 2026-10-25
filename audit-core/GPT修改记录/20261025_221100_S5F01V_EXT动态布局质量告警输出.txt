@@ -1,0 +1,37 @@
+# S5-F01 V_EXT 动态静态布局质量告警输出切片
+
+- 时间：2026-10-25（Windows 原生）
+- 执行者：Codex
+- 修改前 HEAD：`ccec431`（audit-dev，与 `origin/audit-dev` 同步）
+- 修改后 commit：本功能提交，SHA 以 Git 历史为准
+- WIP：在现有 S5 无契约动态布局工作基础上继续；保留未跟踪的 `HANDOFF_ZCODE_TO_CODEX.md` 与 `.pytest-tmp-v3/`，均不纳入提交。
+
+【目的】将 Python 动态 V_EXT 路径的布局/数值质量告警接入 Rust 审核输出；修正整数数值类型作为合法数值处理。S5-F01 整体仍未验收。
+
+【修改文件】
+
+- `audit-core/src/s5_retrieval.rs`：收集外部布局发现告警；无契约普通静态布局的空白、非法数值及公式文本按 0 参与审核，并生成与 Python 字段和消息一致的告警；兼容 `integer` 存储值类型；端到端对拍覆盖整数金额值。
+- `audit-core/src/s5_outputs.rs`：将告警写入兼容的“数据质量提示”表和 `运行总账.json`，并汇总告警数量。
+- `audit-core/src/bin/open-data-audit.rs`：将告警数量纳入 `s5-audit-run` JSON 汇总。
+- `audit-core/tests/s5_previous_source_cli.rs`：覆盖布局告警、空白/非法值、整数值及既有 V_PRE/V_EXT 行为。
+- `audit-core/tests/s5_outputs_parity.rs`：补齐输出请求的告警输入。
+- `audit-core/probe/reports/s5_vext_dynamic_layout_quality_synthetic_parity_windows_native_20261025.json`：记录空白、非数值和整数金额三例 Python/Rust 对拍及边界。
+- `audit-core/MIGRATION_INVENTORY.md`：更新当前 V_EXT 子切片和未完成范围。
+- 本修改记录。
+
+【业务/配置/VBA】配置格式未变，不涉及 VBA。只读 Python 基线将静态布局告警记录到总账和结果表，空白/非数值按 0 参与审核；Rust 已接入同一行为。无契约时间序列布局仍拒绝；配置契约取数路径行为未改变。原 Python 项目及真实样本未修改。
+
+【测试与对拍】
+
+- `cargo fmt --all -- --check`：通过。
+- `cargo check --offline --locked -p audit-core --lib`：通过；仅有既存 workspace 弃用/未使用代码警告。
+- `cargo test --offline --locked -p audit-core --test s5_previous_source_cli -- --nocapture`：7 passed，覆盖动态静态布局取数、数据质量告警工作表/总账、整数值、时间序列拒绝及既有 V_PRE/契约 V_EXT 回归。
+- Python 3.12.10 / openpyxl 3.1.5 定向基线测试：`test_s5_configured_engine.py` 中外部换算、映射边界及空白/非数值质量告警 6 passed。
+- Windows 原生同一临时合成输入 Python `AuditEngine.run` 与 Rust `open-data-audit s5-audit-run` 对拍：空白、非数值、整数金额 3 例状态与当前值一致；警告字段、总账及质量表行一致；质量表冻结/筛选/页面设置/列宽/字体填充等布局一致，差异 0。详见上述 JSON 报告。
+- 合成输出未验证真实外部工作簿，也不代表 S5-F01 全部迁移或目标平台验收。
+
+【未执行/已知问题】真实外部文件、V_EXT 时间序列、多来源歧义、外部文件地址扫描、Linux/目标 glibc/deb、麒麟 V10/UOS V20 均未验收。S5-F01 整体仍未验证。Audit 共享能力请求 #8 仍未解决；本轮未修改共享 crate 或根 Cargo 配置。
+
+【组件版本】`audit-core` crate 版本 `0.1.0`，不升级。
+
+【删除清单/回滚】未删除任何项目文件。仅回滚本功能提交；不得改动 `HANDOFF_ZCODE_TO_CODEX.md`、其他既有 WIP、原 Python 项目或真实样本。

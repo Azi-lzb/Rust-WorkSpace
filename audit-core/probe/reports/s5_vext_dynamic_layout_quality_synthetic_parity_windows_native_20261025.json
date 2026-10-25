@@ -1,0 +1,75 @@
+{
+  "feature": "S5-F01 V_EXT dynamic ordinary-layout data-quality warnings",
+  "platform": "Windows native x86_64",
+  "input": "synthetic XLSX workbooks generated in a temporary directory; no SourceContract",
+  "python": {
+    "runtime": "3.12.10",
+    "excel_engine": "openpyxl 3.1.5"
+  },
+  "rust": {
+    "entry": "open-data-audit s5-audit-run",
+    "excel_engine": "Calamine through excel-reader"
+  },
+  "cases": [
+    {
+      "case": "blank external metric",
+      "python_status": "TRIGGERED",
+      "rust_status": "TRIGGERED",
+      "python_current_value": "0",
+      "rust_current_value": "0",
+      "python_warning_count": 1,
+      "rust_warning_count": 1,
+      "warning_ledger_fields_equal": true,
+      "warning_sheet_rows_equal": true,
+      "warning_sheet_layout_equal": true
+    },
+    {
+      "case": "nonnumeric external metric",
+      "python_status": "TRIGGERED",
+      "rust_status": "TRIGGERED",
+      "python_current_value": "0",
+      "rust_current_value": "0",
+      "python_warning_count": 1,
+      "rust_warning_count": 1,
+      "warning_ledger_fields_equal": true,
+      "warning_sheet_rows_equal": true,
+      "warning_sheet_layout_equal": true
+    },
+    {
+      "case": "whole-number external metric",
+      "python_status": "TRIGGERED",
+      "rust_status": "TRIGGERED",
+      "python_current_value": "10000",
+      "rust_current_value": "10000",
+      "python_warning_count": 0,
+      "rust_warning_count": 0,
+      "warning_ledger_fields_equal": true,
+      "warning_sheet_rows_equal": true,
+      "warning_sheet_layout_equal": "not applicable; no warning sheet expected"
+    }
+  ],
+  "warning_sheet_contract": {
+    "headers_and_rows": "equal",
+    "freeze_panes": "A2",
+    "autofilter": "A1:F2",
+    "gridlines": false,
+    "page_setup": {
+      "orientation": "landscape",
+      "paper_size": "A3",
+      "fit_to_width": 1,
+      "fit_to_height": 0,
+      "repeat_rows": "1:1"
+    },
+    "row_heights": [30, 54],
+    "column_widths": [34, 26, 45, 24, 18, 90],
+    "styles": "font, fill, alignment, wrapping, and institution-code text format equal after RGB alpha normalization",
+    "serialization_normalization": "rust_xlsxwriter omits default fitToWidth=1; openpyxl reports it as 1"
+  },
+  "result": "PASS",
+  "limits": [
+    "Synthetic ordinary-layout inputs only; no real external workbook acceptance.",
+    "V_EXT time-series layout remains explicitly unsupported.",
+    "No Linux, glibc 2.28, deb, Kylin V10, or UOS V20 validation was performed.",
+    "S5-F01 remains unverified overall; Audit shared capability request #8 remains unresolved."
+  ]
+}

@@ -5,7 +5,8 @@
 //! (triggered + failure rows, severity-classified error types, evidence-based
 //! locations and hyperlinks to the copies, per-column precision formats, the
 //! Python `_style_table` look), and the 运行总账.json ledger. Conditional
-//! format and data-quality tables belong to slices that produce those inputs.
+//! format results remain a separate future slice; dynamic external-source data
+//! quality warnings are written to the baseline-compatible table and ledger.
 
 use crate::s5_service::S5RuleOutcome;
 use excel_writer::{Color, Format, FormatAlign, FormatUnderline, Workbook};
@@ -32,6 +33,7 @@ pub struct S5OutputRequest<'a> {
     pub institution_name: &'a str,
     pub outcomes: &'a [S5RuleOutcome],
     pub status_counts: &'a BTreeMap<String, usize>,
+    pub data_quality_warnings: &'a [JsonValue],
     pub source_path: &'a Path,
     pub source_id: &'a str,
     pub source_sha256_before: &'a str,
@@ -68,6 +70,7 @@ pub struct S5WriteOutputsSummary {
     pub output_files: S5OutputFiles,
     pub triggered_rows: usize,
     pub failure_rows: usize,
+    pub data_quality_warning_count: usize,
 }
 
 const RESULT_HEADERS: [&str; 12] = [
@@ -767,6 +770,80 @@ pub fn write_run_outputs(
         conditional
             .set_repeat_rows(0, 0)
             .map_err(|error| error.to_string())?;
+
+        if !request.data_quality_warnings.is_empty() {
+            let quality = workbook
+                .add_worksheet()
+                .set_name("数据质量提示")
+                .map_err(|error| error.to_string())?;
+            quality.set_screen_gridlines(false);
+            let warning_headers = [
+                "机构名称",
+                "统一社会信用代码",
+                "来源文件",
+                "工作表",
+                "单元格/行",
+                "提示",
+            ];
+            let warning_widths = [34.0, 26.0, 45.0, 24.0, 18.0, 90.0];
+            for (column, header) in warning_headers.iter().enumerate() {
+                quality
+                    .write_string_with_format(0, column as u16, *header, &header_format)
+                    .map_err(|error| error.to_string())?;
+            }
+            quality
+                .set_row_height(0, 30.0)
+                .map_err(|error| error.to_string())?;
+            for (row_index, warning) in request.data_quality_warnings.iter().enumerate() {
+                let values = [
+                    "institution_name",
+                    "institution_code",
+                    "source_file",
+                    "sheet",
+                    "location",
+                    "message",
+                ];
+                for (column, key) in values.iter().enumerate() {
+                    let text = warning
+                        .get(*key)
+                        .and_then(JsonValue::as_str)
+                        .unwrap_or_default();
+                    let format = if column == 1 {
+                        &text_format
+                    } else {
+                        &body_format
+                    };
+                    quality
+                        .write_string_with_format(row_index as u32 + 1, column as u16, text, format)
+                        .map_err(|error| error.to_string())?;
+                }
+                quality
+                    .set_row_height(row_index as u32 + 1, 54.0)
+                    .map_err(|error| error.to_string())?;
+            }
+            quality
+                .set_freeze_panes(1, 0)
+                .map_err(|error| error.to_string())?;
+            quality
+                .autofilter(
+                    0,
+                    0,
+                    request.data_quality_warnings.len() as u32,
+                    warning_headers.len() as u16 - 1,
+                )
+                .map_err(|error| error.to_string())?;
+            for (column, width) in warning_widths.iter().enumerate() {
+                quality
+                    .set_column_width_pixels(column as u16, ((*width as f64) * 7.0).round() as u32)
+                    .map_err(|error| error.to_string())?;
+            }
+            quality.set_landscape();
+            quality.set_paper_size(8);
+            quality.set_print_fit_to_pages(1, 0);
+            quality
+                .set_repeat_rows(0, 0)
+                .map_err(|error| error.to_string())?;
+        }
         workbook
             .save(&result_path)
             .map_err(|error| error.to_string())?;
@@ -788,6 +865,7 @@ pub fn write_run_outputs(
         "configuration_sha256": request.config_sha256_before,
         "run_status": "COMPLETED",
         "status_counts": request.status_counts,
+        "data_quality_warnings": request.data_quality_warnings,
         "audit_copy_manifest": manifest,
         "output_files": {
             "result_workbook": output_files.result_workbook.display().to_string(),
@@ -808,6 +886,7 @@ pub fn write_run_outputs(
         output_files,
         triggered_rows,
         failure_rows,
+        data_quality_warning_count: request.data_quality_warnings.len(),
     })
 }
 
@@ -847,6 +926,7 @@ mod tests {
             institution_name: "sample",
             outcomes: &[],
             status_counts: &counts,
+            data_quality_warnings: &[],
             source_path: &source,
             source_id: "CURRENT",
             source_sha256_before: &source_sha,
@@ -901,6 +981,7 @@ mod tests {
             institution_name: "sample",
             outcomes: &[],
             status_counts: &counts,
+            data_quality_warnings: &[],
             source_path: &current,
             source_id: "CURRENT",
             source_sha256_before: &current_sha,

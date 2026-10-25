@@ -729,7 +729,7 @@ fn s5_audit_cli_retrieves_ordinary_external_layout_without_contract() {
 }
 
 #[test]
-fn s5_audit_cli_fails_closed_when_dynamic_external_layout_has_unmigrated_warnings() {
+fn s5_audit_cli_records_dynamic_external_layout_warnings() {
     let directory = temporary_directory();
     let current = directory.join("current.xlsx");
     let external = directory.join("external.xlsx");
@@ -747,7 +747,35 @@ fn s5_audit_cli_fails_closed_when_dynamic_external_layout_has_unmigrated_warning
     );
     let summary: Value = serde_json::from_slice(&output.stdout).expect("valid CLI JSON");
     assert_eq!(summary["status"], "completed");
-    assert_eq!(summary["status_counts"]["RETRIEVAL_FAILED"], 1);
+    assert_eq!(summary["status_counts"]["TRIGGERED"], 1);
+    assert_eq!(summary["data_quality_warning_count"], 1);
+    let result_path = PathBuf::from(
+        summary["output_files"]["result_workbook"]
+            .as_str()
+            .expect("result workbook path"),
+    );
+    let result_workbook = read_workbook(&result_path).expect("read layout-warning result");
+    let warning_sheet = result_workbook
+        .sheets
+        .iter()
+        .find(|sheet| sheet.name == "数据质量提示")
+        .expect("data-quality warning sheet");
+    assert_eq!(
+        CellValue::from_probe_json(&warning_sheet.values["C2"]).expect("source file"),
+        CellValue::Text("external.xlsx".to_owned())
+    );
+    assert_eq!(
+        CellValue::from_probe_json(&warning_sheet.values["E2"]).expect("warning location"),
+        CellValue::Text("第4行".to_owned())
+    );
+    let ledger_path = PathBuf::from(
+        summary["output_files"]["run_ledger"]
+            .as_str()
+            .expect("run ledger path"),
+    );
+    let ledger: Value =
+        serde_json::from_slice(&fs::read(ledger_path).expect("read ledger")).expect("valid ledger");
+    assert_eq!(ledger["data_quality_warnings"].as_array().unwrap().len(), 1);
 
     fs::remove_dir_all(directory).expect("remove synthetic warning-layout files");
 }
@@ -786,7 +814,7 @@ fn s5_audit_cli_rejects_unmigrated_dynamic_external_time_series_layout() {
 }
 
 #[test]
-fn s5_audit_cli_fails_closed_for_invalid_dynamic_external_numeric_values() {
+fn s5_audit_cli_uses_zero_and_records_invalid_dynamic_external_numeric_values() {
     let directory = temporary_directory();
     let current = directory.join("current.xlsx");
     let external = directory.join("external.xlsx");
@@ -799,7 +827,8 @@ fn s5_audit_cli_fails_closed_for_invalid_dynamic_external_numeric_values() {
     let output = run_cli(&config, &current, None, Some(&external), &output_dir, true);
     assert!(output.status.success());
     let summary: Value = serde_json::from_slice(&output.stdout).expect("valid CLI JSON");
-    assert_eq!(summary["status_counts"]["RETRIEVAL_FAILED"], 1);
+    assert_eq!(summary["status_counts"]["PASSED"], 1);
+    assert_eq!(summary["data_quality_warning_count"], 1);
     let result_path = PathBuf::from(
         summary["output_files"]["result_workbook"]
             .as_str()
@@ -811,11 +840,79 @@ fn s5_audit_cli_fails_closed_for_invalid_dynamic_external_numeric_values() {
         .iter()
         .find(|sheet| sheet.name == "审核结果")
         .expect("result sheet");
-    let description = CellValue::from_probe_json(&result_sheet.values["I2"])
-        .expect("invalid-value rejection message");
-    assert!(
-        matches!(description, CellValue::Text(text) if text.contains("动态取数的数据质量告警尚未迁移"))
+    assert!(!result_sheet.values.contains_key("J2"));
+    let warning_sheet = result_workbook
+        .sheets
+        .iter()
+        .find(|sheet| sheet.name == "数据质量提示")
+        .expect("data-quality warning sheet");
+    assert!(matches!(
+        CellValue::from_probe_json(&warning_sheet.values["F2"]).expect("warning message"),
+        CellValue::Text(message) if message.contains("已按 0 参与审核")
+    ));
+    let ledger_path = PathBuf::from(
+        summary["output_files"]["run_ledger"]
+            .as_str()
+            .expect("run ledger path"),
     );
+    let ledger: Value =
+        serde_json::from_slice(&fs::read(ledger_path).expect("read ledger")).expect("valid ledger");
+    assert_eq!(ledger["data_quality_warnings"].as_array().unwrap().len(), 1);
 
     fs::remove_dir_all(directory).expect("remove synthetic invalid-value files");
+}
+
+#[test]
+fn s5_audit_cli_accepts_whole_number_dynamic_external_values() {
+    let directory = temporary_directory();
+    let current = directory.join("current.xlsx");
+    let external = directory.join("external.xlsx");
+    let config = directory.join("config.xlsx");
+    let output_dir = directory.join("out");
+    write_source(&current, 1500.0);
+    write_external_source(&external, 1.0);
+    write_config(&config, true, false);
+
+    let input_workbook = read_workbook(&external).expect("read integer external source");
+    let input_sheet = input_workbook
+        .sheets
+        .iter()
+        .find(|sheet| sheet.name == "集中系统数据")
+        .expect("external data sheet");
+    assert_eq!(
+        CellValue::from_probe_json(&input_sheet.values["C3"]).expect("whole-number metric"),
+        CellValue::Number(1.0),
+        "test input must be a whole-number amount"
+    );
+
+    let output = run_cli(&config, &current, None, Some(&external), &output_dir, true);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let summary: Value = serde_json::from_slice(&output.stdout).expect("valid CLI JSON");
+    assert_eq!(summary["status_counts"]["PASSED"], 1);
+    assert_eq!(summary["data_quality_warning_count"], 0);
+    let result_path = PathBuf::from(
+        summary["output_files"]["result_workbook"]
+            .as_str()
+            .expect("result workbook path"),
+    );
+    let result_workbook = read_workbook(&result_path).expect("read integer-value result");
+    assert!(result_workbook
+        .sheets
+        .iter()
+        .all(|sheet| sheet.name != "数据质量提示"));
+
+    let ledger_path = PathBuf::from(
+        summary["output_files"]["run_ledger"]
+            .as_str()
+            .expect("run ledger path"),
+    );
+    let ledger: Value =
+        serde_json::from_slice(&fs::read(ledger_path).expect("read ledger")).expect("valid ledger");
+    assert_eq!(ledger["data_quality_warnings"].as_array().unwrap().len(), 0);
+
+    fs::remove_dir_all(directory).expect("remove synthetic integer-value files");
 }
