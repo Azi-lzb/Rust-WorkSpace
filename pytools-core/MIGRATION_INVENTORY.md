@@ -840,3 +840,9 @@ WSL 验证：`x86_64-unknown-linux-gnu.2.28` release（HEAD `328532c`）与 deb 
 ### 2026-10-25 真实业务配置加载对拍（用户 VBA 工具仓库主簿）
 
 将用户提供的 VBA 工具仓库主簿（https://github.com/Azi-lzb/VBA_Excel_Tools，HEAD `cea6dfa`）作为**真实配置数据源**入库为夹具 `tests/fixtures/vba_config/VbaV2.4.2.xlsm`（公开仓库内容，1.1MB）。其配置页含此前全部合成夹具未覆盖的真实业务配置：15 条时序提取规则、146 条路径标准化映射、17 条去重任务、3 条打印任务、3 家外资行、39 条机构映射（工作表提取任务为空；全局配置页为 VBA 版结构、PyCode 侧无此表属预期差异不参与对拍）。以只读 PyCode 各配置加载器产出逐字段基线 `expected_loaders.json`，新增集成测试 `config_vba_workbook_parity.rs`：Rust `config` 模块同名加载器对同一夹具全部七段配置与基线**逐字段精确一致，零分歧**——首次为配置解析面建立真实业务数据对拍证据。`config.rs` 相应结构补 `Serialize` derive（无行为影响）。Windows 原生全量 `cargo test` 43 项结果全绿、`cargo fmt --check` 通过。该证据覆盖配置加载层；各配置驱动的业务执行仍按各自既有合成/真实验收状态。
+
+### 2026-10-25 真实规则×合成数据宽表执行对拍与区间超界缺陷修复
+
+把真实配置对拍从"解析"推进到"执行"：以 VBA 簿 15 条真实规则 + 146 条真实路径映射构造桥接配置（两页原样复制 + 合成全局页），三个合成源簿分别命中三条形态迥异的真实规则——`中外资本外币分地区`（双列头行 38/39、行头 B 列、数据区间 40-66 **有上界**、起始列 3）、`普惠分地区`（行头 A 列、单列头行）、`分地区统计研究调研问卷`（三列拼接行头、数据列 4 起）。对拍立即暴露真实缺陷：真实规则按模板最大行配区间而实际源簿行数更少时，PyCode 对越界行头取空串自然跳过（`_header_cell_text`/`_row_header_text` 越界保护）即**静默截断**，而 Rust `rule_engine` 对"配置数据区间超出工作表"直接报错失败。修复：`row_end`/`col_end` 对齐 PyCode 可观察行为截断到实际行列（wide 侧列向本有 `min` clamp），区间完全在表外时仍返回空。修复后两种行头模式 PyCode/Rust 完整投影精确一致（中外资本外币分地区 9×8、普惠分地区 7×5、调研问卷 4×6）。对拍脚本入库 `probe/compare_real_rules_wide.py`，机器报告 `probe/reports/real_rules_wide_parity_20261025.json`。
+
+同轮修复既有测试并发缺陷：`dedup_comment_delete_umya`/`dedup_append_execution` 的配置夹具把输出/日志目录写成相对路径 `output`/`logs`，CLI 子进程以 crate 根为 cwd，全量并行时多个测试二进制共享同一 `pytools-core/output` 相互踩踏（连续三轮全量随机红、单跑皆绿）；改为各测试临时目录的绝对路径后全量连续两轮 43 项全绿。本轮为真实规则 + 合成源数据证据，不构成真实报表样本验收。

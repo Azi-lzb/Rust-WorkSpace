@@ -115,9 +115,17 @@ fn make_config(path: &Path, source: &Path, target: &Path) -> Result<()> {
     for (column, value) in ["配置项", "值"].iter().enumerate() {
         global.write_string(0, column as u16, *value)?;
     }
+    // absolute per-test output: parallel CLI tests must not share the
+    // crate-root relative "output" directory
+    let output_value = path
+        .parent()
+        .context("configuration parent missing")?
+        .join("output")
+        .to_string_lossy()
+        .into_owned();
     for (row, (key, value)) in [
         ("输入目录", "."),
-        ("输出目录", "output"),
+        ("输出目录", output_value.as_str()),
         ("日志目录", "logs"),
     ]
     .iter()

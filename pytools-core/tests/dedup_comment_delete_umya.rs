@@ -99,10 +99,20 @@ fn make_config(path: &Path, source: &Path) -> Result<()> {
     global.write_string(0, 1, "值")?;
     global.write_string(1, 0, "输入目录")?;
     global.write_string(1, 1, ".")?;
+    // absolute per-test output/log dirs: parallel CLI tests must not share
+    // the crate-root relative "output"/"logs" directories
+    let output_dir = path
+        .parent()
+        .context("configuration parent missing")?
+        .join("output");
+    let log_dir = path
+        .parent()
+        .context("configuration parent missing")?
+        .join("logs");
     global.write_string(2, 0, "输出目录")?;
-    global.write_string(2, 1, "output")?;
+    global.write_string(2, 1, output_dir.to_string_lossy().into_owned())?;
     global.write_string(3, 0, "日志目录")?;
-    global.write_string(3, 1, "logs")?;
+    global.write_string(3, 1, log_dir.to_string_lossy().into_owned())?;
 
     let sheet = workbook.add_worksheet();
     sheet.set_name("去重追加数据配置")?;

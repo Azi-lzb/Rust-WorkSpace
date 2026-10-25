@@ -304,9 +304,14 @@ pub fn extract_cells_from_matrix<T: SheetValue>(
     if row_start > row_end || col_start > col_end {
         return Ok(Vec::new());
     }
-    if row_end >= rows || col_end >= column_count {
-        return Err("configured data range is outside the worksheet");
-    }
+    // PyCode reads out-of-range header cells as empty strings, so rows beyond
+    // the stored data silently drop out (empty row header), and the wide
+    // pipeline clamps its configured column bound to the sheet. Real VBA
+    // rules routinely configure the template's maximal row span while actual
+    // reports are shorter, so a configured range past the sheet must
+    // truncate instead of failing.
+    let row_end = row_end.min(rows.saturating_sub(1));
+    let col_end = col_end.min(column_count.saturating_sub(1));
 
     let header_texts = collect_header_rows(
         sheet,
