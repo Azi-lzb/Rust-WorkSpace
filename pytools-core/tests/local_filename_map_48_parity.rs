@@ -273,3 +273,83 @@ fn operation_48_rejects_an_empty_mapping() {
     assert!(error.to_string().contains("缺少 M/N 列"));
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn operation_48_matches_pandas_nan_stringification_for_missing_config_cells() {
+    let expected = baseline()["pandas_empty_config_cells"].clone();
+    let root = temporary_directory();
+    let input_dir = root.join("input");
+    fs::create_dir_all(&input_dir).unwrap();
+    let config = root.join("config.xlsx");
+    let mut workbook = excel_writer::Workbook::new();
+    let sheet = workbook.add_worksheet();
+    sheet
+        .set_name("\u{91cd}\u{547d}\u{540d}\u{914d}\u{7f6e}")
+        .unwrap();
+    sheet
+        .write_string(0, 12, "\u{539f}\u{6587}\u{4ef6}\u{540d}\u{7247}\u{6bb5}")
+        .unwrap();
+    sheet
+        .write_string(0, 13, "\u{65b0}\u{6587}\u{4ef6}\u{540d}\u{7247}\u{6bb5}")
+        .unwrap();
+    sheet.write_string(1, 0, "keep this pandas row").unwrap();
+    sheet.write_string(2, 13, "mapped").unwrap();
+    sheet.write_string(3, 12, "remove").unwrap();
+    sheet
+        .write_string(4, 0, "keep the trailing pandas row")
+        .unwrap();
+    workbook.save(&config).unwrap();
+
+    let inputs = [
+        ("nan.txt", "payload from nan"),
+        ("remove.txt", "payload from remove"),
+        ("keep.txt", "payload from keep"),
+    ];
+    let files = inputs
+        .iter()
+        .map(|(name, content)| {
+            let path = input_dir.join(name);
+            fs::write(&path, content.as_bytes()).unwrap();
+            path
+        })
+        .collect::<Vec<_>>();
+
+    let result = run_local_filename_map_candidate(&config, &files).unwrap();
+    assert_eq!(
+        result.rules,
+        expected["stats"]["rules"].as_u64().unwrap() as usize
+    );
+    assert_eq!(
+        result.ok,
+        expected["stats"]["ok"].as_u64().unwrap() as usize
+    );
+    assert_eq!(
+        result.skip,
+        expected["stats"]["skip"].as_u64().unwrap() as usize
+    );
+
+    let final_entries = fs::read_dir(&input_dir)
+        .unwrap()
+        .filter_map(Result::ok)
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .collect::<BTreeSet<_>>();
+    let expected_entries = expected["final_entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|value| value.as_str().unwrap().to_owned())
+        .collect::<BTreeSet<_>>();
+    assert_eq!(final_entries, expected_entries);
+
+    for (output, content) in [
+        ("mapped.txt", "payload from nan"),
+        ("nan.txt", "payload from remove"),
+        ("keep.txt", "payload from keep"),
+    ] {
+        assert_eq!(
+            fs::read(input_dir.join(output)).unwrap(),
+            content.as_bytes()
+        );
+    }
+    fs::remove_dir_all(root).unwrap();
+}

@@ -334,11 +334,11 @@ fn load_mappings(path: &Path) -> Result<Vec<(String, String)>> {
         .unwrap_or(1);
     let mappings = (2..=max_row)
         .filter_map(|row| {
-            let source = field_at(sheet, row, source_column);
+            let source = pandas_object_cell_text(sheet, row, source_column);
             if source.is_empty() {
                 return None;
             }
-            Some((source, field_at(sheet, row, target_column)))
+            Some((source, pandas_object_cell_text(sheet, row, target_column)))
         })
         .collect();
     Ok(mappings)
@@ -355,12 +355,19 @@ fn header_column(sheet: &SheetDump, expected: &str) -> Option<usize> {
         .min()
 }
 
-fn field_at(sheet: &SheetDump, row: usize, column: usize) -> String {
-    sheet
-        .values
-        .get(&cell_address(row, column))
-        .map(value_text)
-        .unwrap_or_default()
+/// Match pandas read_excel(dtype=object) for blank cells in the PyCode config.
+/// Missing cells become NaN, then _norm stringifies that value as "nan".
+fn pandas_object_cell_text(sheet: &SheetDump, row: usize, column: usize) -> String {
+    let Some(value) = sheet.values.get(&cell_address(row, column)) else {
+        return "nan".to_owned();
+    };
+
+    let value_type = value["type"].as_str().unwrap_or_default();
+    if value_type == "empty" || (value_type == "string" && value["value"].as_str() == Some("")) {
+        return "nan".to_owned();
+    }
+
+    value_text(value)
 }
 
 fn value_text(value: &serde_json::Value) -> String {

@@ -29,7 +29,7 @@
       "结果_cc.docx",
       "same_cc_1.xlsx",
       "same_cc_2.xlsx",
-      "prefix_.doc"
+      "prefix_nan.doc"
     ],
     "expected_skipped_names": ["nest.txt", "unmatched.txt", "gone.pdf", "folder_aa.pdf", "zlong.bin"]
   }
