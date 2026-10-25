@@ -832,3 +832,7 @@ WSL 验证：`x86_64-unknown-linux-gnu.2.28` release（HEAD `328532c`）与 deb 
 ### 2026-10-25 NoCom 错误值差异正式定案（用户决策）
 
 用户对 PT-6-1 按使用区域汇总的 NoCom 变体差异作出决策："原样保存吧，这样能识别出错误，按 PyCode"——错误值单元格在汇总输出中保留为错误类型（PyCode/Rust 现行行为），不采用 NoCom/python-calamine 的置空行为，理由是保留错误值才能在汇总中识别出错误。据此关闭"NoCom 变体差异处置"待决策项：PyCode 为唯一行为基线正式定案，NoCom 差异（1,212 个错误单元格读空、汇总行数差等）永久仅作记录；Rust 无需代码变更（现行 OOXML Patch 保留错误值的路径即为最终行为）。
+
+### 2026-10-25 一键验收脚本扩展至八项与计划审核闭环确认
+
+应用户对"计划文件/候选副本"的询问，确认并验证完整审核闭环：`dedup-comment-plan --plan-output <计划文件>` 独立落盘 ExcelEditPlan JSON（含逐格操作与保留契约），`apply-edit-plan --plan <计划文件> --capabilities ... --platform ...` 直接消费该文件经引擎执行产出候选副本；演示并核实源文件前后 SHA-256 不变、批注保留、仅重复行标红，且 capability 校验在对象特征/保留契约未覆盖时正确拒绝。据此将 `packaging/verify_target.sh` 从五项扩展至八项：新增 T6 按批注去重计划（断言 duplicate_rows=2 与计划文件落盘，无需 capability）、T7 config-init 初始化、T8 archive-date-preview 归档日期预览；配套夹具 `dedup_ledger.xlsx` 入库。WSL 双二进制（2.28 release 与 deb 制品解包）各重验一轮均 8/8 PASS（PROVISIONAL_PASS）。实机复核口径不变。
