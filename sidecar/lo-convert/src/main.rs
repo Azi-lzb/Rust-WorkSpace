@@ -256,15 +256,14 @@ fn run_recalculate(arguments: Vec<String>) -> Result<()> {
 
 fn run_libreoffice_recalculate(input: &Path, temp_dir: &Path) -> Result<String> {
     let profile = temp_dir.join("lo-profile");
-    fs::create_dir_all(&profile).context("create LibreOffice isolated profile directory")?;
-    let profile_uri = file_uri(&profile)?;
+    let profile_argument = libreoffice_user_installation_arg(&profile)?;
     let command = Command::new("soffice")
         .arg("--headless")
         .arg("--nologo")
         .arg("--nodefault")
         .arg("--nolockcheck")
         .arg("--nofirststartwizard")
-        .arg(format!("-env:UserInstallation={profile_uri}"))
+        .arg(profile_argument)
         .arg("--convert-to")
         .arg("xlsx:Calc MS Excel 2007 XML")
         .arg("--outdir")
@@ -306,6 +305,11 @@ fn file_uri(path: &Path) -> Result<String> {
         }
     }
     Ok(format!("file://{encoded}"))
+}
+
+fn libreoffice_user_installation_arg(profile: &Path) -> Result<String> {
+    fs::create_dir_all(profile).context("create LibreOffice isolated profile directory")?;
+    Ok(format!("-env:UserInstallation={}", file_uri(profile)?))
 }
 
 fn require_engine_output(path: &Path) -> Result<()> {
@@ -522,16 +526,14 @@ fn relationships_part(part: &str) -> String {
 
 fn run_libreoffice(input: &Path, temp_dir: &Path, target: &str) -> Result<()> {
     let profile = temp_dir.join("lo-profile");
+    let profile_argument = libreoffice_user_installation_arg(&profile)?;
     let mut command = Command::new("soffice");
     command
         .arg("--headless")
         .arg("--nologo")
         .arg("--nodefault")
         .arg("--nolockcheck")
-        .arg(format!(
-            "-env:UserInstallation={}",
-            profile.to_string_lossy()
-        ))
+        .arg(profile_argument)
         .arg("--convert-to")
         .arg(if target == "xlsx" {
             "xlsx:Calc MS Excel 2007 XML"
@@ -1103,7 +1105,8 @@ impl Drop for TempDirGuard {
 #[cfg(test)]
 mod recalculation_tests {
     use super::{
-        file_uri, formula_cache_cell_count, require_engine_output, MAIN_NS, PACKAGE_REL_NS, REL_NS,
+        file_uri, formula_cache_cell_count, libreoffice_user_installation_arg,
+        require_engine_output, MAIN_NS, PACKAGE_REL_NS, REL_NS,
     };
     use anyhow::Result;
     use std::{
@@ -1196,6 +1199,26 @@ mod recalculation_tests {
         assert!(uri.contains("%23"));
         assert!(!uri.contains(' '));
         assert!(!uri.contains('中'));
+        Ok(())
+    }
+
+    #[test]
+    fn libreoffice_user_installation_argument_creates_profile_and_uses_file_uri() -> Result<()> {
+        let nonce = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
+        let profile = env::temp_dir().join(format!(
+            "lo_profile_arg_{}_{}_# space",
+            std::process::id(),
+            nonce
+        ));
+        assert!(!profile.exists());
+
+        let argument = libreoffice_user_installation_arg(&profile)?;
+
+        assert!(profile.is_dir());
+        assert!(argument.starts_with("-env:UserInstallation=file://"));
+        assert!(argument.contains("%20"));
+        assert!(argument.contains("%23"));
+        fs::remove_dir_all(profile)?;
         Ok(())
     }
 }
