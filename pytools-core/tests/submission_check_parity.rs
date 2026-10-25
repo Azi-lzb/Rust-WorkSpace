@@ -3,9 +3,9 @@ use serde_json::{json, Value};
 use std::{
     collections::BTreeMap,
     fs::{self, File},
-    io::Read,
+    io::{Read, Write},
     path::{Path, PathBuf},
-    process::Command,
+    process::{Command, Output, Stdio},
     sync::atomic::{AtomicU64, Ordering},
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -179,9 +179,125 @@ fn submission_check_cli_matches_python_workbook_and_statistics() -> Result<()> {
     Ok(())
 }
 
+#[test]
+fn submission_check_menu_matches_python_date_keyword_semantics() -> Result<()> {
+    let test_directory = TestDirectory::new()?;
+    let root = &test_directory.0;
+    let config = create_config(root)?;
+    let sources = root.join("sources");
+    fs::create_dir_all(&sources)?;
+    fs::create_dir_all(root.join("output"))?;
+    fs::create_dir_all(root.join("logs"))?;
+    for (index, name) in [
+        "2026_Area_Bank_base.txt",
+        "2026_Area_Bank_multi.txt",
+        "misc_submission.txt",
+    ]
+    .iter()
+    .enumerate()
+    {
+        fs::write(sources.join(name), format!("synthetic payload {index}"))?;
+    }
+    let original_config = fs::read(&config)?;
+    let original_files = fs::read_dir(&sources)?
+        .map(|entry| {
+            let path = entry?.path();
+            fs::read(&path).map(|bytes| (path, bytes))
+        })
+        .collect::<std::io::Result<Vec<_>>>()?;
+
+    let input = format!("4\n8\n2\n{}\n0\n", sources.display());
+    let output = run_menu(&config, &input)?;
+    assert!(
+        output.status.success(),
+        "submission-check menu failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let start = output
+        .stdout
+        .iter()
+        .position(|byte| *byte == b'{')
+        .context("submission-check menu JSON output missing")?;
+    let report: Value = serde_json::Deserializer::from_slice(&output.stdout[start..])
+        .into_iter::<Value>()
+        .next()
+        .context("submission-check menu report missing")??;
+    let expected: Value = serde_json::from_str(include_str!(
+        "../probe/reports/submission_check_python_baseline.json"
+    ))?;
+    for field in [
+        "rules",
+        "files",
+        "submitted",
+        "missing",
+        "unmatched",
+        "multi",
+    ] {
+        assert_eq!(
+            report[field], expected["statistics"][field],
+            "menu statistic {field}"
+        );
+    }
+
+    let report_path = PathBuf::from(report["output"].as_str().context("report path missing")?);
+    let actual = excel_reader::read_workbook(&report_path)?;
+    assert_eq!(
+        actual.sheets[0].values.get("B5"),
+        Some(&json!({
+            "type": "string",
+            "value": "2026-06-30 01:02:03.123000"
+        })),
+        "menu output must retain Python's date-keyword string form"
+    );
+
+    assert_eq!(fs::read(&config)?, original_config);
+    for (path, bytes) in original_files {
+        assert_eq!(fs::read(&path)?, bytes, "input changed: {}", path.display());
+    }
+    Ok(())
+}
+
+fn run_menu(config: &Path, input: &str) -> Result<Output> {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_pytools"))
+        .arg("menu")
+        .arg("--config")
+        .arg(config)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .context("start interactive PyTools menu")?;
+    child
+        .stdin
+        .take()
+        .context("interactive stdin missing")?
+        .write_all(input.as_bytes())
+        .context("send interactive menu selections")?;
+    child
+        .wait_with_output()
+        .context("wait for interactive PyTools menu")
+}
+
 fn create_config(root: &Path) -> Result<PathBuf> {
     let config = root.join("config.xlsx");
     let mut workbook = rust_xlsxwriter::Workbook::new();
+    {
+        let sheet = workbook.add_worksheet();
+        sheet.set_name("全局配置")?;
+        let output = root.join("output");
+        let logs = root.join("logs");
+        for (row, (key, value)) in [
+            ("输入目录", root.to_string_lossy().into_owned()),
+            ("输出目录", output.to_string_lossy().into_owned()),
+            ("日志目录", logs.to_string_lossy().into_owned()),
+        ]
+        .iter()
+        .enumerate()
+        {
+            sheet.write_string(row as u32, 0, *key)?;
+            sheet.write_string(row as u32, 1, value)?;
+        }
+    }
     let sheet = workbook.add_worksheet();
     sheet.set_name("提交检查配置")?;
     for (column, header) in [
