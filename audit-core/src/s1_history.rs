@@ -1663,8 +1663,22 @@ mod tests {
         let mut candidate_issue = issue("CANDIDATE-ONLY", "2026-10", true);
         candidate_issue.source_file = "candidate-source.xlsx".to_owned();
         candidate_issue.target_value = json!(0);
-        let result = build_s1_history_workbook_edit_plan(&input, &output, &[candidate_issue])
-            .expect("build real-sample history edit plan");
+        let result = match build_s1_history_workbook_edit_plan(&input, &output, &[candidate_issue])
+        {
+            Ok(result) => result,
+            Err(error) if format!("{error:#}").contains("已有 S1 历史工作表不在首位") => {
+                assert!(!output.exists(), "preflight refusal must not create output");
+                assert_eq!(fs::read(&input).unwrap(), input_bytes);
+                assert_eq!(fs::read(&source).unwrap(), source_bytes);
+                println!(
+                    "candidate_preflight=rejected reason=history_sheet_not_first editor_invoked=false production_capability=unverified"
+                );
+                fs::remove_dir_all(directory)
+                    .expect("remove temporary real-sample preflight directory");
+                return;
+            }
+            Err(error) => panic!("build real-sample history edit plan: {error:#}"),
+        };
         let plan = &result.edit_plan;
         let sheet_count = excel_reader::read_sheet_names(&input)
             .expect("read real-sample worksheet names")

@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "suite": "audit.s1_history_workbook_update_preflight",
+  "status": "expected_rejection",
+  "sample_role": "config_real_nonempty_s1_history_workbook",
+  "history_rows": 9,
+  "sheet_count": 5,
+  "history_sheet_index": 1,
+  "preflight": {
+    "result": "rejected_before_editor",
+    "reason": "history_sheet_not_first",
+    "editor_invoked": false,
+    "output_created": false,
+    "source_unchanged": true,
+    "temporary_input_unchanged": true
+  },
+  "capability_status": "unverified",
+  "preservation_comparison": "not_run_no_candidate_output",
+  "raw_paths_values_and_hashes_persisted": false,
+  "note": "The Audit edit plan requires the managed history page at index 0 to preserve the original worksheet settings/order; no Editor was invoked. PageSettings and output objects were not measured because preflight rejected the plan.",
+  "test": {
+    "command": "cargo test --offline --locked -p audit-core --lib -j 1 s1_history::tests::real_s1_history_workbook_engine_candidate_only -- --ignored --exact --nocapture",
+    "result": "passed_1"
+  }
+}
