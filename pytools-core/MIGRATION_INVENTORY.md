@@ -820,3 +820,7 @@ Windows 原生 `cargo test --offline --locked -p pytools-core` 全量通过（42
 按用户指示（WSL 通过即暂定通过、实机由用户复核，并提供一键脚本）新增 `pytools-core/packaging/verify_target.sh`：自包含 POSIX sh（内嵌 5 个合成夹具 base64，宽表夹具用相对目录语义控制落点），目标机零依赖运行（无 Python/网络/Office/binutils 要求）。自动定位二进制（`PYTOOLS_BIN` > 脚本同目录/当前目录/`/usr/bin/pytools`），打印宿主内核与 glibc、`ldd` 依赖检查（缺失库即停），依次执行 T1 config-view、T2 summary-used-range（错误值夹具 + 运行历史 succeeded 断言）、T3 summary-comments、T4 wide-summary（规则命中 + 输出文件断言）、T5 交互菜单冒烟；逐项 PASS/FAIL、失败附输出尾部，结果与工作目录保留供查看，退出码反映整体结果，并显式标注"暂定通过、终验仍需实机与真实业务簿"。夹具源文件入库于 `packaging/target_fixtures/`。
 
 WSL 验证：`x86_64-unknown-linux-gnu.2.28` release（HEAD `328532c`）与 deb 制品解包二进制（`pytools_0.1.0-20261025_amd64.deb`）各运行一轮，均 5/5 PASS（RESULT=PROVISIONAL_PASS）。该结果按用户口径登记为麒麟 V10/UOS V20 的**暂定通过**；实机运行 `sh verify_target.sh`（deb 安装后自动探测 `/usr/bin/pytools`）由用户复核。开发中发现并修正脚本断言一处（紧凑 JSON 无空格），非产品缺陷。
+
+### 2026-10-25 NoCom 差异与生产 capability 的默认决策状态
+
+应用户询问说明两项待决策事项后未收到即时选择，即日起在用户另行决策前按以下默认执行（三项均与现状一致，无代码变更）：其一，NoCom 变体差异保持 PyCode 唯一行为基线（错误值保留为错误类型等），NoCom 差异（含 1,212 个错误单元格输出为空、汇总行数差 2,063 行等）继续仅作待确认记录，不实现、不生成第三产品；其二，输入合同维持 .xlsx/.xlsm，.xls 经已验证的显式转换流程处理，不将 NoCom 的 .xls/.xlsb 直读纳入范围；其三，生产 ExcelModifier capability 维持仅计划模式（改写类功能只生成计划/候选不落盘），待用户提供真实模板并完成"引擎+操作组合+保留项"整批对拍后逐项登记。用户可随时推翻以上任何一项。
