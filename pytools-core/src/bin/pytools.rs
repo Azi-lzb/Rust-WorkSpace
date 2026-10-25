@@ -654,14 +654,23 @@ where
         return Ok(());
     };
     fs::create_dir_all(&output_dir)?;
-    fs::write(&plan_path, serde_json::to_vec_pretty(&plan)?)?;
-    writeln!(
-        output,
-        "[计划已生成] 共 {} 项操作，用时={}ms：{}",
-        plan.operations.len(),
-        plan_started.elapsed().as_millis(),
-        plan_path.display()
-    )?;
+    if global.emit_plan_files {
+        fs::write(&plan_path, serde_json::to_vec_pretty(&plan)?)?;
+        writeln!(
+            output,
+            "[计划已生成] 共 {} 项操作，用时={}ms：{}",
+            plan.operations.len(),
+            plan_started.elapsed().as_millis(),
+            plan_path.display()
+        )?;
+    } else {
+        writeln!(
+            output,
+            "[计划已生成] 共 {} 项操作，用时={}ms（全局配置 输出附带计划文件=否，计划未落盘）",
+            plan.operations.len(),
+            plan_started.elapsed().as_millis()
+        )?;
+    }
 
     let (Some(capabilities), Some(platform)) = (capabilities, platform) else {
         writeln!(
@@ -3279,6 +3288,14 @@ fn run_dedup_comment_plan(arguments: Vec<String>) -> Result<()> {
     Ok(())
 }
 
+/// 全局配置 `输出附带计划文件=否` 时跳过计划 JSON 等开发期附带文件的落盘，
+/// 实际使用只保留候选副本等核心输出（PyCode 无此开关，默认行为不变）。
+fn plan_files_enabled(config: &Path) -> bool {
+    pytools_core::config::load_global(config)
+        .map(|global| global.emit_plan_files)
+        .unwrap_or(true)
+}
+
 fn run_dedup_config_plan(arguments: Vec<String>) -> Result<()> {
     let options = parse_cli_arguments(arguments)?;
     let config = required_path(&options, "config")?;
@@ -3287,6 +3304,7 @@ fn run_dedup_config_plan(arguments: Vec<String>) -> Result<()> {
         .get("output-dir")
         .map(PathBuf::from)
         .unwrap_or(load_global(&config)?.output_dir);
+    let emit_plan_files = plan_files_enabled(&config);
     let action = parse_duplicate_action(
         options
             .values
@@ -3320,12 +3338,14 @@ fn run_dedup_config_plan(arguments: Vec<String>) -> Result<()> {
             serde_json::json!("plan_only")
         };
         if let Some(plan) = &report.plan {
-            let path = output_dir.join(format!(
-                "dedup-plan-{}-{index}.json",
-                chrono::Local::now().format("%Y%m%d_%H%M%S")
-            ));
-            fs::write(&path, serde_json::to_vec_pretty(plan)?)?;
-            plan_path = Some(path.clone());
+            if emit_plan_files {
+                let path = output_dir.join(format!(
+                    "dedup-plan-{}-{index}.json",
+                    chrono::Local::now().format("%Y%m%d_%H%M%S")
+                ));
+                fs::write(&path, serde_json::to_vec_pretty(plan)?)?;
+                plan_path = Some(path.clone());
+            }
             if let (Some(capabilities), Some(platform)) = (capabilities, platform) {
                 execution = serde_json::json!(apply_plan_with_capability_file(
                     plan,
@@ -3371,8 +3391,14 @@ fn run_dedup_append_plan(arguments: Vec<String>) -> Result<()> {
     let timestamp = Local::now().format("%Y%m%d_%H%M%S");
     let mut output = Vec::new();
     for (index, report) in reports.iter().enumerate() {
-        let plan_path = output_dir.join(format!("dedup-append-{timestamp}-{index}.json"));
-        fs::write(&plan_path, serde_json::to_vec_pretty(report)?)?;
+        let plan_path = global
+            .emit_plan_files
+            .then(|| -> Result<PathBuf> {
+                let path = output_dir.join(format!("dedup-append-{timestamp}-{index}.json"));
+                fs::write(&path, serde_json::to_vec_pretty(report)?)?;
+                Ok(path)
+            })
+            .transpose()?;
         output.push(serde_json::json!({
             "target": report.target,
             "candidate": report.candidate,
@@ -3665,6 +3691,7 @@ fn run_print_config_plan(arguments: Vec<String>) -> Result<()> {
         Some(path) => PathBuf::from(path),
         None => load_global(&config)?.output_dir,
     };
+    let emit_plan_files = plan_files_enabled(&config);
     let tasks = pytools_core::config::load_print_tasks(config)?;
     let reports = build_config_print_plans(&tasks)?;
     if !reports.is_empty() {
@@ -3682,8 +3709,13 @@ fn run_print_config_plan(arguments: Vec<String>) -> Result<()> {
             .plan
             .as_ref()
             .context("grouped print report has no edit plan")?;
-        let path = output_dir.join(format!("print-target-{index}.plan.json"));
-        fs::write(&path, serde_json::to_vec_pretty(plan)?)?;
+        let path = emit_plan_files
+            .then(|| -> Result<PathBuf> {
+                let path = output_dir.join(format!("print-target-{index}.plan.json"));
+                fs::write(&path, serde_json::to_vec_pretty(plan)?)?;
+                Ok(path)
+            })
+            .transpose()?;
         let execution = if let (Some(capabilities), Some(platform)) = (capabilities, platform) {
             let output_parent = plan
                 .output
@@ -3785,11 +3817,17 @@ fn run_village_split_batch(arguments: Vec<String>) -> Result<()> {
             .map(|config| config.log_dir.clone())
             .unwrap_or_else(|| PathBuf::from("logs")),
     };
+    let emit_plan_files = config
+        .as_ref()
+        .map(|global| global.emit_plan_files)
+        .unwrap_or(true);
     let plan_dir = unique_menu_action_dir(&output_dir, "village-split");
     fs::create_dir_all(&output_dir)
         .with_context(|| format!("create output directory {}", output_dir.display()))?;
-    fs::create_dir_all(&plan_dir)
-        .with_context(|| format!("create plan directory {}", plan_dir.display()))?;
+    if emit_plan_files {
+        fs::create_dir_all(&plan_dir)
+            .with_context(|| format!("create plan directory {}", plan_dir.display()))?;
+    }
 
     let started = Instant::now();
     let started_at = Local::now().to_rfc3339();
@@ -3887,21 +3925,23 @@ fn run_village_split_batch(arguments: Vec<String>) -> Result<()> {
             let execution = if let Some(plan) = report.plan.as_ref() {
                 current_stage = "plan_persistence";
                 let persistence_started = Instant::now();
-                fs::write(&plan_path, serde_json::to_vec_pretty(plan)?)
-                    .with_context(|| format!("write edit plan {}", plan_path.display()))?;
-                emit_village_split_event(
-                    &mut events,
-                    log_view,
-                    started,
-                    "plan_persistence",
-                    "completed",
-                    "已保存工作簿修改计划",
-                    &progress,
-                    Some(persistence_started),
-                    &["pytools-core"],
-                    None,
-                    None,
-                );
+                if emit_plan_files {
+                    fs::write(&plan_path, serde_json::to_vec_pretty(plan)?)
+                        .with_context(|| format!("write edit plan {}", plan_path.display()))?;
+                    emit_village_split_event(
+                        &mut events,
+                        log_view,
+                        started,
+                        "plan_persistence",
+                        "completed",
+                        "已保存工作簿修改计划",
+                        &progress,
+                        Some(persistence_started),
+                        &["pytools-core"],
+                        None,
+                        None,
+                    );
+                }
                 current_stage = "engine_execution";
                 let execution_started = Instant::now();
                 let execution = execute_optional_plan(&options, Some(plan))?;
@@ -7865,8 +7905,10 @@ fn run_wide_summary_cli_report(
                         let plan_path = global
                             .output_dir
                             .join(format!("{stem}_target_append_{}.json", index + 1));
-                        fs::write(&plan_path, serde_json::to_vec_pretty(&plan)?)?;
-                        append_plans.push(plan_path);
+                        if global.emit_plan_files {
+                            fs::write(&plan_path, serde_json::to_vec_pretty(&plan)?)?;
+                            append_plans.push(plan_path);
+                        }
                     }
                     Ok(())
                 })();

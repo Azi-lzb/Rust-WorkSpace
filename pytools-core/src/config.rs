@@ -28,6 +28,9 @@ pub struct GlobalConfig {
     pub default_encoding: String,
     pub source_exts: Vec<String>,
     pub timeline_rule_match_mode: String,
+    /// 开发期审核用的计划 JSON 等附带文件是否落盘；实际使用可在全局配置
+    /// 以 `输出附带计划文件=否` 关闭，仅保留候选副本等核心输出。
+    pub emit_plan_files: bool,
 }
 
 impl GlobalConfig {
@@ -40,6 +43,7 @@ impl GlobalConfig {
             default_encoding: "utf-8".to_owned(),
             source_exts: vec![".xlsx".to_owned(), ".xlsm".to_owned(), ".csv".to_owned()],
             timeline_rule_match_mode: "all_match".to_owned(),
+            emit_plan_files: true,
         }
     }
 }
@@ -163,6 +167,10 @@ pub fn load_global(config_path: impl AsRef<Path>) -> Result<GlobalConfig> {
             .unwrap_or_else(|| "utf-8".to_owned()),
         source_exts,
         timeline_rule_match_mode,
+        emit_plan_files: values
+            .get("输出附带计划文件")
+            .map(|value| !matches!(value.trim(), "否" | "N" | "n" | "false" | "FALSE"))
+            .unwrap_or(true),
     })
 }
 
