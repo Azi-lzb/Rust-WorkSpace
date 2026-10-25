@@ -17,7 +17,10 @@ use excel_editor::{
     inspect_xlsx_profile, CellValue, EditOperation, ExcelEditPlan, PreservationRequirement,
     RangeStyleMode, WorkbookFormat,
 };
-use excel_reader::{read_workbook, uses_1904_date_system, SheetDump};
+use excel_reader::{
+    read_value_columns_with_iso_dates, read_workbook, uses_1904_date_system,
+    CellValue as ReaderCellValue, SheetDump,
+};
 use excel_writer::{Format, FormatAlign, FormatBorder, Workbook};
 use serde::Serialize;
 use std::{
@@ -1292,7 +1295,7 @@ fn run_wide_summary_inner(
             None,
         );
         let filename = file_name(path);
-        let workbook = match read_workbook(path) {
+        let mut workbook = match read_workbook(path) {
             Ok(value) => {
                 emitter.emit(
                     "source_read",
@@ -1337,6 +1340,72 @@ fn run_wide_summary_inner(
                     Some("workbook_read_error"),
                 );
                 return Err(error).with_context(|| format!("read {}", path.display()));
+            }
+        };
+        let date_projection_started = Instant::now();
+        match wide_calendar_date_values(path, &workbook.sheets) {
+            Ok(Some(values)) => {
+                let projected_dates =
+                    overlay_wide_calendar_date_values(&mut workbook.sheets, &values);
+                emitter.emit(
+                    "calendar_date_projection",
+                    "completed",
+                    format!("已按工作簿日期系统归一化 {projected_dates} 个日历日期"),
+                    Some(input_index),
+                    Some(date_projection_started.elapsed()),
+                    &[
+                        "pytools-core",
+                        "excel-reader",
+                        "calamine ISO date projection",
+                    ],
+                    Some("calamine"),
+                    None,
+                );
+            }
+            Ok(None) => {}
+            Err(error) if global.error_policy == "continue" => {
+                emitter.progress.failed_inputs += 1;
+                emitter.emit(
+                    "calendar_date_projection",
+                    "failed",
+                    format!(
+                        "第 {input_index}/{} 个工作簿日期系统投影失败，继续处理",
+                        sources.len()
+                    ),
+                    Some(input_index),
+                    Some(date_projection_started.elapsed()),
+                    &[
+                        "pytools-core",
+                        "excel-reader",
+                        "calamine ISO date projection",
+                    ],
+                    Some("calamine"),
+                    Some("calendar_date_projection_error"),
+                );
+                let _ = error;
+                continue;
+            }
+            Err(error) => {
+                emitter.progress.failed_inputs += 1;
+                emitter.emit(
+                    "calendar_date_projection",
+                    "failed",
+                    format!(
+                        "第 {input_index}/{} 个工作簿日期系统投影失败",
+                        sources.len()
+                    ),
+                    Some(input_index),
+                    Some(date_projection_started.elapsed()),
+                    &[
+                        "pytools-core",
+                        "excel-reader",
+                        "calamine ISO date projection",
+                    ],
+                    Some("calamine"),
+                    Some("calendar_date_projection_error"),
+                );
+                return Err(error)
+                    .with_context(|| format!("project calendar dates from {}", path.display()));
             }
         };
         let aggregation_started = Instant::now();
@@ -1718,6 +1787,69 @@ fn run_wide_summary_inner(
 
 fn wide_rule_compatible(rule: &TimelineRule) -> bool {
     rule.row_header_col_specified || (rule.data_row_start > 0 && rule.data_col_start > 0)
+}
+
+fn wide_calendar_date_values(
+    path: &Path,
+    sheets: &[SheetDump],
+) -> Result<Option<HashMap<(String, String), String>>> {
+    let has_datetime_serial = sheets.iter().any(|sheet| {
+        sheet.values.values().any(|value| {
+            value.get("type").and_then(serde_json::Value::as_str) == Some("datetime_serial")
+        })
+    });
+    if !has_datetime_serial || !uses_1904_date_system(path)? {
+        return Ok(None);
+    }
+
+    let max_columns = sheets
+        .iter()
+        .map(wide_used_column_count)
+        .max()
+        .unwrap_or(1)
+        .max(1);
+    let mut dates = HashMap::new();
+    for sheet in read_value_columns_with_iso_dates(path, max_columns)? {
+        for (address, value) in sheet.values {
+            if let ReaderCellValue::DateTimeIso(value) = value {
+                dates.insert((sheet.name.clone(), address), value);
+            }
+        }
+    }
+    Ok(Some(dates))
+}
+
+fn overlay_wide_calendar_date_values(
+    sheets: &mut [SheetDump],
+    date_values: &HashMap<(String, String), String>,
+) -> usize {
+    let mut projected = 0;
+    for ((name, address), value) in date_values {
+        let Some(sheet) = sheets.iter_mut().find(|sheet| sheet.name == *name) else {
+            continue;
+        };
+        let is_datetime_serial = sheet
+            .values
+            .get(address)
+            .and_then(|cell| cell.get("type"))
+            .and_then(serde_json::Value::as_str)
+            == Some("datetime_serial");
+        let serial = sheet
+            .values
+            .get(address)
+            .and_then(|cell| cell.get("value"))
+            .and_then(serde_json::Value::as_f64);
+        // Sub-day serials can be time-of-day values; the shared ISO projection
+        // does not expose enough number-format detail to safely reclassify them.
+        if is_datetime_serial && serial.is_some_and(|serial| serial >= 1.0) {
+            sheet.values.insert(
+                address.clone(),
+                serde_json::json!({"type":"datetime_iso", "value":value}),
+            );
+            projected += 1;
+        }
+    }
+    projected
 }
 
 fn disambiguate_headers(names: &[String]) -> Vec<String> {
@@ -3237,7 +3369,10 @@ fn write_compare_summary_table(workbook: &mut Workbook, rows: &[Vec<String>]) ->
 
 #[cfg(test)]
 mod keyword_match_tests {
-    use super::keyword_match;
+    use super::{keyword_match, overlay_wide_calendar_date_values};
+    use excel_reader::SheetDump;
+    use serde_json::json;
+    use std::collections::{BTreeMap, HashMap};
 
     #[test]
     fn sheet_keywords_match_python_case_and_delimiter_semantics() {
@@ -3245,5 +3380,46 @@ mod keyword_match_tests {
         assert!(keyword_match("REPORT Data", "report\u{ff0c}data"));
         assert!(keyword_match("REPORT Data", "report\u{ff1b}data"));
         assert!(!keyword_match("REPORT Data", "report,missing"));
+    }
+
+    #[test]
+    fn wide_date_projection_does_not_reclassify_subday_serials() {
+        let mut values = BTreeMap::new();
+        values.insert(
+            "A1".to_owned(),
+            json!({"type":"datetime_serial", "value":45_000.0}),
+        );
+        values.insert(
+            "A2".to_owned(),
+            json!({"type":"datetime_serial", "value":0.5}),
+        );
+        let mut sheets = vec![SheetDump {
+            name: "Report".to_owned(),
+            values,
+            formulas: BTreeMap::new(),
+            formula_status: "not_applicable".to_owned(),
+            merges: Vec::new(),
+            merge_status: "not_applicable".to_owned(),
+            comments: BTreeMap::new(),
+            comments_status: "not_applicable".to_owned(),
+            conditional_formatting: Vec::new(),
+            conditional_formatting_status: "not_applicable".to_owned(),
+            data_validations: Vec::new(),
+            data_validations_status: "not_applicable".to_owned(),
+        }];
+        let dates = HashMap::from([
+            (
+                ("Report".to_owned(), "A1".to_owned()),
+                "2023-03-15T00:00:00.000".to_owned(),
+            ),
+            (
+                ("Report".to_owned(), "A2".to_owned()),
+                "1904-01-01T12:00:00.000".to_owned(),
+            ),
+        ]);
+
+        assert_eq!(overlay_wide_calendar_date_values(&mut sheets, &dates), 1);
+        assert_eq!(sheets[0].values["A1"]["type"], "datetime_iso");
+        assert_eq!(sheets[0].values["A2"]["type"], "datetime_serial");
     }
 }

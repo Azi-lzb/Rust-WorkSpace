@@ -27,6 +27,7 @@ from zipfile import ZipFile
 from openpyxl import Workbook, load_workbook
 from openpyxl.comments import Comment
 from openpyxl.styles import PatternFill
+from openpyxl.utils.datetime import CALENDAR_MAC_1904
 
 sys.dont_write_bytecode = True
 
@@ -85,8 +86,12 @@ def run_rust_command(
     )
 
 
-def make_input(path: Path, cached_formula: bool = False) -> None:
+def make_input(
+    path: Path, cached_formula: bool = False, date_1904: bool = False
+) -> None:
     workbook = Workbook()
+    if date_1904:
+        workbook.epoch = CALENDAR_MAC_1904
     sheet = workbook.active
     sheet.title = "Report"
     sheet["A1"] = "report"
@@ -102,7 +107,15 @@ def make_input(path: Path, cached_formula: bool = False) -> None:
     sheet["D4"] = "本息"
     sheet.append([])
     sheet["A5"] = "公司甲"
-    sheet["B5"] = "=8+2.25" if cached_formula else 10.25
+    sheet["B5"] = (
+        "=8+2.25"
+        if cached_formula
+        else datetime(2024, 6, 30)
+        if date_1904
+        else 10.25
+    )
+    if date_1904:
+        sheet["B5"].number_format = "yyyy/m/d"
     sheet["C5"] = 12
     sheet["D5"] = 23
     sheet["A6"] = "公司甲"
@@ -882,9 +895,12 @@ def run_case(
     *,
     source_filename: str = "sample_2024-06-30.xlsx",
     cached_formula: bool = False,
+    date_1904: bool = False,
 ) -> dict[str, object]:
     case_name = (
-        "no_date_formula_cache"
+        "date_1904_calendar_value"
+        if date_1904
+        else "no_date_formula_cache"
         if cached_formula
         else "suffix"
         if row_suffix
@@ -893,7 +909,7 @@ def run_case(
     case = root / case_name
     case.mkdir()
     source = case / source_filename
-    make_input(source, cached_formula=cached_formula)
+    make_input(source, cached_formula=cached_formula, date_1904=date_1904)
     python_output = case / "python_output"
     rust_output = case / "rust_output"
     config = case / "config.xlsx"
@@ -942,6 +958,32 @@ def run_case(
         or not isinstance(target_event.get("stage_elapsed_ms"), int)
     ):
         raise AssertionError(f"unexpected target execution history event: {target_event}")
+    date_projection_events = [
+        event
+        for event in history.get("events", [])
+        if event.get("phase") == "calendar_date_projection"
+    ]
+    date_projection = None
+    if date_1904:
+        if len(date_projection_events) != 1:
+            raise AssertionError(
+                f"expected one 1904 calendar-date projection event: {date_projection_events}"
+            )
+        date_projection_event = date_projection_events[0]
+        if (
+            date_projection_event.get("status") != "completed"
+            or date_projection_event.get("actual_engine") != "calamine"
+            or not isinstance(date_projection_event.get("stage_elapsed_ms"), int)
+        ):
+            raise AssertionError(
+                f"unexpected calendar-date projection event: {date_projection_event}"
+            )
+        date_projection = {
+            "phase": date_projection_event["phase"],
+            "status": date_projection_event["status"],
+            "actual_engine": date_projection_event["actual_engine"],
+            "stage_elapsed_ms_recorded": True,
+        }
     assert_parity(python_target, candidate)
     assert_parity(python_target, committed_target)
     if cached_formula:
@@ -958,6 +1000,8 @@ def run_case(
     result = {
         "row_suffix": row_suffix,
         "cached_formula_value_projected": cached_formula,
+        "source_date_system": "1904" if date_1904 else "1900",
+        "calendar_date_projection": date_projection,
         "blank_data_date_format": "yyyy/m/d" if cached_formula else "not_applicable",
         "summary_status": "passed",
         "target_append_status": "passed",
@@ -1081,6 +1125,56 @@ def cleanup_probe_directory(path: Path) -> None:
 def main() -> int:
     if not PYTOOLS_SOURCE.is_dir():
         raise FileNotFoundError(f"PyCode source not found: {PYTOOLS_SOURCE}")
+    if sys.argv[1:] == ["--1904-date-only"]:
+        with tempfile.TemporaryDirectory(
+            prefix="pytools-wide-1904-probe-", ignore_cleanup_errors=True
+        ) as temp:
+            result = run_case(Path(temp), False, date_1904=True)
+            report = {
+                "schema_version": 1,
+                "suite": "pytools.timeline.wide_summary_1904_calendar_date_parity",
+                "date": date.today().isoformat(),
+                "status": "passed_synthetic_python_rust_parity",
+                "baseline": "PyCode/core/wide_397_398.py::run_wide_summary",
+                "rust_entry": "pytools menu -> timeline -> wide summary (no row suffix)",
+                "input": {
+                    "format": "xlsx",
+                    "kind": "synthetic",
+                    "date_system": "1904",
+                    "case": "calendar date in a date-formatted summary value cell",
+                },
+                "comparison": {
+                    "workbook_projection": "exact",
+                    "date_epoch_projection_event": result["calendar_date_projection"],
+                    "source_and_configuration_unchanged": True,
+                    "candidate_and_target_projection": "exact",
+                },
+                "result": result,
+                "safety": {
+                    "source_unchanged": True,
+                    "configuration_unchanged": True,
+                    "outputs_temporary_only": True,
+                    "report_contains_input_filenames_or_cell_values": False,
+                },
+                "limitations": [
+                    "Synthetic input only; a sanitized real wide-summary workbook is still required for business acceptance.",
+                    "This case verifies a calendar-date metric cell; sub-day serials (including the 1904 epoch boundary), time-only cells, and elapsed durations remain separately scoped.",
+                    "Linux targets and offline deb acceptance were not tested.",
+                ],
+            }
+            report_path = (
+                WORKSPACE
+                / "pytools-core"
+                / "probe"
+                / "reports"
+                / f"wide_summary_1904_date_parity_{date.today():%Y%m%d}.json"
+            )
+            report_path.write_text(
+                json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+            )
+            print(json.dumps({"report": str(report_path), "result": result}, ensure_ascii=False))
+        return 0
+
     summary_report_path = WORKSPACE / "pytools-core" / "probe" / "reports" / "wide_summary_parity_20261023.json"
     existing_native_dialog_scenarios = []
     if summary_report_path.is_file():
