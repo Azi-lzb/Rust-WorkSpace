@@ -1,0 +1,33 @@
+【时间】2026-10-25 23:25（Asia/Shanghai）
+【执行者】Codex
+【修改前提交】0609789
+【功能提交】037d43f643fc0959b6d694a3b63b74054ba2b2d2
+【WIP】接手时已有 S5 配置校验代码、CLI、测试、迁移清单和合成对拍报告未提交；另有未跟踪 `HANDOFF_ZCODE_TO_CODEX.md` 与 `.pytest-tmp-v3/`。本轮仅提交 Audit 业务文件与合成报告，交接文件和临时目录保留且未暂存。
+
+【目的】完成 S5 当前业务范围的外部 V_EXT 指标地址检查，并接通可运行的 Rust CLI。
+
+【修改文件】
+- `audit-core/src/s5_config_check.rs`
+- `audit-core/src/s5_external_layout.rs`
+- `audit-core/src/bin/open-data-audit.rs`
+- `audit-core/tests/s5_previous_source_cli.rs`
+- `audit-core/probe/reports/s5_config_check_external_addresses_synthetic_parity_windows_native_20261025.json`
+- `audit-core/MIGRATION_INVENTORY.md`
+- 本记录
+
+【逻辑变化】按启用规则和当前业务收集 V_EXT 的 source、指标、sheet 条件及规则单元格位置；用已迁移的外部布局识别器验证选中工作簿中的表头唯一性，区分未选择、文件缺失、布局读取失败、未找到及重复地址。检查错误纳入 valid/configuration_errors；规则位置索引读取失败时向上传递错误。新增 `open-data-audit s5-config-check`，输出机器可读报告，开发者视图记录 Calamine reader 与耗时。全量模板目录扫描仍显式未迁移。仅读取配置和外部工作簿，本功能不改写工作簿；原 Python 项目和业务样本只读，未使用真实业务文件。
+
+【公共修复核实】main 的 `3e53e7e` 允许 XLSM 的 OOXML sheet-name 元数据读取；audit-dev 已包含等效提交 `579155f`，对应 `crates/excel-reader/src/lib.rs` 与 `3e53e7e` 的文件内容相同，故未重复 cherry-pick。`579155f` 已在当前分支历史。共享能力请求 #8 仍未解决，本轮未修改共享 crate 或根 Cargo 配置。
+
+【组件版本】`audit-core` 0.1.0，不升级。
+
+【测试与对拍】
+- `cargo fmt --all -- --check`：通过。
+- `cargo test --offline --locked -p audit-core --test s5_previous_source_cli -- --nocapture`：11/11 通过。首次并行运行发现 Windows 时间戳临时目录名碰撞；测试目录名加入进程内原子序号，串行和修复后的默认并行运行均 11/11 通过。
+- `cargo test --offline --locked -p excel-reader`：13 个单元测试、2 个集成测试通过；包括 XLSM sheet-name 元数据读取。
+- Windows 原生相同合成 XLSX 的 Python `validate_s5_config` 与 Rust `open-data-audit s5-config-check` 对拍：无 sheet 过滤的重复表头、带 `sheet=` 的唯一表头两例全字段差异 0；报告明确记录模板未选、真实业务簿未验收、Linux/deb 未验证及 #8 未解决。
+- `git diff --check`：通过。
+
+【未执行/已知问题】未验证真实外部业务簿、全量模板目录扫描、S5-F01 完整流程、Linux/glibc 2.28/deb、麒麟 V10 或 UOS V20。合成对拍不代表真实 Excel 验收；S5-F01 整体仍未验证。共享请求 #8 仍为阻塞项。
+
+【删除清单/回滚】无删除。回滚本功能可 revert `037d43f`；本记录保留为历史。
