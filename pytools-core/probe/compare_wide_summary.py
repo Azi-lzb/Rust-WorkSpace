@@ -96,6 +96,7 @@ def make_input(
     elapsed_formula: bool = False,
     elapsed_number_format: str | None = None,
     elapsed_duration_serial: float = 1.123456789,
+    include_calendar_value: bool = False,
 ) -> None:
     workbook = Workbook()
     if date_1904:
@@ -141,6 +142,9 @@ def make_input(
     sheet["B7"] = 4
     sheet["C7"] = 5
     sheet["D7"] = 9
+    if include_calendar_value:
+        sheet["E1"] = datetime(2024, 6, 30)
+        sheet["E1"].number_format = "yyyy/m/d"
     if time_only:
         boundary_values = (
             (8, "公司丙", datetime_time(0, 0), "h:mm:ss"),
@@ -1008,6 +1012,7 @@ def run_case(
     elapsed_formula: bool = False,
     elapsed_number_format: str | None = None,
     elapsed_duration_serial: float = 1.123456789,
+    include_calendar_value: bool = False,
 ) -> dict[str, object]:
     if elapsed_duration:
         case_name = f"elapsed_duration_{'row_suffix' if row_suffix else 'no_suffix'}"
@@ -1036,6 +1041,7 @@ def run_case(
         elapsed_formula=elapsed_formula,
         elapsed_number_format=elapsed_number_format,
         elapsed_duration_serial=elapsed_duration_serial,
+        include_calendar_value=include_calendar_value,
     )
     python_output = case / "python_output"
     rust_output = case / "rust_output"
@@ -1638,18 +1644,22 @@ def main() -> int:
         ) as temp:
             root = Path(temp)
             summary_results = []
-            for index, (case_name, serial) in enumerate(cases):
-                case_root = root / f"serial_{index}"
-                case_root.mkdir()
-                for row_suffix in (False, True):
-                    result = run_case(
-                        case_root,
-                        row_suffix,
-                        elapsed_duration=True,
-                        elapsed_duration_serial=serial,
-                    )
-                    result["negative_duration_case"] = case_name
-                    summary_results.append(result)
+            for date_1904 in (False, True):
+                epoch_name = "1904" if date_1904 else "1900"
+                for index, (case_name, serial) in enumerate(cases):
+                    case_root = root / f"date_{epoch_name}" / f"serial_{index}"
+                    case_root.mkdir(parents=True)
+                    for row_suffix in (False, True):
+                        result = run_case(
+                            case_root,
+                            row_suffix,
+                            date_1904=date_1904,
+                            elapsed_duration=True,
+                            elapsed_duration_serial=serial,
+                            include_calendar_value=True,
+                        )
+                        result["negative_duration_case"] = case_name
+                        summary_results.append(result)
             report = {
                 "schema_version": 1,
                 "suite": "pytools.timeline.wide_summary_negative_elapsed_duration_parity",
@@ -1662,6 +1672,7 @@ def main() -> int:
                     "kind": "synthetic",
                     "elapsed_number_format": "[h]:mm:ss.000",
                     "cases": [case_name for case_name, _ in cases],
+                    "date_systems": ["1900", "1904"],
                     "row_modes": ["no_suffix", "row_suffix"],
                 },
                 "comparison": {
