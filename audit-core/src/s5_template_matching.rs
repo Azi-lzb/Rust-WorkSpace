@@ -1,8 +1,9 @@
 //! S5 template matching migrated from
 //! `base_audit.systems.s5_configured_statistics.recognition.match_s5_template`.
 //!
-//! This module matches selected XLSX workbooks by worksheet-set compatibility.
-//! It does not load S5 rules, infer a business, or run an audit.
+//! This module matches selected XLSX/XLSM source workbooks against XLSX template
+//! profiles by worksheet-set compatibility. It reads sheet names only; it does
+//! not load S5 rules, infer a business, or run an audit.
 
 use anyhow::{bail, ensure, Context, Result};
 use excel_reader::read_xlsx_sheet_names_ooxml;
@@ -20,7 +21,8 @@ pub struct S5SourceWorkbook {
     pub sheet_names: Vec<String>,
 }
 
-/// Match the selected XLSX files to one template in a direct template folder.
+/// Match selected XLSX/XLSM source files to one XLSX template in a direct
+/// template folder.
 /// The source Python index is a read/write cache; Rust reads the current
 /// worksheet metadata and leaves that index and the source workbooks untouched.
 pub fn match_s5_template(files: &[PathBuf], template_dir: &Path) -> Result<PathBuf> {

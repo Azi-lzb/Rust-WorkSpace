@@ -600,7 +600,7 @@ struct S5MatchTemplateArgs {
     #[arg(long)]
     template_dir: PathBuf,
 
-    /// Selected S5 source workbook. Repeat once per selected .xlsx file.
+    /// Selected S5 source workbook. Repeat once per selected .xlsx/.xlsm file.
     #[arg(long = "input-file", required = true)]
     selected_files: Vec<PathBuf>,
 
@@ -1083,14 +1083,8 @@ fn run_s5_match_template(arguments: S5MatchTemplateArgs) -> Result<()> {
             .extension()
             .and_then(|value| value.to_str())
             .unwrap_or_default();
-        if !extension.eq_ignore_ascii_case("xlsx") {
-            if extension.eq_ignore_ascii_case("xlsm") {
-                anyhow::bail!(
-                    "S5 模板匹配的 XLSM 工作表读取仍待共享 excel-reader 协调：{}",
-                    path.display()
-                );
-            }
-            anyhow::bail!("S5 模板匹配当前只支持 XLSX：{}", path.display());
+        if !extension.eq_ignore_ascii_case("xlsx") && !extension.eq_ignore_ascii_case("xlsm") {
+            anyhow::bail!("S5 模板匹配当前只支持 XLSX/XLSM：{}", path.display());
         }
     }
 

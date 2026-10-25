@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "suite": "audit.s5_template_match_xlsm_synthetic_metadata_parity",
+  "status": "passed",
+  "feature_id": "S5-F01",
+  "source_function": "base_audit.systems.s5_configured_statistics.recognition.match_s5_template",
+  "rust_function": "audit_core::s5_template_matching::match_s5_template",
+  "cli": "open-data-audit s5-match-template",
+  "platform": "Windows 11 x86_64-pc-windows-msvc",
+  "baseline": {
+    "runtime": "Python 3.12.10",
+    "reader": "ZIP/XML workbook sheet-name metadata"
+  },
+  "sample_scope": {
+    "source_format": "XLSM extension over a synthetic OOXML package",
+    "source_vba_parts": false,
+    "template_format": "XLSX",
+    "source_count": 1,
+    "template_count": 1
+  },
+  "comparison": {
+    "same_selected_template": true,
+    "python_method": "read_xlsx_sheet_names ZIP/XML metadata",
+    "rust_reader": "excel_reader_ooxml_sheet_names",
+    "rust_engine": "rust_s5_sheet_set_matcher",
+    "rust_log_events": 2,
+    "inputs_unchanged": true,
+    "raw_business_values_persisted": false,
+    "path_identity_note": "Rust canonical paths may use the Windows extended-path prefix; comparison normalized that prefix and verified the same file."
+  },
+  "limitations": [
+    "The synthetic XLSM has no VBA parts and does not validate real macro-enabled workbook behavior.",
+    "The user-provided S5 sample subtree contained 120 XLSX and no XLSM files.",
+    "Only sheet-name metadata matching is covered; XLSM value reading, editing, VBA preservation, Linux/deb, and full S5 workflow are not covered.",
+    "Audit shared capability request #8 remains unresolved."
+  ]
+}

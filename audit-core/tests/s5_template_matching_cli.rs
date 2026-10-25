@@ -122,16 +122,54 @@ fn s5_template_match_cli_rejects_ambiguous_profiles_and_reports_failure() {
 }
 
 #[test]
-fn s5_template_match_cli_explains_pending_xlsm_reader_support() {
+fn s5_template_match_cli_accepts_xlsm_source_workbook_metadata() {
     let directory = temporary_directory();
     let template_dir = directory.join("templates");
     fs::create_dir_all(&template_dir).expect("create template directory");
+    let template = template_dir.join("selected-template.xlsx");
     let input = directory.join("source.xlsm");
+    fs::copy(fixture(), &template).expect("copy synthetic XLSX template fixture");
     fs::copy(fixture(), &input).expect("copy synthetic source fixture");
+    let template_before = fs::read(&template).expect("read template fixture bytes");
+    let input_before = fs::read(&input).expect("read XLSM fixture bytes");
 
-    let output = run_cli(&template_dir, &input, false);
-    assert_eq!(output.status.code(), Some(2));
-    assert!(String::from_utf8_lossy(&output.stderr).contains("仍待共享 excel-reader 协调"));
+    let output = run_cli(&template_dir, &input, true);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let payload: Value = serde_json::from_slice(&output.stdout).expect("valid CLI JSON");
+    assert_eq!(payload["status"], "completed");
+    assert_eq!(payload["selected_file_count"], 1);
+    assert_eq!(payload["reader"], "excel_reader_ooxml_sheet_names");
+    assert_eq!(
+        Path::new(payload["template_path"].as_str().unwrap())
+            .file_name()
+            .unwrap(),
+        "selected-template.xlsx"
+    );
+    let events = String::from_utf8_lossy(&output.stderr)
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).expect("valid progress JSON"))
+        .collect::<Vec<_>>();
+    assert_eq!(events.len(), 2);
+    assert_eq!(events[1]["status"], "completed");
+    assert_eq!(events[1]["reader"], "excel_reader_ooxml_sheet_names");
+    assert_eq!(
+        fs::read(&template).expect("read template after matching"),
+        template_before
+    );
+    assert_eq!(
+        fs::read(&input).expect("read source after matching"),
+        input_before
+    );
+
+    let unsupported = directory.join("unsupported.xlsb");
+    fs::copy(fixture(), &unsupported).expect("copy unsupported-format fixture");
+    let rejected = run_cli(&template_dir, &unsupported, false);
+    assert_eq!(rejected.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&rejected.stderr).contains("只支持 XLSX/XLSM"));
 
     fs::remove_dir_all(directory).expect("remove temporary S5 test files");
 }

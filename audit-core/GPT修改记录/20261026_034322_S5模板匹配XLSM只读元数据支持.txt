@@ -1,0 +1,35 @@
+# S5 模板匹配 XLSM 只读元数据支持
+
+- 时间：2026-10-26 03:43（Asia/Shanghai）
+- 执行者：Codex Audit migration agent
+- 分支：audit-dev
+- 修改前 commit：`c762a71`
+- 修改后 commit：随本功能提交，SHA 可由 Git 历史追溯。
+- WIP：保留既有交接报告、`.pytest-tmp-v3/` 和原有未跟踪报告；没有覆盖或清理。未修改源 Python、真实工作簿、共享 crates、`Cargo.lock`、根 Cargo 配置、`pytools-core/**`、`DEVELOPMENT_GOAL.md` 或 main。
+- 组件版本：`audit-core` Cargo 版本未变；不新增旧版 Sx-Fxx 组件编号。
+
+## 目的与变更
+
+分支已包含 shared `read_xlsx_sheet_names_ooxml` 对 `.xlsm` 的等效修复（审计分支提交 `579155f`，源码与 main `3e53e7e` 一致）。但 S5 `s5-match-template` CLI 仍拒绝 XLSM 输入并提示等待共享修复，造成过期门禁。
+
+- `audit-core/src/bin/open-data-audit.rs`：S5 源输入允许 `.xlsx/.xlsm`，其他扩展名仍拒绝；更新 CLI 参数说明。
+- `audit-core/src/s5_template_matching.rs`：说明该入口只读取源 XLSX/XLSM 的 sheet-name 元数据；模板目录仍按 Python `TemplateCatalog` 只收 XLSX。
+- `audit-core/tests/s5_template_matching_cli.rs`：增加 XLSM 源输入成功、普通/开发者日志、源与模板字节不变及 XLSB 仍拒绝的回归。
+- `audit-core/MIGRATION_INVENTORY.md`：记录此 metadata-only 切片和其验证边界。
+- `audit-core/probe/reports/s5_template_matching_xlsm_synthetic_metadata_parity_windows_native_20261026.json`：记录脱敏 Python/Rust 对拍。
+
+该切片仅读 `xl/workbook.xml` 中的工作表名称，不读取单元格、不改写工作簿、不读取或验证 VBA；没有扩大 S5 的值读取或修改能力。
+
+## 验证
+
+- `cargo test --offline --locked -p audit-core --test s5_template_matching_cli`：3/3 通过。
+- `cargo test --offline --locked -p audit-core --lib s5_template_matching::tests`：4/4 通过。
+- `cargo test --offline --locked -p excel-reader ooxml_sheet_name_adapter_accepts_xlsm_metadata`：1/1 通过。
+- Windows Python 3.12.10 与 Rust CLI 合成对拍：1 个 `.xlsm` 扩展名 OOXML 源和 1 个 `.xlsx` 模板选中同一模板；源与模板前后 SHA-256 相同；Rust 开发视图完成事件及引擎字段存在。样本不包含 VBA 部件。
+- 用户提供的真实 S5 样本子树只读盘点：120 个 XLSX、0 个 XLSM；因此未声称真实 XLSM/VBA 验收。
+- `git diff --check` 通过；本次新增/变更行遵循现有格式。`cargo fmt --all -- --check` 报告未修改的 `s3_explanation_export.rs` import 排序差异；直接 rustfmt 整个旧 CLI 文件还会重排与本功能无关的既有代码，本轮已保留那些区域。
+- 未执行真实 XLSM/VBA、Linux/glibc 2.28、麒麟 V10/UOS V20 或 deb 验收；S5-F01 整体仍未验证；共享能力请求 #8 仍未解决。
+
+## 回滚
+
+回滚本功能提交即可撤销 CLI 门禁、测试、迁移记录与合成报告；本轮没有修改用户源文件或真实样本。
