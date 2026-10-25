@@ -1774,6 +1774,21 @@ fn validate_sheet_names(
                 expected.insert(*index, name.clone());
             }
             EditOperation::DeleteSheet { name } => expected.retain(|candidate| candidate != name),
+            EditOperation::MoveSheet { sheet, new_index } => {
+                let current = expected
+                    .iter()
+                    .position(|name| name == sheet)
+                    .with_context(|| {
+                        format!("source sheet {sheet:?} missing from original workbook")
+                    })?;
+                anyhow::ensure!(
+                    *new_index < expected.len(),
+                    "move target index {new_index} exceeds expected sheet count {}",
+                    expected.len()
+                );
+                let moved = expected.remove(current);
+                expected.insert(*new_index, moved);
+            }
             _ => {}
         }
     }
