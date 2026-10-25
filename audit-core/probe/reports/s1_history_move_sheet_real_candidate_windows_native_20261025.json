@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+  "suite": "audit.s1_history_move_sheet_real_candidate",
+  "feature_id": "S1-F01",
+  "status": "candidate_partial_pass",
+  "captured_platform": "Windows native Rust MSVC",
+  "shared_capability": {
+    "commit": "bbd922d (main) synced as db5f7e1 (audit-dev)",
+    "operation": "MoveSheet",
+    "main_evidence_scope": "synthetic only; real-template acceptance delegated to the S1 flow"
+  },
+  "sample_scope": {
+    "kind": "real_config_workbook_with_nonempty_history",
+    "sheet_count": 5,
+    "managed_history_sheet_index_1based": 2,
+    "history_data_rows": 9,
+    "features_present": ["Comments", "DefinedNames", "Relationships", "FreezePanes", "AutoFilter"],
+    "nonempty_scoped_defined_names": ["_xlnm._FilterDatabase"]
+  },
+  "full_plan_candidate": {
+    "operation_count": 38,
+    "plan_leads_with_move_sheet": true,
+    "engine": "umya-spreadsheet",
+    "result": "rejected_during_apply",
+    "rejection": "apply SetFreezePanes: umya backend does not implement freeze-pane or AutoFilter edits",
+    "output_created": false
+  },
+  "move_sheet_only_candidate": {
+    "operations": ["MoveSheet{new_index=0}"],
+    "engine": "umya-spreadsheet",
+    "apply": "passed",
+    "validator": "UmyaXlsxValidator (MoveSheet-aware order and defined-name semantics)",
+    "validation": "passed",
+    "sheet_order_after": "managed history sheet first, remaining order unchanged",
+    "managed_sheet_values_identical": true,
+    "quote_normalization_delta": "not present: the real workbook stores quoted sheet references",
+    "production_capability": "unverified"
+  },
+  "synthetic_focused_candidate": {
+    "scope": "MoveSheet + row replacement + page settings, without FreezePanes/AutoFilter",
+    "engine": "umya-spreadsheet",
+    "apply": "passed",
+    "validation": "order passed; defined-name comparison flagged one quote-normalization delta on a synthetic unquoted Print_Area reference (semantically equal; tolerated and recorded)",
+    "print_area_kept_reference_and_scope": true,
+    "production_capability": "unverified"
+  },
+  "remaining_shared_gaps": [
+    "umya backend does not implement SetFreezePanes/SetAutoFilter, so the complete S1 history update plan cannot route; deleting history rows also shrinks the sheet-scoped _FilterDatabase that only SetAutoFilter can restore",
+    "the engine-neutral OpenpyxlXlsxValidator does not understand MoveSheet (its sheet-order expectation ignores move operations), so cross-engine readback validation of MoveSheet plans is unavailable"
+  ],
+  "input_safety": {
+    "source_workbook_unchanged": true,
+    "temporary_candidate_input_unchanged": true,
+    "outputs_written_to_temporary_directories": true
+  },
+  "data_safety": {
+    "file_paths_recorded": false,
+    "workbook_or_sheet_names_recorded": false,
+    "cell_values_recorded": false
+  }
+}

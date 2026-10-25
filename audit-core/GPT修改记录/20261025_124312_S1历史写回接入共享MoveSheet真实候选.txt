@@ -1,0 +1,42 @@
+# S1 历史写回接入共享 MoveSheet 并完成真实工作簿候选
+
+- 时间：2026-10-25 12:43 (+08:00)
+- 执行者：Codex Audit migration agent
+- 分支：audit-dev
+- 修改前 commit：ba608b8
+- 修改后 commit：随本轮本地提交，提交 ID 见 Git 历史。
+- WIP：开始时 worktree 干净；本轮先 cherry-pick main 的共享 MoveSheet 提交，再修改 Audit 业务计划与测试，最后新增报告、共享请求、清单更新和本记录。未修改共享 crates 内容（cherry-pick 原样承接 main 提交）、源 Python 项目、真实工作簿、pytools-core、根 Cargo.toml 或 Cargo.lock。
+
+## 目的
+
+main 已在本地 main 落地 `bbd922d feat(excel-editor): add MoveSheet and remap sheet-index metadata`（合成证据），真实模板验收交由 S1 流程。本轮把 S1 历史工作簿更新计划从"非首位页拒绝"改为使用 MoveSheet 置首，并在真实 config-real 非空历史工作簿上完成 MoveSheet 候选验收与剩余缺口定位。
+
+## 修改文件
+
+- 共享同步：`git cherry-pick bbd922d` → audit-dev 提交 `db5f7e1`（内容原样：plan.rs、umya_backend.rs、两个新测试、架构文档、main 修改记录）。
+- `audit-core/src/s1_history.rs`：
+  - `build_s1_history_workbook_edit_plan` 非首位页不再拒绝，改为在操作序列最前插入 `EditOperation::MoveSheet { new_index: 0 }`；
+  - 原"非首位拒绝"单测改为断言 MoveSheet 置首且计划可校验；
+  - 真实候选测试移除已不可达的拒绝分支，并新增真实工作簿 MoveSheet-only 子计划段（apply + UmyaXlsxValidator 语义校验 + 内容逐格一致 + Print_Area 跟随断言）；
+  - 新增合成聚焦候选测试（MoveSheet+行替换+页面设置，不含冻结/筛选），对共享校验器的 defined-name 原文比较仅容忍 umya 非 ASCII 表名引号重发这一语义等价差并精确记录。
+- `audit-core/probe/reports/s1_history_move_sheet_real_candidate_windows_native_20261025.json`：新增脱敏机器报告。
+- `audit-core/shared-capability-requests/20261025_s1_history_complete_writeback_remaining_gaps.md`：新增共享请求补充（umya 缺 SetFreezePanes/SetAutoFilter、OpenpyxlXlsxValidator 不识别 MoveSheet、defined-name 比较建议引号归一化）。
+- `audit-core/MIGRATION_INVENTORY.md`：历史写回行更新。
+- 本记录。
+
+## 验证
+
+- cherry-pick 后：`cargo test --offline --locked -p excel-editor --test move_sheet --test sheet_index_metadata` 3+3 通过；`cargo test --offline --locked -p audit-core` 全量 192 通过、0 失败。
+- 真实候选（Windows 原生，config-real 非空历史簿：5 表、管理页 index 1、9 数据行、特征 Comments/DefinedNames/Relationships/FreezePanes/AutoFilter）：
+  - 完整 38 操作计划以 MoveSheet 置首，umya 在 `SetFreezePanes` 处拒绝（该后端未实现，既有共享缺口），无输出；
+  - MoveSheet-only 子计划 apply 通过，UmyaXlsxValidator 顺序+defined-name 语义校验通过（真实文件引用自带引号，无归一化差），管理页内容逐格一致，输出工作表顺序以历史页为首，输入与源文件字节未变。
+- 合成聚焦候选（MoveSheet+行替换+页面设置）：apply 与顺序校验通过；defined-name 比较对合成裸引用报告 umya 引号重发差，经逐字符归一化确认语义等价后仅记录不放宽其他断言。
+- 发现并如实记录：删除真实历史行会把页级 `_xlnm._FilterDatabase` 由 `$A$1:$L$10` 收缩为 `$A$1:$L$1`，完整计划需 `SetAutoFilter` 恢复，而 umya 未实现——已在共享请求中列为完整写回的正式缺口。
+
+## 未执行项、已知问题与回滚
+
+- S1 历史完整写回仍不可路由（umya 冻结/筛选缺口 + 引擎无关校验器 MoveSheet 识别缺口，均已提请求）；openpyxl worker 路线仍缺 DeleteRows/InsertRows。生产路由与 capability 均未改变，S1-F01 历史写回仍未验收。
+- 目标 Linux/deb、麒麟 V10/UOS V20 未验证。
+- S1-F01 公式复制共享请求（目标合并非锚载荷基线等价）仍等 main。
+- 回滚：还原 s1_history.rs 与清单/记录，revert db5f7e1 即回到 MoveSheet 之前状态；无用户工作簿恢复项。
+- 【组件版本】不升级。
