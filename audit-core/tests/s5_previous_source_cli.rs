@@ -370,11 +370,26 @@ fn write_external_source_variant(
 }
 
 fn write_config(path: &Path, include_external: bool, include_external_contract: bool) {
-    write_config_variant(path, include_external, include_external_contract, false);
+    write_config_variant(
+        path,
+        include_external,
+        include_external_contract,
+        false,
+        false,
+        false,
+    );
 }
 
 fn write_multi_current_source_config(path: &Path) {
-    write_config_variant(path, false, false, true);
+    write_config_variant(path, false, false, true, false, false);
+}
+
+fn write_multi_external_source_config(path: &Path) {
+    write_config_variant(path, true, false, false, true, false);
+}
+
+fn write_multi_external_explicit_source_config(path: &Path) {
+    write_config_variant(path, true, false, false, true, true);
 }
 
 fn write_config_variant(
@@ -382,6 +397,8 @@ fn write_config_variant(
     include_external: bool,
     include_external_contract: bool,
     multi_current_sources: bool,
+    multi_external_sources: bool,
+    explicit_external_source_ids: bool,
 ) {
     let mut workbook = excel_writer::Workbook::new();
     let rule_headers = [
@@ -426,6 +443,34 @@ fn write_config_variant(
             "",
             "",
             r#"{"本期": V_CUR(("贷款产品类别", "经营贷款"), ("余额", "本期"))}"#,
+            "",
+            "",
+            "",
+            "",
+        ]
+    } else if multi_external_sources {
+        vec![
+            "EXTERNAL.BUSINESS.A",
+            "1",
+            "是",
+            "单位贷款",
+            "CUR",
+            "贷款表",
+            "外部来源 A",
+            "错误",
+            "表间核对",
+            "经营贷款余额",
+            "ABS({差值}) < 0",
+            "否",
+            "差异={差值}",
+            "{本期}",
+            "{大集中}",
+            "{差值}",
+            if explicit_external_source_ids {
+                r#"{"本期": V_CUR(("贷款产品类别", "经营贷款"), ("余额", "本期")), "大集中": V_EXT("贷款余额(亿元)", source="EXT_A"), "差值": {本期} - {大集中}}"#
+            } else {
+                r#"{"本期": V_CUR(("贷款产品类别", "经营贷款"), ("余额", "本期")), "大集中": V_EXT("贷款余额(亿元)"), "差值": {本期} - {大集中}}"#
+            },
             "",
             "",
             "",
@@ -524,6 +569,39 @@ fn write_config_variant(
                     .write_string(2, column as u16, *value)
                     .expect("write second current-source rule");
             }
+        } else if multi_external_sources {
+            let second_rule_values = [
+                "EXTERNAL.BUSINESS.B",
+                "1",
+                "是",
+                "其他业务",
+                "CUR",
+                "贷款表",
+                "外部来源 B",
+                "错误",
+                "表间核对",
+                "经营贷款余额",
+                "ABS({差值}) < 0",
+                "否",
+                "差异={差值}",
+                "{本期}",
+                "{大集中}",
+                "{差值}",
+                if explicit_external_source_ids {
+                    r#"{"本期": V_CUR(("贷款产品类别", "经营贷款"), ("余额", "本期")), "大集中": V_EXT("贷款余额(亿元)", source="EXT_B"), "差值": {本期} - {大集中}}"#
+                } else {
+                    r#"{"本期": V_CUR(("贷款产品类别", "经营贷款"), ("余额", "本期")), "大集中": V_EXT("贷款余额(亿元)"), "差值": {本期} - {大集中}}"#
+                },
+                "",
+                "",
+                "",
+                "",
+            ];
+            for (column, value) in second_rule_values.iter().enumerate() {
+                sheet
+                    .write_string(2, column as u16, *value)
+                    .expect("write second external-source rule");
+            }
         }
     }
 
@@ -589,6 +667,16 @@ fn write_config_variant(
                     )
                     .expect("write metric for primary source business");
             }
+        } else if multi_external_sources {
+            for (column, value) in metric_values.iter().enumerate() {
+                sheet
+                    .write_string(
+                        2,
+                        column as u16,
+                        if column == 0 { "其他业务" } else { value },
+                    )
+                    .expect("write template metric for second external-source business");
+            }
         }
     }
     if include_external {
@@ -631,6 +719,16 @@ fn write_config_variant(
             sheet
                 .write_string(1, column as u16, *value)
                 .expect("write external metric value");
+        }
+        if multi_external_sources {
+            for (column, value) in external_values.iter().enumerate() {
+                sheet
+                    .write_string(2, column as u16, if column == 0 { "EXT_B" } else { value })
+                    .expect("write second external metric source");
+            }
+            sheet
+                .write_string(1, 0, "EXT_A")
+                .expect("name primary external metric source");
         }
     }
 
@@ -720,6 +818,8 @@ fn write_config_variant(
         }
         let version_note = if multi_current_sources {
             "Rust/Python multi current-source parity"
+        } else if multi_external_sources {
+            "Rust/Python multi external-source parity"
         } else {
             "Rust/Python V_PRE parity"
         };
@@ -907,6 +1007,116 @@ fn run_multi_source_python_rust_parity(
     );
     serde_json::from_slice(&fs::read(report_path).expect("read multi-source parity report"))
         .expect("valid multi-source parity report")
+}
+
+fn run_multi_external_cli(
+    config: &Path,
+    current: &Path,
+    external_sources: &[(&str, &str, &Path)],
+    template_dir: &Path,
+    output_dir: &Path,
+    run_id: &str,
+    businesses: &[&str],
+) -> Output {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_open-data-audit"));
+    command
+        .arg("s5-audit-run")
+        .arg("--config")
+        .arg(config)
+        .arg("--source")
+        .arg(current)
+        .arg("--source-id")
+        .arg("CUR")
+        .arg("--source-business")
+        .arg("其他业务")
+        .arg("--template-dir")
+        .arg(template_dir);
+    for (source_id, business, path) in external_sources {
+        command
+            .arg("--external-source-binding")
+            .arg(format!("{source_id}={business}={}", path.display()));
+    }
+    for business in businesses {
+        command.arg("--business").arg(business);
+    }
+    command
+        .arg("--period")
+        .arg("2026-08-31")
+        .arg("--org-code")
+        .arg("I001")
+        .arg("--org-name")
+        .arg("合成机构")
+        .arg("--output-dir")
+        .arg(output_dir)
+        .arg("--run-id")
+        .arg(run_id)
+        .arg("--developer-view");
+    command.output().expect("run S5 multi-external CLI")
+}
+
+fn run_multi_external_source_python_rust_parity(
+    python_source_root: &Path,
+    config: &Path,
+    current: &Path,
+    external_sources: &[(&str, &str, &Path)],
+    template_dir: &Path,
+    report_path: &Path,
+) -> Value {
+    assert!(
+        !report_path.exists(),
+        "refusing to overwrite parity report: {}",
+        report_path.display()
+    );
+    let comparator = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("compare")
+        .join("compare_s5_outputs.py");
+    let mut command = Command::new(std::env::var_os("PYTHON").unwrap_or_else(|| "python".into()));
+    command
+        .arg(comparator)
+        .arg("--source-root")
+        .arg(python_source_root)
+        .arg("--config-workbook")
+        .arg(config)
+        .arg("--audit-copy")
+        .arg(current)
+        .arg("--source-id")
+        .arg("CUR")
+        .arg("--source-business")
+        .arg("其他业务")
+        .arg("--period")
+        .arg("2026-08-31")
+        .arg("--institution-code")
+        .arg("I001")
+        .arg("--institution-name")
+        .arg("合成机构")
+        .arg("--business")
+        .arg("单位贷款")
+        .arg("--business")
+        .arg("其他业务")
+        .arg("--template-dir")
+        .arg(template_dir);
+    for (source_id, business, path) in external_sources {
+        command
+            .arg("--external-source-binding")
+            .arg(format!("{source_id}={business}={}", path.display()));
+    }
+    command
+        .arg("--rust-bin")
+        .arg(env!("CARGO_BIN_EXE_open-data-audit"))
+        .arg("--report")
+        .arg(report_path);
+    let output = command
+        .output()
+        .expect("run Python/Rust multi-external parity comparator");
+    assert!(
+        output.status.success(),
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    serde_json::from_slice(&fs::read(report_path).expect("read multi-external parity report"))
+        .expect("valid multi-external parity report")
 }
 
 fn run_config_check_cli(config: &Path, external: Option<&Path>, developer_view: bool) -> Output {
@@ -1500,6 +1710,182 @@ fn s5_audit_cli_reads_and_copies_configured_external_source() {
     assert_eq!(missing_summary["status_counts"]["RETRIEVAL_FAILED"], 1);
 
     fs::remove_dir_all(directory).expect("remove synthetic external CLI files");
+}
+
+#[test]
+fn s5_audit_cli_selects_multiple_external_sources_and_matches_python() {
+    let directory = temporary_directory();
+    let current = directory.join("current.xlsx");
+    let external_a = directory.join("external-a.xlsx");
+    let external_b = directory.join("external-b.xlsx");
+    let fallback_config = directory.join("multi-external-fallback.xlsx");
+    let explicit_config = directory.join("multi-external-explicit.xlsx");
+    let template_dir = directory.join("empty-templates");
+    fs::create_dir_all(&template_dir).expect("create empty template directory");
+    write_source(&current, 1500.0);
+    write_external_source(&external_a, 0.15);
+    write_external_source(&external_b, 0.25);
+    write_multi_external_source_config(&fallback_config);
+
+    let fallback_sources = [
+        ("EXT_A", "单位贷款", external_a.as_path()),
+        ("EXT_B", "其他业务", external_b.as_path()),
+    ];
+    let output = run_multi_external_cli(
+        &fallback_config,
+        &current,
+        &fallback_sources,
+        &template_dir,
+        &directory.join("fallback-out"),
+        "external-business-fallback",
+        &["单位贷款", "其他业务"],
+    );
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let summary: Value = serde_json::from_slice(&output.stdout).expect("valid multi-external JSON");
+    assert_eq!(summary["status"], "completed");
+    assert_eq!(summary["status_counts"]["TRIGGERED"], 2);
+    assert_eq!(
+        summary["source_roles"],
+        serde_json::json!(["current", "external"])
+    );
+    let result_path = PathBuf::from(
+        summary["output_files"]["result_workbook"]
+            .as_str()
+            .expect("result workbook path"),
+    );
+    let result_workbook = read_workbook(&result_path).expect("read multi-external result workbook");
+    let result_sheet = result_workbook
+        .sheets
+        .iter()
+        .find(|sheet| sheet.name == "审核结果")
+        .expect("result sheet");
+    assert_eq!(
+        CellValue::from_probe_json(&result_sheet.values["K2"]).expect("business A external value"),
+        CellValue::Number(1500.0)
+    );
+    assert_eq!(
+        CellValue::from_probe_json(&result_sheet.values["K3"]).expect("business B external value"),
+        CellValue::Number(2500.0)
+    );
+    let ledger_path = PathBuf::from(
+        summary["output_files"]["run_ledger"]
+            .as_str()
+            .expect("run ledger path"),
+    );
+    let ledger: Value = serde_json::from_slice(&fs::read(&ledger_path).expect("read run ledger"))
+        .expect("valid run ledger");
+    let manifest = ledger["audit_copy_manifest"]
+        .as_array()
+        .expect("copy manifest");
+    for (source_id, original) in [("EXT_A", &external_a), ("EXT_B", &external_b)] {
+        let entry = manifest
+            .iter()
+            .find(|entry| entry["role"] == "external" && entry["source_id"] == source_id)
+            .expect("external source manifest entry");
+        assert_eq!(entry["matches_snapshot"], true);
+        let copy_path = PathBuf::from(entry["copy_path"].as_str().expect("external copy path"));
+        assert_eq!(
+            fs::read(copy_path).expect("read external copy"),
+            fs::read(original).expect("read external input")
+        );
+    }
+
+    if let Some(python_source_root) = std::env::var_os("AUDIT_PYTHON_SOURCE_ROOT") {
+        let python_source_root = PathBuf::from(python_source_root);
+        let fallback_report = std::env::var_os("AUDIT_S5_MULTI_EXTERNAL_REPORT")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| directory.join("external-business-fallback-parity.json"));
+        let report = run_multi_external_source_python_rust_parity(
+            &python_source_root,
+            &fallback_config,
+            &current,
+            &fallback_sources,
+            &template_dir,
+            &fallback_report,
+        );
+        assert_eq!(report["status"], "completed");
+        assert_eq!(report["comparison"]["diff_count"], 0);
+        assert_eq!(report["verification"]["inputs_unchanged"], true);
+        assert_eq!(report["sample_scope"]["external_source_count"], 2);
+
+        let ambiguous_sources = [
+            ("EXT_A", "单位贷款", external_a.as_path()),
+            ("EXT_B", "单位贷款", external_b.as_path()),
+        ];
+        let ambiguous = run_multi_external_cli(
+            &fallback_config,
+            &current,
+            &ambiguous_sources,
+            &template_dir,
+            &directory.join("ambiguous-out"),
+            "external-business-ambiguous",
+            &["单位贷款", "其他业务"],
+        );
+        assert!(
+            ambiguous.status.success(),
+            "{}",
+            String::from_utf8_lossy(&ambiguous.stderr)
+        );
+        let ambiguous_summary: Value =
+            serde_json::from_slice(&ambiguous.stdout).expect("valid ambiguous external JSON");
+        assert_eq!(ambiguous_summary["status_counts"]["RETRIEVAL_FAILED"], 1);
+        assert_eq!(ambiguous_summary["status_counts"]["CONFIG_ERROR"], 1);
+        let ambiguous_report = std::env::var_os("AUDIT_S5_MULTI_EXTERNAL_AMBIGUOUS_REPORT")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| directory.join("external-business-ambiguous-parity.json"));
+        let report = run_multi_external_source_python_rust_parity(
+            &python_source_root,
+            &fallback_config,
+            &current,
+            &ambiguous_sources,
+            &template_dir,
+            &ambiguous_report,
+        );
+        assert_eq!(report["status"], "completed");
+        assert_eq!(report["comparison"]["diff_count"], 0);
+
+        write_multi_external_explicit_source_config(&explicit_config);
+        let explicit_sources = [
+            ("EXT_A", "其他业务", external_a.as_path()),
+            ("EXT_B", "其他业务", external_b.as_path()),
+        ];
+        let explicit = run_multi_external_cli(
+            &explicit_config,
+            &current,
+            &explicit_sources,
+            &template_dir,
+            &directory.join("explicit-out"),
+            "external-explicit-selection",
+            &["单位贷款", "其他业务"],
+        );
+        assert!(
+            explicit.status.success(),
+            "{}",
+            String::from_utf8_lossy(&explicit.stderr)
+        );
+        let explicit_summary: Value =
+            serde_json::from_slice(&explicit.stdout).expect("valid explicit external JSON");
+        assert_eq!(explicit_summary["status_counts"]["TRIGGERED"], 2);
+        let explicit_report = std::env::var_os("AUDIT_S5_MULTI_EXTERNAL_EXPLICIT_REPORT")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| directory.join("external-explicit-selection-parity.json"));
+        let report = run_multi_external_source_python_rust_parity(
+            &python_source_root,
+            &explicit_config,
+            &current,
+            &explicit_sources,
+            &template_dir,
+            &explicit_report,
+        );
+        assert_eq!(report["status"], "completed");
+        assert_eq!(report["comparison"]["diff_count"], 0);
+    }
+
+    fs::remove_dir_all(directory).expect("remove synthetic multi-external S5 files");
 }
 
 #[test]

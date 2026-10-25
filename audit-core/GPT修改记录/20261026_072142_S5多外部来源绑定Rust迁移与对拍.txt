@@ -1,0 +1,47 @@
+# S5 V_EXT 多外部来源绑定 Rust 迁移与对拍
+
+- 时间：2026-10-26 07:21（Asia/Shanghai）
+- 执行者：Codex Audit migration agent
+- 分支：`audit-dev`
+- 修改前 commit：`05cb57685ecdafe5e4c3c5e907a4e171e68c9f4b`
+- 修改后 commit：随本功能提交；SHA 可由 Git 历史追溯。
+- WIP：开始时 tracked 工作区干净。保留未跟踪的 `HANDOFF_ZCODE_TO_CODEX.md`、`.pytest-tmp-v3/` 及已有本机报告，未修改、暂存或提交。原 Python 项目和真实样本只读。
+- 【组件版本】：`audit-core` 仍为 0.1.0，不升级；不使用旧 Sx-Fxx 组件版本制度。
+
+## 目的与变更
+
+将 S5 的 V_EXT 来源选择从单来源扩展为多来源，复现 Python `SourceRepository._binding("external", ...)` 的显式来源、默认来源、业务回退、唯一来源回退和歧义行为。保留旧 `--external-source`/`--external-source-id` 用法；增加可重复 `--external-source-binding SOURCE_ID=BUSINESS=FILE` 与 `--default-external-source-id`。每个外部来源单独缓存动态布局与时序识别结果，所有绑定文件进入运行副本和哈希总账。
+
+- `audit-core/src/s5_retrieval.rs`：增加外部来源绑定/快照和 Python 兼容的来源选择；按来源隔离布局与时序状态。
+- `audit-core/src/bin/open-data-audit.rs`：接入外部绑定 CLI 参数、来源校验、开发者日志和多来源审核副本。
+- `audit-core/tests/s5_previous_source_cli.rs`：覆盖业务回退、显式来源 ID、歧义和未匹配来源；保留旧单来源回归路径。
+- `audit-core/tests/compare/compare_s5_outputs.py`：对比多个外部来源下 Python `AuditEngine.run` 与真实 Rust CLI 的完整输出，支持外部来源输入指纹和来源绑定。
+- `audit-core/probe/reports/`：新增三份脱敏合成对拍摘要，分别记录业务回退、显式选择和歧义场景。
+- `audit-core/MIGRATION_INVENTORY.md`：记录本切片证据与未验收边界。
+
+没有修改共享 crates、根 Cargo 配置、`Cargo.lock`、`pytools-core/**`、`DEVELOPMENT_GOAL.md`、原 Python 项目或真实工作簿。
+
+## 验证
+
+- Windows 原生 `cargo check --locked -p audit-core --bin open-data-audit`：通过。输出包含既有 `excel-editor` 弃用 API 与 Audit unused warnings。
+- `cargo test --locked -p audit-core --test s5_previous_source_cli s5_audit_cli_selects_multiple_external_sources_and_matches_python -- --nocapture`，设置 `AUDIT_PYTHON_SOURCE_ROOT`：1 passed。Python 3.12.10 与 Rust CLI 的业务回退、显式 `source=`、歧义/未匹配三组完整输出差异均为 0，输入均未变；状态计数逐组一致。
+- 兼容回归：`s5_audit_cli_reads_and_copies_configured_external_source`、`s5_audit_cli_retrieves_dynamic_external_time_series_for_current_period`、`s5_audit_cli_selects_multiple_current_sources_by_rule_binding` 各 1 passed。
+- 公共 XLSM 修复复核：`cargo test -p excel-reader ooxml_sheet_name_adapter_accepts_xlsm_metadata`，1 passed。`audit-dev` 未包含 main 原始 SHA `3e53e7e`，但祖先提交 `579155f` 的完整补丁 ID 与 `3e53e7e` 一致，因此未重复 cherry-pick 或生成同步提交。
+- 修改文件的 `rustfmt --edition 2021 --check`、`python -m py_compile audit-core/tests/compare/compare_s5_outputs.py` 和 `git diff --check` 通过。包级 `cargo fmt -p audit-core -- --check` 还报告既有、未修改的 `audit-core/src/s3_explanation_export.rs` 格式差异；未触碰该文件。
+
+对拍报告：
+
+- `probe/reports/s5_multiple_external_sources_business_fallback_synthetic_parity_windows_native_20261026.json`
+- `probe/reports/s5_multiple_external_sources_explicit_synthetic_parity_windows_native_20261026.json`
+- `probe/reports/s5_multiple_external_sources_ambiguous_synthetic_parity_windows_native_20261026.json`
+
+## 未执行与已知限制
+
+- 没有真实外部业务工作簿用于取数对拍；对拍仅覆盖合成 XLSX。配置检查的真实外部表头证据不能替代真实 V_EXT 业务运行验收。
+- Linux/glibc 2.28、deb、麒麟 V10、统信 UOS V20 未验证；S5-F01 整体仍未验收，production capability 保持 `unverified`。
+- Audit 共享能力问题 #8（MoveSheet/历史关系快照）仍未解决，本切片不构成其关闭证据。
+
+## 删除与回滚
+
+- 未删除文件或改写输入样本。
+- 回滚本功能提交即可撤销多 V_EXT 来源绑定与对应测试/报告/清单记录；不要修改既有交接文件和其他未跟踪 WIP。

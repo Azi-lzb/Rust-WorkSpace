@@ -41,7 +41,9 @@ use audit_core::{
     s5_config_check::validate_s5_config,
     s5_outputs::{write_run_outputs, S5OutputRequest, S5OutputSource},
     s5_period_recognition::{detect_s5_period, s5_file_period_hint},
-    s5_retrieval::{S5CurrentSourceBinding, S5Retrieval, S5SourceDescriptor},
+    s5_retrieval::{
+        S5CurrentSourceBinding, S5ExternalSourceBinding, S5Retrieval, S5SourceDescriptor,
+    },
     s5_service::run_rules,
     s5_template_matching::match_s5_template,
     web_bridge::serve_web_ui,
@@ -663,6 +665,17 @@ struct S5AuditRunArgs {
     /// Logical source id for --external-source; required when that source is selected.
     #[arg(long, requires = "external_source")]
     external_source_id: Option<String>,
+
+    /// Additional external binding in SOURCE_ID=BUSINESS=FILE form; repeat as needed.
+    #[arg(
+        long = "external-source-binding",
+        value_name = "SOURCE_ID=BUSINESS=FILE"
+    )]
+    external_source_bindings: Vec<String>,
+
+    /// Default external source id used when V_EXT does not specify source=.
+    #[arg(long)]
+    default_external_source_id: Option<String>,
 
     /// Reporting period, e.g. 2026-07-31.
     #[arg(long)]
@@ -3179,23 +3192,23 @@ fn run_s1_history_classify(arguments: S1HistoryClassifyArgs) -> Result<()> {
             );
         } else {
             match summary.status {
-                    "missing_file" => eprintln!(
-                        "S1 历史工作簿不存在，按空历史处理；未调用 Excel 读取引擎，耗时 {} ms。",
-                        summary.elapsed_ms
-                    ),
-                    "sheet_missing" => eprintln!(
-                        "S1 历史工作簿未找到支持的历史工作表，按空历史处理；引擎 {}，耗时 {} ms。",
-                        summary.reader, summary.elapsed_ms
-                    ),
-                    _ => eprintln!(
-                        "S1 历史工作簿读取完成：引擎 {}，工作表 {}，读取 {} 条、跳过 {} 条；耗时 {} ms。",
-                        summary.reader,
-                        summary.sheet_name.as_deref().unwrap_or("未知"),
-                        summary.rows_read,
-                        summary.rows_skipped,
-                        summary.elapsed_ms
-                    ),
-                }
+                "missing_file" => eprintln!(
+                    "S1 历史工作簿不存在，按空历史处理；未调用 Excel 读取引擎，耗时 {} ms。",
+                    summary.elapsed_ms
+                ),
+                "sheet_missing" => eprintln!(
+                    "S1 历史工作簿未找到支持的历史工作表，按空历史处理；引擎 {}，耗时 {} ms。",
+                    summary.reader, summary.elapsed_ms
+                ),
+                _ => eprintln!(
+                    "S1 历史工作簿读取完成：引擎 {}，工作表 {}，读取 {} 条、跳过 {} 条；耗时 {} ms。",
+                    summary.reader,
+                    summary.sheet_name.as_deref().unwrap_or("未知"),
+                    summary.rows_read,
+                    summary.rows_skipped,
+                    summary.elapsed_ms
+                ),
+            }
         }
         Some(summary)
     } else {
@@ -3570,32 +3583,32 @@ fn run_conditional_audit_inputs(
                     }
                 } else {
                     match progress.status {
-                    "started" => eprintln!(
-                        "正在检查条件格式：{}（{}/{}）",
-                        progress.source_file, progress.file_index, progress.files_total
-                    ),
-                    "completed" => eprintln!(
-                        "{}：引擎 {}，规则 {}/{}，扫描 {} 格，触发 {} 项，未确定 {} 项；读取 {} ms、判定 {} ms、组装 {} ms、单文件总计 {} ms。",
-                        progress.source_file,
-                        progress.reader.unwrap_or("未知"),
-                        progress.rules_supported.unwrap_or_default(),
-                        progress.rules_total.unwrap_or_default(),
-                        progress.scanned_cells.unwrap_or_default(),
-                        progress.issue_count.unwrap_or_default(),
-                        progress.diagnostics.unwrap_or_default(),
-                        progress.read_time_ms.unwrap_or_default(),
-                        progress.evaluation_time_ms.unwrap_or_default(),
-                        progress.issue_build_time_ms.unwrap_or_default(),
-                        progress.elapsed_ms.unwrap_or_default()
-                    ),
-                    "failed" => eprintln!(
-                        "{}：条件格式检查失败（{} ms）：{}",
-                        progress.source_file,
-                        progress.elapsed_ms.unwrap_or_default(),
-                        progress.error.as_deref().unwrap_or("未知错误")
-                    ),
-                    _ => {}
-                }
+                        "started" => eprintln!(
+                            "正在检查条件格式：{}（{}/{}）",
+                            progress.source_file, progress.file_index, progress.files_total
+                        ),
+                        "completed" => eprintln!(
+                            "{}：引擎 {}，规则 {}/{}，扫描 {} 格，触发 {} 项，未确定 {} 项；读取 {} ms、判定 {} ms、组装 {} ms、单文件总计 {} ms。",
+                            progress.source_file,
+                            progress.reader.unwrap_or("未知"),
+                            progress.rules_supported.unwrap_or_default(),
+                            progress.rules_total.unwrap_or_default(),
+                            progress.scanned_cells.unwrap_or_default(),
+                            progress.issue_count.unwrap_or_default(),
+                            progress.diagnostics.unwrap_or_default(),
+                            progress.read_time_ms.unwrap_or_default(),
+                            progress.evaluation_time_ms.unwrap_or_default(),
+                            progress.issue_build_time_ms.unwrap_or_default(),
+                            progress.elapsed_ms.unwrap_or_default()
+                        ),
+                        "failed" => eprintln!(
+                            "{}：条件格式检查失败（{} ms）：{}",
+                            progress.source_file,
+                            progress.elapsed_ms.unwrap_or_default(),
+                            progress.error.as_deref().unwrap_or("未知错误")
+                        ),
+                        _ => {}
+                    }
                 }
             },
         )
@@ -4540,6 +4553,12 @@ struct S5CurrentSourceArgument {
     path: PathBuf,
 }
 
+struct S5ExternalSourceArgument {
+    source_id: String,
+    business: String,
+    path: PathBuf,
+}
+
 fn parse_s5_current_source_argument(value: &str) -> Result<S5CurrentSourceArgument> {
     let mut parts = value.splitn(3, '=');
     let source_id = parts.next().unwrap_or_default().trim();
@@ -4550,6 +4569,22 @@ fn parse_s5_current_source_argument(value: &str) -> Result<S5CurrentSourceArgume
         "--current-source must use SOURCE_ID=BUSINESS=FILE form"
     );
     Ok(S5CurrentSourceArgument {
+        source_id: source_id.to_owned(),
+        business: business.to_owned(),
+        path: PathBuf::from(path),
+    })
+}
+
+fn parse_s5_external_source_argument(value: &str) -> Result<S5ExternalSourceArgument> {
+    let mut parts = value.splitn(3, '=');
+    let source_id = parts.next().unwrap_or_default().trim();
+    let business = parts.next().unwrap_or_default().trim();
+    let path = parts.next().unwrap_or_default();
+    anyhow::ensure!(
+        !source_id.is_empty() && !path.is_empty(),
+        "--external-source-binding must use SOURCE_ID=BUSINESS=FILE form"
+    );
+    Ok(S5ExternalSourceArgument {
         source_id: source_id.to_owned(),
         business: business.to_owned(),
         path: PathBuf::from(path),
@@ -4647,6 +4682,40 @@ fn run_s5_audit_run(arguments: S5AuditRunArgs) -> Result<()> {
             "--external-source-id requires --external-source"
         );
     }
+    let additional_external_sources: Vec<S5ExternalSourceArgument> = arguments
+        .external_source_bindings
+        .iter()
+        .map(|value| parse_s5_external_source_argument(value))
+        .collect::<Result<_>>()?;
+    let mut external_source_ids = Vec::new();
+    if let Some(source_id) = arguments.external_source_id.as_deref() {
+        external_source_ids.push(source_id.trim().to_owned());
+    }
+    for source in &additional_external_sources {
+        anyhow::ensure!(
+            source.path.is_file(),
+            "S5 附加外部数据源工作簿不存在：{}",
+            source.path.display()
+        );
+        anyhow::ensure!(
+            !external_source_ids.iter().any(|id| id == &source.source_id),
+            "外部逻辑数据源 ID 重复：{}",
+            source.source_id
+        );
+        external_source_ids.push(source.source_id.clone());
+    }
+    if let Some(default_source_id) = arguments.default_external_source_id.as_deref() {
+        anyhow::ensure!(
+            !default_source_id.trim().is_empty(),
+            "--default-external-source-id cannot be empty"
+        );
+        anyhow::ensure!(
+            external_source_ids
+                .iter()
+                .any(|source_id| source_id == default_source_id.trim()),
+            "--default-external-source-id must name a bound external source: {default_source_id}"
+        );
+    }
     anyhow::ensure!(
         !arguments.period.trim().is_empty(),
         "运行上下文必须提供报告期"
@@ -4664,7 +4733,7 @@ fn run_s5_audit_run(arguments: S5AuditRunArgs) -> Result<()> {
     if arguments.previous_source.is_some() {
         source_roles.push("previous");
     }
-    if arguments.external_source.is_some() {
+    if arguments.external_source.is_some() || !additional_external_sources.is_empty() {
         source_roles.push("external");
     }
     if arguments.developer_view {
@@ -4686,6 +4755,8 @@ fn run_s5_audit_run(arguments: S5AuditRunArgs) -> Result<()> {
                 "numeric_region_template_engine": "Calamine via excel-reader + namespace-aware defined names",
                 "previous_period": arguments.previous_period,
                 "external_source_id": arguments.external_source_id,
+                "default_external_source_id": arguments.default_external_source_id,
+                "external_source_ids": external_source_ids,
                 "engine": "rust_s5_configured_audit",
                 "started_at": chrono::Local::now().to_rfc3339()
             }))?
@@ -4709,7 +4780,12 @@ fn run_s5_audit_run(arguments: S5AuditRunArgs) -> Result<()> {
         .previous_source_id
         .clone()
         .unwrap_or_else(|| arguments.source_id.clone());
-    let external_source_id = arguments.external_source_id.clone().unwrap_or_default();
+    let external_source_id = arguments
+        .external_source_id
+        .as_deref()
+        .map(str::trim)
+        .unwrap_or_default()
+        .to_owned();
     let previous_descriptor = arguments
         .previous_source
         .as_deref()
@@ -4721,16 +4797,31 @@ fn run_s5_audit_run(arguments: S5AuditRunArgs) -> Result<()> {
             institution_code: &arguments.org_code,
             institution_name: &arguments.org_name,
         });
-    let external_descriptor = arguments
-        .external_source
-        .as_deref()
-        .map(|path| S5SourceDescriptor {
-            path,
-            source_id: &external_source_id,
-            period: arguments.period.trim(),
-            institution_code: &arguments.org_code,
-            institution_name: &arguments.org_name,
+    let mut external_bindings = Vec::new();
+    if let Some(path) = arguments.external_source.as_deref() {
+        external_bindings.push(S5ExternalSourceBinding {
+            source: S5SourceDescriptor {
+                path,
+                source_id: &external_source_id,
+                period: arguments.period.trim(),
+                institution_code: &arguments.org_code,
+                institution_name: &arguments.org_name,
+            },
+            business: "",
         });
+    }
+    external_bindings.extend(additional_external_sources.iter().map(|binding| {
+        S5ExternalSourceBinding {
+            source: S5SourceDescriptor {
+                path: &binding.path,
+                source_id: &binding.source_id,
+                period: arguments.period.trim(),
+                institution_code: &arguments.org_code,
+                institution_name: &arguments.org_name,
+            },
+            business: &binding.business,
+        }
+    }));
     let mut current_bindings = vec![S5CurrentSourceBinding {
         source: S5SourceDescriptor {
             path: &arguments.source,
@@ -4753,11 +4844,15 @@ fn run_s5_audit_run(arguments: S5AuditRunArgs) -> Result<()> {
             business: &binding.business,
         }
     }));
-    let mut retrieval = S5Retrieval::bind_with_current_sources_and_templates(
+    let mut retrieval = S5Retrieval::bind_with_current_sources_and_external_sources_and_templates(
         configuration.clone(),
         &current_bindings,
         previous_descriptor,
-        external_descriptor,
+        &external_bindings,
+        arguments
+            .default_external_source_id
+            .as_deref()
+            .or(arguments.external_source_id.as_deref()),
         arguments.period.trim(),
         arguments.template_path.as_deref(),
         template_dir,
@@ -4796,15 +4891,13 @@ fn run_s5_audit_run(arguments: S5AuditRunArgs) -> Result<()> {
             sha256_before,
         });
     }
-    if let (Some(path), Some(sha256_before)) = (
-        arguments.external_source.as_deref(),
-        retrieval.external_source_sha256(),
-    ) {
+    let external_source_snapshots = retrieval.external_source_snapshots();
+    for source in &external_source_snapshots {
         additional_output_sources.push(S5OutputSource {
             role: "external",
-            path,
-            source_id: &external_source_id,
-            sha256_before,
+            path: &source.path,
+            source_id: &source.source_id,
+            sha256_before: &source.sha256,
         });
     }
     let selected_template_bindings = retrieval.numeric_region_template_sources();
@@ -4880,6 +4973,8 @@ fn run_s5_audit_run(arguments: S5AuditRunArgs) -> Result<()> {
         "period": arguments.period,
         "previous_period": arguments.previous_period,
         "external_source_id": arguments.external_source_id,
+        "default_external_source_id": arguments.default_external_source_id,
+        "external_source_ids": external_source_ids,
         "businesses": arguments.businesses,
         "source_roles": source_roles,
         "rule_results": outcomes.len(),
@@ -4908,6 +5003,7 @@ fn run_s5_audit_run(arguments: S5AuditRunArgs) -> Result<()> {
                 "run_id": run_id,
                 "elapsed_ms": elapsed_ms,
                 "source_roles": source_roles,
+                "external_source_ids": external_source_ids,
                 "numeric_region_templates": numeric_region_template_selections,
             }))?
         );

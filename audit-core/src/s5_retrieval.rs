@@ -123,6 +123,14 @@ pub struct S5CurrentSourceBinding<'a> {
     pub business: &'a str,
 }
 
+/// An external source bound to the business used by Python's
+/// `RuntimeContext.external_sources` fallback selection.
+#[derive(Clone, Copy)]
+pub struct S5ExternalSourceBinding<'a> {
+    pub source: S5SourceDescriptor<'a>,
+    pub business: &'a str,
+}
+
 /// A layout template actually selected while retrieving S5 numeric regions.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct S5NumericTemplateSource {
@@ -148,8 +156,22 @@ struct BoundCurrentSource {
     source: BoundSource,
 }
 
+struct BoundExternalSource {
+    business: String,
+    source: BoundSource,
+    layout: Option<ExternalLayout>,
+    has_time_series_layout: Option<bool>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct S5CurrentSourceSnapshot {
+    pub path: PathBuf,
+    pub source_id: String,
+    pub sha256: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct S5ExternalSourceSnapshot {
     pub path: PathBuf,
     pub source_id: String,
     pub sha256: String,
@@ -224,9 +246,8 @@ pub struct S5Retrieval {
     current_business: String,
     additional_current: Vec<BoundCurrentSource>,
     previous: Option<BoundSource>,
-    external: Option<BoundSource>,
-    external_layout: Option<ExternalLayout>,
-    external_has_time_series: Option<bool>,
+    external_sources: Vec<BoundExternalSource>,
+    default_external_source: Option<String>,
     data_quality_warnings: Vec<JsonValue>,
 }
 
@@ -260,9 +281,8 @@ impl S5Retrieval {
             current_business: String::new(),
             additional_current: Vec::new(),
             previous: None,
-            external: None,
-            external_layout: None,
-            external_has_time_series: None,
+            external_sources: Vec::new(),
+            default_external_source: None,
             data_quality_warnings: Vec::new(),
         })
     }
@@ -278,8 +298,7 @@ impl S5Retrieval {
         Self::bind_with_sources(configuration, current, previous, None, audit_period)
     }
 
-    /// Bind the configured current, previous, and one external source using
-    /// the currently migrated single-source-per-role path.
+    /// Bind the configured current, previous, and one default external source.
     pub fn bind_with_sources(
         configuration: Configuration,
         current: S5SourceDescriptor<'_>,
@@ -332,6 +351,38 @@ impl S5Retrieval {
         current_sources: &[S5CurrentSourceBinding<'_>],
         previous: Option<S5SourceDescriptor<'_>>,
         external: Option<S5SourceDescriptor<'_>>,
+        audit_period: &str,
+        template_path: Option<&Path>,
+        template_dir: Option<&Path>,
+    ) -> Result<Self, RetrievalFailure> {
+        let external_bindings: Vec<_> = external
+            .map(|source| S5ExternalSourceBinding {
+                source,
+                business: "",
+            })
+            .into_iter()
+            .collect();
+        let default_external_source = external.map(|source| source.source_id);
+        Self::bind_with_current_sources_and_external_sources_and_templates(
+            configuration,
+            current_sources,
+            previous,
+            &external_bindings,
+            default_external_source,
+            audit_period,
+            template_path,
+            template_dir,
+        )
+    }
+
+    /// Bind external sources using Python's logical-ID and business fallback
+    /// selection rules. A legacy external source remains the default source.
+    pub fn bind_with_current_sources_and_external_sources_and_templates(
+        configuration: Configuration,
+        current_sources: &[S5CurrentSourceBinding<'_>],
+        previous: Option<S5SourceDescriptor<'_>>,
+        external_sources: &[S5ExternalSourceBinding<'_>],
+        default_external_source: Option<&str>,
         audit_period: &str,
         template_path: Option<&Path>,
         template_dir: Option<&Path>,
@@ -405,9 +456,37 @@ impl S5Retrieval {
                 )
             })
             .transpose()?;
-        let external = external
-            .map(|descriptor| BoundSource::bind(descriptor, "external", audit_period, None, None))
-            .transpose()?;
+        let mut bound_external_sources = Vec::with_capacity(external_sources.len());
+        let mut external_source_ids = Vec::with_capacity(external_sources.len());
+        for binding in external_sources {
+            let source_id = binding.source.source_id.trim();
+            if source_id.is_empty() {
+                return Err(RetrievalFailure::new(
+                    "SOURCE_NOT_FOUND",
+                    "外部数据源必须提供逻辑数据源 ID",
+                ));
+            }
+            if external_source_ids.iter().any(|known| known == source_id) {
+                return Err(RetrievalFailure::new(
+                    "SOURCE_DUPLICATE",
+                    format!("外部逻辑数据源 ID 重复：{source_id}"),
+                ));
+            }
+            external_source_ids.push(source_id.to_owned());
+            let mut source =
+                BoundSource::bind(binding.source, "external", audit_period, None, None)?;
+            source.source_id = source_id.to_owned();
+            bound_external_sources.push(BoundExternalSource {
+                business: binding.business.trim().to_owned(),
+                source,
+                layout: None,
+                has_time_series_layout: None,
+            });
+        }
+        let default_external_source = default_external_source
+            .map(str::trim)
+            .filter(|source_id| !source_id.is_empty())
+            .map(str::to_owned);
         if previous
             .as_ref()
             .is_some_and(|previous| previous.institution_code != current.institution_code)
@@ -423,9 +502,8 @@ impl S5Retrieval {
             current_business,
             additional_current,
             previous,
-            external,
-            external_layout: None,
-            external_has_time_series: None,
+            external_sources: bound_external_sources,
+            default_external_source,
             data_quality_warnings: Vec::new(),
         })
     }
@@ -488,6 +566,18 @@ impl S5Retrieval {
             .collect()
     }
 
+    /// Snapshots for every bound external source, for the run copy manifest.
+    pub fn external_source_snapshots(&self) -> Vec<S5ExternalSourceSnapshot> {
+        self.external_sources
+            .iter()
+            .map(|binding| S5ExternalSourceSnapshot {
+                path: binding.source.source_path.clone(),
+                source_id: binding.source.source_id.clone(),
+                sha256: binding.source.sha256.clone(),
+            })
+            .collect()
+    }
+
     fn current_source_index(
         &self,
         requested_source: &str,
@@ -541,6 +631,54 @@ impl S5Retrieval {
         ))
     }
 
+    fn external_source_index(
+        &self,
+        requested_source: &str,
+        rule_business: &str,
+    ) -> Result<usize, RetrievalFailure> {
+        let requested_source = requested_source.trim();
+        let selected_source = if !requested_source.is_empty() {
+            Some(requested_source)
+        } else {
+            self.default_external_source.as_deref()
+        };
+        if let Some(source_id) = selected_source {
+            return self
+                .external_sources
+                .iter()
+                .position(|binding| binding.source.source_id == source_id)
+                .ok_or_else(|| {
+                    RetrievalFailure::new(
+                        "SOURCE_NOT_SELECTED",
+                        format!("未选择或未登记逻辑数据源：{source_id}"),
+                    )
+                });
+        }
+
+        let matching: Vec<usize> = self
+            .external_sources
+            .iter()
+            .enumerate()
+            .filter_map(|(index, binding)| (binding.business == rule_business).then_some(index))
+            .collect();
+        if matching.len() == 1 {
+            return Ok(matching[0]);
+        }
+        if matching.is_empty() && self.external_sources.len() == 1 {
+            return Ok(0);
+        }
+        if matching.is_empty() {
+            return Err(RetrievalFailure::new(
+                "SOURCE_NOT_SELECTED",
+                format!("没有找到业务 {rule_business} 对应的external数据源"),
+            ));
+        }
+        Err(RetrievalFailure::new(
+            "SOURCE_AMBIGUOUS",
+            format!("业务 {rule_business} 对应多个external数据源，请显式选择逻辑来源"),
+        ))
+    }
+
     /// SHA-256 captured for the selected previous source, when present.
     pub fn previous_source_sha256(&self) -> Option<&str> {
         self.previous.as_ref().map(|source| source.sha256.as_str())
@@ -548,7 +686,17 @@ impl S5Retrieval {
 
     /// SHA-256 captured for the selected external source, when present.
     pub fn external_source_sha256(&self) -> Option<&str> {
-        self.external.as_ref().map(|source| source.sha256.as_str())
+        let source_id = self.default_external_source.as_deref();
+        let source = if let Some(source_id) = source_id {
+            self.external_sources
+                .iter()
+                .find(|binding| binding.source.source_id == source_id)
+        } else if self.external_sources.len() == 1 {
+            self.external_sources.first()
+        } else {
+            None
+        }?;
+        Some(source.source.sha256.as_str())
     }
 
     /// Dynamic external-source quality warnings to include in the result and ledger.
@@ -760,27 +908,11 @@ impl S5Retrieval {
         keywords: &BTreeMap<String, String>,
         rule_business: &str,
     ) -> Result<EvalValue, RetrievalFailure> {
-        let source_id = self
-            .external
-            .as_ref()
-            .ok_or_else(|| {
-                RetrievalFailure::new(
-                    "SOURCE_NOT_SELECTED",
-                    format!("没有找到业务 {rule_business} 对应的external数据源"),
-                )
-            })?
-            .source_id
-            .clone();
-        if let Some(requested_source) = keywords
-            .get("source")
-            .filter(|source_id| !source_id.trim().is_empty())
-            .filter(|requested| requested.as_str() != source_id)
-        {
-            return Err(RetrievalFailure::new(
-                "SOURCE_NOT_SELECTED",
-                format!("未选择或未登记逻辑数据源：{requested_source}"),
-            ));
-        }
+        let source_index = self.external_source_index(
+            keywords.get("source").map(String::as_str).unwrap_or(""),
+            rule_business,
+        )?;
+        let source_id = self.external_sources[source_index].source.source_id.clone();
         let [EvalArgument::Text(metric_argument)] = args else {
             return Err(RetrievalFailure::new(
                 "VALUE_TYPE_INVALID",
@@ -818,24 +950,28 @@ impl S5Retrieval {
             .iter()
             .find(|contract| contract.source_id == source_id)
             .cloned();
-        let has_time_series_layout = if let Some(value) = self.external_has_time_series {
-            value
-        } else {
-            let value = self
-                .external
-                .as_ref()
-                .is_some_and(|source| ExternalLayout::has_time_series_header(&source.book));
-            self.external_has_time_series = Some(value);
-            value
-        };
+        if self.external_sources[source_index]
+            .has_time_series_layout
+            .is_none()
+        {
+            let value = ExternalLayout::has_time_series_header(
+                &self.external_sources[source_index].source.book,
+            );
+            self.external_sources[source_index].has_time_series_layout = Some(value);
+        }
+        let has_time_series_layout = self.external_sources[source_index]
+            .has_time_series_layout
+            .unwrap_or(false);
         let Some(contract) = contract.filter(|_| !has_time_series_layout) else {
             let sheet_filter = keywords.get("sheet").map(String::as_str).unwrap_or("");
-            return self.retrieve_external_from_layout(&metric, metric_header, sheet_filter);
+            return self.retrieve_external_from_layout(
+                source_index,
+                &metric,
+                metric_header,
+                sheet_filter,
+            );
         };
-        let source = self
-            .external
-            .as_ref()
-            .expect("external source checked above");
+        let source = &self.external_sources[source_index].source;
         if contract.mapping_sheet == "参照表" {
             return Err(RetrievalFailure::new(
                 "MAPPING_SHEET_MISSING",
@@ -1027,16 +1163,14 @@ impl S5Retrieval {
 
     fn retrieve_external_from_layout(
         &mut self,
+        source_index: usize,
         metric: &crate::s5_config::ExternalMetricSpec,
         metric_header: &str,
         sheet_filter: &str,
     ) -> Result<EvalValue, RetrievalFailure> {
-        let source = self
-            .external
-            .as_ref()
-            .expect("external source checked above");
+        let source = &self.external_sources[source_index].source;
         let source_period = source.source_period.clone();
-        if self.external_layout.is_none() {
+        if self.external_sources[source_index].layout.is_none() {
             let layout = ExternalLayout::discover(&source.book)
                 .map_err(|failure| RetrievalFailure::new(&failure.code, failure.message))?;
             let source_path = source.source_path.clone();
@@ -1054,13 +1188,13 @@ impl S5Retrieval {
                     )
                 })
                 .collect();
-            self.external_layout = Some(layout);
+            self.external_sources[source_index].layout = Some(layout);
             for warning in warnings {
                 push_data_quality_warning(&mut self.data_quality_warnings, warning);
             }
         }
-        let layout = self
-            .external_layout
+        let layout = self.external_sources[source_index]
+            .layout
             .as_ref()
             .expect("layout is populated before retrieval");
         let lookup = layout
@@ -1072,10 +1206,7 @@ impl S5Retrieval {
                 &source_period,
             )
             .map_err(|failure| RetrievalFailure::new(&failure.code, failure.message))?;
-        let source = self
-            .external
-            .as_ref()
-            .expect("external source checked above");
+        let source = &self.external_sources[source_index].source;
         let cell = format!("{}{}", column_letter_local(lookup.column), lookup.row);
         let formula_cell = source
             .book

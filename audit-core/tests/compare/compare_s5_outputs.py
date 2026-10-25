@@ -36,16 +36,26 @@ def parse_current_source_spec(value: str) -> tuple[str, str, Path]:
     return parts[0].strip(), parts[1].strip(), Path(parts[2])
 
 
+def parse_external_source_spec(value: str) -> tuple[str, str, Path]:
+    parts = value.split("=", 2)
+    if len(parts) != 3 or not parts[0].strip() or not parts[2]:
+        raise ValueError("external source must use SOURCE_ID=BUSINESS=FILE form")
+    return parts[0].strip(), parts[1].strip(), Path(parts[2])
+
+
 def input_fingerprints(
     config: Path,
     source: Path,
     template_path: Path | None,
     template_dir: Path | None,
     additional_sources: list[tuple[str, str, Path]] | None = None,
+    external_sources: list[tuple[str, str, Path, bool]] | None = None,
 ):
     inputs = {"config": config, "source": source}
     for index, (source_id, _business, path) in enumerate(additional_sources or []):
         inputs[f"current:{index}:{source_id}"] = path
+    for index, (source_id, _business, path, _legacy_default) in enumerate(external_sources or []):
+        inputs[f"external:{index}:{source_id}"] = path
     if template_path:
         inputs["template"] = template_path
     if template_dir:
@@ -256,6 +266,16 @@ def main() -> int:
         default=[],
         metavar="SOURCE_ID=BUSINESS=FILE",
     )
+    parser.add_argument("--external-source", type=Path)
+    parser.add_argument("--external-source-id")
+    parser.add_argument("--external-source-business", default="")
+    parser.add_argument(
+        "--external-source-binding",
+        action="append",
+        default=[],
+        metavar="SOURCE_ID=BUSINESS=FILE",
+    )
+    parser.add_argument("--default-external-source")
     parser.add_argument("--template-path", type=Path)
     parser.add_argument("--template-dir", type=Path)
     parser.add_argument(
@@ -290,15 +310,46 @@ def main() -> int:
             additional_sources.append((source_id, business, path.resolve(strict=True)))
     except (OSError, ValueError) as error:
         parser.error(str(error))
+    external_sources: list[tuple[str, str, Path, bool]] = []
+    known_external_ids: set[str] = set()
+    if args.external_source:
+        if not args.external_source_id or not args.external_source_id.strip():
+            parser.error("--external-source requires --external-source-id")
+        external_sources.append((
+            args.external_source_id.strip(),
+            args.external_source_business.strip(),
+            args.external_source.resolve(strict=True),
+            True,
+        ))
+        known_external_ids.add(args.external_source_id.strip())
+    elif args.external_source_id:
+        parser.error("--external-source-id requires --external-source")
+    try:
+        for spec in args.external_source_binding:
+            source_id, business, path = parse_external_source_spec(spec)
+            if source_id in known_external_ids:
+                raise ValueError(f"duplicate external source id: {source_id}")
+            known_external_ids.add(source_id)
+            external_sources.append((source_id, business, path.resolve(strict=True), False))
+    except (OSError, ValueError) as error:
+        parser.error(str(error))
+    default_external_source = args.default_external_source or (
+        args.external_source_id.strip() if args.external_source_id else ""
+    )
+    if default_external_source and default_external_source not in known_external_ids:
+        parser.error("--default-external-source must name a bound external source")
     if args.rust_bin:
         args.rust_bin = args.rust_bin.resolve(strict=True)
-    use_rust_cli = args.rust_cli or bool(additional_sources) or args.rust_bin is not None
+    use_rust_cli = (
+        args.rust_cli or bool(additional_sources) or bool(external_sources) or args.rust_bin is not None
+    )
     inputs_before = input_fingerprints(
         args.config_workbook.resolve(strict=True),
         args.audit_copy.resolve(strict=True),
         template_path,
         template_dir,
         additional_sources,
+        external_sources,
     )
     sys.path.insert(0, str(source_root / "core" / "src"))
     os.environ["AUDIT3_WRITER_ENGINE"] = "openpyxl"
@@ -315,6 +366,12 @@ def main() -> int:
             copied_path = directory / f"current-source-{index}{suffix}"
             shutil.copy2(source_path, copied_path)
             copied_current_sources.append((source_id, business, copied_path))
+        copied_external_sources = []
+        for index, (source_id, business, source_path, legacy_default) in enumerate(external_sources):
+            suffix = source_path.suffix or ".xlsx"
+            copied_path = directory / f"external-source-{index}{suffix}"
+            shutil.copy2(source_path, copied_path)
+            copied_external_sources.append((source_id, business, copied_path, legacy_default))
         py_root = directory / "py_out"
         rs_root = directory / "rs_out"
 
@@ -343,11 +400,24 @@ def main() -> int:
                 institution_code=args.institution_code,
                 institution_name=args.institution_name,
             )
+        external_source_bindings = {
+            source_id: SourceBinding(
+                source_id,
+                copied_path,
+                business=business,
+                period=args.period,
+                institution_code=args.institution_code,
+                institution_name=args.institution_name,
+            )
+            for source_id, business, copied_path, _legacy_default in copied_external_sources
+        }
         context = RuntimeContext(
             period=args.period,
             institution_code=args.institution_code,
             institution_name=args.institution_name,
             current_sources=current_source_bindings,
+            external_sources=external_source_bindings,
+            default_external_source=default_external_source,
         )
         result = engine.run(
             context,
@@ -402,6 +472,21 @@ def main() -> int:
                 rust_command.extend([
                     "--current-source",
                     f"{source_id}={business}={copied_path}",
+                ])
+            for source_id, business, copied_path, legacy_default in copied_external_sources:
+                if legacy_default:
+                    rust_command.extend([
+                        "--external-source", str(copied_path),
+                        "--external-source-id", source_id,
+                    ])
+                else:
+                    rust_command.extend([
+                        "--external-source-binding",
+                        f"{source_id}={business}={copied_path}",
+                    ])
+            if default_external_source and default_external_source != args.external_source_id:
+                rust_command.extend([
+                    "--default-external-source-id", default_external_source,
                 ])
             if template_path:
                 rust_command.extend(["--template-path", str(template_path)])
@@ -516,6 +601,7 @@ def main() -> int:
             template_path,
             template_dir,
             additional_sources,
+            external_sources,
         )
         if not inputs_unchanged:
             diffs.append("inputs.modified_during_run")
@@ -539,6 +625,9 @@ def main() -> int:
             "business_count": len(businesses),
             "current_source_count": 1 + len(additional_sources),
             "additional_current_sources_count": len(additional_sources),
+            "external_source_count": len(external_sources),
+            "external_source_ids": [source_id for source_id, _business, _path, _legacy in external_sources],
+            "default_external_source": default_external_source or None,
             "run_id": RUN_ID,
             "files_copied_to_temporary": True,
             "template_path_supplied": template_path is not None,
