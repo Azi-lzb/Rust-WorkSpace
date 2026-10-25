@@ -850,3 +850,7 @@ WSL 验证：`x86_64-unknown-linux-gnu.2.28` release（HEAD `328532c`）与 deb 
 ### 2026-10-25 附带计划文件输出开关（用户需求：实际使用可选精简输出）
 
 按用户决策（候选副本是核心交付，计划 JSON/capability 记录等属开发期审核用附带产物，实际使用应可选择不输出）新增全局配置键 `输出附带计划文件`（值 是/否，缺省"是"，未配置行为与既有版本完全一致）：`GlobalConfig.emit_plan_files` 经 `load_global` 解析，接入六个计划落盘点——dedup-config-plan（dedup-plan-*.json 与报告 plan_file）、dedup-append-plan（dedup-append-*.json 与报告 plan_file）、print-config-plan（print-target-*.plan.json 与报告 plan_file）、village-split 批处理（计划文件、计划目录创建与 plan_persistence 事件一并跳过）、交互菜单宽表目标追加计划、配置修复菜单（计划文件与提示语）。设为"否"时：不创建计划目录、不落盘任何计划 JSON、报告 plan_file 为 null、村志拆分运行历史少一条 plan_persistence 事件；候选副本/目标等核心输出不变。运行历史仍由 `--log-view off` 独立控制。新增集成测试 `plan_file_output_toggle.rs` 验证两端：默认产生计划文件且报告路径；设"否"后输出树零 JSON、plan_file=null、candidate 仍产出。Windows 原生全量 44 项结果全绿、fmt 通过。config-init 模板未改动（避免影响 5-1 对拍），用法记录于 GPT 修改记录。
+
+### 2026-10-25 真实参数去重追加对拍（交接前安全检查点完成）
+
+以 VBA 簿 17 条真实去重任务的参数形态（源表名、键列 [3,4] 与 [1,3,5,7,8]、空写入模式、多任务共享同一目标簿）+ 合成源/目标文件建立桥接对拍 `probe/compare_real_dedup_tasks.py`：两侧同读桥接配置 xlsx，PyCode 走菜单层同款 dict→DedupTask 转换后 `run_append_by_config`，Rust 走真实两步产品流 `dedup-append-plan` → `dedup-append-execute --commit-target`（既有目标自动按计划内操作/特征/保留契约声明 probe capability）。结果：第一轮各追加 10 行、第二轮双双 0 追加（幂等），两轮后目标工作簿全表投影**精确一致**；五键列含空白键行两侧一致跳过；批内重复保留首值一致。机器报告 `probe/reports/real_shape_dedup_parity_20261025.json`。仍为真实参数形态 × 合成文件证据，不构成真实样本验收。此为 ZCode→Codex 交接前最后一个完成项。
