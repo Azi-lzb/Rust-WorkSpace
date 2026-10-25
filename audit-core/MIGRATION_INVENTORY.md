@@ -226,4 +226,6 @@ Windows 原生 `s5-audit-run` 与原 Python `AuditEngine.run` 对拍覆盖业务
 
 多外部来源选择本身目前仍只有 Windows 合成对拍。另用 config-real 真实审核配置、2026-07-31 批次的一本单位贷款审核副本、真实大集中外部工作簿及临时复制的模板目录，完成单外部来源端到端验证：`s5-config-check --scope current_business` 为 valid/complete，377 条启用规则通过，静态模板地址 532/532、外部指标表头 1/1；`s5-audit-run` CLI 与 Python 3.12.10 `AuditEngine.run` 完整输出对拍差异 0，状态计数均为 PASSED 373、TRIGGERED 3、STRUCTURE_ERROR 1，输入未变且报告不保存原始值。报告：`probe/reports/s5_vext_real_external_single_source_parity_windows_native_20261026.json`。
 
+同一真实输入另显式将 `EXT_REAL` 设为默认外部来源，验证 `--default-external-source-id` 路径：Python/Rust 完整输出差异仍为 0，状态计数相同，输入未变且未持久化原始值；报告中的 `default_external_source` 为 `EXT_REAL`。证据见 `probe/reports/s5_vext_real_external_default_selection_parity_windows_native_20261026.json`。
+
 该真实运行仅覆盖一个物理外部工作簿和一个单位贷款审核副本；多物理外部来源真实验收、条件格式/数据质量非空路径、结构快照/哈希完整性降级、Linux/deb、glibc 2.28、麒麟 V10/UOS V20 与完整 S5-F01 仍未验收，生产 capability 仍为 unverified。Audit 共享能力请求 #8 仍未解决。
