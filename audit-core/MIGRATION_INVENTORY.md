@@ -25,7 +25,7 @@
 | S3-F03 | 机构说明到说明文件 | 机构反馈读取、身份键匹配、冲突处理和说明回写 | 未验证；待多机构反馈样本 |
 | S3-F04 | 本期数值核对 | 本期数据核对规则、跨期关联和异常报告 | 未验证；待真实日报/月报批次 |
 | S3-F05 | 比较文件到金融表单 | 比较结果写入金融表单并保留表单结构、格式和名称引用 | 未验证；待金融表单样本 |
-| S5-F01 | 汇总核查表校验（逐笔统计配置版） | 配置驱动读取、逐笔规则、校验结果与输出 | 未验证；已完成报告期识别子切片：Rust CLI `s5-detect-period` 按源文件名、源表报告期字段、输入目录祖先顺序识别，支持原格式、月末归一、非法/多期拒绝和公式单元格忽略；20 例 Python `periods_in` 基线逐项一致，合成日期单元格 Python/Rust CLI 的报告期与来源一致；用户提供的两组选中文件各 7 份，Python/Rust 均识别 `2026-07-31` 且来源均为文件名，输入只读。新增 Rust CLI `s5-file-period-hints` 迁移 Python `file_period_hint`：文件名/目录优先、异常/多期提示、不读取工作簿；9 例 Python 基线一致，用户 S5 样本子树 120 个 XLSX/XLSM 路径与 Python 提示逐项一致（0 差异、输入只读），见 `probe/reports/s5_file_period_hint_python_baseline.json` 和 `probe/reports/s5_file_period_hint_windows_native_20261025.json`。普通/开发者日志含步骤、实际路径解析器/reader 状态与耗时。此前期间识别证据见 `probe/reports/s5_period_parser_python_baseline.json` 和 `probe/reports/s5_period_recognition_windows_native_20261025.json`。新增 Rust `s5-match-template` CLI，迁移 `recognition.match_s5_template` 的工作表集合评分、覆盖兜底、0.05 歧义阈值和同业务批次约束；用户真实 120 个 XLSX 逐文件 Python/Rust 对拍为 85 匹配、35 不匹配、0 差异，同模板/跨模板批次结果一致，见 `probe/reports/s5_template_matching_windows_real_20261025.json`。当前共享 reader 只接受 XLSX，XLSM 支持待 main 协调；配置驱动审核、业务识别、规则执行及审核结果输出仍未迁移，S5-F01 整体仍未验证 |
+| S5-F01 | 汇总核查表校验（逐笔统计配置版） | 配置驱动读取、逐笔规则、校验结果与输出 | 未验证；已完成报告期识别子切片：Rust CLI `s5-detect-period` 按源文件名、源表报告期字段、输入目录祖先顺序识别，支持原格式、月末归一、非法/多期拒绝和公式单元格忽略；20 例 Python `periods_in` 基线逐项一致，合成日期单元格 Python/Rust CLI 的报告期与来源一致；用户提供的两组选中文件各 7 份，Python/Rust 均识别 `2026-07-31` 且来源均为文件名，输入只读。新增 Rust CLI `s5-file-period-hints` 迁移 Python `file_period_hint`：文件名/目录优先、异常/多期提示、不读取工作簿；9 例 Python 基线一致，用户 S5 样本子树 120 个 XLSX/XLSM 路径与 Python 提示逐项一致（0 差异、输入只读），见 `probe/reports/s5_file_period_hint_python_baseline.json` 和 `probe/reports/s5_file_period_hint_windows_native_20261025.json`。普通/开发者日志含步骤、实际路径解析器/reader 状态与耗时。此前期间识别证据见 `probe/reports/s5_period_parser_python_baseline.json` 和 `probe/reports/s5_period_recognition_windows_native_20261025.json`。新增 Rust `s5-match-template` CLI，迁移 `recognition.match_s5_template` 的工作表集合评分、覆盖兜底、0.05 歧义阈值和同业务批次约束；用户真实 120 个 XLSX 逐文件 Python/Rust 对拍为 85 匹配、35 不匹配、0 差异，同模板/跨模板批次结果一致，见 `probe/reports/s5_template_matching_windows_real_20261025.json`。配置 DSL 解析与静态校验已移植为 `s5_config_dsl` 模块，真实配置 2,392 条启用规则 Python/Rust 逐字段对拍 0 差异，见 `probe/reports/s5_config_dsl_parity_windows_native_20261025.json`。当前共享 reader 只接受 XLSX，XLSM 支持待 main 协调；配置工作簿加载、适用范围/业务行级检查、规则执行及审核结果输出仍未迁移，S5-F01 整体仍未验证 |
 | S5-F02 | 隐藏维护工具（来源测试标识） | 从源代码确认实际业务功能、输入输出和触发方式 | 待确认；不能因默认隐藏而跳过 |
 | S5-F03 | 隐藏维护工具（来源测试标识） | 从源代码确认实际业务功能、输入输出和触发方式 | 待确认；不能因默认隐藏而跳过 |
 | S5-F04 | 隐藏维护工具（来源测试标识） | 从源代码确认实际业务功能、输入输出和触发方式 | 待确认；不能因默认隐藏而跳过 |
@@ -110,6 +110,10 @@ Windows 原生 Python/Rust 对拍将 `config-real` 的非空历史簿接入 2026
 ### S1-F02 等线全角列宽真实样本校准
 
 Windows 原生 Microsoft Excel/Python 与 Rust 对拍将全角字宽估算由 15px 校准为 14px；7 个真实源簿、27 张源表的输出表名/结构/值/类型/数字格式/字体/对齐/筛选/冻结差异均为 0，列宽最大差从 3.07421875 降至 0.7890625 字符，仍有 48 列宽不同，不能视为格式契约通过。合成任意行/固定行/历史/兜底对拍的值与样式差异为 0，列宽仍有估算差异。完整列宽精确性及 S1-F02 保持未验证；本次真实输入未变，输出位于临时目录。证据见 `probe/reports/s1_f02_dengxian_width_calibration_real_windows_native_20261025.json`。
+
+### S5-F01 配置 DSL 解析与静态校验切片（真实配置对拍）
+
+将源项目 `s1audit_configured.dsl` 的解析与静态校验半边（词法/语法分析、`parse_expression`、`parse_dictionary`、`validate_call`、`validate_node`、`validate_static_types`、`static_kind`、`validate_dictionary_dependencies`、`variables_in`、`calls_in`）忠实移植为 `audit-core/src/s5_config_dsl.rs`，错误消息与位置逐字对齐 Python；`evaluate` 运行时属后续规则执行切片。Windows 原生对拍以真实 config-real 生效配置（`5.逐笔统计系统_审核配置.xlsx`）的 2,392 条启用规则为样本，比较器按 `load_configuration` 规则循环的 DSL 段逐行复刻（字典解析→依赖检查→字典静态类型→各表达式解析→静态类型与字段种类约束→未定义变量检查），Python/Rust 逐字段比较状态、错误类别与原始消息：2,392/2,392 匹配、0 差异，全部规则两侧均通过校验（python_ok/rust_ok 2,392），0 个公式单元格拒绝。合成单测 11 例覆盖优先级、连续比较、转义与位置、V 函数别名/具名参数/元组路径、字典循环引用、静态类型错误等。已知 Unicode 边界差：Python `str.isdigit` 接受全部 Unicode 十进制数字而 Rust 端仅接受 ASCII 加上标三符（后者随后以相同"无效数字"错误拒绝）。该切片不覆盖配置工作簿加载、适用范围/业务行级检查和规则执行；S5-F01 整体仍未验证。证据见 `probe/reports/s5_config_dsl_parity_windows_native_20261025.json`。
 
 ## Rust 前端接入状态
 

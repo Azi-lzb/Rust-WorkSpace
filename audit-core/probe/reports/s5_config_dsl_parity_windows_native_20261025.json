@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "suite": "audit.s5_config_dsl_parity",
+  "status": "completed",
+  "sample_scope": {
+    "rule_rows_total": 2392,
+    "enabled_rules": 2392,
+    "compared_rules": 2392,
+    "missing_audit_expression_skipped": 0,
+    "formula_cells_rejected_rows": 0
+  },
+  "comparison": {
+    "matched": 2392,
+    "status_mismatch_count": 0,
+    "message_mismatch_count": 0,
+    "mismatch_ordinal_sample": [],
+    "outcome_kind_distribution": {
+      "python_ok/rust_ok": 2392
+    },
+    "compared_fields": [
+      "status",
+      "error_kind",
+      "message"
+    ]
+  },
+  "verification": {
+    "rust_runner": "audit-core/tests/s5_config_dsl_parity.rs",
+    "python_baseline": "s1audit_configured.dsl via load_configuration rule-loop semantics",
+    "inputs_unchanged": true,
+    "raw_rule_text_or_messages_persisted": false,
+    "capability_status": "unverified",
+    "production_route_eligible": false
+  },
+  "limitations": [
+    "Covers the DSL parse/validate layer only; workbook loading, scope/business row checks, and rule evaluation are not migrated.",
+    "Python str.isdigit accepts all Unicode decimal digits; the Rust port accepts ASCII plus the superscript trio (documented delta)."
+  ]
+}

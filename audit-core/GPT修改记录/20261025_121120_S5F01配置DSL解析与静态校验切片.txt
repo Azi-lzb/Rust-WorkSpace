@@ -1,0 +1,36 @@
+# S5-F01 配置 DSL 解析与静态校验切片
+
+- 时间：2026-10-25 12:11 (+08:00)
+- 执行者：Codex Audit migration agent
+- 分支：audit-dev
+- 修改前 commit：a280413
+- 修改后 commit：随本轮本地提交，提交 ID 见 Git 历史。
+- WIP：开始时 worktree 干净；验证结束时仅新增 Rust DSL 模块、对拍测试、Python 比较器、脱敏报告、迁移清单更新和本记录。未修改 DEVELOPMENT_GOAL.md、源 Python 项目、真实工作簿、pytools-core、共享 crates、Cargo.lock 或根 Cargo 配置；未引入新第三方依赖。
+
+## 目的
+
+按迁移顺序推进 S5-F01 的配置驱动链路：移植 `s1audit_configured.dsl` 的解析与静态校验半边（配置加载、规则执行之前的共同基础），并以真实生效配置完成 Python/Rust 逐字段对拍。本轮不触碰共享 crates；S1-F01 的共享能力请求继续等待 main。
+
+## 修改文件
+
+- `audit-core/src/s5_config_dsl.rs`：新增 DSL 解析与静态校验模块。移植 tokenize、递归下降解析器（表达式+取值字典）、`parse_expression`、`parse_dictionary`、`validate_call`、`validate_node`、`validate_static_types`、`static_kind`、`validate_dictionary_dependencies`（含循环引用检测）、`variables_in`、`calls_in`；错误分 Parse/Configuration 两类，消息与位置逐字对齐 Python。数字字面量按原文保存，数值求值留给规则执行切片。11 个合成单测。
+- `audit-core/tests/s5_config_dsl_parity.rs`：新增 env 驱动的 `#[ignore]` 对拍运行器，按 `load_configuration` 规则循环的 DSL 段顺序复刻单条规则检查，输出 JSONL。
+- `audit-core/tests/compare/compare_s5_config_dsl.py`：新增 Python 比较器，从真实配置提取启用规则 DSL 字段，运行 Python 基线与 Rust 运行器并逐字段比较（状态/错误类别/原始消息）。
+- `audit-core/probe/reports/s5_config_dsl_parity_windows_native_20261025.json`：新增脱敏机器报告（仅聚合计数，无规则文本或消息）。
+- `audit-core/MIGRATION_INVENTORY.md`：S5-F01 行更新并新增切片小节。
+- 本记录。
+
+## 验证
+
+- 单测：`cargo test --offline --locked -p audit-core --lib s5_config_dsl` 11/11 通过；`cargo test --offline --locked -p audit-core` 全部 41 个测试目标通过、无失败。
+- 真实对拍：Windows 原生，config-real 生效配置 `5.逐笔统计系统_审核配置.xlsx`（2,392 行规则全部启用、0 空表达式、0 公式单元格）；Python 基线复刻 `load_configuration` 规则循环的 DSL 段（字典解析→`validate_dictionary_dependencies`→字典静态类型→审核表达式+四个可选表达式解析→`validate_static_types`+字段种类约束→未定义变量检查），Rust 运行器同序执行；2,392/2,392 状态、错误类别、原始消息全部一致，0 差异；分布 python_ok/rust_ok=2,392。
+- 输入未变；报告不含规则文本、表达式或错误消息。
+- 层级保真说明：`parse_expression` 本身不做静态类型检查（与 Python 一致），静态类型与字段种类检查属于配置加载层，移植在对拍运行器中复刻；合成单测已按该分层校正。
+
+## 未执行项、已知问题与回滚
+
+- 未迁移：配置工作簿加载（`load_configuration` 的表头/行级检查、适用范围/业务推断、派生指标目录）、S5 规则执行（`evaluate` 运行时）、`match_s5_business`/`classify_s5_files`、配置校验入口及审核结果输出。
+- 已知 Unicode 边界差：Python `str.isdigit` 接受全部 Unicode 十进制数字（阿拉伯-印度数字等会被 `Decimal` 接受），Rust 端仅接受 ASCII 数字加上标三符并以相同"无效数字"错误拒绝；真实配置为 ASCII 数字，不受影响。
+- S1-F01 共享能力请求（目标合并非锚载荷基线等价）与 MoveSheet 仍等 main；本轮未再评估其他功能线。
+- 回滚：删除新增模块/测试/比较器/报告并还原迁移清单与本记录即可；无用户工作簿恢复项。
+- 【组件版本】不升级。
