@@ -659,5 +659,28 @@
       "Single execution per batch; no performance comparison.",
       "Report records counts, engines and events only; outputs were temporary."
     ]
+  },
+  "deb_artifact_real_sample_validation_20261025": {
+    "status": "passed_deb_artifact_real_sample_parity",
+    "artifact": "target/deb/pytools_0.1.0-20261025_amd64.deb (built from HEAD 5e2f1fc assets)",
+    "entrypoint": "deb-extracted /usr/bin/pytools summary-used-range (WSL)",
+    "sample_rows": 7462,
+    "dimensions": [
+      {
+        "name": "汇总",
+        "rows": 7463,
+        "columns": 213
+      }
+    ],
+    "comparison": "exact full-workbook projection vs read-only PyCode",
+    "source_sha256_before_after_equal": true,
+    "event_count": 14,
+    "event_stream_matches_saved_history": true,
+    "rust_execution": {
+      "reader_engine": "calamine",
+      "writer_engine": "rust_xlsxwriter",
+      "ooxml_error_cells_patched": 1212,
+      "total_elapsed_ms": 2934
+    }
   }
 }

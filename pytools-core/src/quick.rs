@@ -71,7 +71,16 @@ fn open_path(path: &Path) -> Result<()> {
         Command::new("xdg-open").arg(path).status()
     }
     .with_context(|| format!("start system opener for {}", path.display()))?;
-    if !status.success() {
+    // PyCode opens files with os.startfile (ShellExecute), which never surfaces
+    // an exit status. explorer.exe routinely exits with code 1 after a successful
+    // hand-off to an existing process, so on Windows only codes beyond 0/1 are
+    // treated as failures; existence is validated above like the source menu.
+    let opener_failed = if cfg!(windows) {
+        !matches!(status.code(), Some(0 | 1))
+    } else {
+        !status.success()
+    };
+    if opener_failed {
         bail!("system opener exited with {status}");
     }
     Ok(())

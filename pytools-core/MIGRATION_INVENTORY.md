@@ -794,3 +794,9 @@ Windows 原生 `cargo test --offline --locked -p pytools-core` 全量通过（42
 ### 2026-10-25 pytools.deb 阶段级打包资产与制品验证
 
 按 DEVELOPMENT_GOAL 第十七章"两个产品的交付流程必须保持独立"，在 `pytools-core/packaging/` 新增产品侧 deb 打包资产：`deb/control.in`（Package pytools、Architecture amd64、`Depends: libc6 (>= 2.28), xdg-utils`，版本 0.1.0-日期）与 `build_deb.sh`（WSL 内 cargo-zigbuild + Zig 0.17.0 构建 `x86_64-unknown-linux-gnu.2.28` release → `objdump -T` 数值校验最高 GLIBC 符号恰为 2.28（超出即失败）→ 组装 `/usr/bin/pytools` 与文档 → `dpkg-deb --build --root-owner-group` → `dpkg-deb --info/--contents` 校验 → 解包冒烟）。产物写入 `target/deb/`（不进版本控制）。本轮制品 `pytools_0.1.0-20261025_amd64.deb`（5.1 MB，Installed-Size 17,600 KB）冒烟通过：从 deb 解包的二进制对错误值夹具运行真实 `summary-used-range` 输出正确 JSON（7 个错误单元格由 OOXML Patch 保留，Calamine + 错误 token 兼容，63 ms）。有意不执行 `dpkg -i`：WSL 中保留旧 Python 版 `pytools 1.2.0` 参考安装，且实机安装验收属目标环境。边界：阶段级打包资产与制品验证归本分支；最终打包、麒麟 V10/UOS V20 实机安装与离线交付验收仍归 main（DEVELOPMENT_GOAL.md 第十六章）。
+
+### 2026-10-25 快捷工具 Windows 实际打开缺陷修复与 deb 制品真实样本验证
+
+快捷工具（菜单 9）此前仅覆盖失败路径；本次 Windows 实际打开验证发现真实缺陷：`explorer.exe` 成功打开目录/文件并交接给既有进程后惯例返回退出码 1，`quick.rs::open_path` 按通用 `!status.success()` 判定，把成功打开误报为"system opener exited with exit code: 1"（CLI 退出码 2）。PyCode 对应实现为 `os.startfile`（ShellExecute，不暴露退出状态）；Rust 修复为 Windows 分支仅将 0/1 之外的退出码视为失败（存在性预检保留，与源菜单一致），Linux/macOS 分支不变。修复后 `open-output-dir` 真实打开输出目录退出码 0；`open-config`/`open-output-latest` 共用同一 `open_path`（经关联应用打开文件的行为不在开发机实测，避免拉起 Office）。`quick_menu_cli` 回归与全量 42 项结果通过。
+
+同轮以 `target/deb/pytools_0.1.0-20261025_amd64.deb` 制品解包出的 `/usr/bin/pytools` 运行真实 `summary-used-range`，对原项目只读 `xlsx/1.报表分口径.xlsx` 与 PyCode 完整工作簿投影对拍精确一致：7,462 行 × 213 列（含标题），1,212 个错误单元格由 OOXML Patch 保留，14 条开发者事件与保存历史一致，输入 SHA-256 前后相同。此前真实对拍均用裸构建二进制，本次把"deb 制品本身"与真实负载对拍挂钩。机器记录并入 `probe/reports/summary_used_range_real_parity_20261025.json` 的 `deb_artifact_real_sample_validation_20261025`。该验证仍属 WSL 阶段，麒麟 V10/UOS V20 实机安装与离线交付验收仍归 main + 目标实机。
