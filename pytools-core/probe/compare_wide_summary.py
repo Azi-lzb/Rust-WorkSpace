@@ -22,7 +22,7 @@ import xml.etree.ElementTree as ET
 from datetime import date, datetime, time as datetime_time
 from importlib.metadata import version
 from pathlib import Path
-from zipfile import ZipFile
+from zipfile import ZIP_DEFLATED, ZipFile
 
 from openpyxl import Workbook, load_workbook
 from openpyxl.comments import Comment
@@ -146,6 +146,8 @@ def make_input(
             cell = sheet.cell(row=row, column=2, value=value)
             cell.number_format = number_format
     workbook.save(path)
+    if path.suffix.lower() == ".xlsm":
+        mark_macro_enabled_workbook_type(path)
     if cached_formula:
         patch_cached_formula(path, "B5", "8+2.25", "10.25")
     if time_only:
@@ -163,6 +165,31 @@ def make_input(
                 )
         finally:
             check.close()
+
+
+def mark_macro_enabled_workbook_type(path: Path) -> None:
+    content_types_ns = "http://schemas.openxmlformats.org/package/2006/content-types"
+    workbook_type = "application/vnd.ms-excel.sheet.macroEnabled.main+xml"
+    temporary = path.with_name(f"{path.name}.content-types.tmp")
+    with ZipFile(path, "r") as source:
+        entries = [(item, source.read(item.filename)) for item in source.infolist()]
+    if any(item.filename.lower().endswith("vbaproject.bin") for item, _ in entries):
+        raise AssertionError("synthetic XLSM fixture unexpectedly contains a VBA project")
+    found = False
+    ET.register_namespace("", content_types_ns)
+    with ZipFile(temporary, "w", compression=ZIP_DEFLATED) as output:
+        for item, data in entries:
+            if item.filename == "[Content_Types].xml":
+                root = ET.fromstring(data)
+                for override in root.findall(f"{{{content_types_ns}}}Override"):
+                    if override.attrib.get("PartName") == "/xl/workbook.xml":
+                        override.attrib["ContentType"] = workbook_type
+                        found = True
+                if not found:
+                    raise AssertionError("XLSM fixture has no workbook content type entry")
+                data = ET.tostring(root, encoding="utf-8", xml_declaration=True)
+            output.writestr(item, data)
+    temporary.replace(path)
 
 
 def patch_cached_formula(path: Path, address: str, formula_text: str, cached_value: str) -> None:
@@ -297,7 +324,13 @@ def make_existing_target_seed(full_target: Path, output: Path) -> None:
     workbook.save(output)
 
 
-def make_config(path: Path, output: Path, input_dir: Path, target: Path) -> None:
+def make_config(
+    path: Path,
+    output: Path,
+    input_dir: Path,
+    target: Path,
+    source_extensions: list[str] | None = None,
+) -> None:
     workbook = Workbook()
     global_sheet = workbook.active
     global_sheet.title = "全局配置"
@@ -307,7 +340,7 @@ def make_config(path: Path, output: Path, input_dir: Path, target: Path) -> None
         ("输出目录", rust_path_argument(output)),
         ("日志目录", rust_path_argument(output / "logs")),
         ("错误策略", "fail_fast"),
-        ("源文件扩展名", ".xlsx"),
+        ("源文件扩展名", ";".join(source_extensions or [".xlsx"])),
         ("时序规则匹配模式", "all_match"),
     ):
         global_sheet.append([key, value])
@@ -364,7 +397,7 @@ def python_baseline(
         output_dir=output,
         log_dir=output / "logs",
         error_policy="fail_fast",
-        source_exts=[".xlsx"],
+        source_exts=[source.suffix.lower()],
     )
     try:
         summary = run_wide_summary(
@@ -961,7 +994,13 @@ def run_case(
     python_output = case / "python_output"
     rust_output = case / "rust_output"
     config = case / "config.xlsx"
-    make_config(config, rust_output, source.parent, rust_output / "target.xlsx")
+    make_config(
+        config,
+        rust_output,
+        source.parent,
+        rust_output / "target.xlsx",
+        [source.suffix.lower()],
+    )
     source_before = source.read_bytes()
     config_before = config.read_bytes()
     baseline, python_target = python_baseline(source, python_output, row_suffix)
@@ -1110,10 +1149,11 @@ def run_existing_target_case(
     *,
     elapsed_duration: bool = False,
     elapsed_number_format: str | None = None,
+    source_filename: str = "sample_2024-06-30.xlsx",
 ) -> dict[str, object]:
     case = root / ("existing_suffix" if row_suffix else "existing_no_suffix")
     case.mkdir()
-    source = case / "sample_2024-06-30.xlsx"
+    source = case / source_filename
     make_input(
         source,
         elapsed_duration=elapsed_duration,
@@ -1134,7 +1174,7 @@ def run_existing_target_case(
     python_target.write_bytes(seed_bytes)
     rust_target.write_bytes(seed_bytes)
     config = case / "config.xlsx"
-    make_config(config, rust_output, source.parent, rust_target)
+    make_config(config, rust_output, source.parent, rust_target, [source.suffix.lower()])
     source_before = source.read_bytes()
     config_before = config.read_bytes()
 
@@ -1215,6 +1255,90 @@ def cleanup_probe_directory(path: Path) -> None:
 def main() -> int:
     if not PYTOOLS_SOURCE.is_dir():
         raise FileNotFoundError(f"PyCode source not found: {PYTOOLS_SOURCE}")
+    if sys.argv[1:] == ["--elapsed-duration-xlsm"]:
+        with tempfile.TemporaryDirectory(
+            prefix="pytools-wide-elapsed-xlsm-", ignore_cleanup_errors=True
+        ) as temp:
+            root = Path(temp)
+            source_filename = "sample_2024-06-30.xlsm"
+            summary_cases = [
+                run_case(
+                    root,
+                    row_suffix,
+                    source_filename=source_filename,
+                    elapsed_duration=True,
+                )
+                for row_suffix in (False, True)
+            ]
+            existing_target_cases = [
+                run_existing_target_case(
+                    root,
+                    row_suffix,
+                    elapsed_duration=True,
+                    source_filename=source_filename,
+                )
+                for row_suffix in (False, True)
+            ]
+            report = {
+                "schema_version": 1,
+                "suite": "pytools.timeline.wide_summary_elapsed_duration_xlsm_parity",
+                "date": date.today().isoformat(),
+                "status": "passed_synthetic_python_rust_parity",
+                "baseline": "PyCode/core/wide_397_398.py::run_wide_summary",
+                "rust_entry": "pytools menu -> 1 timeline -> 3/4 wide summary -> confirm",
+                "input": {
+                    "format": "xlsm",
+                    "kind": "synthetic OOXML package without a vbaProject part",
+                    "number_format": "[h]:mm:ss.000",
+                    "cases": [
+                        "row-suffix and no-suffix summary",
+                        "new target append and existing target replacement",
+                    ],
+                },
+                "comparison": {
+                    "summary_values_types_and_effective_styles": "exact",
+                    "new_target_values_types_and_effective_styles": "exact",
+                    "existing_target_values_types": "exact",
+                    "existing_target_replaced_sheet_styles": "exact",
+                    "source_and_configuration_unchanged": True,
+                },
+                "summary_cases": summary_cases,
+                "existing_target_cases": existing_target_cases,
+                "safety": {
+                    "source_unchanged": True,
+                    "configuration_unchanged": True,
+                    "outputs_temporary_only": True,
+                    "report_contains_input_filenames_or_cell_values": False,
+                },
+                "limitations": [
+                    "Synthetic macro-enabled OOXML packages contain no VBA project; this does not validate preservation or execution of VBA macros.",
+                    "A sanitized real .xlsm business workbook and target Linux acceptance remain outstanding.",
+                ],
+            }
+            report_path = (
+                WORKSPACE
+                / "pytools-core"
+                / "probe"
+                / "reports"
+                / f"wide_summary_elapsed_duration_xlsm_{date.today():%Y%m%d}.json"
+            )
+            report_path.write_text(
+                json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+            )
+            print(
+                json.dumps(
+                    {
+                        "report": str(report_path),
+                        "summary_cases": len(summary_cases),
+                        "existing_target_cases": len(existing_target_cases),
+                        "status": report["status"],
+                    },
+                    ensure_ascii=False,
+                )
+            )
+            cleanup_probe_directory(root)
+        return 0
+
     if sys.argv[1:] == ["--elapsed-duration-formats"]:
         formats = [
             "[h]:mm:ss.000",
