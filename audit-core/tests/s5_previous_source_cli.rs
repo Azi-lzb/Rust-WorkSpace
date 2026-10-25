@@ -4,18 +4,23 @@ use std::{
     fs,
     path::{Path, PathBuf},
     process::{Command, Output},
+    sync::atomic::{AtomicU64, Ordering},
     time::{SystemTime, UNIX_EPOCH},
 };
+
+static TEMPORARY_DIRECTORY_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 fn temporary_directory() -> PathBuf {
     let nonce = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("system clock after Unix epoch")
         .as_nanos();
+    let sequence = TEMPORARY_DIRECTORY_SEQUENCE.fetch_add(1, Ordering::Relaxed);
     let path = std::env::temp_dir().join(format!(
-        "audit_s5_previous_source_cli_{}_{}",
+        "audit_s5_previous_source_cli_{}_{}_{}",
         std::process::id(),
-        nonce
+        nonce,
+        sequence
     ));
     fs::create_dir_all(&path).expect("create temporary S5 CLI directory");
     path
@@ -543,6 +548,82 @@ fn run_cli(
         command.arg("--developer-view");
     }
     command.output().expect("run S5 audit CLI")
+}
+
+fn run_config_check_cli(config: &Path, external: Option<&Path>, developer_view: bool) -> Output {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_open-data-audit"));
+    command
+        .arg("s5-config-check")
+        .arg("--config")
+        .arg(config)
+        .arg("--business")
+        .arg("单位贷款");
+    if let Some(external) = external {
+        command.arg("--external-path").arg(external);
+    }
+    if developer_view {
+        command.arg("--developer-view");
+    }
+    command.output().expect("run S5 config-check CLI")
+}
+
+#[test]
+fn s5_config_check_cli_scans_external_metric_headers() {
+    let directory = temporary_directory();
+    let config = directory.join("config.xlsx");
+    let external = directory.join("external.xlsx");
+    write_config(&config, true, false);
+    write_external_source(&external, 0.15);
+
+    let output = run_config_check_cli(&config, Some(&external), true);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: Value = serde_json::from_slice(&output.stdout).expect("valid config-check JSON");
+    assert_eq!(report["valid"], true);
+    assert_eq!(report["complete"], false);
+    assert_eq!(report["checks"]["external_addresses"]["status"], "passed");
+    assert_eq!(report["checks"]["external_addresses"]["checked"], 1);
+    assert_eq!(report["checks"]["external_addresses"]["resolved"], 1);
+    assert_eq!(
+        report["checks"]["template_addresses"]["status"],
+        "not_checked"
+    );
+    let developer_log = String::from_utf8_lossy(&output.stderr);
+    assert!(developer_log.contains("s5_config_check_started"));
+    assert!(developer_log.contains("s5_config_check_completed"));
+    assert!(developer_log.contains("Calamine via excel-reader"));
+
+    fs::remove_dir_all(directory).expect("remove config-check fixture directory");
+}
+
+#[test]
+fn s5_config_check_cli_marks_missing_external_file_invalid() {
+    let directory = temporary_directory();
+    let config = directory.join("config.xlsx");
+    let missing_external = directory.join("missing.xlsx");
+    write_config(&config, true, false);
+
+    let output = run_config_check_cli(&config, Some(&missing_external), false);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: Value = serde_json::from_slice(&output.stdout).expect("valid config-check JSON");
+    assert_eq!(report["valid"], false);
+    assert_eq!(report["checks"]["external_addresses"]["status"], "failed");
+    assert_eq!(report["configuration_errors"].as_array().unwrap().len(), 1);
+    assert!(
+        report["checks"]["external_addresses"]["errors"][0]["message"]
+            .as_str()
+            .unwrap()
+            .contains("外部文件不存在")
+    );
+
+    fs::remove_dir_all(directory).expect("remove config-check failure directory");
 }
 
 #[test]

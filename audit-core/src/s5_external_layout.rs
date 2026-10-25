@@ -116,6 +116,17 @@ impl ExternalLayout {
         })
     }
 
+    pub fn metric_header_match_count(&self, metric_header: &str, sheet_filter: &str) -> usize {
+        let metric = normalize_external_label(metric_header);
+        self.columns
+            .iter()
+            .filter(|column| {
+                normalize_external_label(&column.header) == metric
+                    && (sheet_filter.is_empty() || column.sheet == sheet_filter)
+            })
+            .count()
+    }
+
     pub fn discover(book: &ScanBook) -> Result<Self, ExternalLayoutFailure> {
         let (mapping_sheet, mapping_rows) = discover_institution_mapping(book)?;
         let targets: BTreeSet<String> = mapping_rows

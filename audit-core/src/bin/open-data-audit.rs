@@ -37,6 +37,7 @@ use audit_core::{
     s2_summary::S2AuditSummary,
     s3_explanation_export::export_selected_explanations,
     s5_config::load_configuration,
+    s5_config_check::validate_s5_config,
     s5_outputs::{write_run_outputs, S5OutputRequest, S5OutputSource},
     s5_period_recognition::{detect_s5_period, s5_file_period_hint},
     s5_retrieval::{S5Retrieval, S5SourceDescriptor},
@@ -73,6 +74,8 @@ enum Command {
     S5FilePeriodHints(S5FilePeriodHintsArgs),
     /// Match selected S5 XLSX workbooks to one template by worksheet names.
     S5MatchTemplate(S5MatchTemplateArgs),
+    /// Validate S5 configuration rules and their selected template/external addresses.
+    S5ConfigCheck(S5ConfigCheckArgs),
     /// Run the S5 configured audit against current and optional previous-period sources.
     S5AuditRun(S5AuditRunArgs),
     /// Run the S2 period-report audit and create its three-sheet result workbook.
@@ -671,6 +674,33 @@ struct S5AuditRunArgs {
 }
 
 #[derive(Debug, Args)]
+struct S5ConfigCheckArgs {
+    /// S5 configuration workbook.
+    #[arg(long)]
+    config: PathBuf,
+
+    /// Optional selected template workbook for current-scope address checks.
+    #[arg(long)]
+    template_path: Option<PathBuf>,
+
+    /// Optional selected external workbook for V_EXT header checks.
+    #[arg(long)]
+    external_path: Option<PathBuf>,
+
+    /// Business to check. Empty checks all enabled rules in the current scope.
+    #[arg(long, default_value = "")]
+    business: String,
+
+    /// Check scope: current, current_business, all, or all_enabled.
+    #[arg(long, default_value = "current")]
+    scope: String,
+
+    /// Emit developer-view JSON events with the reader engine and elapsed time.
+    #[arg(long, default_value_t = false)]
+    developer_view: bool,
+}
+
+#[derive(Debug, Args)]
 struct S3ExportExplanationsArgs {
     /// S3 comparison workbook containing the output-explanation selection column.
     #[arg(long)]
@@ -714,6 +744,9 @@ fn run() -> Result<()> {
         }
         Command::S5MatchTemplate(arguments) => {
             run_s5_match_template(arguments)?;
+        }
+        Command::S5ConfigCheck(arguments) => {
+            run_s5_config_check(arguments)?;
         }
         Command::S5AuditRun(arguments) => {
             run_s5_audit_run(arguments)?;
@@ -4244,6 +4277,59 @@ fn decode_sheet_name(value: &str) -> String {
     } else {
         value.to_owned()
     }
+}
+
+fn run_s5_config_check(arguments: S5ConfigCheckArgs) -> Result<()> {
+    let started = Instant::now();
+    let template_path = arguments
+        .template_path
+        .as_deref()
+        .map(|path| path.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let external_path = arguments
+        .external_path
+        .as_deref()
+        .map(|path| path.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    if arguments.developer_view {
+        eprintln!(
+            "{}",
+            serde_json::to_string(&json!({
+                "type": "progress",
+                "step": "s5_config_check_started",
+                "engine": "Calamine via excel-reader",
+                "config": arguments.config.display().to_string(),
+                "template_path": template_path.as_str(),
+                "external_path": external_path.as_str(),
+                "scope": arguments.scope.as_str(),
+                "elapsed_ms": 0,
+            }))?
+        );
+    }
+    let result = validate_s5_config(
+        &arguments.config,
+        &template_path,
+        "",
+        "",
+        &external_path,
+        &arguments.business,
+        &arguments.scope,
+    )?;
+    if arguments.developer_view {
+        eprintln!(
+            "{}",
+            serde_json::to_string(&json!({
+                "type": "progress",
+                "step": "s5_config_check_completed",
+                "engine": "Calamine via excel-reader",
+                "valid": result.get("valid").and_then(serde_json::Value::as_bool),
+                "complete": result.get("complete").and_then(serde_json::Value::as_bool),
+                "elapsed_ms": started.elapsed().as_millis(),
+            }))?
+        );
+    }
+    println!("{}", serde_json::to_string_pretty(&result)?);
+    Ok(())
 }
 
 fn run_s5_audit_run(arguments: S5AuditRunArgs) -> Result<()> {

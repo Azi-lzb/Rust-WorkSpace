@@ -1,0 +1,56 @@
+{
+  "feature": "S5 current-scope external V_EXT address validation",
+  "platform": "Windows 11 native x86_64",
+  "input": {
+    "kind": "synthetic XLSX",
+    "same_files_for_both_runtimes": true
+  },
+  "python": {
+    "entry": "validate_s5_config",
+    "excel_engine": "openpyxl"
+  },
+  "rust": {
+    "entry": "open-data-audit s5-config-check",
+    "excel_engine": "Calamine via excel-reader"
+  },
+  "comparison": {
+    "case_count": 2,
+    "total_field_difference_count": 0,
+    "cases": [
+      {
+        "case": "duplicate_header_without_sheet_filter",
+        "field_difference_count": 0,
+        "difference_paths_sample": [],
+        "python_valid": false,
+        "rust_valid": false,
+        "python_external_status": "failed",
+        "rust_external_status": "failed",
+        "python_checked": 1,
+        "rust_checked": 1,
+        "python_resolved": 0,
+        "rust_resolved": 0
+      },
+      {
+        "case": "unique_header_with_sheet_filter",
+        "field_difference_count": 0,
+        "difference_paths_sample": [],
+        "python_valid": true,
+        "rust_valid": true,
+        "python_external_status": "passed",
+        "rust_external_status": "passed",
+        "python_checked": 1,
+        "rust_checked": 1,
+        "python_resolved": 1,
+        "rust_resolved": 1
+      }
+    ]
+  },
+  "limits": [
+    "Synthetic configuration and external workbook only.",
+    "The selected template was omitted, so template-address check remains not_checked in both results.",
+    "The all/all_enabled template-catalog branch remains explicitly unsupported.",
+    "No real business workbook, Linux, glibc 2.28, deb, Kylin V10, or UOS V20 validation.",
+    "S5-F01 remains unverified overall; shared capability request #8 remains unresolved."
+  ],
+  "result": "PASS"
+}

@@ -2,26 +2,24 @@
 //!
 //! Faithful port of the source project's
 //! `s5_configured_statistics.service.validate_s5_config` for the
-//! configuration-level checks: scope handling, business inference from a
-//! matched template, configuration loading with error mapping, rule/business
-//! counters, enabled-rule reference extraction, and the no-template /
-//! no-external-file `not_checked` outcomes.
+//! configuration checks: scope handling, business inference from a matched
+//! template, configuration loading with error mapping, rule/business counters,
+//! enabled-rule reference extraction, and current-scope template/external
+//! address validation.
 //!
-//! Port boundary: the template/external workbook address scanning (including
-//! the `all`/`all_enabled` full-scope branch with its template catalog) is not
-//! migrated yet; calls that would enter those branches fail with an explicit
-//! not-migrated error instead of silently returning a check result.
+//! Port boundary: the `all`/`all_enabled` template-catalog scan is not
+//! migrated; calls that would enter that branch return an explicit error.
 
 use crate::s5_config::{load_configuration, Configuration};
 use crate::s5_config_dsl::{calls_in, parse_dictionary, parse_expression, Node};
-use crate::s5_scan::{contextual_row_hits, row_path_candidates, scan_rule_paths, ScanBook};
+use crate::s5_external_layout::ExternalLayout;
+use crate::s5_scan::{scan_rule_paths, ScanBook};
 use excel_reader::read_workbook;
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::path::Path;
 
-const NOT_MIGRATED_SCAN: &str =
-    "S5 配置校验的模板/外部地址扫描尚未迁移，请使用不含模板/外部文件的配置级检查";
+const NOT_MIGRATED_SCAN: &str = "S5 配置校验的全量模板目录扫描尚未迁移，请使用当前业务范围检查";
 
 fn configuration_error_to_json(message: &str) -> Value {
     json!({"message": message, "locations": []})
@@ -294,13 +292,20 @@ struct DynamicReference {
     sheet: String,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+struct ExternalReference {
+    rule_id: String,
+    revision: i64,
+    field: String,
+}
+
 struct RuleReferences {
     /// First-seen key order mirrors Python's defaultdict iteration.
     template_refs: Vec<(
         (String, String, Vec<String>, Vec<String>),
         Vec<TemplateReference>,
     )>,
-    external_reference_count: usize,
+    external_refs: Vec<((String, String, String), Vec<ExternalReference>)>,
     dynamic_refs: Vec<DynamicReference>,
 }
 
@@ -356,14 +361,14 @@ fn rule_formula_nodes(rule: &crate::s5_config::RuleDefinition) -> Vec<(String, N
     nodes
 }
 
-/// Mirror of `_rule_references` (counts and shapes only; locations are part of
-/// the not-yet-migrated scan stage).
+/// Mirror of `_rule_references`, collecting enabled addresses and their rule
+/// owners for configuration-cell diagnostics.
 fn rule_references(configuration: &Configuration, business: &str) -> RuleReferences {
     let mut template_refs: Vec<(
         (String, String, Vec<String>, Vec<String>),
         Vec<TemplateReference>,
     )> = Vec::new();
-    let mut external_reference_count = 0usize;
+    let mut external_refs: Vec<((String, String, String), Vec<ExternalReference>)> = Vec::new();
     let mut dynamic_refs: Vec<DynamicReference> = Vec::new();
     for rule in configuration
         .rules
@@ -437,7 +442,37 @@ fn rule_references(configuration: &Configuration, business: &str) -> RuleReferen
                         .map(str::trim)
                         .unwrap_or_default();
                     if !metric.is_empty() {
-                        external_reference_count += 1;
+                        let source = call
+                            .keywords
+                            .iter()
+                            .find(|(key, _)| key == "source")
+                            .map(|(_, value)| value.as_str())
+                            .filter(|value| !value.is_empty())
+                            .unwrap_or("EXT")
+                            .to_owned();
+                        let sheet = call
+                            .keywords
+                            .iter()
+                            .find(|(key, _)| key == "sheet")
+                            .map(|(_, value)| value.clone())
+                            .unwrap_or_default();
+                        let key = (source, metric.to_owned(), sheet);
+                        let reference = ExternalReference {
+                            rule_id: rule.rule_id.clone(),
+                            revision: rule.revision,
+                            field: field.clone(),
+                        };
+                        match external_refs
+                            .iter_mut()
+                            .find(|(existing_key, _)| *existing_key == key)
+                        {
+                            Some((_, owners)) => {
+                                if !owners.contains(&reference) {
+                                    owners.push(reference);
+                                }
+                            }
+                            None => external_refs.push((key, vec![reference])),
+                        }
                     }
                 }
             }
@@ -445,7 +480,7 @@ fn rule_references(configuration: &Configuration, business: &str) -> RuleReferen
     }
     RuleReferences {
         template_refs,
-        external_reference_count,
+        external_refs,
         dynamic_refs,
     }
 }
@@ -453,8 +488,9 @@ fn rule_references(configuration: &Configuration, business: &str) -> RuleReferen
 /// Validate one S5 audit configuration at the configuration level.
 ///
 /// `template_path`, `template_dir`, `template_index_path`, and `external_path`
-/// follow the Python signature; providing a template or external file selects
-/// the not-yet-migrated workbook scan and fails with [`NOT_MIGRATED_SCAN`].
+/// follow the Python signature. Current-scope template and external address
+/// checks use the selected workbooks; full-scope template catalog discovery
+/// remains explicitly unsupported.
 pub fn validate_s5_config(
     config_path: &Path,
     template_path: &str,
@@ -465,6 +501,7 @@ pub fn validate_s5_config(
     scope: &str,
 ) -> Result<Value, crate::s5_config::LoadError> {
     let _ = (template_dir, template_index_path);
+    set_configuration_source_path(config_path);
     let full_scope = scope == "all" || scope == "all_enabled";
     let strict_current = scope == "current_business";
     if !matches!(
@@ -522,7 +559,7 @@ pub fn validate_s5_config(
             "configuration_errors": [configuration_error_to_json(message)],
         }));
     }
-    if !external_path.is_empty() || full_scope {
+    if full_scope {
         return Err(crate::s5_config::LoadError::configuration(
             NOT_MIGRATED_SCAN,
         ));
@@ -687,14 +724,7 @@ pub fn validate_s5_config(
             object.iter().filter(|(key, _)| key.as_str() != "errors").map(|(key, value)| (key.clone(), value.clone())).collect::<serde_json::Map<String, Value>>()
         }).unwrap_or_default(),
     }]);
-    let external_check = if references.external_reference_count == 0 {
-        json!({"status": "no_references", "checked": 0, "resolved": 0, "errors": []})
-    } else {
-        json!({
-            "status": "not_checked", "checked": 0, "resolved": 0, "errors": [],
-            "message": "配置引用 V_EXT，但尚未选择外部文件，无法检查指标表头地址",
-        })
-    };
+    let external_check = check_external_addresses(config_path, external_path, &references)?;
     let template_status_text = template_check
         .get("status")
         .and_then(Value::as_str)
@@ -705,7 +735,13 @@ pub fn validate_s5_config(
         .unwrap_or_default();
     let checks_complete = !matches!(template_status_text, "not_checked" | "partial")
         && !matches!(external_status_text, "not_checked" | "partial");
-    let valid = true;
+    let mut configuration_errors = Vec::new();
+    for check in [&template_check, &external_check] {
+        if let Some(errors) = check.get("errors").and_then(Value::as_array) {
+            configuration_errors.extend(errors.iter().cloned());
+        }
+    }
+    let valid = configuration_errors.is_empty();
 
     let mut warnings: Vec<String> = Vec::new();
     if matches!(template_status_text, "not_checked" | "partial") {
@@ -769,7 +805,7 @@ pub fn validate_s5_config(
             "external_addresses": external_check,
         },
         "warnings": warnings,
-        "configuration_errors": [],
+        "configuration_errors": configuration_errors,
     }))
 }
 
@@ -948,8 +984,8 @@ fn config_locations(
 }
 
 /// Mirror of `_check_template_addresses` for the current business with a
-/// selected template workbook. External-file and full-scope branches remain
-/// with the not-migrated boundary above.
+/// selected template workbook. Full-scope template catalog discovery remains
+/// outside this current-business path.
 fn check_template_addresses(
     configuration: &Configuration,
     template_path: &Path,
@@ -1131,13 +1167,135 @@ fn check_template_addresses(
     }))
 }
 
+fn check_external_addresses(
+    config_path: &Path,
+    external_path: &str,
+    references: &RuleReferences,
+) -> Result<Value, crate::s5_config::LoadError> {
+    if references.external_refs.is_empty() {
+        return Ok(json!({"status": "no_references", "checked": 0, "resolved": 0, "errors": []}));
+    }
+    if external_path.is_empty() {
+        return Ok(json!({
+            "status": "not_checked", "checked": 0, "resolved": 0, "errors": [],
+            "message": "配置引用 V_EXT，但尚未选择外部文件，无法检查指标表头地址",
+        }));
+    }
+
+    let external_path = Path::new(external_path);
+    let resolved_path = external_path
+        .canonicalize()
+        .unwrap_or_else(|_| absolute_path(external_path));
+    if !resolved_path.is_file() {
+        return Ok(json!({
+            "status": "failed", "checked": 0, "resolved": 0,
+            "errors": [{
+                "message": format!("外部文件不存在：{}", resolved_path.display()),
+                "locations": [],
+            }],
+        }));
+    }
+
+    let result = (|| -> Result<(ExternalLayout, ScanBook), String> {
+        let book = ScanBook::open(&resolved_path)?;
+        let layout = ExternalLayout::discover(&book).map_err(|failure| failure.message)?;
+        Ok((layout, book))
+    })();
+    let (layout, _book) = match result {
+        Ok(result) => result,
+        Err(error) => {
+            return Ok(json!({
+                "status": "failed", "checked": 0, "resolved": 0,
+                "errors": [{
+                    "message": format!("外部文件无法读取或识别映射/指标布局：{error}"),
+                    "locations": [],
+                }],
+            }));
+        }
+    };
+
+    let row_map = configuration_rule_locations(config_path)?;
+    let mut errors = Vec::new();
+    let mut resolved = 0usize;
+    for ((_, metric, sheet_filter), owners) in &references.external_refs {
+        let matches = layout.metric_header_match_count(metric, sheet_filter);
+        if matches == 1 {
+            resolved += 1;
+            continue;
+        }
+        let reason = if matches == 0 {
+            "未找到指标表头"
+        } else {
+            "指标表头重复，不能唯一定位"
+        };
+        let locations = owners
+            .iter()
+            .flat_map(|reference| {
+                row_map
+                    .get(&(reference.rule_id.clone(), reference.revision))
+                    .into_iter()
+                    .flatten()
+                    .map(|(row, columns)| {
+                        let column = columns.get(&reference.field).copied();
+                        json!({
+                            "sheet": "审核规则",
+                            "row": row,
+                            "column": column,
+                            "cell": column
+                                .map(|column| format!("{}{row}", check_column_letter(column)))
+                                .unwrap_or_default(),
+                            "field": reference.field,
+                            "rule_id": reference.rule_id,
+                        })
+                    })
+            })
+            .collect::<Vec<_>>();
+        errors.push(json!({
+            "message": format!(
+                "外部文件 V_EXT 指标地址无法唯一定位：{metric}{}；{reason}",
+                if sheet_filter.is_empty() {
+                    String::new()
+                } else {
+                    format!("（Sheet={sheet_filter}）")
+                }
+            ),
+            "locations": locations,
+        }));
+    }
+    let status = if errors.is_empty() {
+        "passed"
+    } else {
+        "failed"
+    };
+    Ok(json!({
+        "status": status,
+        "checked": references.external_refs.len(),
+        "resolved": resolved,
+        "errors": errors,
+        "message": format!(
+            "外部文件检查 {} 个 V_EXT 指标表头，成功定位 {resolved} 个",
+            references.external_refs.len(),
+        ),
+    }))
+}
+
+fn absolute_path(path: &Path) -> std::path::PathBuf {
+    if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .map(|directory| directory.join(path))
+            .unwrap_or_else(|_| path.to_path_buf())
+    }
+}
+
 thread_local! {
     static CONFIG_SOURCE_PATH: std::cell::RefCell<Option<std::path::PathBuf>> =
         const { std::cell::RefCell::new(None) };
 }
 
-/// Record the configuration path for the diagnostics that re-read the rule
-/// sheet (the parity runner sets it before validation).
+/// Remember the configuration workbook for diagnostics that map rule IDs
+/// back to worksheet cells.
 pub fn set_configuration_source_path(path: &Path) {
     CONFIG_SOURCE_PATH.with(|cell| {
         *cell.borrow_mut() = Some(path.to_path_buf());
