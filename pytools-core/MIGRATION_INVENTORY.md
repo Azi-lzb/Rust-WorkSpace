@@ -790,3 +790,7 @@ Windows 原生 `cargo fmt --manifest-path pytools-core/Cargo.toml -- --check`、
 Windows 原生 `cargo test --offline --locked -p pytools-core` 全量通过（42 项结果 0 failed，含全部既有宽表/汇总/去重/追加回归）。机器报告：`probe/reports/realistic_synthetic_suite_parity_20261025.json`。该套件为按用户指示新建的业务形态合成样本，不构成真实样本验收；宽表真实输入与批注汇总真实模板仍缺，PT-1-3/1-4 与 PT-6-2 整体仍未验收。
 
 同日补充：现实合成套件新增规则命中策略与路径标准化映射场景。两条规则（`Report` 与 `Rep` 关键字重叠命中同一批工作簿/工作表，第二条含数据结束行/列边界与必含行头）分别在 `时序规则命中策略=all_match`（两张规则表：39×11、35×8）与 `first_match`（仅首条规则表：39×11）下与 PyCode 完整投影精确一致；`路径标准化映射`（适用规则名 WideAll、作用对象 行头、包含匹配 甲分行→甲标准化分行）改写后的行头路径在行头加后缀模式下逐格一致。同时修正套件全局配置键为 PyCode 实际读取的 `时序规则命中策略`。本轮无 Rust 代码改动，套件报告同前。
+
+### 2026-10-25 pytools.deb 阶段级打包资产与制品验证
+
+按 DEVELOPMENT_GOAL 第十七章"两个产品的交付流程必须保持独立"，在 `pytools-core/packaging/` 新增产品侧 deb 打包资产：`deb/control.in`（Package pytools、Architecture amd64、`Depends: libc6 (>= 2.28), xdg-utils`，版本 0.1.0-日期）与 `build_deb.sh`（WSL 内 cargo-zigbuild + Zig 0.17.0 构建 `x86_64-unknown-linux-gnu.2.28` release → `objdump -T` 数值校验最高 GLIBC 符号恰为 2.28（超出即失败）→ 组装 `/usr/bin/pytools` 与文档 → `dpkg-deb --build --root-owner-group` → `dpkg-deb --info/--contents` 校验 → 解包冒烟）。产物写入 `target/deb/`（不进版本控制）。本轮制品 `pytools_0.1.0-20261025_amd64.deb`（5.1 MB，Installed-Size 17,600 KB）冒烟通过：从 deb 解包的二进制对错误值夹具运行真实 `summary-used-range` 输出正确 JSON（7 个错误单元格由 OOXML Patch 保留，Calamine + 错误 token 兼容，63 ms）。有意不执行 `dpkg -i`：WSL 中保留旧 Python 版 `pytools 1.2.0` 参考安装，且实机安装验收属目标环境。边界：阶段级打包资产与制品验证归本分支；最终打包、麒麟 V10/UOS V20 实机安装与离线交付验收仍归 main（DEVELOPMENT_GOAL.md 第十六章）。
