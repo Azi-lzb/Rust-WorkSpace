@@ -284,7 +284,9 @@ PyCode/openpyxl 可保留日期格式单元格中的负 Excel 序列；Rust 新�
 
 在当前已推送 HEAD `b0fe425` 复用 Ubuntu 24.04 WSL2、Rust 1.99.1、cargo-zigbuild 0.24.0 和现有 Zig 0.17.0，执行 `pytools-core/packaging/build_deb.sh`。`x86_64-unknown-linux-gnu.2.28` release 构建通过，`objdump -T` 最高 GLIBC 符号为 `GLIBC_2.28`；阶段制品 `target/deb/pytools_0.1.0-20261026_amd64.deb` 的包元数据检查及解包冒烟通过，测试 `summary-used-range` 的合成错误值夹具。机器报告：`probe/reports/current_head_glibc_2_28_deb_smoke_20261026.json`。
 
-另在代码相同的 `29030aa` 上于 Ubuntu WSL2 host glibc 2.39 运行 `cargo test --offline --locked -p pytools-core --test timeline_menu_cli interactive_wide_summary_menu_preserves_negative_date_serial_in_new_target -j 1`，Linux debug CLI 交互回归 1/1 通过，覆盖合成负序列新目标写入。此项不是 glibc 2.28 release/deb 二进制的该路径验收；deb 冒烟仍只覆盖合成 `summary-used-range`。无真实样本，麒麟 V10/UOS V20 安装与离线交付未验收。制品仅在被忽略的 `target/deb/` 中，未执行 dpkg 安装。
+在代码相同的 `29030aa` 上于 Ubuntu WSL2 host glibc 2.39 运行 `cargo test --offline --locked -p pytools-core --test timeline_menu_cli interactive_wide_summary_menu_preserves_negative_date_serial_in_new_target -j 1`，Linux debug CLI 交互回归 1/1 通过。另使用 `b0fe425` 构建的 `x86_64-unknown-linux-gnu.2.28` release 二进制启动同一真实菜单，以 -0.5 合成日期序列与只读 PyCode 基线对拍：汇总、追加候选及提交目标的完整工作簿投影通过，输出为 `1899-12-29 12:00`，候选与已提交目标一致，源及配置未变。该二进制运行于 WSL host glibc 2.39，不等同于真实 glibc 2.28/Kylin/UOS 系统验收；机器报告：`probe/reports/current_head_glibc_2_28_deb_smoke_20261026.json`。
+
+deb 解包冒烟仍只覆盖合成 `summary-used-range` 错误值夹具。无真实宽表样本，麒麟 V10/UOS V20 安装与离线交付未验收。制品仅在被忽略的 `target/deb/` 中，未执行 dpkg 安装。
 ### 2026-10-25 PT-1-3/PT-1-4 输入路径筛选对齐
 
 对照 PyCode `run_wide_summary` 后，Rust 汇总入口现只读取已存在、扩展名在全局 `源文件扩展名` 中或为 `.xls` 的路径；其他扩展名与不存在路径在 reader 调用前忽略。user/developer 运行历史中的 `total_inputs` 同步按实际纳入处理的路径计数。Windows 原生 `timeline_menu_cli` 9/9 通过；新增 Python/Rust CLI 对拍以 3 个输入路径验证 `.xlsb` 和不存在的 `.xlsx` 被过滤、输出工作簿投影一致、源和配置未改变。机器报告：`probe/reports/wide_summary_input_filter_parity_20261025.json`。
