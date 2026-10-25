@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "suite": "audit.s5_config_load_parity",
+  "status": "completed",
+  "sample_scope": {
+    "config_sheet_shape": "rules sheet without optional catalog sheets",
+    "python_rule_count": 2392,
+    "include_disabled": false,
+    "business_filter": ""
+  },
+  "comparison": {
+    "diff_count": 0,
+    "field_diff_counts": {},
+    "diff_path_sample": [],
+    "compared_fields": [
+      "rules(all fields)",
+      "metrics",
+      "external_metrics",
+      "source_contracts",
+      "applicability_scopes",
+      "version",
+      "version_status",
+      "effective_from",
+      "effective_to",
+      "release_date",
+      "release_note",
+      "sha256"
+    ]
+  },
+  "verification": {
+    "rust_runner": "audit-core/tests/s5_config_load_parity.rs",
+    "python_baseline": "s1audit_configured.workbook_config.load_configuration",
+    "inputs_unchanged": true,
+    "raw_rule_text_or_messages_persisted": false,
+    "capability_status": "unverified",
+    "production_route_eligible": false
+  },
+  "limitations": [
+    "Optional catalog sheets (模板指标目录/适用范围目录/外部指标目录/数据源契约/配置版本) are absent from the real configuration, so only their absence branches plus derived metric/external extraction are exercised by this parity run.",
+    "The workbook-not-found and workbook-unreadable messages embed runtime paths and are not compared verbatim."
+  ]
+}

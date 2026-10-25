@@ -1,0 +1,39 @@
+# S5-F01 配置工作簿加载层切片
+
+- 时间：2026-10-25 12:29 (+08:00)
+- 执行者：Codex Audit migration agent
+- 分支：audit-dev
+- 修改前 commit：356058a
+- 修改后 commit：随本轮本地提交，提交 ID 见 Git 历史。
+- WIP：开始时 worktree 干净；验证结束时仅新增配置加载模块、对拍测试、Python 比较器、脱敏报告、迁移清单更新和本记录；Cargo.toml 增加 workspace 已管理的 sha2，Cargo.lock 相应登记。未修改 DEVELOPMENT_GOAL.md、源 Python 项目、真实工作簿、pytools-core、共享 crates 或根 Cargo.toml。
+
+## 目的
+
+承接 S5-F01 配置 DSL 切片，移植 `s1audit_configured.workbook_config.load_configuration` 配置工作簿加载层，使真实配置能被 Rust 完整加载为与 Python 一致的 Configuration 结构，为业务识别与规则执行切片铺路。本轮不触碰共享 crates；S1-F01 共享能力请求继续等待 main。
+
+## 修改文件
+
+- `audit-core/src/s5_config.rs`：新增配置加载模块。审核规则表头校验（ID 列三别名、必填字段、重复表头、空白行跳过、公式单元格拒绝）、规则行装配与全序检查（修订、启用、数值运算模式、取反标志、生效日期、适用范围存在性/确认/业务/工作表一致性、`@当前行`交叉校验、业务推断、描述变量扫描）、规则循环内 DSL 段（复用 `s5_config_dsl`）、可选目录表（模板指标目录/适用范围目录/外部指标目录/数据源契约/配置版本）解析及单位/精度/数据类型/唯一性校验、无指标目录时从 V_CUR/V_PRE 派生模板指标（单位按标签推断）与 V_EXT 派生外部指标、末尾交叉校验与 Configuration 装配（含文件 sha256）。错误消息逐字对齐 Python。
+- `audit-core/tests/s5_config_load_parity.rs`：env 驱动的 `#[ignore]` 整簿加载对拍运行器，序列化 Configuration JSON。
+- `audit-core/tests/compare/compare_s5_config_load.py`：Python 比较器，双侧加载同一字节级副本后递归逐字段比较（Python 侧经 JSON 往返归一化元组），报告仅聚合计数。
+- `audit-core/probe/reports/s5_config_load_parity_windows_native_20261025.json`：新增脱敏机器报告。
+- `audit-core/Cargo.toml` 与根 `Cargo.lock`：登记 `sha2.workspace = true`（workspace 根已声明 sha2 = "0.10"，lock 中已存在 0.10.9，仅新增成员依赖一行）。
+- `audit-core/src/lib.rs`：注册 `s5_config` 模块。
+- `audit-core/MIGRATION_INVENTORY.md`：S5-F01 行更新并新增加载层切片小节。
+- 本记录。
+
+## 验证
+
+- 编译与测试：`cargo build --offline -p audit-core` 通过；`cargo test --offline --locked -p audit-core` 全量 192 通过、0 失败（一次 `s1_history_workbook_cli` 并行偶发失败，单跑及全量重跑均通过，与本轮改动无关）。
+- 真实整簿对拍：Windows 原生，config-real 生效配置 `5.逐笔统计系统_审核配置.xlsx`；Python `load_configuration` 与 Rust 端口同载字节级临时副本，Configuration 逐字段递归比较：2,392 条规则全部字段、4,215 个派生模板指标（含行/列路径元组、单位推断结果、allow_blank/precision/confirmed）、版本字段与文件 sha256 差异 0；双侧状态均 ok。
+- 对拍中间发现并修复比较器元组/列表类型误报（Python asdict 保留 tuple，经 JSON 往返归一化后消除）；确认修复前 12,645 项差异全部为该类型表示假差。
+- 输入未变；报告不含规则文本或错误消息。
+
+## 未执行项、已知问题与回滚
+
+- 真实配置无可选目录表，模板指标目录/适用范围目录/外部指标目录/数据源契约/配置版本的"存在"分支已移植但未获真实样本对拍（缺席分支及派生指标路径已对拍）；后续可用合成配置工作簿补充。
+- 已知读取差：openpyxl 将日期格式数字单元格转为 Python 日期，本移植读存储文本；真实配置字段均为文本。配置簿不存在/不可读的错误消息含运行时路径，不逐字比较。
+- 未迁移：规则执行（`evaluate` 运行时）、`match_s5_business`/`classify_s5_files` 业务识别、配置校验入口与审核结果输出；S5-F01 整体仍未验证。
+- S1-F01 共享能力请求（目标合并非锚载荷基线等价）与 MoveSheet 仍等 main。
+- 回滚：删除新增模块/测试/比较器/报告，还原 lib.rs、Cargo.toml、Cargo.lock、迁移清单与本记录即可；无用户工作簿恢复项。
+- 【组件版本】不升级。
