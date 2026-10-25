@@ -355,6 +355,115 @@ def run_rule_mode_case(root: Path, mode: str, workbooks: list[Path]) -> dict[str
     }
 
 
+def make_set_conflict_workbook(path: Path, month: str, empty_set: bool) -> None:
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = f"{month}Report"
+    sheet["B1"] = "" if empty_set else f"{month}期"
+    sheet["B2"] = "" if empty_set else "集团A"
+    sheet["A3"] = "地区"
+    sheet["B3"] = "存款"
+    sheet["C3"] = "存款"
+    sheet["D3"] = "贷款"
+    sheet["A4"] = "名称"
+    sheet["B4"] = "余额"
+    sheet["C4"] = "余额"
+    sheet["D4"] = "本息"
+    # Duplicate col paths 存款_余额 (B/C) with different values: the first
+    # occurrence must win on both sides; D keeps a unique path.
+    sheet["A5"] = "甲分行"
+    sheet["B5"] = 10.25
+    sheet["C5"] = 999
+    sheet["D5"] = 23
+    sheet["A6"] = "乙分行"
+    sheet["B6"] = 14
+    sheet["C6"] = 888
+    sheet["D6"] = 29
+    sheet["A7"] = "甲分行"
+    sheet["B7"] = 31
+    sheet["C7"] = 777
+    sheet["D7"] = 35
+    path.parent.mkdir(parents=True, exist_ok=True)
+    workbook.save(path)
+
+
+def make_set_conflict_config(path: Path, output: Path) -> None:
+    workbook = Workbook()
+    global_sheet = workbook.active
+    global_sheet.title = "全局配置"
+    global_sheet.append(["配置项", "值"])
+    for key, value in (
+        ("输入目录", cws.rust_path_argument(output / "unused_input")),
+        ("输出目录", cws.rust_path_argument(output)),
+        ("日志目录", cws.rust_path_argument(output / "logs")),
+        ("错误策略", "fail_fast"),
+        ("源文件扩展名", ".xlsx"),
+        ("时序规则命中策略", "all_match"),
+    ):
+        global_sheet.append([key, value])
+    timeline = workbook.create_sheet("时序提取规则")
+    timeline.append([
+        "是否启用", "规则名称", "工作簿关键字", "工作表关键字", "行头列", "列表头行",
+        "必含列头", "必含行头", "数据起始行", "数据结束行", "数据起始列", "数据结束列",
+        "跳过关键字", "目标工作簿路径", "目标工作表", "启用目标写入", "set区域", "目标去重列",
+        "是否输出行序号",
+    ])
+    timeline.append([
+        "是", "WideSet", "sample", "Report", "A", "3,4", "", "", 5, "", "B", "D",
+        "", "", "", "否", "集团@B2;期间@B1", "", "是",
+    ])
+    maps = workbook.create_sheet("路径标准化映射")
+    maps.append([
+        "是否启用", "映射名称", "适用规则名", "工作簿关键字", "工作表关键字", "作用对象",
+        "匹配方式", "原始路径", "标准路径", "备注",
+    ])
+    # Both numbered 存款_余额 columns map to the same standard path, which
+    # happens after header numbering in PyCode and must trigger the
+    # duplicate-column-path conflict rule (keep first value, single header).
+    maps.append(["是", "合并存款1", "WideSet", "sample", "Report", "列头", "精确", "存款_余额_1", "公共存款", ""])
+    maps.append(["是", "合并存款2", "WideSet", "sample", "Report", "列头", "精确", "存款_余额_2", "公共存款", ""])
+    path.parent.mkdir(parents=True, exist_ok=True)
+    workbook.save(path)
+
+
+def run_set_conflict_case(root: Path, workbooks: list[Path]) -> dict[str, object]:
+    case = root / "wide_sets_conflict"
+    output = case / "output"
+    config = case / "config.xlsx"
+    make_set_conflict_config(config, output)
+    python_output = python_wide_baseline(config, workbooks, row_suffix=False)
+    rust_output, plans = cws.run_rust_sources(config, workbooks, row_suffix=False)
+    if python_output is None or rust_output is None:
+        raise AssertionError(
+            f"set/conflict wide summary did not save: python={python_output}, rust={rust_output}"
+        )
+    if plans:
+        raise AssertionError(f"target writes must be disabled in this suite, got plans: {plans}")
+    cws.assert_parity(python_output, rust_output)
+    from openpyxl import load_workbook
+
+    workbook = load_workbook(rust_output, data_only=False)
+    try:
+        sheet = workbook.worksheets[0]
+        headers = [sheet.cell(1, column).value for column in range(1, sheet.max_column + 1)]
+        sample_rows = [
+            [cst.normalize(sheet.cell(row, column).value) for column in range(1, sheet.max_column + 1)]
+            for row in range(2, min(sheet.max_row, 8) + 1)
+        ]
+    finally:
+        workbook.close()
+    return {
+        "python_rust_summary": "exact",
+        "sheet_names": [item["name"] for item in _sheet_dimensions(rust_output)],
+        "dimensions": [
+            [item["rows"], item["columns"]] for item in _sheet_dimensions(rust_output)
+        ],
+        "headers": headers,
+        "sample_rows": sample_rows,
+        "conflict_policy": "first value kept for duplicate column paths (PyCode 保留首值)",
+    }
+
+
 def main() -> int:
     with tempfile.TemporaryDirectory(
         prefix="pytools-realistic-suite-", ignore_cleanup_errors=True
@@ -376,6 +485,13 @@ def main() -> int:
             run_rule_mode_case(root, mode, workbooks) for mode in ("all_match", "first_match")
         ]
 
+        set_conflict_workbooks = []
+        for month, empty in (("2026-06", False), ("2026-07", True)):
+            workbook = root / "set_sources" / f"sample_{month}-30.xlsx"
+            make_set_conflict_workbook(workbook, month, empty)
+            set_conflict_workbooks.append(workbook)
+        set_conflict_result = run_set_conflict_case(root, set_conflict_workbooks)
+
         comment_sources = []
         for tag in ("一", "二"):
             source = root / "comment_sources" / f"report_{tag}.xlsx"
@@ -394,6 +510,7 @@ def main() -> int:
             ),
             "wide_summary_multi_rule": wide_results,
             "wide_summary_rule_match_modes": rule_mode_results,
+            "wide_summary_sets_and_conflicts": set_conflict_result,
             "comment_summary_multi_sheet": comment_result,
             "rust_runtime": {
                 "host": "Windows 11 x64, native MSVC target",

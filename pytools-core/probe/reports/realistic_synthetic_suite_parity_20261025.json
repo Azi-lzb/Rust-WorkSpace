@@ -118,6 +118,98 @@
       ]
     }
   ],
+  "wide_summary_sets_and_conflicts": {
+    "python_rust_summary": "exact",
+    "sheet_names": [
+      "WideSet"
+    ],
+    "dimensions": [
+      [
+        7,
+        9
+      ]
+    ],
+    "headers": [
+      "工作簿名",
+      "工作表名",
+      "数据日期",
+      "集团",
+      "期间",
+      "行头路径",
+      "行序号",
+      "公共存款",
+      "贷款_本息"
+    ],
+    "sample_rows": [
+      [
+        "sample_2026-06-30.xlsx",
+        "2026-06Report",
+        "2026-06-30T00:00:00",
+        "集团A",
+        "2026-06期",
+        "甲分行",
+        "5",
+        10.25,
+        23
+      ],
+      [
+        "sample_2026-06-30.xlsx",
+        "2026-06Report",
+        "2026-06-30T00:00:00",
+        "集团A",
+        "2026-06期",
+        "乙分行",
+        "6",
+        14,
+        29
+      ],
+      [
+        "sample_2026-06-30.xlsx",
+        "2026-06Report",
+        "2026-06-30T00:00:00",
+        "集团A",
+        "2026-06期",
+        "甲分行",
+        "7",
+        31,
+        35
+      ],
+      [
+        "sample_2026-07-30.xlsx",
+        "2026-07Report",
+        "2026-07-30T00:00:00",
+        null,
+        null,
+        "甲分行",
+        "5",
+        10.25,
+        23
+      ],
+      [
+        "sample_2026-07-30.xlsx",
+        "2026-07Report",
+        "2026-07-30T00:00:00",
+        null,
+        null,
+        "乙分行",
+        "6",
+        14,
+        29
+      ],
+      [
+        "sample_2026-07-30.xlsx",
+        "2026-07Report",
+        "2026-07-30T00:00:00",
+        null,
+        null,
+        "甲分行",
+        "7",
+        31,
+        35
+      ]
+    ],
+    "conflict_policy": "first value kept for duplicate column paths (PyCode 保留首值)"
+  },
   "comment_summary_multi_sheet": {
     "python_rust_output": "exact",
     "sheet_names": [
