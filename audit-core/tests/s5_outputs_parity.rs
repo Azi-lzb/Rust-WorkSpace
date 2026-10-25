@@ -75,6 +75,7 @@ fn runs_s5_outputs_parity_item() {
         source_path: &request.source,
         source_id: &request.source_id,
         source_sha256_before: &source_sha,
+        additional_sources: &[],
         config_path: &request.config,
         config_sha256_before: &configuration.sha256,
         config_version: &configuration.version,

@@ -94,9 +94,15 @@ fn amount_factor(unit: &str) -> Option<i64> {
         .map(|(_, factor)| *factor)
 }
 
-/// Single-binding runtime context for the current/previous source.
-pub struct S5Retrieval {
-    configuration: Configuration,
+/// A source explicitly selected for one S5 period role.
+pub struct S5SourceDescriptor<'a> {
+    pub path: &'a Path,
+    pub source_id: &'a str,
+    pub period: &'a str,
+    pub institution_code: &'a str,
+}
+
+struct BoundSource {
     source_path: PathBuf,
     source_id: String,
     source_period: String,
@@ -106,9 +112,64 @@ pub struct S5Retrieval {
     index_cache: BTreeMap<String, crate::s5_scan::ScanResult>,
 }
 
+impl BoundSource {
+    fn bind(
+        descriptor: S5SourceDescriptor<'_>,
+        role: &'static str,
+        audit_period: &str,
+    ) -> Result<Self, RetrievalFailure> {
+        if descriptor.period.is_empty() {
+            return Err(RetrievalFailure::new(
+                "PERIOD_CONTRACT_MISSING",
+                "来源未提供可验证的报告期",
+            ));
+        }
+        if matches!(role, "current" | "external") && descriptor.period != audit_period {
+            return Err(RetrievalFailure::new(
+                "PERIOD_CONTRACT_MISMATCH",
+                "本期来源期间与本次审核期间不一致",
+            ));
+        }
+        if role == "previous" && descriptor.period == audit_period {
+            return Err(RetrievalFailure::new(
+                "PERIOD_CONTRACT_MISMATCH",
+                "上期来源期间与本期相同",
+            ));
+        }
+        if matches!(role, "current" | "previous") && descriptor.institution_code.is_empty() {
+            return Err(RetrievalFailure::new(
+                "INSTITUTION_CONTRACT_MISSING",
+                "本期/上期来源未提供可验证的机构身份",
+            ));
+        }
+        let payload = std::fs::read(descriptor.path)
+            .map_err(|_| RetrievalFailure::new("SOURCE_NOT_FOUND", "数据源文件无法读取"))?;
+        let mut hasher = Sha256::new();
+        hasher.update(&payload);
+        let sha256 = format!("{:x}", hasher.finalize());
+        let book = ScanBook::open(descriptor.path)
+            .map_err(|error| RetrievalFailure::new("SOURCE_UNREADABLE", error))?;
+        Ok(Self {
+            source_path: descriptor.path.to_path_buf(),
+            source_id: descriptor.source_id.to_owned(),
+            source_period: descriptor.period.to_owned(),
+            institution_code: descriptor.institution_code.to_owned(),
+            sha256,
+            book,
+            index_cache: BTreeMap::new(),
+        })
+    }
+}
+
+/// Runtime context for one current source and an optional selected previous source.
+pub struct S5Retrieval {
+    configuration: Configuration,
+    current: BoundSource,
+    previous: Option<BoundSource>,
+}
+
 impl S5Retrieval {
-    /// Bind one source workbook for `role` ("current" or "previous") with the
-    /// no-contract gates from `_validate_binding_context`.
+    /// Bind one current source with the no-contract gates.
     pub fn bind(
         configuration: Configuration,
         role: &'static str,
@@ -118,62 +179,69 @@ impl S5Retrieval {
         institution_code: &str,
         audit_period: &str,
     ) -> Result<Self, RetrievalFailure> {
-        if source_period.is_empty() {
-            return Err(RetrievalFailure::new(
-                "PERIOD_CONTRACT_MISSING",
-                "来源未提供可验证的报告期",
-            ));
-        }
-        if matches!(role, "current" | "external") && source_period != audit_period {
-            return Err(RetrievalFailure::new(
-                "PERIOD_CONTRACT_MISMATCH",
-                "本期来源期间与本次审核期间不一致",
-            ));
-        }
-        if role == "previous" && source_period == audit_period {
-            return Err(RetrievalFailure::new(
-                "PERIOD_CONTRACT_MISMATCH",
-                "上期来源期间与本期相同",
-            ));
-        }
-        if matches!(role, "current" | "previous") && institution_code.is_empty() {
-            return Err(RetrievalFailure::new(
-                "INSTITUTION_CONTRACT_MISSING",
-                "本期/上期来源未提供可验证的机构身份",
-            ));
-        }
-        let payload = std::fs::read(source_path)
-            .map_err(|_| RetrievalFailure::new("SOURCE_NOT_FOUND", "数据源文件无法读取"))?;
-        let mut hasher = Sha256::new();
-        hasher.update(&payload);
-        let sha256 = format!("{:x}", hasher.finalize());
-        let book = ScanBook::open(source_path)
-            .map_err(|error| RetrievalFailure::new("SOURCE_UNREADABLE", error))?;
+        let current = BoundSource::bind(
+            S5SourceDescriptor {
+                path: source_path,
+                source_id,
+                period: source_period,
+                institution_code,
+            },
+            role,
+            audit_period,
+        )?;
         Ok(Self {
             configuration,
-            source_path: source_path.to_path_buf(),
-            source_id: source_id.to_owned(),
-            source_period: source_period.to_owned(),
-            institution_code: institution_code.to_owned(),
-            sha256,
-            book,
-            index_cache: BTreeMap::new(),
+            current,
+            previous: None,
         })
     }
 
-    /// SHA-256 captured when the bound source was opened for this run.
+    /// Bind current and optional previous workbooks using the no-contract
+    /// gates mirrored from `_validate_binding_context`.
+    pub fn bind_with_previous(
+        configuration: Configuration,
+        current: S5SourceDescriptor<'_>,
+        previous: Option<S5SourceDescriptor<'_>>,
+        audit_period: &str,
+    ) -> Result<Self, RetrievalFailure> {
+        let current = BoundSource::bind(current, "current", audit_period)?;
+        let previous = previous
+            .map(|descriptor| BoundSource::bind(descriptor, "previous", audit_period))
+            .transpose()?;
+        if previous
+            .as_ref()
+            .is_some_and(|previous| previous.institution_code != current.institution_code)
+        {
+            return Err(RetrievalFailure::new(
+                "INSTITUTION_MISMATCH",
+                "上期来源机构身份与本次审核机构不一致",
+            ));
+        }
+        Ok(Self {
+            configuration,
+            current,
+            previous,
+        })
+    }
+
+    /// SHA-256 captured when the current source was opened for this run.
     pub fn source_sha256(&self) -> &str {
-        &self.sha256
+        &self.current.sha256
+    }
+
+    /// SHA-256 captured for the selected previous source, when present.
+    pub fn previous_source_sha256(&self) -> Option<&str> {
+        self.previous.as_ref().map(|source| source.sha256.as_str())
     }
 
     fn metrics_for_path(
-        &self,
+        configuration: &Configuration,
         business: &str,
         row_path: &[String],
         column_path: &[String],
         sheet_name: &str,
     ) -> Vec<crate::s5_config::MetricSpec> {
-        self.configuration
+        configuration
             .metrics
             .iter()
             .filter(|metric| {
@@ -218,14 +286,7 @@ impl S5Retrieval {
     ) -> Result<EvalValue, RetrievalFailure> {
         let role = match function_name {
             "V_CUR" => "current",
-            "V_PRE" => {
-                // This port binds a single current source; the previous-source
-                // map is always empty, matching Python's unbound behavior.
-                return Err(RetrievalFailure::new(
-                    "SOURCE_NOT_SELECTED",
-                    format!("没有找到业务 {rule_business} 对应的previous数据源"),
-                ));
-            }
+            "V_PRE" => "previous",
             "V_EXT" => {
                 return Err(RetrievalFailure::new(
                     "SOURCE_NOT_SELECTED",
@@ -234,9 +295,29 @@ impl S5Retrieval {
             }
             _ => return Err(RetrievalFailure::new("SOURCE_NOT_FOUND", "未知取值函数")),
         };
-        // Single-binding resolution: the requested source (when given) must be
-        // the bound one; otherwise the single binding serves every business.
-        let _ = (rule_default_source, keywords.get("source"));
+        let source = if role == "current" {
+            &mut self.current
+        } else {
+            self.previous.as_mut().ok_or_else(|| {
+                RetrievalFailure::new(
+                    "SOURCE_NOT_SELECTED",
+                    format!("没有找到业务 {rule_business} 对应的previous数据源"),
+                )
+            })?
+        };
+        if role == "previous" {
+            let requested_source = keywords
+                .get("source")
+                .filter(|source_id| !source_id.trim().is_empty())
+                .map(String::as_str)
+                .unwrap_or(rule_default_source);
+            if !requested_source.is_empty() && requested_source != source.source_id {
+                return Err(RetrievalFailure::new(
+                    "SOURCE_NOT_SELECTED",
+                    format!("未选择或未登记逻辑数据源：{requested_source}"),
+                ));
+            }
+        }
 
         let (positional_sheet, row_argument, column_argument) = match args {
             [EvalArgument::Text(sheet), row, column] => {
@@ -261,10 +342,21 @@ impl S5Retrieval {
             rule_default_sheet.to_owned()
         };
 
-        let mut candidates =
-            self.metrics_for_path(rule_business, &row_path, &column_path, &sheet_name);
+        let mut candidates = Self::metrics_for_path(
+            &self.configuration,
+            rule_business,
+            &row_path,
+            &column_path,
+            &sheet_name,
+        );
         if candidates.is_empty() {
-            candidates = self.metrics_for_path(rule_business, &row_path, &column_path, "");
+            candidates = Self::metrics_for_path(
+                &self.configuration,
+                rule_business,
+                &row_path,
+                &column_path,
+                "",
+            );
         }
         if candidates.is_empty() {
             return Err(RetrievalFailure::new(
@@ -304,7 +396,7 @@ impl S5Retrieval {
                 "默认或显式工作表与指标目录不一致",
             ));
         }
-        if !self
+        if !source
             .book
             .sheet_names()
             .iter()
@@ -316,9 +408,16 @@ impl S5Retrieval {
             )
             .with_evidence(&resolved_sheet, ""));
         }
-        let (raw_value, address) = self.locate_template_value(&metric, &resolved_sheet, role)?;
+        let (raw_value, address) = Self::locate_template_value(
+            &self.configuration,
+            source,
+            &metric,
+            &resolved_sheet,
+            role,
+        )?;
 
-        self.value_with_unit(
+        Self::value_with_unit(
+            source,
             &raw_value,
             &metric,
             &resolved_sheet,
@@ -333,36 +432,38 @@ impl S5Retrieval {
         )
     }
 
-    fn template_index(
-        &mut self,
+    fn template_index<'a>(
+        configuration: &Configuration,
+        source: &'a mut BoundSource,
         metric: &crate::s5_config::MetricSpec,
         role: &str,
-    ) -> &crate::s5_scan::ScanResult {
+    ) -> &'a crate::s5_scan::ScanResult {
         let cache_key = format!("{}|{}|{}", role, metric.business, metric.sheet);
-        if !self.index_cache.contains_key(&cache_key) {
-            let key_pairs: Vec<(Vec<String>, Vec<String>)> = self
-                .configuration
+        if !source.index_cache.contains_key(&cache_key) {
+            let key_pairs: Vec<(Vec<String>, Vec<String>)> = configuration
                 .metrics
                 .iter()
                 .filter(|item| item.business == metric.business && item.sheet == metric.sheet)
                 .map(|item| (item.row_path.clone(), item.column_path.clone()))
                 .collect();
-            let result = scan_rule_paths(&self.book, &self.source_path, &metric.sheet, &key_pairs);
-            self.index_cache.insert(cache_key.clone(), result);
+            let result =
+                scan_rule_paths(&source.book, &source.source_path, &metric.sheet, &key_pairs);
+            source.index_cache.insert(cache_key.clone(), result);
         }
-        &self.index_cache[&cache_key]
+        &source.index_cache[&cache_key]
     }
 
     /// Mirror of `_locate_template_value` (paths branch) plus `value()` gates.
     fn locate_template_value(
-        &mut self,
+        configuration: &Configuration,
+        source: &mut BoundSource,
         metric: &crate::s5_config::MetricSpec,
         sheet_name: &str,
         role: &str,
     ) -> Result<(String, String), RetrievalFailure> {
         let key = (metric.row_path.clone(), metric.column_path.clone());
         let (matches, row_found, column_found) = {
-            let index = self.template_index(metric, role);
+            let index = Self::template_index(configuration, source, metric, role);
             let matches = index.locations.get(&key).cloned().unwrap_or_default();
             let row_found = index
                 .row_locations
@@ -406,8 +507,7 @@ impl S5Retrieval {
             return Err(failure);
         }
         let (row, column) = (matches[0].row, matches[0].column);
-        // `value()` gates: formula rejection and error cells.
-        if self.book_has_formula(sheet_name, row, column) {
+        if source.book.sheet_has_formula(sheet_name, row, column) {
             return Err(RetrievalFailure::new(
                 "SOURCE_FORMULA_UNVERIFIED",
                 "源数据目标单元格包含公式，未确认其重算缓存，不能作为审核输入",
@@ -417,7 +517,7 @@ impl S5Retrieval {
                 &format!("{}{}", column_letter_local(column), row),
             ));
         }
-        let stored = self.book_stored_value(sheet_name, row, column);
+        let stored = source.book.stored_value(sheet_name, row, column);
         if stored.0.as_str() == "error" {
             return Err(RetrievalFailure::new(
                 "VALUE_TYPE_INVALID",
@@ -431,19 +531,10 @@ impl S5Retrieval {
         Ok((stored.1, format!("{}{}", column_letter_local(column), row)))
     }
 
-    fn book_has_formula(&self, sheet: &str, row: usize, column: usize) -> bool {
-        self.book.sheet_has_formula(sheet, row, column)
-    }
-
-    fn book_stored_value(&self, sheet: &str, row: usize, column: usize) -> (String, String) {
-        self.book.stored_value(sheet, row, column)
-    }
-
     /// Mirror of `_value_with_unit` + `_convert_value`.
     #[allow(clippy::too_many_arguments)]
-    #[allow(clippy::too_many_arguments)]
     fn value_with_unit(
-        &self,
+        source: &BoundSource,
         raw_value: &str,
         metric: &crate::s5_config::MetricSpec,
         sheet: &str,
@@ -457,19 +548,19 @@ impl S5Retrieval {
         definition_evidence: &str,
     ) -> Result<EvalValue, RetrievalFailure> {
         let evidence = json!({
-            "source_id": self.source_id,
-            "source_path": self.source_path.display().to_string(),
-            "source_sha256": self.sha256,
+            "source_id": source.source_id,
+            "source_path": source.source_path.display().to_string(),
+            "source_sha256": source.sha256,
             "sheet": sheet,
             "cell": cell,
             "raw_value": raw_value,
             "source_unit": source_unit,
             "standard_unit": standard_unit,
-            "source_period": self.source_period,
+            "source_period": source.source_period,
             "source_contract_version": "",
             "metric_layout_version": layout_version,
             "metric_definition_evidence": definition_evidence,
-            "institution_code": self.institution_code,
+            "institution_code": source.institution_code,
             "precision": precision,
             "mapping_sheet": "",
             "mapping_cell": "",

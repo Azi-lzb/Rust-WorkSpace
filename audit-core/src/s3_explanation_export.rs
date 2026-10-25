@@ -5,9 +5,9 @@
 //! This module only creates a new workbook; it never modifies the comparison
 //! file or the optional institution/region reference workbook.
 
-use anyhow::{Context, Result, bail, ensure};
+use anyhow::{bail, ensure, Context, Result};
 use chrono::Local;
-use excel_reader::{CellValue, SheetValues, read_value_columns, read_workbook};
+use excel_reader::{read_value_columns, read_workbook, CellValue, SheetValues};
 use excel_writer::{Color, ExcelDateTime, Format, FormatAlign, Workbook, Worksheet};
 use serde::Serialize;
 use std::{

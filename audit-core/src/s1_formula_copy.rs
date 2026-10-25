@@ -7,14 +7,14 @@
 
 use crate::{
     models::CopyRange,
-    s1_template_rules::{S1TemplateRuleSummary, load_s1_template_rule_plan},
+    s1_template_rules::{load_s1_template_rule_plan, S1TemplateRuleSummary},
 };
-use anyhow::{Context, Result, ensure};
+use anyhow::{ensure, Context, Result};
 use excel_editor::{
-    EditOperation, ExcelEditPlan, PreservationRequirement, RangeStyleMode, WorkbookProfile,
-    inspect_xlsx_profile,
+    inspect_xlsx_profile, EditOperation, ExcelEditPlan, PreservationRequirement, RangeStyleMode,
+    WorkbookProfile,
 };
-use excel_reader::{WorkbookComment, read_ooxml_comments};
+use excel_reader::{read_ooxml_comments, WorkbookComment};
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs,

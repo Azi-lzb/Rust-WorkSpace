@@ -37,9 +37,9 @@ use audit_core::{
     s2_summary::S2AuditSummary,
     s3_explanation_export::export_selected_explanations,
     s5_config::load_configuration,
-    s5_outputs::{write_run_outputs, S5OutputRequest},
+    s5_outputs::{write_run_outputs, S5OutputRequest, S5OutputSource},
     s5_period_recognition::{detect_s5_period, s5_file_period_hint},
-    s5_retrieval::S5Retrieval,
+    s5_retrieval::{S5Retrieval, S5SourceDescriptor},
     s5_service::run_rules,
     s5_template_matching::match_s5_template,
     web_bridge::serve_web_ui,
@@ -73,7 +73,7 @@ enum Command {
     S5FilePeriodHints(S5FilePeriodHintsArgs),
     /// Match selected S5 XLSX workbooks to one template by worksheet names.
     S5MatchTemplate(S5MatchTemplateArgs),
-    /// Run the S5 configured audit for one business against a bound source workbook.
+    /// Run the S5 configured audit against current and optional previous-period sources.
     S5AuditRun(S5AuditRunArgs),
     /// Run the S2 period-report audit and create its three-sheet result workbook.
     S2(S2Args),
@@ -619,6 +619,19 @@ struct S5AuditRunArgs {
     /// Logical source id recorded on retrieval evidence.
     #[arg(long, default_value = "CURRENT")]
     source_id: String,
+
+    /// Optional previous-period source workbook for V_PRE calls.
+    #[arg(long)]
+    previous_source: Option<PathBuf>,
+
+    /// Logical source id for the selected previous-period workbook.
+    /// Defaults to --source-id.
+    #[arg(long)]
+    previous_source_id: Option<String>,
+
+    /// Reporting period of --previous-source. Required when that source is selected.
+    #[arg(long, requires = "previous_source")]
+    previous_period: Option<String>,
 
     /// Reporting period, e.g. 2026-07-31.
     #[arg(long)]
@@ -4236,6 +4249,25 @@ fn run_s5_audit_run(arguments: S5AuditRunArgs) -> Result<()> {
         "S5 本期数据源工作簿不存在：{}",
         arguments.source.display()
     );
+    if let Some(previous_source) = &arguments.previous_source {
+        anyhow::ensure!(
+            previous_source.is_file(),
+            "S5 上期数据源工作簿不存在：{}",
+            previous_source.display()
+        );
+        anyhow::ensure!(
+            arguments
+                .previous_period
+                .as_deref()
+                .is_some_and(|period| !period.trim().is_empty()),
+            "--previous-period must be supplied with --previous-source"
+        );
+    } else {
+        anyhow::ensure!(
+            arguments.previous_source_id.is_none(),
+            "--previous-source-id requires --previous-source"
+        );
+    }
     anyhow::ensure!(
         !arguments.period.trim().is_empty(),
         "运行上下文必须提供报告期"
@@ -4258,23 +4290,43 @@ fn run_s5_audit_run(arguments: S5AuditRunArgs) -> Result<()> {
                 "run_id": run_id,
                 "period": arguments.period,
                 "businesses": arguments.businesses,
+                "source_roles": if arguments.previous_source.is_some() { vec!["current", "previous"] } else { vec!["current"] },
+                "previous_period": arguments.previous_period,
                 "engine": "rust_s5_configured_audit",
                 "started_at": chrono::Local::now().to_rfc3339()
             }))?
         );
+    } else if arguments.previous_source.is_some() {
+        eprintln!("正在执行 S5 配置化审核（Rust 配置加载 + 本期/上期来源读取与规则求值）；本期 {}，上期 {}", arguments.period, arguments.previous_period.as_deref().unwrap_or_default());
     } else {
         eprintln!("正在执行 S5 配置化审核（Rust 配置加载 + 规则求值）…");
     }
 
     let configuration = load_configuration(&arguments.config, false, "")
         .map_err(|error| anyhow::anyhow!("{error}"))?;
-    let mut retrieval = S5Retrieval::bind(
+    let previous_source_id = arguments
+        .previous_source_id
+        .clone()
+        .unwrap_or_else(|| arguments.source_id.clone());
+    let previous_descriptor = arguments
+        .previous_source
+        .as_deref()
+        .zip(arguments.previous_period.as_deref())
+        .map(|(path, period)| S5SourceDescriptor {
+            path,
+            source_id: &previous_source_id,
+            period: period.trim(),
+            institution_code: &arguments.org_code,
+        });
+    let mut retrieval = S5Retrieval::bind_with_previous(
         configuration.clone(),
-        "current",
-        &arguments.source,
-        &arguments.source_id,
-        arguments.period.trim(),
-        &arguments.org_code,
+        S5SourceDescriptor {
+            path: &arguments.source,
+            source_id: &arguments.source_id,
+            period: arguments.period.trim(),
+            institution_code: &arguments.org_code,
+        },
+        previous_descriptor,
         arguments.period.trim(),
     )
     .map_err(|failure| anyhow::anyhow!("{}：{}", failure.code, failure.message))?;
@@ -4290,6 +4342,19 @@ fn run_s5_audit_run(arguments: S5AuditRunArgs) -> Result<()> {
     )
     .map_err(|error| anyhow::anyhow!("{error}"))?;
 
+    let previous_output_sources: Vec<S5OutputSource<'_>> = arguments
+        .previous_source
+        .as_deref()
+        .zip(retrieval.previous_source_sha256())
+        .map(|(path, sha256_before)| {
+            vec![S5OutputSource {
+                role: "previous",
+                path,
+                source_id: &previous_source_id,
+                sha256_before,
+            }]
+        })
+        .unwrap_or_default();
     let output_summary = write_run_outputs(
         &S5OutputRequest {
             run_id: &run_id,
@@ -4301,6 +4366,7 @@ fn run_s5_audit_run(arguments: S5AuditRunArgs) -> Result<()> {
             source_path: &arguments.source,
             source_id: &arguments.source_id,
             source_sha256_before: &source_sha256_before,
+            additional_sources: &previous_output_sources,
             config_path: &arguments.config,
             config_sha256_before: &configuration.sha256,
             config_version: &configuration.version,
@@ -4314,7 +4380,9 @@ fn run_s5_audit_run(arguments: S5AuditRunArgs) -> Result<()> {
         "status": "completed",
         "run_id": run_id,
         "period": arguments.period,
+        "previous_period": arguments.previous_period,
         "businesses": arguments.businesses,
+        "source_roles": if arguments.previous_source.is_some() { vec!["current", "previous"] } else { vec!["current"] },
         "rule_results": outcomes.len(),
         "status_counts": status_counts,
         "output_files": {

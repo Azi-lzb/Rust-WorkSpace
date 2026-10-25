@@ -9,15 +9,15 @@
 use crate::{
     models::CopyRange,
     name_config::{
-        FIXED_ROW_SUMMARY_FUNCTION, NamedRangeArea, USED_RANGE_SUMMARY_FUNCTION,
-        load_s1_region_summary_mappings, resolve_named_ranges_for_mappings,
+        load_s1_region_summary_mappings, resolve_named_ranges_for_mappings, NamedRangeArea,
+        FIXED_ROW_SUMMARY_FUNCTION, USED_RANGE_SUMMARY_FUNCTION,
     },
     template::normalize_template_name,
 };
-use anyhow::{Context, Result, bail, ensure};
+use anyhow::{bail, ensure, Context, Result};
 use excel_reader::{
-    CellValue, DefinedNameParseStatus, DefinedNameRecord, SheetDump, WorkbookDump, WorksheetExtent,
-    read_defined_names, read_workbook, read_xlsx_worksheet_extents,
+    read_defined_names, read_workbook, read_xlsx_worksheet_extents, CellValue,
+    DefinedNameParseStatus, DefinedNameRecord, SheetDump, WorkbookDump, WorksheetExtent,
 };
 use excel_writer::{Color, Format, FormatAlign, Workbook};
 use serde::Serialize;

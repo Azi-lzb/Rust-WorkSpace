@@ -1,8 +1,8 @@
 //! S1 template structure checks used to screen source workbooks before audit.
 
 use crate::models::CopyRange;
-use anyhow::{Context, Result, bail};
-use excel_reader::{CellValue, SheetDump, read_workbook};
+use anyhow::{bail, Context, Result};
+use excel_reader::{read_workbook, CellValue, SheetDump};
 use serde::Serialize;
 use std::{
     collections::{BTreeMap, BTreeSet},

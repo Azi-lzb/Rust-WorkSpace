@@ -1055,13 +1055,11 @@ mod tests {
         let configured = ["单位贷款", "个人贷款"];
         assert!(validate_business_selection(configured, &[]).is_ok());
         assert!(validate_business_selection(configured, &["单位贷款".to_owned()]).is_ok());
-        assert!(
-            validate_business_selection(
-                configured,
-                &["单位贷款".to_owned(), "个人贷款".to_owned()]
-            )
-            .is_ok()
-        );
+        assert!(validate_business_selection(
+            configured,
+            &["单位贷款".to_owned(), "个人贷款".to_owned()]
+        )
+        .is_ok());
     }
 
     #[test]

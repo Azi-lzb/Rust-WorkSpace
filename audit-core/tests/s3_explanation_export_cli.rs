@@ -1,4 +1,4 @@
-use excel_reader::{CellValue, read_workbook};
+use excel_reader::{read_workbook, CellValue};
 use excel_writer::Workbook;
 use serde_json::Value;
 use std::{

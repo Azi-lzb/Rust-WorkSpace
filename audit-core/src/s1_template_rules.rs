@@ -5,7 +5,7 @@
 //! definition; it never recalculates formulas or modifies the workbook.
 
 use crate::{
-    models::{AuditRule, CopyRange, TemplateDefinition, PreflightItem},
+    models::{AuditRule, CopyRange, PreflightItem, TemplateDefinition},
     name_config::{
         load_s1_conditional_mappings, load_s1_formula_mappings, named_areas_from_defined_names,
         resolve_named_ranges_for_mappings, FeatureMapping, FORMULA_ISSUE_EXTRACT_FUNCTION,

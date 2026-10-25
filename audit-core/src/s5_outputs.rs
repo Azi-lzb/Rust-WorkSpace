@@ -9,13 +9,21 @@
 
 use crate::s5_service::S5RuleOutcome;
 use excel_writer::{Color, Format, FormatAlign, FormatUnderline, Workbook};
-use serde_json::{Value as JsonValue, json};
+use serde_json::{json, Value as JsonValue};
 use sha2::{Digest, Sha256};
 use std::{
     collections::BTreeMap,
     fs,
     path::{Path, PathBuf},
 };
+
+#[derive(Clone, Copy)]
+pub struct S5OutputSource<'a> {
+    pub role: &'a str,
+    pub path: &'a Path,
+    pub source_id: &'a str,
+    pub sha256_before: &'a str,
+}
 
 pub struct S5OutputRequest<'a> {
     pub run_id: &'a str,
@@ -27,6 +35,7 @@ pub struct S5OutputRequest<'a> {
     pub source_path: &'a Path,
     pub source_id: &'a str,
     pub source_sha256_before: &'a str,
+    pub additional_sources: &'a [S5OutputSource<'a>],
     pub config_path: &'a Path,
     pub config_sha256_before: &'a str,
     pub config_version: &'a str,
@@ -335,7 +344,7 @@ fn relative_link(source: &Path, result: &Path, sheet: &str, cell: &str) -> Strin
         .strip_prefix(result.parent().unwrap_or_else(|| Path::new("")))
         .map(|relative| relative.to_string_lossy().replace('\\', "/"))
         .unwrap_or_else(|_| source.to_string_lossy().replace('\\', "/"));
-    format!("{target}#'{sheet}'!{cell}")
+    format!("file:///{target}#'{sheet}'!{cell}")
 }
 
 fn numeric_text(value: &JsonValue) -> Option<f64> {
@@ -358,6 +367,14 @@ pub fn write_run_outputs(
         request.config_sha256_before,
         "审核配置",
     )?;
+    for source in request.additional_sources {
+        let label = match source.role {
+            "previous" => "上期数据源",
+            "external" => "外部数据源",
+            _ => return Err(format!("不支持的附加来源角色：{}", source.role)),
+        };
+        verify_input_snapshot(source.path, source.sha256_before, label)?;
+    }
     let output_root = output_root.to_path_buf();
     fs::create_dir_all(&output_root).map_err(|error| format!("创建输出根目录失败：{error}"))?;
     let run_dir = output_root.join(safe_name(request.run_id));
@@ -407,6 +424,46 @@ pub fn write_run_outputs(
         request.source_path.display().to_string(),
         source_copy.clone(),
     );
+
+    for source in request.additional_sources {
+        let extension = source
+            .path
+            .extension()
+            .map(|extension| format!(".{}", extension.to_string_lossy().to_lowercase()))
+            .unwrap_or_default();
+        let source_copy = copies_dir.join(format!(
+            "{}_{}_{}{}",
+            safe_name(source.role),
+            safe_name(source.source_id),
+            safe_name(&path_stem(source.path)),
+            extension
+        ));
+        fs::copy(source.path, &source_copy)
+            .map_err(|error| format!("复制附加数据源失败：{error}"))?;
+        let label = match source.role {
+            "previous" => "上期数据源",
+            "external" => "外部数据源",
+            _ => return Err(format!("不支持的附加来源角色：{}", source.role)),
+        };
+        let (sha_after, sha_copy) = verify_copied_snapshot(
+            &run_dir,
+            label,
+            source.sha256_before,
+            file_sha256(source.path),
+            file_sha256(&source_copy),
+        )?;
+        manifest.push(S5OutputManifestEntry {
+            role: source.role.to_owned(),
+            source_id: source.source_id.to_owned(),
+            source_path: source.path.display().to_string(),
+            copy_path: source_copy.display().to_string(),
+            sha256_before: source.sha256_before.to_owned(),
+            sha256_after: sha_after,
+            sha256_copy: sha_copy,
+            matches_snapshot: true,
+        });
+        copy_by_source.insert(source.path.display().to_string(), source_copy);
+    }
 
     let config_copy = copies_dir.join(format!(
         "配置_{}{}",
@@ -756,7 +813,7 @@ pub fn write_run_outputs(
 
 #[cfg(test)]
 mod tests {
-    use super::{S5OutputRequest, file_sha256, write_run_outputs};
+    use super::{file_sha256, write_run_outputs, S5OutputRequest, S5OutputSource};
     use std::{
         collections::BTreeMap,
         fs,
@@ -793,6 +850,7 @@ mod tests {
             source_path: &source,
             source_id: "CURRENT",
             source_sha256_before: &source_sha,
+            additional_sources: &[],
             config_path: &config,
             config_sha256_before: &config_sha,
             config_version: "test",
@@ -804,6 +862,60 @@ mod tests {
         assert!(
             !output.exists(),
             "rejected input must not create a run directory"
+        );
+        fs::remove_dir_all(root).expect("remove test root");
+    }
+    #[test]
+    fn output_writer_rejects_changed_previous_input_before_creating_run_outputs() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "audit_s5_previous_snapshot_guard_{}_{}",
+            std::process::id(),
+            nonce
+        ));
+        fs::create_dir_all(&root).expect("create test root");
+        let current = root.join("current.xlsx");
+        let previous = root.join("previous.xlsx");
+        let config = root.join("config.xlsx");
+        let output = root.join("output");
+        fs::write(&current, b"current source").expect("write current source");
+        fs::write(&previous, b"previous source changed").expect("write previous source");
+        fs::write(&config, b"config snapshot").expect("write config");
+        let config_sha = file_sha256(&config).expect("hash config");
+        let current_sha = file_sha256(&current).expect("hash current");
+        let stale_previous_sha = "0".repeat(64);
+        let counts = BTreeMap::new();
+        let additional_sources = [S5OutputSource {
+            role: "previous",
+            path: &previous,
+            source_id: "PREVIOUS",
+            sha256_before: &stale_previous_sha,
+        }];
+        let request = S5OutputRequest {
+            run_id: "changed-previous-input",
+            period: "2026-07-31",
+            institution_code: "123",
+            institution_name: "sample",
+            outcomes: &[],
+            status_counts: &counts,
+            source_path: &current,
+            source_id: "CURRENT",
+            source_sha256_before: &current_sha,
+            additional_sources: &additional_sources,
+            config_path: &config,
+            config_sha256_before: &config_sha,
+            config_version: "test",
+        };
+
+        let error = write_run_outputs(&request, &output)
+            .expect_err("changed previous source must not produce a completed output run");
+        assert!(error.contains("上期数据源在审核期间发生变化"));
+        assert!(
+            !output.exists(),
+            "rejected previous input must not create a run directory"
         );
         fs::remove_dir_all(root).expect("remove test root");
     }
