@@ -28,6 +28,8 @@ PT-6-1 的完整 `compare_summary_tools.py` 组合对拍于 2026-10-25 在 Windo
 
 PT-6-1 当前 HEAD 复验（2026-10-25，bbb8762）：Windows 原生 MSVC CLI 对只读 tests/fixtures/vba_config/VbaV2.4.2.xlsm 与 PyCode 完整投影精确一致，23,975 条数据行、19 列；输入未变，新建 XLSX 不含源 VBA。开发者事件流与保存历史一致，实际引擎为 Calamine、excel-reader::read_xlsx_worksheet_extents、rust_xlsxwriter，Rust 总耗时 5,063 ms。机器证据追加于 probe/reports/summary_used_range_real_vba_xlsm_parity_20261025.json。此项只复验该单一真实宏工作簿；目标 Linux/麒麟/UOS、glibc 2.28 和 deb 仍未验收。
 
+PT-6-1 当前 HEAD 6cc0232 的 Windows 原生 MSVC CLI 复验：原 PyTools xlsx/ 下 13 份只读 XLSX 分四批对拍，96 张表、203,580 行完整输出投影与只读 PyCode 精确一致；值/类型、已填充样式、工作表名称/维度、冻结窗格/表头、公式/合并/定义名称/页面属性均一致。源文件指纹前后一致，四批开发者事件均与保存历史匹配，第二批 1,212 个受支持错误单元格保留。报告已更新至 probe/reports/summary_used_range_real_parity_20261025.json。该次单轮墙钟不作性能比较；探针进程工作集只采到一次约 3.87 GB 快照，不代表峰值 RSS。PT-1-3/1-4 仍无可命中当前时序规则的真实报表，PT-6-2 仍缺真实批注区域模板；当前 HEAD 的 glibc 2.28、麒麟/UOS、deb 与离线交付仍未验收。
+
 ## 输入与转换矩阵
 
 | 格式 | 计划 | 验收状态 |

@@ -143,14 +143,14 @@
           "columns": 260
         }
       ],
-      "python_elapsed_ms": 5368,
-      "rust_cli_wall_elapsed_ms": 2216,
+      "python_elapsed_ms": 4261,
+      "rust_cli_wall_elapsed_ms": 1848,
       "rust_execution": {
         "ooxml_error_cells_patched": 0,
-        "read_elapsed_ms": 1523,
+        "read_elapsed_ms": 1281,
         "reader_engine": "calamine",
-        "total_elapsed_ms": 2138,
-        "write_elapsed_ms": 606,
+        "total_elapsed_ms": 1791,
+        "write_elapsed_ms": 507,
         "writer_engine": "rust_xlsxwriter"
       },
       "progress_log": {
@@ -172,12 +172,12 @@
           "rust_xlsxwriter"
         ],
         "completed_stage_elapsed_ms": {
-          "extent_scan": 54,
-          "value_read": 193,
-          "row_write": 35,
-          "output_save": 459,
-          "output_workbook": 606,
-          "run": 2138
+          "extent_scan": 44,
+          "value_read": 171,
+          "row_write": 30,
+          "output_save": 384,
+          "output_workbook": 507,
+          "run": 1791
         },
         "skipped_input_names": [],
         "input_filter_events_have_no_engine": true
@@ -204,14 +204,14 @@
           "columns": 213
         }
       ],
-      "python_elapsed_ms": 15052,
-      "rust_cli_wall_elapsed_ms": 16334,
+      "python_elapsed_ms": 10904,
+      "rust_cli_wall_elapsed_ms": 12581,
       "rust_execution": {
         "ooxml_error_cells_patched": 1212,
-        "read_elapsed_ms": 7484,
+        "read_elapsed_ms": 6061,
         "reader_engine": "calamine",
-        "total_elapsed_ms": 16278,
-        "write_elapsed_ms": 8791,
+        "total_elapsed_ms": 12528,
+        "write_elapsed_ms": 6465,
         "writer_engine": "rust_xlsxwriter"
       },
       "progress_log": {
@@ -235,13 +235,13 @@
           "rust_xlsxwriter"
         ],
         "completed_stage_elapsed_ms": {
-          "extent_scan": 1808,
-          "value_read": 5676,
-          "row_write": 385,
-          "output_save": 798,
-          "ooxml_error_patch": 7568,
-          "output_workbook": 8791,
-          "run": 16278
+          "extent_scan": 1535,
+          "value_read": 4525,
+          "row_write": 329,
+          "output_save": 597,
+          "ooxml_error_patch": 5506,
+          "output_workbook": 6465,
+          "run": 12528
         },
         "skipped_input_names": [],
         "input_filter_events_have_no_engine": true
@@ -271,14 +271,14 @@
           "columns": 17
         }
       ],
-      "python_elapsed_ms": 4557,
-      "rust_cli_wall_elapsed_ms": 6523,
+      "python_elapsed_ms": 3732,
+      "rust_cli_wall_elapsed_ms": 5548,
       "rust_execution": {
         "ooxml_error_cells_patched": 0,
-        "read_elapsed_ms": 4714,
+        "read_elapsed_ms": 3905,
         "reader_engine": "calamine",
-        "total_elapsed_ms": 6445,
-        "write_elapsed_ms": 1726,
+        "total_elapsed_ms": 5480,
+        "write_elapsed_ms": 1571,
         "writer_engine": "rust_xlsxwriter"
       },
       "progress_log": {
@@ -300,12 +300,12 @@
           "rust_xlsxwriter"
         ],
         "completed_stage_elapsed_ms": {
-          "extent_scan": 530,
-          "value_read": 2102,
-          "row_write": 78,
-          "output_save": 1384,
-          "output_workbook": 1726,
-          "run": 6445
+          "extent_scan": 487,
+          "value_read": 1807,
+          "row_write": 76,
+          "output_save": 1295,
+          "output_workbook": 1571,
+          "run": 5480
         },
         "skipped_input_names": [],
         "input_filter_events_have_no_engine": true
@@ -335,14 +335,14 @@
           "columns": 22
         }
       ],
-      "python_elapsed_ms": 186065,
-      "rust_cli_wall_elapsed_ms": 305697,
+      "python_elapsed_ms": 143496,
+      "rust_cli_wall_elapsed_ms": 260653,
       "rust_execution": {
         "ooxml_error_cells_patched": 0,
-        "read_elapsed_ms": 223176,
+        "read_elapsed_ms": 194409,
         "reader_engine": "calamine",
-        "total_elapsed_ms": 304838,
-        "write_elapsed_ms": 81659,
+        "total_elapsed_ms": 259886,
+        "write_elapsed_ms": 65473,
         "writer_engine": "rust_xlsxwriter"
       },
       "progress_log": {
@@ -364,12 +364,12 @@
           "rust_xlsxwriter"
         ],
         "completed_stage_elapsed_ms": {
-          "extent_scan": 5987,
-          "value_read": 25316,
-          "row_write": 4570,
-          "output_save": 64978,
-          "output_workbook": 81659,
-          "run": 304838
+          "extent_scan": 5345,
+          "value_read": 20582,
+          "row_write": 2678,
+          "output_save": 51775,
+          "output_workbook": 65473,
+          "run": 259886
         },
         "skipped_input_names": [],
         "input_filter_events_have_no_engine": true
@@ -401,12 +401,12 @@
           "rust_xlsxwriter"
         ],
         "completed_stage_elapsed_ms": {
-          "extent_scan": 54,
-          "value_read": 193,
-          "row_write": 35,
-          "output_save": 459,
-          "output_workbook": 606,
-          "run": 2138
+          "extent_scan": 44,
+          "value_read": 171,
+          "row_write": 30,
+          "output_save": 384,
+          "output_workbook": 507,
+          "run": 1791
         },
         "skipped_input_names": [],
         "input_filter_events_have_no_engine": true
@@ -432,13 +432,13 @@
           "rust_xlsxwriter"
         ],
         "completed_stage_elapsed_ms": {
-          "extent_scan": 1808,
-          "value_read": 5676,
-          "row_write": 385,
-          "output_save": 798,
-          "ooxml_error_patch": 7568,
-          "output_workbook": 8791,
-          "run": 16278
+          "extent_scan": 1535,
+          "value_read": 4525,
+          "row_write": 329,
+          "output_save": 597,
+          "ooxml_error_patch": 5506,
+          "output_workbook": 6465,
+          "run": 12528
         },
         "skipped_input_names": [],
         "input_filter_events_have_no_engine": true
@@ -462,12 +462,12 @@
           "rust_xlsxwriter"
         ],
         "completed_stage_elapsed_ms": {
-          "extent_scan": 530,
-          "value_read": 2102,
-          "row_write": 78,
-          "output_save": 1384,
-          "output_workbook": 1726,
-          "run": 6445
+          "extent_scan": 487,
+          "value_read": 1807,
+          "row_write": 76,
+          "output_save": 1295,
+          "output_workbook": 1571,
+          "run": 5480
         },
         "skipped_input_names": [],
         "input_filter_events_have_no_engine": true
@@ -491,12 +491,12 @@
           "rust_xlsxwriter"
         ],
         "completed_stage_elapsed_ms": {
-          "extent_scan": 5987,
-          "value_read": 25316,
-          "row_write": 4570,
-          "output_save": 64978,
-          "output_workbook": 81659,
-          "run": 304838
+          "extent_scan": 5345,
+          "value_read": 20582,
+          "row_write": 2678,
+          "output_save": 51775,
+          "output_workbook": 65473,
+          "run": 259886
         },
         "skipped_input_names": [],
         "input_filter_events_have_no_engine": true
@@ -530,17 +530,23 @@
     "freeze_panes_and_header_bold": "exact",
     "formula_merge_name_and_page_properties": "exact"
   },
-  "python_elapsed_ms": 211042,
-  "rust_cli_wall_elapsed_ms": 330770,
+  "python_elapsed_ms": 162393,
+  "rust_cli_wall_elapsed_ms": 280630,
   "execution_environment": {
     "python_sys_platform": "win32",
-    "rust_cli_host": "Windows 11 x64, native MSVC target",
-    "rust_cli_executable": "native cargo build: x86_64-pc-windows-msvc, rustc 1.99.1, HEAD 26d0d9e",
-    "rust_cli_wall_includes_cargo_run": false
+    "rust_cli_host": "Windows 11 x64; Rust 1.99.1 MSVC",
+    "rust_cli_executable": "native cargo build --offline --locked; HEAD 6cc0232",
+    "rust_cli_wall_includes_cargo_run": false,
+    "resource_observation": {
+      "process": "Windows Python oracle/projection process",
+      "working_set_snapshot_bytes": 3872260096,
+      "interpretation": "one transient snapshot during batch 4; not peak RSS and not a performance benchmark"
+    }
   },
   "timing_note": "Single execution per batch for diagnostics; not a performance comparison.",
   "limitations": [
     "Original-project XLSX assets only; no production default or broad format acceptance inferred.",
+    "Windows-native Cargo build remains unvalidated.",
     "VBA-bearing XLSM, XLS/XLSB and target Linux/deb remain unvalidated.",
     "Report contains no source cell values or output workbook; both outputs were temporary."
   ],
