@@ -27,6 +27,7 @@ from zipfile import ZipFile
 from openpyxl import Workbook, load_workbook
 from openpyxl.comments import Comment
 from openpyxl.styles import PatternFill
+from openpyxl.styles.numbers import is_timedelta_format
 from openpyxl.utils.datetime import CALENDAR_MAC_1904
 
 sys.dont_write_bytecode = True
@@ -92,6 +93,7 @@ def make_input(
     date_1904: bool = False,
     time_only: bool = False,
     elapsed_duration: bool = False,
+    elapsed_number_format: str | None = None,
 ) -> None:
     workbook = Workbook()
     if date_1904:
@@ -113,7 +115,7 @@ def make_input(
     sheet["A5"] = "公司甲"
     if elapsed_duration:
         sheet["B5"] = 1.123456789
-        sheet["B5"].number_format = "[h]:mm:ss.000"
+        sheet["B5"].number_format = elapsed_number_format or "[h]:mm:ss.000"
     elif cached_formula:
         sheet["B5"] = "=8+2.25"
     elif time_only:
@@ -930,6 +932,7 @@ def run_case(
     date_1904: bool = False,
     time_only: bool = False,
     elapsed_duration: bool = False,
+    elapsed_number_format: str | None = None,
 ) -> dict[str, object]:
     if elapsed_duration:
         case_name = f"elapsed_duration_{'row_suffix' if row_suffix else 'no_suffix'}"
@@ -953,6 +956,7 @@ def run_case(
         date_1904=date_1904,
         time_only=time_only,
         elapsed_duration=elapsed_duration,
+        elapsed_number_format=elapsed_number_format,
     )
     python_output = case / "python_output"
     rust_output = case / "rust_output"
@@ -1070,6 +1074,7 @@ def run_case(
     result = {
         "row_suffix": row_suffix,
         "elapsed_duration": elapsed_duration,
+        "elapsed_number_format": elapsed_number_format,
         "cached_formula_value_projected": cached_formula,
         "time_only_value": time_only,
         "source_date_system": "1904" if date_1904 else "1900",
@@ -1100,12 +1105,20 @@ def run_case(
 
 
 def run_existing_target_case(
-    root: Path, row_suffix: bool, *, elapsed_duration: bool = False
+    root: Path,
+    row_suffix: bool,
+    *,
+    elapsed_duration: bool = False,
+    elapsed_number_format: str | None = None,
 ) -> dict[str, object]:
     case = root / ("existing_suffix" if row_suffix else "existing_no_suffix")
     case.mkdir()
     source = case / "sample_2024-06-30.xlsx"
-    make_input(source, elapsed_duration=elapsed_duration)
+    make_input(
+        source,
+        elapsed_duration=elapsed_duration,
+        elapsed_number_format=elapsed_number_format,
+    )
     seed_output = case / "seed_output"
     _, full_target = python_baseline(source, seed_output, row_suffix)
     seed_target = case / "target_seed.xlsx"
@@ -1158,6 +1171,7 @@ def run_existing_target_case(
     result = {
         "row_suffix": row_suffix,
         "elapsed_duration": elapsed_duration,
+        "elapsed_number_format": elapsed_number_format,
         "summary_status": "passed",
         "existing_target_replacement_status": "passed",
         "engine": execution["engine"],
@@ -1201,6 +1215,111 @@ def cleanup_probe_directory(path: Path) -> None:
 def main() -> int:
     if not PYTOOLS_SOURCE.is_dir():
         raise FileNotFoundError(f"PyCode source not found: {PYTOOLS_SOURCE}")
+    if sys.argv[1:] == ["--elapsed-duration-formats"]:
+        formats = [
+            "[h]:mm:ss.000",
+            "[hh]:mm:ss",
+            "[m]:ss.000",
+            "[mm]:ss",
+            "[ss].000",
+            "[Red][h]:mm:ss",
+            "[Red]h:mm:ss",
+        ]
+        with tempfile.TemporaryDirectory(
+            prefix="pytools-wide-elapsed-format-matrix-", ignore_cleanup_errors=True
+        ) as temp:
+            root = Path(temp)
+            summary_results = []
+            existing_target_results = []
+            for index, number_format in enumerate(formats):
+                case_root = root / f"format_{index}"
+                case_root.mkdir()
+                summary_results.extend(
+                    run_case(
+                        case_root,
+                        row_suffix,
+                        elapsed_duration=True,
+                        elapsed_number_format=number_format,
+                    )
+                    for row_suffix in (False, True)
+                )
+                existing_target_results.extend(
+                    run_existing_target_case(
+                        case_root,
+                        row_suffix,
+                        elapsed_duration=True,
+                        elapsed_number_format=number_format,
+                    )
+                    for row_suffix in (False, True)
+                )
+            report = {
+                "schema_version": 1,
+                "suite": "pytools.timeline.wide_summary_elapsed_duration_format_parity",
+                "date": date.today().isoformat(),
+                "status": "passed_synthetic_python_rust_parity",
+                "baseline": "PyCode/core/wide_397_398.py::run_wide_summary",
+                "rust_entry": "pytools menu -> 1 timeline -> 3/4 wide summary -> confirm",
+                "input": {
+                    "format": "xlsx",
+                    "kind": "synthetic",
+                    "number_formats": [
+                        {
+                            "format": number_format,
+                            "python_openpyxl_timedelta_format": is_timedelta_format(number_format),
+                        }
+                        for number_format in formats
+                    ],
+                    "cases_per_format": [
+                        "row-suffix and no-suffix summary variants",
+                        "new target append and existing target replacement",
+                    ],
+                },
+                "comparison": {
+                    "summary_values_types_and_effective_styles": "exact",
+                    "new_target_values_types_and_effective_styles": "exact",
+                    "existing_target_values_types": "exact",
+                    "existing_target_style_differences": "reported_per_case",
+                    "source_and_configuration_unchanged": True,
+                },
+                "summary_cases": summary_results,
+                "existing_target_cases": existing_target_results,
+                "safety": {
+                    "source_unchanged": True,
+                    "configuration_unchanged": True,
+                    "outputs_temporary_only": True,
+                    "report_contains_input_filenames_or_cell_values": False,
+                },
+                "limitations": [
+                    "Synthetic inputs only; a sanitized real wide-summary workbook is still required for business acceptance.",
+                    "Only the listed xlsx number formats and menu/target paths were tested.",
+                    "Linux targets and offline deb acceptance were not tested.",
+                ],
+            }
+            report_path = (
+                WORKSPACE
+                / "pytools-core"
+                / "probe"
+                / "reports"
+                / f"wide_summary_elapsed_duration_formats_{date.today():%Y%m%d}.json"
+            )
+            report_path.write_text(
+                json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+            )
+            print(
+                json.dumps(
+                    {
+                        "report": str(report_path),
+                        "formats": len(formats),
+                        "summary_cases": len(summary_results),
+                        "existing_target_cases": len(existing_target_results),
+                        "status": report["status"],
+                    },
+                    ensure_ascii=False,
+                )
+            )
+            cleanup_probe_directory(root)
+        return 0
+
     if sys.argv[1:] == ["--elapsed-duration"]:
         with tempfile.TemporaryDirectory(
             prefix="pytools-wide-elapsed-duration-probe-", ignore_cleanup_errors=True
