@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "status": "passed",
+  "feature": "PT-7-6 XLSM area extraction",
+  "sample_kind": "real macro-enabled workbook fixture from the related VBA tool suite; not an original PyTools report workbook",
+  "source_extension": ".xlsm",
+  "source_sheet_count": 14,
+  "source_vba_project_present": true,
+  "area_spec": "A1:XFD1048576",
+  "python_stats": {
+    "files": 1,
+    "extracted_sheets": 14,
+    "output_files": 1,
+    "failed_files": 0
+  },
+  "rust_stats": {
+    "files": 1,
+    "extracted_sheets": 14,
+    "output_files": 1,
+    "failed_files": 0
+  },
+  "output_projection_exact_match": true,
+  "output_projection_counts": {
+    "sheets": 14,
+    "non_empty_cells": 39015
+  },
+  "python_output_vba_project_present": false,
+  "rust_output_vba_project_present": false,
+  "source_unchanged": true,
+  "scope_note": "This confirms full used-range value extraction parity on one real macro-enabled fixture, not acceptance on an original PyTools XLSM report or VBA preservation. The output contract is a new XLSX without VBA; other real templates and platform delivery remain unverified."
+}

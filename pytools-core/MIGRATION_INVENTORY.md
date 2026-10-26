@@ -797,7 +797,13 @@ Windows 原生验证：cargo fmt --manifest-path pytools-core/Cargo.toml -- --ch
 
 Windows 原生验证：cargo fmt --manifest-path pytools-core/Cargo.toml -- --check、cargo test --offline --locked -p pytools-core --test sheet_extract_area_operation_parity -j 1（16/16）、cargo build --offline --locked -p pytools-core --bin pytools -j 1 通过。实际 pytools menu → 7 → 6 对仓库中的宏工作簿测试夹具执行单个文本格提取，生成 .xlsx，输入字节未变。Python/Rust extract-sheets-area 对拍以 1900/1904 epoch 下 .xlsx 与宏启用内容类型 .xlsm（无 VBA 项目）的 4 个合成输入运行，完整输出投影相同；双方均 files=4、extracted_sheets=4、output_files=1、failed_files=0，源未变。机器报告：probe/reports/sheet_extract_area_time_only_parity_20261026.json。
 
-该证据不代表 PyTools 真实业务 .xlsm 样本完整验收或宏保留能力；输出合同是值提取到新建 .xlsx。真实业务工作簿、完整宏簿 Python/Rust 对拍、整表 .xlsm 样式导入、原生文件弹窗与目标 Linux/deb 仍未验证。PT-7-6 整体保持迁移中。
+该证据不代表 PyTools 原业务报表的完整验收或宏保留能力；输出合同是值提取到新建 .xlsx。原 PyTools 业务输入、整表 .xlsm 样式导入、原生文件弹窗与目标 Linux/deb 仍未验证。PT-7-6 整体保持迁移中。
+
+### 2026-10-26 PT-7-6 相关宏工作簿完整区域 XLSM 对拍
+
+使用仓库既有 VbaV2.4.2.xlsm 宏工作簿测试夹具（14 张表，来自相关 VBA 工具项目，不是 PyTools 原项目报表），以区域 `A1:XFD1048576` 对整个工作簿做值提取。只读 PyCode `run_extract_sheets` 与 Rust `pytools extract-sheets-area` 均处理 1 个文件、提取 14 张表、生成 1 个输出、失败 0；14 张输出表共 39,015 个非空格的工作表名、坐标、值类型、值与数字格式投影精确一致。输入字节未变，两侧输出均为新建 XLSX 且不含 VBA 项目。机器报告：`probe/reports/sheet_extract_area_real_xlsm_parity_20261026.json`。
+
+这是实际宏启用工作簿的完整区域对拍，但不等同于 PyTools 原项目业务报表验收，也不验证 VBA 保留。输出合同按旧 Python 行为生成无 VBA 的 XLSX；PyTools 原业务输入、其他 XLSM、原生文件弹窗及 Linux/deb/目标机仍未验收，PT-7-6 整体维持迁移中。
 
 ### 2026-10-25 PT-1-2 时序提取 Rust 主输出、目标追加与入口对拍
 

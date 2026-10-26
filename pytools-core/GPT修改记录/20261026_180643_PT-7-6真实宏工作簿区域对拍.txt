@@ -1,0 +1,7 @@
+功能：PT-7-6 XLSM 区域提取真实宏工作簿对拍
+目的：对近期接通的 .xlsm 区域提取增加完整工作簿范围的独立 Python/Rust 对拍，检查实际宏启用容器中的全部工作表和值类型。
+输入：仓库既有 VbaV2.4.2.xlsm 宏工作簿测试夹具；它来自相关 VBA 工具项目，不是 PyTools 原项目报表样本。源文件只读。
+入口：只读 PyCode `core.feature_1_6_extract_sheets.run_extract_sheets`；Rust 真实 CLI `pytools extract-sheets-area`。使用显式 A1:XFD1048576 区域，双方均按工作表实际维度裁剪。
+结果：Python/Rust 均 files=1、extracted_sheets=14、output_files=1、failed_files=0；14 张输出表共 39,015 个非空格的工作表名、坐标、值类型、值与数字格式投影完全一致。两侧输出均为新 XLSX 且不含 VBA 项目；输入字节前后相同。机器报告 `probe/reports/sheet_extract_area_real_xlsm_parity_20261026.json`。临时配置和输出在 F 盘归档目录下运行并已自动清理。
+未验证：此相关工具工作簿不替代 PyTools 原项目真实业务报表；不验证 VBA 保留，输出合同本来就是新 XLSX；其他 XLSM、原生对话框、Linux/glibc/deb 与目标机仍待验证。PT-7-6 维持迁移中。
+回滚：回退本次验证提交即可移除此探针、汇总报告及修改记录，不改业务代码或输入工作簿。
