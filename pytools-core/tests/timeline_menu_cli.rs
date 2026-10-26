@@ -319,6 +319,67 @@ fn wide_summary_cli_processes_legacy_xls_without_ooxml_metadata() -> Result<()> 
 }
 
 #[test]
+fn wide_summary_cli_summarizes_nonempty_legacy_xls_elapsed_values() -> Result<()> {
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures")
+        .join("timeline")
+        .join("wide_summary_elapsed_duration.xls");
+
+    for command in ["wide-summary", "wide-summary-row-suffix"] {
+        let root = TestDirectory::new()?;
+        let config = create_timeline_config(root.path())?;
+        let source = root.path().join("sample_2024-06-30.xls");
+        fs::copy(&fixture, &source)?;
+        let source_before = fs::read(&source)?;
+
+        let output = Command::new(env!("CARGO_BIN_EXE_pytools"))
+            .arg(command)
+            .arg("--config")
+            .arg(&config)
+            .arg("--log-view")
+            .arg("developer")
+            .arg(&source)
+            .output()
+            .context("run wide-summary CLI with nonempty BIFF XLS input")?;
+        assert!(
+            output.status.success(),
+            "{command} did not summarize nonempty BIFF XLS input: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let report: Value = serde_json::from_slice(&output.stdout)?;
+        let summary_path = report["output"]
+            .as_str()
+            .map(PathBuf::from)
+            .context("nonempty legacy XLS summary output path missing")?;
+        let dump = read_workbook(&summary_path)?;
+        let summary = dump
+            .sheets
+            .iter()
+            .find(|sheet| sheet.name == "WideRule")
+            .context("nonempty legacy XLS summary sheet missing")?;
+        assert_eq!(summary.values["G2"]["type"], "datetime_serial");
+        let elapsed = summary.values["G2"]["value"]
+            .as_f64()
+            .context("BIFF elapsed date serial missing")?;
+        assert!((elapsed - 1.123_456_789).abs() < 1e-15);
+        assert_eq!(summary.values["G3"]["type"], "string");
+        assert_eq!(summary.values["G3"]["value"], "12:00:00");
+
+        let run_log_path = report["run_log_path"]
+            .as_str()
+            .map(PathBuf::from)
+            .context("nonempty legacy XLS run history missing")?;
+        let history: Value = serde_json::from_slice(&fs::read(run_log_path)?)?;
+        assert_eq!(history["completed_inputs"], 1);
+        assert_eq!(history["failed_inputs"], 0);
+        assert_eq!(fs::read(&source)?, source_before);
+    }
+    Ok(())
+}
+
+#[test]
 fn wide_summary_cli_discovers_default_sources_for_both_row_modes() -> Result<()> {
     let root = TestDirectory::new()?;
     let config = create_timeline_config(root.path())?;
