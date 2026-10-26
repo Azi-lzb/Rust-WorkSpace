@@ -1,0 +1,19 @@
+目的：让 Audit #8 的保留工作表关系例外继续可由 Audit 当前分支调用，不要求其先同步尚未包含的公式引用平移操作变体。
+
+修改文件：
+- crates/excel-editor/src/plan.rs
+- 本记录
+
+修改内容：关系例外的数据重写判定只识别 `SetCellValue`、`SetFormulaText`、`CopyRange` 和 `ImportRange`。移除对 Audit 当前提交树中不存在的 `CopyRangeWithFormulaTranslation` / `ImportRangeWithFormulaTranslation` 变体的引用。该判定只影响工作表关系例外的资格检查；Audit S1 当前使用的单元格写入仍可满足条件，不改变公式复制接口或其他保真校验。
+
+验证：
+- `cargo fmt -p excel-editor -- --check`：通过。
+- `git diff --check -- crates/excel-editor/src/plan.rs`：通过。
+- `CARGO_TARGET_DIR=F:\rust-workspace-targets\main-relationship-validation cargo test -q -p excel-editor --locked --offline`：通过；40 个单元测试及对应集成/doc tests 通过，4 个依赖隔离 openpyxl runtime 的测试按定义忽略。
+- 构建产物写入 `F:\rust-workspace-targets\main-relationship-validation`。
+
+未验证：尚未在 Audit 真实工作簿执行完整 S1-F01；Audit 需在其业务计划中显式授权对应工作表的 `Relationships` 变化后再进行真实样本验证。未进行 Linux/glibc 2.28 验证。
+
+已知限制：合成测试和共享 crate 测试不等于真实 Audit 模板保真验收；不得据此登记生产 capability 为 Passed。
+
+回滚：回滚本次单独提交及本记录；保留 `crates/ooxml-patch/src/lib.rs` 的既有未提交修改和未跟踪交接文件。
