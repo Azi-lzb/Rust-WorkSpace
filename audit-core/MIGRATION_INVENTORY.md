@@ -82,7 +82,8 @@
 ## Rust 前端接入状态
 
 - 源项目 `core/frontend/web/index.html` 和 `core/frontend/assets/app-icon.{png,ico}` 已原样复制到 `frontend/`；HTML 与源文件 SHA-256 一致。源项目只读，没有修改。
-- `open-data-audit serve` 仅监听 `127.0.0.1`，并通过响应时注入 bridge 保持 HTML 文件本身不变。页面启动后导航至已接入的 S2。
+- Windows 可直接启动新增的 `open-data-audit-gui.exe`（无参数默认端口 8750，可用 `--port`/`--config` 覆盖）；它复用原 GUI 页面和同一 HTTP bridge，仅监听 `127.0.0.1`，启动后尝试打开系统默认浏览器。原 `open-data-audit serve` 也复用该自动打开行为；打开失败时打印手动访问地址。此入口已通过 Windows HTTP 冒烟，状态仍为“已实现，待 Windows 真实验收”。
+- bridge 在响应时注入运行时接口，保持 HTML 文件本身不变。当前页面启动后导航至已接入的 S2。
 - 当前连接 `get_state`、浏览器路径浏览、S2 配置检查、S2 路径选择/清除、输出目录固定/跟随、审核启动、进度和结果回传，以及有限的 UI 设置更新。选择或清除本期/上期目录会刷新两期文件配对预览，并支持 `.xls`/`.xlsx` 文件名列举。
 - 未迁移接口返回 HTTP 501。取消和设置持久化尚未接入；S1/S3/S4/S5 的前端入口不表示其功能已经迁移。
 - 合成 S2 输入经 HTTP bridge 完整运行并生成三表 XLSX；该结果不替代真实业务模板、Windows 原生、麒麟/UOS、glibc 2.28 与 deb 验收。
