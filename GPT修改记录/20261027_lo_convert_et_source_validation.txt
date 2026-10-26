@@ -1,0 +1,24 @@
+执行日期：2026-10-27（Asia/Shanghai）
+执行者：Codex（main）
+目的：修复 `.et` 输入转换后的工作簿保留验证，并保护调用方源文件。原逻辑仅把 `.et` 复制成 `.xlsx` 再交 Calamine，导致 CFB 输入被当作 ZIP 并以 EOCD 错误拒绝；此外，WPS COM 失败路径可能改写传入的源副本。
+
+修改文件：
+- sidecar/lo-convert/src/main.rs
+- sidecar/lo-convert/tests/convert_et_com.rs
+- 本记录
+
+修改内容：ET 源验证改为使用当前选定的 LO 或 Windows COM 引擎，将原 ET 单独转换到临时 XLSX，再用 Calamine 读取该验证副本，与待发布候选逐项比较工作表顺序/名称、公式文本及非公式数据单元格和值。验证报告明确标记该 source probe 是使用所选引擎单独转换产生。Windows COM 转换前还会把输入复制到隔离临时目录，只打开该副本；成功或失败都不再把用户源路径交给 COM，并清理该暂存副本。任何转换或比较失败仍拒绝发布，原 ET 不改动。
+
+回归测试：新增 Windows opt-in 集成测试。当前本机 WPS 安装样本 `newfile.et` 实际 `Workbook.FileFormat=56`（Excel 8），不是已确认的原生 ET；因此测试把它明确作为“CFB/XLS 内容使用 .et 扩展名”的回归夹具，在临时副本写入数值和公式后验证 CLI 的工作表/值/公式比较及输入字节保护。另加 COM SaveAs 失败测试验证调用方输入不变。原生 ET 测试仅在 `LO_CONVERT_NATIVE_ET_FIXTURE` 指向经 KET 确认 `FileFormat=65521` 的含数据样本时执行；未将 WPS 安装资源复制到仓库。
+
+验证：
+- `cargo fmt -p lo-convert -- --check`：通过（格式调整后复查）。
+- `LO_CONVERT_RUN_WPS_ET_TESTS=1`、`LO_CONVERT_CFB_ET_NAMED_XLS_FIXTURE=<WPS 安装目录>/newfile.et` 下运行 `cargo test --offline --locked -p lo-convert -- --test-threads=1`：7 个单元测试通过；1 个 CFB/.et 扩展名 COM 集成测试通过；原生 ET 测试因未提供经过验证的 ET 样本而跳过；LibreOffice 重算集成测试通过。
+- CFB/.et 扩展名测试将安装样本复制到临时目录，再用 KET 写入数值 12、3 和公式 `=SUM(A1:A2)`；转换后验证值/公式保留、独立 source probe 标记及输入副本字节不变。COM SaveAs 失败测试也验证调用方输入字节不变。原安装目录的 6,656-byte `newfile.et` 未直接传给 sidecar COM。
+- WPS 官方 `XlFileFormat` 枚举（https://open.wps.cn/documents/app-integration-dev/wps365/client/wpsoffice/jsapi/et/enum/XlFileFormat）记录 56=Excel8、65521=et；本机 WPS Office 2019 11.8.2.8053 对安装样本及 `SaveAs(...,65521)` 生成物均报告 56，因此当前机器没有可用于原生 ET 成功验收的样本。
+- `git diff --check`：通过。
+
+未验证与边界：**真实原生 ET 的转换验收仍未完成**；CFB/XLS 内容改用 .et 扩展名的测试不能代替原生 ET。需要提供 KET 报告 `FileFormat=65521`、且至少含一个值或公式的合法 ET 样本，再运行 `LO_CONVERT_NATIVE_ET_FIXTURE` 测试。当前比较范围是工作表顺序/名称、公式文本、非公式数据坐标和值；不声明样式、批注、打印设置等对象保真。Linux/LibreOffice ET 路径未实测。源工作树现有 `crates/ooxml-patch/src/lib.rs` 未提交 WIP 与 `HANDOFF_ZCODE_TO_CODEX.md` 未跟踪交接文件保持不变。
+
+组件版本：不升级。
+回滚：仅回滚本次 ET source-probe 验证和集成测试；保留既有转换路由和其他工作区修改。

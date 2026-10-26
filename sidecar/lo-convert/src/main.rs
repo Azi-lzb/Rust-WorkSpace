@@ -563,6 +563,25 @@ fn run_libreoffice(input: &Path, temp_dir: &Path, target: &str) -> Result<()> {
 }
 
 fn run_com(input: &Path, output: &Path, target: &str, source_ext: &str) -> Result<()> {
+    let output_parent = output
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    fs::create_dir_all(output_parent)?;
+    let nonce = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
+    let com_input = output_parent.join(format!(
+        ".lo-convert-source-{}-{nonce}.{source_ext}",
+        std::process::id()
+    ));
+    // Some WPS COM failure paths can alter the workbook passed to Open even
+    // when ReadOnly=true. External automation must never receive the caller's
+    // source path; it only opens this disposable copy.
+    fs::copy(input, &com_input).with_context(|| {
+        format!(
+            "stage a private source copy for Office/WPS COM conversion from {}",
+            input.display()
+        )
+    })?;
     let app_names: &[&str] = if target == "docx" {
         &[
             "Word.Application",
@@ -589,32 +608,35 @@ fn run_com(input: &Path, output: &Path, target: &str, source_ext: &str) -> Resul
         "$doc=$null; $book=$null;\ntry {\n$app.Visible=$false; $app.DisplayAlerts=$false;\n",
     );
     if target == "docx" {
-        script.push_str(&format!("$doc=$app.Documents.Open('{}',$false,$true); try {{ $doc.SaveAs2('{}',{}) }} catch {{ $doc.SaveAs('{}',{}) }};\n", ps_quote(&input.to_string_lossy()), ps_quote(&output.to_string_lossy()), format_code, ps_quote(&output.to_string_lossy()), format_code));
+        script.push_str(&format!("$doc=$app.Documents.Open('{}',$false,$true); try {{ $doc.SaveAs2('{}',{}) }} catch {{ $doc.SaveAs('{}',{}) }};\n", ps_quote(&com_input.to_string_lossy()), ps_quote(&output.to_string_lossy()), format_code, ps_quote(&output.to_string_lossy()), format_code));
     } else {
         script.push_str(&format!(
             "$book=$app.Workbooks.Open('{}',0,$true); $book.SaveAs('{}',{});\n",
-            ps_quote(&input.to_string_lossy()),
+            ps_quote(&com_input.to_string_lossy()),
             ps_quote(&output.to_string_lossy()),
             format_code
         ));
     }
     script.push_str("} finally { if ($null -ne $doc) { $doc.Close($false) }; if ($null -ne $book) { $book.Close($false) }; if ($null -ne $app) { $app.Quit() } }\n");
     let script_path = output.with_extension("lo-convert.ps1");
-    fs::write(&script_path, script)?;
-    let result = Command::new("powershell.exe")
-        .args([
-            "-NoProfile",
-            "-NonInteractive",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-File",
-        ])
-        .arg(&script_path)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
-        .with_context(|| "start Office/WPS COM automation");
+    let result = (|| {
+        fs::write(&script_path, script)?;
+        Command::new("powershell.exe")
+            .args([
+                "-NoProfile",
+                "-NonInteractive",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+            ])
+            .arg(&script_path)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+            .with_context(|| "start Office/WPS COM automation")
+    })();
     let _ = fs::remove_file(script_path);
+    let _ = fs::remove_file(com_input);
     let result = result?;
     if !result.status.success() {
         bail!(
@@ -669,16 +691,32 @@ fn validate_conversion(
         );
     }
     let source_path = if source_ext == "et" {
-        // Calamine dispatches by extension. A temporary extension copy lets
-        // it inspect ET files that use an XLSX-compatible OOXML package while
-        // leaving the original file untouched. If the package isn't readable,
-        // reject the conversion because sheet/data preservation cannot be
-        // checked safely.
+        // ET is a CFB container, not necessarily an OOXML ZIP. Convert the
+        // original source separately with the selected engine, then compare
+        // that workbook's sheets, values and formulas with the candidate.
+        // Never disguise the source by changing its extension and asking
+        // Calamine to read it as XLSX.
         let probe_dir = temp_dir.join("source-probe");
         fs::create_dir_all(&probe_dir)?;
-        let probe = probe_dir.join("source.xlsx");
-        fs::copy(input, &probe).context("prepare read-only ET validation copy")?;
-        probe
+        match engine {
+            "lo" => {
+                run_libreoffice(input, &probe_dir, target)
+                    .context("convert ET source for preservation validation with LibreOffice")?;
+                locate_converted(&probe_dir, target)
+                    .context("locate separately converted ET source for validation")?
+            }
+            "com" if cfg!(windows) => {
+                let probe = probe_dir.join(format!("source.{target}"));
+                run_com(input, &probe, target, source_ext)
+                    .context("convert ET source for preservation validation with COM")?;
+                ensure!(
+                    probe.is_file() && fs::metadata(&probe)?.len() > 0,
+                    "COM did not create a non-empty ET source validation workbook"
+                );
+                probe
+            }
+            _ => bail!("unsupported ET source-validation engine {engine:?}"),
+        }
     } else {
         input.to_path_buf()
     };
@@ -689,10 +727,14 @@ fn validate_conversion(
         )
     })?;
     compare_workbooks(&source, &converted)?;
-    Ok(
-        "{\"level\":\"worksheet_order_names_values_and_formula_text\",\"numeric_tolerance\":1e-15}"
-            .into(),
-    )
+    if source_ext == "et" {
+        Ok("{\"level\":\"worksheet_order_names_values_and_formula_text\",\"source_probe\":\"separate_conversion_using_selected_engine\",\"numeric_tolerance\":1e-15}".into())
+    } else {
+        Ok(
+            "{\"level\":\"worksheet_order_names_values_and_formula_text\",\"numeric_tolerance\":1e-15}"
+                .into(),
+        )
+    }
 }
 
 fn extract_word_text_lo(input: &Path, output_dir: &Path) -> Result<String> {
@@ -1101,6 +1143,57 @@ struct TempDirGuard(PathBuf);
 impl Drop for TempDirGuard {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
+#[cfg(test)]
+#[path = "../tests/support/et_fixture.rs"]
+mod et_fixture_support;
+
+#[cfg(test)]
+mod et_com_source_safety_tests {
+    use super::{et_fixture_support, run_com};
+    use anyhow::{ensure, Result};
+    use std::{env, fs, path::Path};
+
+    #[test]
+    fn com_save_failure_preserves_cfb_source_named_et() -> Result<()> {
+        if !cfg!(windows) {
+            eprintln!("skipping ET COM failure test: COM is only available on Windows");
+            return Ok(());
+        }
+        if env::var("LO_CONVERT_RUN_WPS_ET_TESTS").as_deref() != Ok("1") {
+            eprintln!("skipping WPS ET failure test: set LO_CONVERT_RUN_WPS_ET_TESTS=1 to enable");
+            return Ok(());
+        }
+        let Some(fixture) = env::var_os("LO_CONVERT_CFB_ET_NAMED_XLS_FIXTURE") else {
+            eprintln!("skipping WPS CFB source-safety test: fixture path is not set");
+            return Ok(());
+        };
+        let root = et_fixture_support::temp_test_dir("lo_convert_et_com_failure")?;
+        let input = et_fixture_support::copy_and_seed_excel8_et_named_fixture(
+            &root.0,
+            Path::new(&fixture),
+        )?;
+        let source_bytes = fs::read(&input)?;
+
+        // A directory at the requested file path forces COM SaveAs to fail
+        // after opening the ET workbook, exercising the source-safety path.
+        let blocked_output = root.0.join("blocked.xlsx");
+        fs::create_dir(&blocked_output)?;
+        let error = run_com(&input, &blocked_output, "xlsx", "et")
+            .expect_err("COM SaveAs to an existing directory must fail");
+        ensure!(
+            error
+                .to_string()
+                .contains("Office/WPS COM conversion failed"),
+            "expected a COM save failure, got: {error:#}"
+        );
+        ensure!(
+            fs::read(&input)? == source_bytes,
+            "COM failure modified the caller's ET source"
+        );
+        Ok(())
     }
 }
 
