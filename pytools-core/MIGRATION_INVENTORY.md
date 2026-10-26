@@ -25,8 +25,8 @@
 ## Windows Rust 菜单入口（2026-10-26）
 
 - `pytools.exe` 不带参数或使用 `menu` 时直接进入与只读旧版 `PyCode/main.py` 对齐的 1–9 数字主菜单和既有子菜单编号；该入口复用 `pytools` 的现有 Rust 命令分发，不重复实现业务逻辑。入口状态为“Windows 启动烟测通过，完整菜单与真实业务验收待验证”，不提升任何业务功能的真实样本验收状态。
-- 已接通：1-1、1-3、1-4、1-5；2-6；3-4；4-1、4-5 至 4-10（4-8/4-9/4-10 分别为缺失检查/排序前缀/取消排序前缀）；5-1/5-2；6-1/6-2；7-5；8-1 至 8-5；9-1 至 9-3。路径通过终端交互输入，配置优先取 `PYTOOLS_CONFIG_PATH`，再查可执行文件旁、当前目录下 `pytools-core/config/config.xlsx` 和 `config/config.xlsx`；新建配置拒绝覆盖已有目标，归档复制保留源文件。
-- 仍未从菜单接通或受能力门控：1-2；2-1 至 2-5；3-1 至 3-3；4-2 至 4-4；7-1 至 7-4、7-6 至 7-8。菜单明确显示“尚未实现”（含等待修改能力验收的说明），不调用命令或报告成功。个别项目已有 CLI 候选并不代表菜单入口或业务验收通过。
+- 已接通：1-1、1-3、1-4、1-5；2-6；3-4；4-1、4-5 至 4-10（4-8/4-9/4-10 分别为缺失检查/排序前缀/取消排序前缀）；5-1（仅初始化新配置）/5-2；6-1/6-2；7-5；8-1 至 8-5；9-1 至 9-3。路径通过终端交互输入，配置优先取 `PYTOOLS_CONFIG_PATH`，再查可执行文件旁、当前目录下 `pytools-core/config/config.xlsx` 和 `config/config.xlsx`；新建配置拒绝覆盖已有目标，归档复制保留源文件。
+- 仍未从菜单接通或受能力门控：1-2；2-1 至 2-5；3-1 至 3-3；4-2 至 4-4；5-1 的现有配置修复；7-1 至 7-4、7-6 至 7-8。菜单明确显示“尚未实现”（含等待修改能力验收的说明），不调用命令或报告成功。配置修复虽有单独的 capability-gated CLI 候选，但尚未接入旧数字菜单；个别项目已有 CLI 候选并不代表菜单入口或业务验收通过。
 - 2026-10-26 Windows 11 x64 原生 Rust 复测：`cargo test -p pytools-core --test interactive_menu --locked --offline` 5/5 通过，覆盖退出、配置只读查看、配置新建、汇总输出和未接通项提示。Release `pytools.exe` 无参数运行显示旧版 1–9 菜单；直接选择 6-1 调用 Rust 汇总并从合成夹具生成 18 行 XLSX。当前入口状态为“Windows 启动烟测通过，完整菜单与真实业务验收待验证”；未逐项验收整张菜单，合成烟测不代表真实样本通过。
 - 本轮 Release 二进制因 C: 无空间输出到本机 F: 隔离 Cargo target，未纳入 Git。真实业务样本、完整菜单逐项验收和目标 Linux/deb 仍未验证；已接通菜单项不因此提升业务验收状态。
 - 本次独立复核的 Windows Release 构建命令 `cargo build --locked --offline --release -p pytools-core --bin pytools -p audit-core --bin open-data-audit-gui` 通过；直接运行该 `pytools.exe` 并输入 `0`，确认 1–9 主菜单显示且正常退出。入口可启动，不代表各菜单业务已逐项验收。
@@ -36,6 +36,7 @@
 - 本轮 Windows Release 入口复核：`interactive_menu` 5/5 通过；独立 Release 目录中的 `pytools.exe` 显示 1–9 数字菜单，选择 6-1 后由 Rust 汇总生成 1 个 XLSX，合成源夹具 SHA-256 未变化。此项是 CLI 接线冒烟，不提升该汇总功能的真实业务验收状态；菜单其余功能、真实样本与 Linux/deb 仍按本清单状态跟踪。
 - 2026-10-26 Windows 原生复核（HEAD `1682d14`）：联合 Release 构建通过；`interactive_menu` 5/5 通过；独立 `pytools.exe` 无参数启动显示 1–9 菜单并通过 `0` 正常退出。配置查看/初始化、6-1 汇总输出及未实现提示由定向测试覆盖。入口与菜单状态不提升业务真实样本验收；整张菜单逐项、真实业务样本和 Linux/deb 未验证。
 - 2026-10-26 当前 Windows 原生 Release 复测（HEAD `4945ace`）：`cargo test --offline --locked -p pytools-core --test interactive_menu -j 1` 5/5 通过，联合 Release 构建成功；直接运行 `F:\CodexBuilds\windows-operable-entries-20261026-codex-current\release\pytools.exe` 无参数显示 1–9 菜单并输入 `0` 正常退出。未逐项执行菜单，入口验证不提升业务真实样本验收状态。
+- 2026-10-26 当前工作树（基于 HEAD `ba6631f`）修正 5-1 菜单状态：配置修复计划虽有 capability-gated CLI 候选，旧数字菜单仍只接通新配置创建；菜单现明确提示既有配置修复尚未实现于菜单。`interactive_menu` 5/5 通过，Release `pytools.exe` 输入 `5 → 0 → 0` 显示提示并正常退出；未运行真实配置修复或业务样本。
 
 ## 输入与转换矩阵
 

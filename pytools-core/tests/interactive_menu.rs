@@ -117,6 +117,7 @@ fn config_initialization_uses_the_safe_new_file_command() {
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
+    assert!(stdout.contains("现有配置修复功能尚未实现"));
     assert!(stdout.contains("new configuration template created"));
     assert!(config.is_file());
 

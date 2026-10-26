@@ -1,0 +1,25 @@
+时间：2026-10-26 19:38（Asia/Shanghai）
+执行者：Codex
+分支：codex/windows-operable-entries
+修改前 commit：ba6631fa32d3a2ea2c5fb8719dcc5ea8123b5498；工作树含本轮两份入口复测记录提交
+修改后 commit：本次记录所在提交
+
+目的：让旧版 5-1 配置初始化/修复入口明确反映 Rust 菜单当前只支持新建，不将 capability-gated CLI 修复计划误示为菜单已完成。
+
+文件：
+- `pytools-core/src/bin/pytools_menu/mod.rs`：保留 5-1 编号，改为明确的新配置入口文案。
+- `pytools-core/tests/interactive_menu.rs`：断言 5-1 菜单明确说明修复未接通。
+- `pytools-core/MIGRATION_INVENTORY.md`：区分菜单可用的新建与仍未接入的配置修复。
+- 本记录。
+
+没有修改配置格式、修复计划算法、Excel 引擎或源 Python 项目。
+
+验证：
+- Windows Rust 1.99.1：`cargo test --offline --locked -p pytools-core --test interactive_menu -j 1`，5/5 通过。
+- `cargo build --offline --locked --release -p pytools-core --bin pytools -j 1` 通过。更新的 Release exe 输入 `5`、`0`、`0`，显示旧数字菜单及 5-1 修复未接入提示后正常退出。
+
+未执行/已知问题：未运行真实配置修复；该项仍须匹配已验收 capability 才可写入，CLI 修复候选尚未接入菜单。真实业务样本和 Linux/deb 未验证。
+
+组件版本：不升级（菜单状态提示修正）。
+删除清单：无。
+回滚：恢复菜单标签/状态、对应断言、迁移清单行和本记录即可。

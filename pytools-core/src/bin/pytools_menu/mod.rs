@@ -153,8 +153,8 @@ const CONVERT: &[MenuEntry] = &[
 const CONFIG: &[MenuEntry] = &[
     MenuEntry {
         number: "1",
-        label: "初始化/修复配置表（新建配置不覆盖已有文件）",
-        status: "Rust 入口",
+        label: "初始化新配置（现有配置修复功能尚未实现）",
+        status: "Rust 入口（仅新建，不覆盖已有文件）",
     },
     MenuEntry {
         number: "2",
