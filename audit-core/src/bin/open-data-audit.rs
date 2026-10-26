@@ -35,7 +35,9 @@ use audit_core::{
     },
     s2_service::{run_s2_audit, s2_engine_for_stage, S2ProgressEvent, S2RunRequest},
     s2_summary::S2AuditSummary,
-    s3_current_value_check::{python_regex_scope_matcher, run_current_value_check_csv},
+    s3_current_value_check::{
+        input_reader_for_paths, python_regex_scope_matcher, run_current_value_check_files,
+    },
     s3_explanation_export::export_selected_explanations,
     s3_explanation_feedback::plan_explanation_feedback_import,
     s5_config::load_configuration,
@@ -89,7 +91,7 @@ enum Command {
     /// Match S3-F03 institution feedback and write a read-only ExcelEditPlan.
     #[command(name = "s3-plan-explanation-feedback-import")]
     S3PlanExplanationFeedbackImport(S3PlanExplanationFeedbackImportArgs),
-    /// Run S3-F04 current/previous period checks from CSV files.
+    /// Run S3-F04 current/previous period checks from CSV, XLSX, or XLS files.
     #[command(name = "s3-check-current-values")]
     S3CheckCurrentValues(S3CurrentValueCheckArgs),
     /// Recommend an S1 template from source and template workbook sheet names.
@@ -785,11 +787,11 @@ struct S3PlanExplanationFeedbackImportArgs {
 
 #[derive(Debug, Args)]
 struct S3CurrentValueCheckArgs {
-    /// Current-period CSV data; repeat for multiple institution files.
+    /// Current-period CSV/XLSX/XLS data; repeat for multiple institution files.
     #[arg(long = "current-csv", required = true)]
     current_csvs: Vec<PathBuf>,
 
-    /// Previous-period CSV data; repeat for multiple institution files.
+    /// Previous-period CSV/XLSX/XLS data; repeat for multiple institution files.
     #[arg(long = "previous-csv")]
     previous_csvs: Vec<PathBuf>,
 
@@ -1399,7 +1401,7 @@ fn run_s3_current_value_check(arguments: S3CurrentValueCheckArgs) -> Result<()> 
         eprintln!("正在运行本期数值核对并生成结果工作簿…");
     }
 
-    let report = match run_current_value_check_csv(
+    let report = match run_current_value_check_files(
         &arguments.current_csvs,
         &arguments.previous_csvs,
         &arguments.config_workbooks,
@@ -1409,6 +1411,8 @@ fn run_s3_current_value_check(arguments: S3CurrentValueCheckArgs) -> Result<()> 
     ) {
         Ok(report) => report,
         Err(error) => {
+            let mut input_paths = arguments.current_csvs.clone();
+            input_paths.extend_from_slice(&arguments.previous_csvs);
             if arguments.developer_view {
                 eprintln!(
                     "{}",
@@ -1420,7 +1424,7 @@ fn run_s3_current_value_check(arguments: S3CurrentValueCheckArgs) -> Result<()> 
                         "status": "failed",
                         "finished_at": chrono::Local::now().to_rfc3339(),
                         "elapsed_ms": started.elapsed().as_millis(),
-                        "reader": "calamine/csv",
+                        "input_reader": input_reader_for_paths(&input_paths),
                         "writer": "rust_xlsxwriter",
                         "error": format!("{error:#}")
                     }))?

@@ -1,8 +1,8 @@
-//! CSV import and normalization for the Audit S3 central-statistics workflow.
+//! Import and normalization for the Audit S3 central-statistics workflow.
 //!
-//! This module currently covers the legacy CSV path only. XLS/XLSX dispatch is
-//! intentionally left to a later migration step that can use the shared
-//! `excel-reader` adapter and its own workbook parity cases.
+//! CSV decoding remains specific to the legacy text contract. Workbook value
+//! reading is delegated to the shared `excel-reader`; both paths converge on
+//! the same row-number-aware business normalization below.
 
 use anyhow::{bail, Context, Result};
 use chrono::{NaiveDate, NaiveDateTime};
@@ -139,7 +139,32 @@ pub fn parse_central_csv(
         let record = record.with_context(|| format!("CSV 格式错误：{file_name}"))?;
         rows.push(record.iter().map(str::to_owned).collect::<Vec<_>>());
     }
-    build_dataset(&rows, file_name, unit_factor, exempt_indicators)
+    build_dataset(
+        rows.iter()
+            .enumerate()
+            .map(|(index, row)| (index + 1, row.as_slice())),
+        file_name,
+        unit_factor,
+        exempt_indicators,
+    )
+}
+
+/// Build the same dataset contract from rows read by an accepted workbook
+/// reader. Row numbers are one-based worksheet coordinates so sparse sheets
+/// retain the same issue locations as the Python importer.
+pub(crate) fn parse_central_grid(
+    file_name: &str,
+    rows: &[(usize, Vec<String>)],
+    unit_factor: f64,
+    exempt_indicators: &BTreeSet<String>,
+) -> Result<CentralDataset> {
+    build_dataset(
+        rows.iter()
+            .map(|(row_number, row)| (*row_number, row.as_slice())),
+        file_name,
+        unit_factor,
+        exempt_indicators,
+    )
 }
 
 fn preserve_empty_records(text: &str) -> String {
@@ -208,31 +233,32 @@ fn decode_legacy_csv(bytes: &[u8]) -> String {
     replacement.into_owned()
 }
 
-fn build_dataset(
-    rows: &[Vec<String>],
+fn build_dataset<'a>(
+    rows: impl IntoIterator<Item = (usize, &'a [String])>,
     file_name: &str,
     unit_factor: f64,
     exempt_indicators: &BTreeSet<String>,
 ) -> Result<CentralDataset> {
-    let Some(first_row) = rows.first() else {
+    let mut rows = rows.into_iter();
+    let Some((header_row, first_row)) = rows.next() else {
         bail!("导数文件为空：{file_name}");
     };
-    if !header_matches(first_row) {
+    if header_row != 1 || !header_matches(first_row) {
         bail!("表头与大集中导数 14 列不符：{file_name}");
     }
 
     let mut dataset = CentralDataset::default();
-    for (offset, input_fields) in rows.iter().enumerate().skip(1) {
+    for (row_number, input_fields) in rows {
         if !input_fields.iter().any(|cell| !cell.trim().is_empty()) {
             continue;
         }
-        let mut fields = input_fields.clone();
+        let mut fields = input_fields.to_vec();
         fields.resize(fields.len().max(EXPECTED_HEADERS.len()), String::new());
 
         let record_date = parse_central_date(&fields[1]);
         if record_date.is_empty() {
             dataset.issues.push(ImportIssue {
-                row: offset + 1,
+                row: row_number,
                 message: format!("数据日期无法解析：{}", python_repr(&fields[1])),
             });
         }
@@ -244,7 +270,7 @@ fn build_dataset(
         } else if let Some(number) = parse_number(raw_value) {
             if number == 0.0 && is_abnormal_number(raw_value) {
                 dataset.issues.push(ImportIssue {
-                    row: offset + 1,
+                    row: row_number,
                     message: format!("数据值非纯数值：{}", python_repr(raw_value)),
                 });
                 CentralValue::Text(raw_value.to_owned())
@@ -255,7 +281,7 @@ fn build_dataset(
             }
         } else {
             dataset.issues.push(ImportIssue {
-                row: offset + 1,
+                row: row_number,
                 message: format!("数据值非纯数值：{}", python_repr(raw_value)),
             });
             CentralValue::Text(raw_value.to_owned())
@@ -298,7 +324,7 @@ fn build_dataset(
     Ok(dataset)
 }
 
-fn header_matches(row: &[String]) -> bool {
+pub(crate) fn header_matches(row: &[String]) -> bool {
     row.len() >= EXPECTED_HEADERS.len()
         && row
             .iter()
@@ -454,5 +480,31 @@ mod tests {
 
         let wrong_header = parse_central_csv("wrong.csv", b"a,b,c\n", 1.0, &exempt).unwrap_err();
         assert!(wrong_header.to_string().contains("14 列不符"));
+    }
+
+    #[test]
+    fn workbook_grid_preserves_sparse_physical_row_numbers() {
+        let header = EXPECTED_HEADERS
+            .iter()
+            .map(|value| (*value).to_owned())
+            .collect::<Vec<_>>();
+        let mut data = vec![String::new(); EXPECTED_HEADERS.len()];
+        data[0] = "人民币".to_owned();
+        data[1] = "bad-date".to_owned();
+        data[2] = "0001".to_owned();
+        data[7] = "I1".to_owned();
+        data[13] = "not-a-number".to_owned();
+
+        let dataset = parse_central_grid(
+            "sparse.xlsx",
+            &[(1, header), (4, data)],
+            1.0,
+            &BTreeSet::new(),
+        )
+        .unwrap();
+
+        assert_eq!(dataset.records.len(), 1);
+        assert_eq!(dataset.issues.len(), 2);
+        assert!(dataset.issues.iter().all(|issue| issue.row == 4));
     }
 }

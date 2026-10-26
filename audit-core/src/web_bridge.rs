@@ -5,22 +5,26 @@
 
 use crate::{
     period_pairs::{list_period_pairs, report_source_warning},
-    s1_template_inspection::{INSPECTION_ENGINE, inspect_s1_template},
+    s1_template_inspection::{inspect_s1_template, INSPECTION_ENGINE},
     s2_config_check::check_s2_config,
-    s2_service::{S2ProgressEvent, S2RunRequest, run_s2_audit, s2_engine_for_stage},
-    s3_current_value_check::{python_regex_scope_matcher, run_current_value_check_csv},
+    s2_service::{run_s2_audit, s2_engine_for_stage, S2ProgressEvent, S2RunRequest},
+    s3_current_value_check::{
+        input_reader_for_paths, python_regex_scope_matcher, run_current_value_check_files,
+    },
     s3_explanation_export::export_selected_explanations,
 };
 use anyhow::{Context, Result};
 use axum::{
-    Json, Router,
     body::Bytes,
     extract::{Path as RoutePath, State},
-    http::{HeaderMap, HeaderValue, StatusCode, header},
+    http::{header, HeaderMap, HeaderValue, StatusCode},
     response::{Html, IntoResponse, Response},
     routing::{get, post},
+    Json, Router,
 };
-use serde_json::{Value, json};
+use serde_json::{json, Value};
+#[cfg(any(windows, target_os = "macos", target_os = "linux"))]
+use std::process::Command;
 use std::{
     fs,
     net::{IpAddr, Ipv4Addr, SocketAddr},
@@ -29,8 +33,6 @@ use std::{
     thread,
     time::Instant,
 };
-#[cfg(any(windows, target_os = "macos", target_os = "linux"))]
-use std::process::Command;
 use tokio::{net::TcpListener, runtime::Builder};
 
 const ORIGINAL_HTML: &str = include_str!("../frontend/web/index.html");
@@ -283,7 +285,33 @@ fn router(state: AppState) -> Router {
 }
 
 fn render_index() -> String {
-    ORIGINAL_HTML.replacen("</head>", &format!("{BRIDGE_JS}</head>"), 1)
+    let mut page = ORIGINAL_HTML.to_owned();
+    for (old, new) in [
+        ("centralCrossCur:'csv'", "centralCrossCur:'central_data'"),
+        (
+            "选择本期数值核对 CSV（UTF-8/GBK）；XLS/XLSX 尚未接通",
+            "选择本期数值核对文件（CSV/XLSX/XLS）",
+        ),
+        (
+            "选择本期数值核对 CSV（UTF-8/GBK）",
+            "选择本期数值核对文件（CSV/XLSX/XLS）",
+        ),
+        (
+            "选择单个本期数值核对 CSV（UTF-8/GBK）",
+            "选择单个本期数值核对文件（CSV/XLSX/XLS）",
+        ),
+        (
+            "当前 Rust Web 入口暂不支持 XLS/XLSX。",
+            "Rust 入口支持 CSV、XLSX 和 XLS。",
+        ),
+        (
+            "选择本期数值核对 CSV",
+            "选择本期数值核对文件（CSV/XLSX/XLS）",
+        ),
+    ] {
+        page = page.replace(old, new);
+    }
+    page.replacen("</head>", &format!("{BRIDGE_JS}</head>"), 1)
 }
 
 async fn index() -> Response {
@@ -491,7 +519,11 @@ fn choose_central(state: &AppState, args: &[Value]) -> std::result::Result<Value
             "centralExplainFile" | "centralCommonConfig" | "centralComparisonConfig" => {
                 extension.eq_ignore_ascii_case("xlsx")
             }
-            "centralCrossCur" => extension.eq_ignore_ascii_case("csv"),
+            "centralCrossCur" => {
+                extension.eq_ignore_ascii_case("csv")
+                    || extension.eq_ignore_ascii_case("xlsx")
+                    || extension.eq_ignore_ascii_case("xls")
+            }
             "centralCrossConfig" => extension.eq_ignore_ascii_case("xlsx"),
             _ => false,
         };
@@ -502,7 +534,7 @@ fn choose_central(state: &AppState, args: &[Value]) -> std::result::Result<Value
                     "centralCompareFile" => "S3-F02 比较结果目前只支持 .xlsx 和 .xlsm",
                     "centralExplainFile" => "说明工作簿目前只支持 .xlsx",
                     "centralCommonConfig" => "大集中通用配置目前只支持 .xlsx",
-                    "centralCrossCur" => "S3-F04 当前只支持 CSV 输入；XLS/XLSX 尚未迁移",
+                    "centralCrossCur" => "S3-F04 只支持 CSV、XLSX、XLS 输入",
                     "centralCrossConfig" => "本期数值核对配置目前只支持 .xlsx",
                     _ => "大集中执行比较配置目前只支持 .xlsx",
                 },
@@ -752,7 +784,7 @@ fn start_central_cross_period(state: &AppState) -> std::result::Result<Value, Ap
             .filter(|path| !path.trim().is_empty())
             .map(PathBuf::from)
             .ok_or_else(|| {
-                ApiError::new(StatusCode::BAD_REQUEST, "请先选择本期数值核对 CSV 文件")
+                ApiError::new(StatusCode::BAD_REQUEST, "请先选择本期数值核对数据文件")
             })?;
         if !current_file.is_file() {
             return Err(ApiError::new(
@@ -763,11 +795,15 @@ fn start_central_cross_period(state: &AppState) -> std::result::Result<Value, Ap
         if !current_file
             .extension()
             .and_then(|extension| extension.to_str())
-            .is_some_and(|extension| extension.eq_ignore_ascii_case("csv"))
+            .is_some_and(|extension| {
+                extension.eq_ignore_ascii_case("csv")
+                    || extension.eq_ignore_ascii_case("xlsx")
+                    || extension.eq_ignore_ascii_case("xls")
+            })
         {
             return Err(ApiError::new(
                 StatusCode::BAD_REQUEST,
-                "S3-F04 当前只支持 CSV 输入；XLS/XLSX 尚未迁移",
+                "S3-F04 只支持 CSV、XLSX、XLS 输入",
             ));
         }
 
@@ -856,6 +892,7 @@ fn start_central_cross_period(state: &AppState) -> std::result::Result<Value, Ap
         }
     }
 
+    let input_reader = input_reader_for_paths(std::slice::from_ref(&current_file));
     {
         let mut ui = state.lock();
         if ui.value["busy"] == true {
@@ -870,7 +907,8 @@ fn start_central_cross_period(state: &AppState) -> std::result::Result<Value, Ap
         push_detail_log(
             &mut ui.value,
             format!(
-                "S3-F04 开始：reader=Calamine/csv，writer=rust_xlsxwriter；当前数据 {}；通用配置 {}；本期核对配置 {}；结果输出 {}；运行日志={}",
+                "S3-F04 开始：reader={}，writer=rust_xlsxwriter；当前数据 {}；通用配置 {}；本期核对配置 {}；结果输出 {}；运行日志={}",
+                input_reader,
                 current_file.display(),
                 config_workbooks[0].display(),
                 config_workbooks[1].display(),
@@ -912,7 +950,8 @@ fn run_s3_current_value_check_worker(
     log_workbook: Option<PathBuf>,
 ) {
     let started = Instant::now();
-    let result = run_current_value_check_csv(
+    let input_reader = input_reader_for_paths(std::slice::from_ref(&current_file));
+    let result = run_current_value_check_files(
         std::slice::from_ref(&current_file),
         &[],
         &config_workbooks,
@@ -969,7 +1008,7 @@ fn run_s3_current_value_check_worker(
             push_detail_log(
                 &mut ui.value,
                 format!(
-                    "S3-F04 失败：reader=Calamine/csv，writer=rust_xlsxwriter，任务总计={} ms，错误={error:#}",
+                    "S3-F04 失败：reader={input_reader}，writer=rust_xlsxwriter，任务总计={} ms，错误={error:#}",
                     started.elapsed().as_millis()
                 ),
             );
@@ -1860,11 +1899,11 @@ impl IntoResponse for ApiError {
 
 #[cfg(test)]
 mod tests {
-    use super::{AppState, browse_dir, dispatch_api, progress_value, render_index};
+    use super::{browse_dir, dispatch_api, progress_value, render_index, AppState};
     use crate::central_csv::EXPECTED_HEADERS;
     use crate::s2_service::S2ProgressEvent;
     use excel_writer::Workbook;
-    use serde_json::{Value, json};
+    use serde_json::{json, Value};
     use std::{
         fs,
         path::{Path, PathBuf},
@@ -2005,14 +2044,51 @@ mod tests {
         workbook.save(path).unwrap();
     }
 
+    fn write_s3_current_value_input_xlsx(path: &Path) {
+        let mut workbook = Workbook::new();
+        let cover = workbook.add_worksheet();
+        cover.set_name("说明").unwrap();
+        cover.write_string(0, 0, "非导数工作表").unwrap();
+
+        let data = workbook.add_worksheet();
+        data.set_name("本期导数").unwrap();
+        for (column, header) in EXPECTED_HEADERS.iter().enumerate() {
+            data.write_string(0, column as u16, *header).unwrap();
+        }
+        let values = [
+            "人民币",
+            "2026-08-31",
+            "0001",
+            "机构",
+            "1234567",
+            "地区",
+            "1",
+            "I1",
+            "指标",
+            "余额",
+            "人民币",
+            "月",
+            "2",
+        ];
+        for (column, value) in values.iter().enumerate() {
+            data.write_string(2, column as u16, *value).unwrap();
+        }
+        data.write_number(2, 13, 200_000_000.0).unwrap();
+        workbook.save(path).unwrap();
+    }
+
     #[test]
     fn served_page_is_original_markup_plus_runtime_bridge() {
         let served = render_index();
-        assert_eq!(served.replace(super::BRIDGE_JS, ""), super::ORIGINAL_HTML);
+        let served_markup = served.replace(super::BRIDGE_JS, "");
+        assert!(super::ORIGINAL_HTML.contains("centralCrossCur:'csv'"));
+        assert!(served_markup.contains("centralCrossCur:'central_data'"));
+        assert!(!served_markup.contains("centralCrossCur:'csv'"));
+        assert!(served_markup.contains("本期数值核对文件（CSV/XLSX/XLS）"));
+        assert!(!served_markup.contains("XLS/XLSX 尚未接通"));
         assert!(served.contains("window.bridge = { api: api }"));
         assert!(super::ORIGINAL_HTML.contains("bridge.api.start_central_explanation_export()"));
         assert!(super::ORIGINAL_HTML.contains("bridge.api.start_central_cross_period()"));
-        assert!(super::ORIGINAL_HTML.contains("centralCrossCur:'csv'"));
     }
 
     #[test]
@@ -2028,7 +2104,7 @@ mod tests {
         ));
         fs::create_dir_all(&root).expect("create S3-F04 temporary directory");
         let current = root.join("current.csv");
-        let unsupported = root.join("current.xlsx");
+        let xlsx_current = root.join("current.xlsx");
         let common_config = root.join("3.0大集中通用配置.xlsx");
         let cross_config = root.join("3.2大集中本期数值核对_配置.xlsx");
         let output = root.join("output");
@@ -2038,23 +2114,24 @@ mod tests {
             EXPECTED_HEADERS.join(",")
         );
         fs::write(&current, &csv).expect("write synthetic current CSV");
-        fs::write(&unsupported, b"xlsx input is not supported yet")
-            .expect("write unsupported extension sample");
+        write_s3_current_value_input_xlsx(&xlsx_current);
         write_s3_current_value_common_config(&common_config);
         write_s3_current_value_cross_config(&cross_config);
 
         let state = test_state();
-        let extension_error = dispatch_api(
+        let selected_xlsx = dispatch_api(
             &state,
             "choose_central",
             &[
                 json!("centralCrossCur"),
-                json!(unsupported.to_string_lossy()),
+                json!(xlsx_current.to_string_lossy()),
             ],
         )
-        .expect_err("XLSX input must be rejected before scheduling S3-F04");
-        assert_eq!(extension_error.status, axum::http::StatusCode::BAD_REQUEST);
-        assert!(extension_error.message.contains("只支持 CSV"));
+        .expect("XLSX input should be selectable for S3-F04");
+        assert_eq!(
+            selected_xlsx,
+            json!(fs::canonicalize(&xlsx_current).unwrap().to_string_lossy())
+        );
 
         for (field, path) in [
             ("centralCrossCur", &current),
@@ -2136,8 +2213,37 @@ mod tests {
                 })
         }));
         assert_eq!(fs::read(&current).unwrap(), csv.as_bytes());
+        let xlsx_before = fs::read(&xlsx_current).unwrap();
         assert!(fs::read(&common_config).is_ok());
         assert!(fs::read(&cross_config).is_ok());
+
+        dispatch_api(
+            &state,
+            "choose_central",
+            &[
+                json!("centralCrossCur"),
+                json!(xlsx_current.to_string_lossy()),
+            ],
+        )
+        .expect("select the XLSX input for an end-to-end Web run");
+        dispatch_api(&state, "start_central_cross_period", &[])
+            .expect("start S3-F04 XLSX run through its Web API");
+        for _ in 0..200 {
+            if state.get_state()["busy"] != true {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(25));
+        }
+        let xlsx_state = state.get_state();
+        assert_eq!(xlsx_state["busy"], false);
+        assert_eq!(xlsx_state["status"], "本期数值核对完成：1 行");
+        assert!(xlsx_state["log"].as_array().unwrap().iter().any(|entry| {
+            entry["detail"] == true
+                && entry["text"].as_str().is_some_and(|text| {
+                    text.contains("reader=calamine") && text.contains("结果行=1")
+                })
+        }));
+        assert_eq!(fs::read(&xlsx_current).unwrap(), xlsx_before);
         fs::remove_dir_all(root).expect("remove S3-F04 temporary files");
     }
 
@@ -2323,13 +2429,11 @@ mod tests {
         assert!(output_path.is_file());
         let canonical_output = fs::canonicalize(&output).expect("canonical output directory");
         assert_eq!(output_path.parent(), Some(canonical_output.as_path()));
-        assert!(
-            output_path
-                .file_name()
-                .unwrap()
-                .to_string_lossy()
-                .starts_with("指标说明_")
-        );
+        assert!(output_path
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .starts_with("指标说明_"));
         let output_sheets = excel_reader::read_value_columns(&output_path, 8)
             .expect("read generated explanation workbook");
         let explanation = output_sheets
@@ -2578,13 +2682,11 @@ mod tests {
         .expect("select current directory");
         let current_only = state.get_state();
         assert_eq!(current_only["periodPairs"].as_array().unwrap().len(), 2);
-        assert!(
-            current_only["periodPairs"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .all(|pair| pair["side"] == "cur")
-        );
+        assert!(current_only["periodPairs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|pair| pair["side"] == "cur"));
 
         dispatch_api(
             &state,
@@ -2593,25 +2695,21 @@ mod tests {
         )
         .expect("select previous directory");
         let matched = state.get_state();
-        assert!(
-            matched["periodPairs"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .all(|pair| pair["matched"] == true)
-        );
+        assert!(matched["periodPairs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|pair| pair["matched"] == true));
         assert_eq!(matched["periodPairs"][0]["curDate"], "2026-06-30");
         assert_eq!(matched["periodPairs"][0]["preDate"], "2026-03-31");
 
         dispatch_api(&state, "clear_path", &[json!("pcPreDir")]).expect("clear previous");
         let cleared = state.get_state();
-        assert!(
-            cleared["periodPairs"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .all(|pair| pair["side"] == "cur")
-        );
+        assert!(cleared["periodPairs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|pair| pair["side"] == "cur"));
         let _ = fs::remove_dir_all(root);
     }
 }

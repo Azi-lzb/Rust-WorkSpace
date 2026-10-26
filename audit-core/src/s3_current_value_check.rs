@@ -4,15 +4,17 @@
 //! contract. Input loading, rule configuration, and workbook presentation stay
 //! at the service/CLI boundary so the calculation can be compared independently.
 
-use crate::central_csv::{CentralDataset, CentralValue};
-use anyhow::{Context, Result, bail, ensure};
-use chrono::Local;
-use excel_reader::{CellValue, SheetValues, read_value_columns};
+use crate::central_csv::{
+    header_matches, parse_central_csv, parse_central_grid, CentralDataset, CentralValue,
+};
+use anyhow::{bail, ensure, Context, Result};
+use chrono::{Local, NaiveDate, NaiveDateTime};
+use excel_reader::{read_value_columns, read_value_columns_with_iso_dates, CellValue, SheetValues};
 use excel_writer::{Color, Format, Workbook};
 use regex::Regex;
 use serde::Serialize;
 use std::{
-    collections::{BTreeSet, HashMap, HashSet},
+    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     fs,
     path::{Path, PathBuf},
     time::Instant,
@@ -94,7 +96,7 @@ pub struct S3CurrentValueCheckReport {
     pub current_records: usize,
     pub previous_records: usize,
     pub config_reader: &'static str,
-    pub input_reader: &'static str,
+    pub input_reader: String,
     pub writer: &'static str,
     pub config_read_time_ms: u128,
     pub input_read_time_ms: u128,
@@ -410,9 +412,9 @@ pub fn load_current_value_check_config(paths: &[PathBuf]) -> Result<S3CurrentVal
     })
 }
 
-/// Run the CSV-backed S3-F04 service and create the Python-compatible result
+/// Run the S3-F04 service and create the Python-compatible result
 /// workbook plus the optional separate flow-log workbook.
-pub fn run_current_value_check_csv(
+pub fn run_current_value_check_files(
     current_paths: &[PathBuf],
     previous_paths: &[PathBuf],
     config_paths: &[PathBuf],
@@ -439,13 +441,13 @@ pub fn run_current_value_check_csv(
     let conversion_factor = unit_factor(&config.source_unit) / unit_factor(&config.target_unit);
 
     let input_started = Instant::now();
-    let current = load_csv_dataset(current_paths, conversion_factor, &config.exempt_indicators)
+    let current = load_central_dataset(current_paths, conversion_factor, &config.exempt_indicators)
         .context("读取本期数据失败")?;
     let previous = if previous_paths.is_empty() {
         None
     } else {
         Some(
-            load_csv_dataset(previous_paths, conversion_factor, &config.exempt_indicators)
+            load_central_dataset(previous_paths, conversion_factor, &config.exempt_indicators)
                 .context("读取上期数据失败")?,
         )
     };
@@ -519,6 +521,8 @@ pub fn run_current_value_check_csv(
     }
     let workbook_write_time_ms = workbook_started.elapsed().as_millis();
 
+    let mut input_paths = current_paths.to_vec();
+    input_paths.extend_from_slice(previous_paths);
     Ok(S3CurrentValueCheckReport {
         status: "completed",
         output_workbook: output_path,
@@ -530,7 +534,7 @@ pub fn run_current_value_check_csv(
         current_records,
         previous_records,
         config_reader: "calamine",
-        input_reader: "csv",
+        input_reader: input_reader_for_paths(&input_paths),
         writer: "rust_xlsxwriter",
         config_read_time_ms,
         input_read_time_ms,
@@ -582,33 +586,64 @@ fn same_path(left: &Path, right: &Path) -> bool {
 }
 
 fn date_or_unknown(date: &str) -> &str {
-    if date.is_empty() { "未知" } else { date }
+    if date.is_empty() {
+        "未知"
+    } else {
+        date
+    }
 }
 
-fn load_csv_dataset(
+/// Return the reader selected by the input file formats for safe failure logs.
+/// Successful reports use the same value after all files have been read.
+pub fn input_reader_for_paths(paths: &[PathBuf]) -> String {
+    let mut has_csv = false;
+    let mut has_calamine = false;
+    let mut unsupported = false;
+    for path in paths {
+        match path
+            .extension()
+            .and_then(|value| value.to_str())
+            .map(str::to_ascii_lowercase)
+            .as_deref()
+        {
+            Some("csv") => has_csv = true,
+            Some("xlsx" | "xls") => has_calamine = true,
+            _ => unsupported = true,
+        }
+    }
+    if unsupported || (!has_csv && !has_calamine) {
+        return "unavailable".to_owned();
+    }
+    match (has_csv, has_calamine) {
+        (true, true) => "calamine+csv".to_owned(),
+        (true, false) => "csv".to_owned(),
+        (false, true) => "calamine".to_owned(),
+        (false, false) => unreachable!(),
+    }
+}
+
+fn load_central_dataset(
     paths: &[PathBuf],
     conversion_factor: f64,
     exempt_indicators: &BTreeSet<String>,
 ) -> Result<CentralDataset> {
-    use crate::central_csv::parse_central_csv;
-
     ensure!(!paths.is_empty(), "数据文件列表为空");
     let mut combined = CentralDataset::default();
     for path in paths {
-        ensure!(
-            path.extension()
-                .and_then(|value| value.to_str())
-                .is_some_and(|value| value.eq_ignore_ascii_case("csv")),
-            "S3-F04 当前只支持 CSV 导数：{}",
-            path.display()
-        );
-        let bytes = fs::read(path).with_context(|| format!("读取导数文件：{}", path.display()))?;
-        let dataset = parse_central_csv(
-            &path.file_name().unwrap_or_default().to_string_lossy(),
-            &bytes,
-            conversion_factor,
-            exempt_indicators,
-        )?;
+        let file_name = path.file_name().unwrap_or_default().to_string_lossy();
+        let extension = path
+            .extension()
+            .and_then(|value| value.to_str())
+            .unwrap_or_default();
+        let dataset = if extension.eq_ignore_ascii_case("csv") {
+            let bytes =
+                fs::read(path).with_context(|| format!("读取导数文件：{}", path.display()))?;
+            parse_central_csv(&file_name, &bytes, conversion_factor, exempt_indicators)?
+        } else if extension.eq_ignore_ascii_case("xlsx") || extension.eq_ignore_ascii_case("xls") {
+            load_central_workbook_dataset(path, conversion_factor, exempt_indicators)?
+        } else {
+            bail!("S3-F04 只支持 CSV、XLSX、XLS 导数：{}", path.display());
+        };
         combined.records.extend(dataset.records);
         combined.issues.extend(dataset.issues);
     }
@@ -625,6 +660,153 @@ fn load_csv_dataset(
     );
     combined.record_date = dates.into_iter().next().unwrap_or_default();
     Ok(combined)
+}
+
+fn load_central_workbook_dataset(
+    path: &Path,
+    conversion_factor: f64,
+    exempt_indicators: &BTreeSet<String>,
+) -> Result<CentralDataset> {
+    let extension = path
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or_default();
+    let is_xls = extension.eq_ignore_ascii_case("xls");
+    let format_name = if is_xls { "XLS" } else { "XLSX" };
+    let sheets = read_value_columns_with_iso_dates(path, usize::MAX)
+        .with_context(|| format!("读取{format_name}导数工作簿失败：{}", path.display()))?;
+
+    for sheet in sheets {
+        let rows = workbook_rows(&sheet, is_xls)
+            .with_context(|| format!("规范化工作表“{}”：{}", sheet.name, path.display()))?;
+        if rows
+            .first()
+            .is_some_and(|(row_number, fields)| *row_number == 1 && header_matches(fields))
+        {
+            return parse_central_grid(
+                &path.file_name().unwrap_or_default().to_string_lossy(),
+                &rows,
+                conversion_factor,
+                exempt_indicators,
+            );
+        }
+    }
+
+    bail!(
+        "{format_name} 首行表头与大集中导数 14 列不符：{}",
+        path.display()
+    )
+}
+
+fn workbook_rows(sheet: &SheetValues, is_xls: bool) -> Result<Vec<(usize, Vec<String>)>> {
+    let mut sparse_rows: BTreeMap<usize, BTreeMap<usize, String>> = BTreeMap::new();
+    for (address, value) in &sheet.values {
+        let (row, column) = parse_a1_coordinate(address)
+            .with_context(|| format!("解析工作表“{}”单元格坐标 {address}", sheet.name))?;
+        let text = workbook_cell_text(value, is_xls)
+            .with_context(|| format!("读取工作表“{}”单元格 {address}", sheet.name))?;
+        sparse_rows.entry(row).or_default().insert(column, text);
+    }
+
+    Ok(sparse_rows
+        .into_iter()
+        .map(|(row_number, cells)| {
+            let width = cells.last_key_value().map_or(0, |(column, _)| *column);
+            let mut fields = vec![String::new(); width];
+            for (column, value) in cells {
+                fields[column - 1] = value;
+            }
+            (row_number, fields)
+        })
+        .collect())
+}
+
+fn parse_a1_coordinate(address: &str) -> Result<(usize, usize)> {
+    let split = address
+        .find(|character: char| character.is_ascii_digit())
+        .context("坐标缺少行号")?;
+    let (column_letters, row_digits) = address.split_at(split);
+    ensure!(!column_letters.is_empty(), "坐标缺少列号");
+    ensure!(!row_digits.is_empty(), "坐标缺少行号");
+
+    let mut column = 0usize;
+    for character in column_letters.bytes() {
+        let upper = character.to_ascii_uppercase();
+        ensure!(upper.is_ascii_uppercase(), "坐标包含非法列号");
+        column = column
+            .checked_mul(26)
+            .and_then(|value| value.checked_add((upper - b'A' + 1) as usize))
+            .context("列号超出范围")?;
+    }
+    let row = row_digits.parse::<usize>().context("行号不是正整数")?;
+    ensure!(row > 0 && column > 0, "坐标必须从 A1 开始");
+    Ok((row, column))
+}
+
+fn workbook_cell_text(value: &CellValue, is_xls: bool) -> Result<String> {
+    Ok(match value {
+        CellValue::Empty => String::new(),
+        CellValue::Text(value) => value.clone(),
+        CellValue::Number(value) | CellValue::DateTimeSerial(value) => legacy_number_text(*value),
+        CellValue::Integer(value) => value.to_string(),
+        CellValue::Boolean(value) if is_xls => if *value { "TRUE" } else { "FALSE" }.to_owned(),
+        // Python's XLSX reader uses str(bool), whose spelling is title case.
+        CellValue::Boolean(value) => if *value { "True" } else { "False" }.to_owned(),
+        CellValue::DateTimeIso(value) => legacy_datetime_text(value, is_xls)?,
+        CellValue::DurationIso(value) => {
+            bail!("XLS/XLSX 时长单元格暂不支持按 Python timedelta 文本转换：{value}");
+        }
+        CellValue::Error(value) => legacy_excel_error_text(value, is_xls)?,
+    })
+}
+
+fn legacy_number_text(value: f64) -> String {
+    if value == 0.0 {
+        return "0".to_owned();
+    }
+    if value.is_finite() && value.fract() == 0.0 {
+        return format!("{value:.0}");
+    }
+    python_float_repr(value)
+}
+
+fn legacy_datetime_text(value: &str, is_xls: bool) -> Result<String> {
+    let datetime = NaiveDateTime::parse_from_str(value, "%Y-%m-%dT%H:%M:%S%.f")
+        .or_else(|_| NaiveDateTime::parse_from_str(value, "%Y-%m-%d %H:%M:%S%.f"))
+        .or_else(|_| {
+            NaiveDate::parse_from_str(value, "%Y-%m-%d")
+                .map(|date| date.and_hms_opt(0, 0, 0).expect("valid midnight"))
+        })
+        .with_context(|| format!("无法解析 Calamine 日期值 {value:?}"))?;
+    if is_xls {
+        return Ok(datetime.date().format("%Y-%m-%d").to_string());
+    }
+    let mut text = datetime.format("%Y-%m-%d %H:%M:%S").to_string();
+    let microseconds = datetime.and_utc().timestamp_subsec_micros();
+    if microseconds != 0 {
+        text.push_str(&format!(".{microseconds:06}"));
+    }
+    Ok(text)
+}
+
+fn legacy_excel_error_text(value: &str, is_xls: bool) -> Result<String> {
+    let (text, xls_code) = match value {
+        "Div0" => ("#DIV/0!", 7),
+        "NA" => ("#N/A", 42),
+        "Name" => ("#NAME?", 29),
+        "Null" => ("#NULL!", 0),
+        "Num" => ("#NUM!", 36),
+        "Ref" => ("#REF!", 23),
+        "Value" => ("#VALUE!", 15),
+        "GettingData" => ("#GETTING_DATA", 43),
+        value if value.starts_with('#') => return Ok(value.to_owned()),
+        _ => bail!("不支持的 Excel 错误单元格类型：{value}"),
+    };
+    if is_xls {
+        Ok(format!("#ERR{xls_code}"))
+    } else {
+        Ok(text.to_owned())
+    }
 }
 
 fn header_columns(sheet: &SheetValues) -> HashMap<String, usize> {
@@ -1705,6 +1887,30 @@ mod tests {
         workbook.save(path).unwrap();
     }
 
+    fn create_test_central_xlsx(path: &Path) {
+        let mut workbook = Workbook::new();
+        let cover = workbook.add_worksheet();
+        cover.set_name("说明").unwrap();
+        cover.write_string(0, 0, "非导数工作表").unwrap();
+
+        let data = workbook.add_worksheet();
+        data.set_name("本期导数").unwrap();
+        for (column, header) in EXPECTED_HEADERS.iter().enumerate() {
+            data.write_string(0, column as u16, *header).unwrap();
+        }
+        // Leave two physical rows blank to verify row numbers survive sparse
+        // Calamine output, as they do in the old openpyxl grid.
+        data.write_string(3, 0, "人民币").unwrap();
+        data.write_string(3, 1, "bad-date").unwrap();
+        data.write_string(3, 2, "0001").unwrap();
+        data.write_boolean(3, 3, true).unwrap();
+        data.write_string(3, 4, "1234567").unwrap();
+        data.write_boolean(3, 5, false).unwrap();
+        data.write_string(3, 7, "I1").unwrap();
+        data.write_string(3, 13, "12.5").unwrap();
+        workbook.save(path).unwrap();
+    }
+
     fn record(
         org: &str,
         region: &str,
@@ -1818,11 +2024,9 @@ mod tests {
         let result = run_current_value_check(&current, None, &rules, "亿元", |_, _| true);
 
         assert_eq!(result.rows.len(), 1);
-        assert!(
-            result.rows[0]
-                .explanation_required
-                .contains("校验公式计算有误")
-        );
+        assert!(result.rows[0]
+            .explanation_required
+            .contains("校验公式计算有误"));
         assert_eq!(result.logs.len(), 1);
         assert_eq!(result.logs[0].error_type, "校验公式 计算有误");
     }
@@ -1906,6 +2110,65 @@ mod tests {
     }
 
     #[test]
+    fn workbook_cell_text_matches_python_xlsx_and_xls_scalar_strings() {
+        assert_eq!(
+            workbook_cell_text(&CellValue::Boolean(true), false).unwrap(),
+            "True"
+        );
+        assert_eq!(
+            workbook_cell_text(&CellValue::Boolean(false), false).unwrap(),
+            "False"
+        );
+        assert_eq!(
+            workbook_cell_text(&CellValue::Boolean(true), true).unwrap(),
+            "TRUE"
+        );
+        assert_eq!(
+            workbook_cell_text(&CellValue::Number(12.0), false).unwrap(),
+            "12"
+        );
+        assert_eq!(
+            workbook_cell_text(
+                &CellValue::DateTimeIso("2026-08-31T00:00:00".to_owned()),
+                false,
+            )
+            .unwrap(),
+            "2026-08-31 00:00:00"
+        );
+        assert_eq!(
+            workbook_cell_text(
+                &CellValue::DateTimeIso("2026-08-31T00:00:00".to_owned()),
+                true,
+            )
+            .unwrap(),
+            "2026-08-31"
+        );
+        assert_eq!(
+            workbook_cell_text(&CellValue::Error("Div0".to_owned()), false).unwrap(),
+            "#DIV/0!"
+        );
+        assert_eq!(
+            workbook_cell_text(&CellValue::Error("Div0".to_owned()), true).unwrap(),
+            "#ERR7"
+        );
+    }
+
+    #[test]
+    fn xlsx_import_selects_matching_sheet_and_preserves_python_values_and_rows() {
+        let path = temporary_path("central-import", "xlsx");
+        create_test_central_xlsx(&path);
+
+        let dataset = load_central_workbook_dataset(&path, 1.0, &BTreeSet::new()).unwrap();
+
+        assert_eq!(dataset.records.len(), 1);
+        assert_eq!(dataset.records[0].org_name, "True");
+        assert_eq!(dataset.records[0].region_name, "False");
+        assert_eq!(dataset.issues.len(), 1);
+        assert_eq!(dataset.issues[0].row, 4);
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
     fn csv_service_writes_python_contract_workbook_and_flow_log() {
         let config_path = temporary_path("service-config", "xlsx");
         let current_path = temporary_path("current", "csv");
@@ -1929,7 +2192,7 @@ mod tests {
         )
         .unwrap();
 
-        let report = run_current_value_check_csv(
+        let report = run_current_value_check_files(
             std::slice::from_ref(&current_path),
             std::slice::from_ref(&previous_path),
             std::slice::from_ref(&config_path),
@@ -1975,7 +2238,7 @@ mod tests {
         let same_log_path = output_path.clone();
         let missing_inputs = [PathBuf::from("not-read.csv")];
 
-        let same_path_error = run_current_value_check_csv(
+        let same_path_error = run_current_value_check_files(
             &missing_inputs,
             &[],
             &[],
@@ -1990,7 +2253,7 @@ mod tests {
         let existing_log_path = temporary_path("preflight-existing-log", "xlsx");
         fs::write(&existing_log_path, b"keep existing log").unwrap();
         let protected_output_path = temporary_path("preflight-protected-output", "xlsx");
-        let existing_log_error = run_current_value_check_csv(
+        let existing_log_error = run_current_value_check_files(
             &missing_inputs,
             &[],
             &[],

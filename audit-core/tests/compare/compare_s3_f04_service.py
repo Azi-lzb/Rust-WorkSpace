@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compare the Rust S3-F04 CSV service with the read-only Python baseline."""
+"""Compare the Rust S3-F04 file service with the read-only Python baseline."""
 
 from __future__ import annotations
 

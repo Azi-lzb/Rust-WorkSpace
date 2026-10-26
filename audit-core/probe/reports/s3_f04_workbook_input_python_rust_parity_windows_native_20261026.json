@@ -1,0 +1,101 @@
+{
+  "feature": "S3-F04",
+  "date": "2026-10-26",
+  "platform": "Windows-11-10.0.26200-SP0",
+  "python_runtime": "3.12.10",
+  "cases": {
+    "real_xlsx": {
+      "current_file_count": 1,
+      "previous_file_count": 0,
+      "config_file_count": 2,
+      "current_record_count": 2610,
+      "previous_record_count": 0,
+      "configured_rule_count": 183,
+      "enabled_rule_count": 163,
+      "python_result_rows": 0,
+      "rust_result_rows": 0,
+      "python_log_rows": 3,
+      "rust_log_rows": 3,
+      "workbook_mismatches": 0,
+      "mismatch_counts": {
+        "structure": 0,
+        "headers": 0,
+        "row_values": 0,
+        "row_values_by_column": {},
+        "row_value_kinds_by_column": {},
+        "workbook_features": 0,
+        "column_widths": 0,
+        "header_style": 0,
+        "number_formats": 0,
+        "run_log": 0
+      },
+      "inputs_unchanged": true,
+      "rust_engines": {
+        "config_reader": "calamine",
+        "input_reader": "calamine",
+        "writer": "rust_xlsxwriter"
+      },
+      "rust_timings_ms": {
+        "config_read": 95,
+        "input_read": 836,
+        "calculation": 11,
+        "workbook_write": 36,
+        "total": 980
+      },
+      "status": "passed",
+      "sample_kind": "read-only real XLSX",
+      "matching_samples_in_tree": 4
+    },
+    "synthetic_xls": {
+      "current_file_count": 1,
+      "previous_file_count": 0,
+      "config_file_count": 2,
+      "current_record_count": 1,
+      "previous_record_count": 0,
+      "configured_rule_count": 183,
+      "enabled_rule_count": 163,
+      "python_result_rows": 0,
+      "rust_result_rows": 0,
+      "python_log_rows": 3,
+      "rust_log_rows": 3,
+      "workbook_mismatches": 0,
+      "mismatch_counts": {
+        "structure": 0,
+        "headers": 0,
+        "row_values": 0,
+        "row_values_by_column": {},
+        "row_value_kinds_by_column": {},
+        "workbook_features": 0,
+        "column_widths": 0,
+        "header_style": 0,
+        "number_formats": 0,
+        "run_log": 0
+      },
+      "inputs_unchanged": true,
+      "rust_engines": {
+        "config_reader": "calamine",
+        "input_reader": "calamine",
+        "writer": "rust_xlsxwriter"
+      },
+      "rust_timings_ms": {
+        "config_read": 99,
+        "input_read": 1,
+        "calculation": 1,
+        "workbook_write": 33,
+        "total": 135
+      },
+      "status": "passed",
+      "sample_kind": "temporary synthetic XLS",
+      "cell_type_checks": {
+        "date_cell_is_xlrd_date": true,
+        "true_cell_is_xlrd_boolean": true,
+        "false_cell_is_xlrd_boolean": true
+      }
+    }
+  },
+  "limitations": [
+    "The real XLSX case uses current-period input only and produced zero result rows; prior real CSV comparison covers non-empty rule output.",
+    "No matching real XLS input was found in the inspected sample trees; XLS parity is synthetic only.",
+    "This comparison does not certify the whole S3-F04 feature, all workbook value types, the GUI manual workflow, or Linux/deb targets."
+  ]
+}
