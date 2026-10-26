@@ -1,0 +1,19 @@
+目的：修复 ExcelModifier 关系保留校验对 `MoveSheet` 后 worksheet relationship ID 重新编号的误拒绝，同时继续验证每个工作表身份对应的关系目标和所有非 worksheet 关系。
+
+修改文件：
+- crates/excel-editor/src/openpyxl_backend.rs
+- 本记录
+
+修改内容：当编辑计划包含 `MoveSheet` 时，比较 workbook relationship part 前按工作表身份归一化 worksheet relationship 的 `Id`，并对归一化后的条目排序。关系类型、目标、TargetMode 仍参与比较；非 worksheet relationships 继续严格比较；工作表自身 `.rels` 仍只按既有的显式、工作表级许可例外处理。没有修改路由或保真默认。
+
+验证：
+- `cargo fmt -p excel-editor -- --check`：通过。
+- `git diff --check -- crates/excel-editor/src/openpyxl_backend.rs`：通过。
+- `CARGO_TARGET_DIR=F:\rust-workspace-targets\main-relationship-validation cargo test -p excel-editor --locked --offline move_sheet_allows_worksheet_relationship_id_remapping_by_sheet_identity`：通过。
+- `CARGO_TARGET_DIR=F:\rust-workspace-targets\main-relationship-validation cargo test -q -p excel-editor --locked --offline`：通过；41 个单元测试及对应集成/doc tests 通过，4 个依赖隔离 openpyxl runtime 的测试按定义忽略。
+
+验证边界：新增合成回归覆盖仅 worksheet rId 重新编号时接受、关系目标改变时拒绝、没有 MoveSheet 时仍严格拒绝。Audit 报告的真实候选输出因测试临时目录清理未保留，具体 workbook `.rels` 差异没有证据可复核；本修复是否解除该候选失败须由 Audit 在安全同步后用原真实样本复跑确认。真实 S1 保真及 capability 仍未验证。
+
+已知问题：若真实失败由 worksheet relationship Target 改变、非 worksheet relationship 改变或其他 package 差异导致，此次窄修复不会放宽相应校验，候选仍会失败并需另行分析。
+
+回滚：回滚本次单独提交及本记录；保留 `crates/ooxml-patch/src/lib.rs` 的既有未提交修改及本地 handoff 文件。
