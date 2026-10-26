@@ -153,6 +153,50 @@ fn interactive_timeline_menu_routes_compare_wide_modes_and_precheck() -> Result<
 }
 
 #[test]
+fn v2_wide_summary_generates_intermediate_without_target_append_step() -> Result<()> {
+    let root = TestDirectory::new()?;
+    let target = root.path().join("app").join("output").join("history.xlsx");
+    let config = create_timeline_config_with_target(root.path(), Some(&target))?;
+    let source = root.path().join("sample wide source.xlsx");
+    create_wide_source(&source, "V2 中间汇总", 17.5)?;
+    let source_before = fs::read(&source)?;
+
+    let output = run_menu_v2(&config, &format!("1\n1\n{}\n0\n", source.display()))?;
+    assert!(
+        output.status.success(),
+        "V2 intermediate wide summary failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("1-1 时序宽表汇总"));
+    assert!(stdout.contains("未准备或修改历史目标"));
+    assert!(!stdout.contains("确认执行上述目标写入"));
+
+    let report = latest_menu_json_report(&output)?;
+    assert_eq!(report["target_append_status"], "not_requested");
+    assert_eq!(report["target_append_plans"], serde_json::json!([]));
+    assert_eq!(report["target_append_executions"], serde_json::json!([]));
+    assert!(report["output"]
+        .as_str()
+        .is_some_and(|path| Path::new(path).is_file()));
+    assert!(
+        !target.exists(),
+        "V2 1-1 must not create the history target"
+    );
+    assert_eq!(fs::read(&source)?, source_before);
+
+    let output_dir = root.path().join("app").join("output");
+    let artifacts = fs::read_dir(&output_dir)?
+        .map(|entry| entry.map(|entry| entry.file_name().to_string_lossy().into_owned()))
+        .collect::<std::io::Result<Vec<_>>>()?;
+    assert!(
+        artifacts.iter().all(|name| !name.contains("target_append")),
+        "V2 1-1 must not create target-append plan artifacts"
+    );
+    Ok(())
+}
+
+#[test]
 fn wide_summary_cli_filters_missing_and_unconfigured_extensions_before_reading() -> Result<()> {
     let root = TestDirectory::new()?;
     let config = create_timeline_config(root.path())?;
@@ -1878,6 +1922,25 @@ fn find_output(output_dir: &Path, stem_contains: &str) -> Result<PathBuf> {
 
 fn run_menu(config: &Path, input: &str) -> Result<Output> {
     run_menu_with_view(config, "user", input)
+}
+
+fn run_menu_v2(config: &Path, input: &str) -> Result<Output> {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_pytools"))
+        .arg("menu-v2")
+        .arg("--config")
+        .arg(config)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .context("start PyTools Rust V2 menu")?;
+    child
+        .stdin
+        .take()
+        .context("V2 menu stdin missing")?
+        .write_all(input.as_bytes())
+        .context("send V2 menu selections")?;
+    child.wait_with_output().context("wait for V2 menu")
 }
 
 fn run_default_menu(input: &str) -> Result<Output> {

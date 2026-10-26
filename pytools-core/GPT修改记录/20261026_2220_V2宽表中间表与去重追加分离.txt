@@ -1,0 +1,20 @@
+执行者：Codex（pytools-dev）
+修改前 HEAD：3e6e02c；分支：pytools-dev；origin/pytools-dev 同步。此前既有的未提交 MIGRATION_INVENTORY.md 修改保留，仅追加本条工作记录及对应状态说明。
+
+目的：让 Rust V2 的 1-1 时序宽表汇总只生成供人工核对的中间文件，不准备或执行历史目标写入，使后续 2-3 去重追加保持独立。
+
+修改文件：
+- pytools-core/src/bin/pytools.rs：区分旧菜单的显式目标追加路径与 V2 中间表路径。V2 跳过追加计划，状态为 `not_requested`，输出中明确提示后续单独使用“数据去重与追加”。
+- pytools-core/tests/timeline_menu_cli.rs：新增 V2 实际菜单回归，设置历史目标、输入工作簿，断言中间结果存在、目标及源不变、没有追加计划文件且未显示写入确认；同时复验旧菜单显式确认仍通过。
+- pytools-core/MIGRATION_INVENTORY.md：记录本次语义修正与边界。
+
+验证（Windows 原生，输出/临时文件在 F 盘本轮目录）：
+- `cargo test --offline --locked --manifest-path pytools-core/Cargo.toml --test timeline_menu_cli v2_wide_summary_generates_intermediate_without_target_append_step -- -q`：1/1 通过。
+- `cargo test --offline --locked --manifest-path pytools-core/Cargo.toml --test timeline_menu_cli interactive_wide_summary_menu_commits_new_target_after_confirmation -- -q`：1/1 通过。
+- `cargo build --offline --locked --manifest-path pytools-core/Cargo.toml --bin pytools -j 1`、`cargo fmt -- --check`、`git diff --check` 通过。
+
+未执行项/已知限制：仅用合成配置与工作簿验证入口隔离；真实业务宽表样本、Windows 人工验收及 Linux/目标平台未验证。V2 1-1 对应业务当前状态不升级。PT-1-2 继续排除。未改共享 crate、Cargo 根文件、Audit 或原 Python 项目。
+
+【组件版本】pytools-core 0.1.0；不升级。
+删除清单：无。
+修改后提交：等待提交，SHA 以 Git 历史为准。回滚可仅 revert 本次功能提交，不清理 F 盘测试目录或其他 WIP。

@@ -1090,3 +1090,7 @@ PT-7-6 仍为迁移中；该结果仅覆盖此批真实工作簿及全区域提�
 Windows 原生验证：`cargo fmt --manifest-path pytools-core/Cargo.toml -- --check`、`cargo test --offline --locked --manifest-path pytools-core/Cargo.toml --test summary_menu_cli v2_ -- -q`（3/3）、`cargo build --offline --locked --manifest-path pytools-core/Cargo.toml --bin pytools -j 1` 通过。入口冒烟覆盖直接启动 7 分类菜单、V2 菜单→PT-6-1 生成真实 XLSX、源文件不变，以及命名区域项目明确未实现且不生成输出。
 
 菜单入口本身已接通；各业务功能状态沿用既有记录，不因菜单接线升级为 Windows 真实验收通过。PT-1-2 继续排除。其他 V2 项目的真实业务对拍、Windows 人工验收及 Linux/deb 尚待后续；未修改共享 crate、根 Cargo 文件或原 Python 项目。
+
+### 2026-10-26 V2 宽表中间步骤与去重追加分离
+
+复核新版 1-1 后发现它复用了旧宽表交互流程，该流程会继续询问并允许提交历史目标追加，与新版将中间表核对和 2-3 去重追加分成独立步骤不符。现 V2 1-1 只生成核对用中间工作簿，不准备目标追加计划，也不修改历史目标；旧 9 类菜单的显式确认追加行为保持原状。真实入口回归用例覆盖配置目标存在时不创建目标、不生成追加计划、源不变，并确认旧菜单显式确认仍通过。

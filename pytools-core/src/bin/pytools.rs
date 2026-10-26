@@ -339,6 +339,7 @@ where
                 allow_native_dialog,
                 capabilities,
                 platform,
+                true,
             )?,
             "2" => run_interactive_dedup_menu(
                 input,
@@ -997,6 +998,7 @@ where
             allow_native_dialog,
             capabilities,
             platform,
+            false,
         ),
         V2LegacyMenu::Dedup => run_interactive_dedup_menu(
             &mut routed_input,
@@ -2243,6 +2245,7 @@ fn run_interactive_timeline_menu<R, W>(
     allow_native_dialog: bool,
     capabilities: Option<&Path>,
     platform: Option<&str>,
+    allow_target_append: bool,
 ) -> Result<()>
 where
     R: BufRead,
@@ -2339,6 +2342,7 @@ where
                     log_view,
                     capabilities,
                     platform,
+                    allow_target_append,
                 )?;
                 return Ok(());
             }
@@ -2360,12 +2364,24 @@ fn run_interactive_wide_summary_menu<R, W>(
     log_view: &str,
     capabilities: Option<&Path>,
     platform: Option<&str>,
+    allow_target_append: bool,
 ) -> Result<()>
 where
     R: BufRead,
     W: Write,
 {
-    let mut report = run_wide_summary_cli_report(arguments, row_suffix)?;
+    let mut report =
+        run_wide_summary_cli_report_with_target_plans(arguments, row_suffix, allow_target_append)?;
+    if !allow_target_append {
+        report["target_append_status"] = serde_json::Value::String("not_requested".to_owned());
+        report["target_append_executions"] = serde_json::Value::Array(Vec::new());
+        writeln!(
+            output,
+            "宽表中间文件已生成；此步骤未准备或修改历史目标。需要追加时，请单独进入“数据去重与追加”。"
+        )?;
+        writeln!(output, "{}", serde_json::to_string(&report)?)?;
+        return Ok(());
+    }
     let plan_paths = report["target_append_plans"]
         .as_array()
         .cloned()
@@ -10231,6 +10247,14 @@ fn run_wide_summary_cli_report(
     arguments: Vec<String>,
     row_suffix: bool,
 ) -> Result<serde_json::Value> {
+    run_wide_summary_cli_report_with_target_plans(arguments, row_suffix, true)
+}
+
+fn run_wide_summary_cli_report_with_target_plans(
+    arguments: Vec<String>,
+    row_suffix: bool,
+    prepare_target_append_plans: bool,
+) -> Result<serde_json::Value> {
     let options = parse_cli_arguments(arguments)?;
     let run_started = Instant::now();
     let started_at = Local::now().to_rfc3339();
@@ -10356,72 +10380,96 @@ fn run_wide_summary_cli_report(
         Ok(summary_output) => {
             output = summary_output;
             if let Some(summary_path) = output.as_deref() {
-                if log_view != "off" {
-                    let event = new_wide_summary_cli_event(
-                        &events,
-                        &run_started,
-                        feature_id,
-                        total_inputs,
-                        "target_append_plan",
-                        "started",
-                        "正在准备既有目标的追加计划",
-                        None,
-                        0,
-                        &["pytools-core", "excel-reader", "calamine", "excel-editor"],
-                        None,
-                        None,
-                    );
-                    emit_wide_summary_event(log_view, &mut events, event);
-                }
-                let plan_started = Instant::now();
-                let plan_result = (|| -> Result<()> {
-                    for (index, plan) in
-                        build_wide_target_append_plans(summary_path, &rules, &global.output_dir)?
-                            .into_iter()
-                            .enumerate()
-                    {
-                        let stem = summary_path
-                            .file_stem()
-                            .unwrap_or_default()
-                            .to_string_lossy();
-                        let plan_path = global
-                            .output_dir
-                            .join(format!("{stem}_target_append_{}.json", index + 1));
-                        if global.emit_plan_files {
-                            fs::write(&plan_path, serde_json::to_vec_pretty(&plan)?)?;
-                            append_plans.push(plan_path);
+                if prepare_target_append_plans {
+                    if log_view != "off" {
+                        let event = new_wide_summary_cli_event(
+                            &events,
+                            &run_started,
+                            feature_id,
+                            total_inputs,
+                            "target_append_plan",
+                            "started",
+                            "正在准备既有目标的追加计划",
+                            None,
+                            0,
+                            &["pytools-core", "excel-reader", "calamine", "excel-editor"],
+                            None,
+                            None,
+                        );
+                        emit_wide_summary_event(log_view, &mut events, event);
+                    }
+                    let plan_started = Instant::now();
+                    let plan_result = (|| -> Result<()> {
+                        for (index, plan) in build_wide_target_append_plans(
+                            summary_path,
+                            &rules,
+                            &global.output_dir,
+                        )?
+                        .into_iter()
+                        .enumerate()
+                        {
+                            let stem = summary_path
+                                .file_stem()
+                                .unwrap_or_default()
+                                .to_string_lossy();
+                            let plan_path = global
+                                .output_dir
+                                .join(format!("{stem}_target_append_{}.json", index + 1));
+                            if global.emit_plan_files {
+                                fs::write(&plan_path, serde_json::to_vec_pretty(&plan)?)?;
+                                append_plans.push(plan_path);
+                            }
                         }
+                        Ok(())
+                    })();
+                    if log_view != "off" {
+                        let status = if plan_result.is_ok() {
+                            "completed"
+                        } else {
+                            "failed"
+                        };
+                        let message = if plan_result.is_ok() {
+                            format!("追加计划已准备，共 {} 项", append_plans.len())
+                        } else {
+                            "准备追加计划失败".to_owned()
+                        };
+                        let event = new_wide_summary_cli_event(
+                            &events,
+                            &run_started,
+                            feature_id,
+                            total_inputs,
+                            "target_append_plan",
+                            status,
+                            message,
+                            Some(plan_started.elapsed().as_millis()),
+                            append_plans.len(),
+                            &["pytools-core", "excel-reader", "calamine", "excel-editor"],
+                            Some("calamine"),
+                            plan_result.as_ref().err().map(|_| "append_plan_error"),
+                        );
+                        emit_wide_summary_event(log_view, &mut events, event);
+                    }
+                    plan_result
+                } else {
+                    if log_view != "off" {
+                        let event = new_wide_summary_cli_event(
+                            &events,
+                            &run_started,
+                            feature_id,
+                            total_inputs,
+                            "target_append_plan",
+                            "skipped",
+                            "该入口仅生成中间表，不准备历史目标追加计划",
+                            None,
+                            0,
+                            &["pytools-core"],
+                            None,
+                            None,
+                        );
+                        emit_wide_summary_event(log_view, &mut events, event);
                     }
                     Ok(())
-                })();
-                if log_view != "off" {
-                    let status = if plan_result.is_ok() {
-                        "completed"
-                    } else {
-                        "failed"
-                    };
-                    let message = if plan_result.is_ok() {
-                        format!("追加计划已准备，共 {} 项", append_plans.len())
-                    } else {
-                        "准备追加计划失败".to_owned()
-                    };
-                    let event = new_wide_summary_cli_event(
-                        &events,
-                        &run_started,
-                        feature_id,
-                        total_inputs,
-                        "target_append_plan",
-                        status,
-                        message,
-                        Some(plan_started.elapsed().as_millis()),
-                        append_plans.len(),
-                        &["pytools-core", "excel-reader", "calamine", "excel-editor"],
-                        Some("calamine"),
-                        plan_result.as_ref().err().map(|_| "append_plan_error"),
-                    );
-                    emit_wide_summary_event(log_view, &mut events, event);
                 }
-                plan_result
             } else {
                 if log_view != "off" {
                     let event = new_wide_summary_cli_event(
