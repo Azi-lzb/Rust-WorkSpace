@@ -99,6 +99,8 @@ fn runs_s5_outputs_parity_item() {
         config_path: &request.config,
         config_sha256_before: &configuration.sha256,
         config_version: &configuration.version,
+        structure_observations: &[],
+        schema_snapshot_dir: None,
     };
     let summary = write_run_outputs(&output_request, &request.output_root)
         .unwrap_or_else(|error| panic!("write outputs failed: {error}"));

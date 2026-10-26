@@ -4536,15 +4536,25 @@ fn run_s5_config_check(arguments: S5ConfigCheckArgs) -> Result<()> {
 }
 
 fn default_s5_template_dir() -> Option<PathBuf> {
-    let base_data_dir = std::env::var_os("BASE_AUDIT_DATA_DIR")
+    Some(default_s5_data_dir()?.join("templates"))
+}
+
+fn default_s5_data_dir() -> Option<PathBuf> {
+    std::env::var_os("BASE_AUDIT_DATA_DIR")
         .filter(|value| !value.is_empty())
         .map(PathBuf::from)
         .or_else(|| {
             std::env::var_os("USERPROFILE")
                 .or_else(|| std::env::var_os("HOME"))
                 .map(|home| PathBuf::from(home).join(".audit-tools"))
-        })?;
-    Some(base_data_dir.join("s5").join("templates"))
+        })
+        .map(|base_data_dir| base_data_dir.join("s5"))
+}
+
+fn default_s5_schema_snapshot_dir() -> PathBuf {
+    default_s5_data_dir()
+        .unwrap_or_else(|| PathBuf::from(".audit-tools").join("s5"))
+        .join(".schema_snapshots")
 }
 
 struct S5CurrentSourceArgument {
@@ -4910,6 +4920,8 @@ fn run_s5_audit_run(arguments: S5AuditRunArgs) -> Result<()> {
             sha256_before: &template.sha256,
         })
         .collect();
+    let structure_observations = retrieval.structure_observations();
+    let schema_snapshot_dir = default_s5_schema_snapshot_dir();
     let output_summary = write_run_outputs(
         &S5OutputRequest {
             run_id: &run_id,
@@ -4927,6 +4939,8 @@ fn run_s5_audit_run(arguments: S5AuditRunArgs) -> Result<()> {
             config_path: &arguments.config,
             config_sha256_before: &configuration.sha256,
             config_version: &configuration.version,
+            structure_observations: &structure_observations,
+            schema_snapshot_dir: Some(&schema_snapshot_dir),
         },
         &arguments.output_dir,
     )
@@ -4935,6 +4949,8 @@ fn run_s5_audit_run(arguments: S5AuditRunArgs) -> Result<()> {
     let cli_status = run_status.to_ascii_lowercase();
     let input_integrity = output_summary.input_integrity.as_str();
     let configuration_integrity = output_summary.configuration_integrity.as_str();
+    let structure_checks = output_summary.structure_checks.clone();
+    let structure_check_count = structure_checks.len();
 
     let elapsed_ms = started.elapsed().as_millis();
     let numeric_region_template_selections = retrieval.numeric_region_template_selections();
@@ -4986,6 +5002,7 @@ fn run_s5_audit_run(arguments: S5AuditRunArgs) -> Result<()> {
         "source_roles": source_roles,
         "rule_results": outcomes.len(),
         "status_counts": output_summary.status_counts,
+        "structure_checks": structure_checks,
         "output_files": output_summary.output_files,
         "triggered_rows": output_summary.triggered_rows,
         "failure_rows": output_summary.failure_rows,
@@ -5010,6 +5027,7 @@ fn run_s5_audit_run(arguments: S5AuditRunArgs) -> Result<()> {
                 "source_roles": source_roles,
                 "external_source_ids": external_source_ids,
                 "numeric_region_templates": numeric_region_template_selections,
+                "structure_check_count": structure_check_count,
             }))?
         );
     }

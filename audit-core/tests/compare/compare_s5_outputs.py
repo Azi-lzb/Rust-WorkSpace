@@ -9,6 +9,9 @@ styling baseline. The comparator diffs: audit copies (byte-level), the manifest
 widths, freeze, filter, row heights, header/body styles, numeric formats,
 page setup, sheet inventory), and the ledger's stable fields. Aggregate
 counts only.
+The optional structure-only mode seeds Rust with Python-created snapshots and
+compares migration continuity without making unrelated output deltas gate the
+snapshot result.
 """
 
 from __future__ import annotations
@@ -23,7 +26,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-from openpyxl.utils import column_index_from_string, get_column_letter
+from openpyxl.utils import column_index_from_string, get_column_letter, range_boundaries
 
 ROOT = Path(__file__).resolve().parents[3]
 RUN_ID = "PARITYRUN"
@@ -288,6 +291,11 @@ def main() -> int:
         type=Path,
         help="use this already-built open-data-audit binary for the CLI comparison",
     )
+    parser.add_argument(
+        "--structure-only",
+        action="store_true",
+        help="report parity for structure snapshot events without gating on other output deltas",
+    )
     parser.add_argument("--workspace", type=Path, default=ROOT)
     parser.add_argument("--report", type=Path, required=True)
     args = parser.parse_args()
@@ -351,11 +359,22 @@ def main() -> int:
         additional_sources,
         external_sources,
     )
+    python_snapshot_baseline_loaded_by_rust = False
+    # The comparison imports the legacy baseline from its read-only source tree.
+    sys.dont_write_bytecode = True
     sys.path.insert(0, str(source_root / "core" / "src"))
     os.environ["AUDIT3_WRITER_ENGINE"] = "openpyxl"
 
     with tempfile.TemporaryDirectory(prefix="audit-s5-outputs-") as temporary:
         directory = Path(temporary)
+        py_schema_dir = directory / "py_schema_snapshots"
+        rs_data_dir = directory / "rust_data"
+        rs_schema_dir = rs_data_dir / "s5" / ".schema_snapshots"
+        py_schema_dir.mkdir(parents=True)
+        rs_schema_dir.mkdir(parents=True)
+        shared_schema_key = os.urandom(32)
+        (py_schema_dir / ".schema-key").write_bytes(shared_schema_key)
+        (rs_schema_dir / ".schema-key").write_bytes(shared_schema_key)
         config_copy = directory / "config.xlsx"
         source_copy = directory / "source.xlsx"
         shutil.copy2(args.config_workbook.resolve(strict=True), config_copy)
@@ -424,7 +443,7 @@ def main() -> int:
             output_dir=py_root,
             run_id=RUN_ID,
             businesses=businesses,
-            schema_snapshot_dir=directory / "snap",
+            schema_snapshot_dir=py_schema_dir,
             persist_schema_snapshots=False,
             runtime_paths=RuntimePaths(
                 template_path=template_path,
@@ -432,6 +451,11 @@ def main() -> int:
             ),
         )
         py_run_dir = py_root / RUN_ID
+        if args.structure_only:
+            python_snapshot_files = list(py_schema_dir.glob("*.json"))
+            for snapshot_path in python_snapshot_files:
+                shutil.copy2(snapshot_path, rs_schema_dir / snapshot_path.name)
+            python_snapshot_baseline_loaded_by_rust = bool(python_snapshot_files)
 
         # --- Rust side ---
         request = {
@@ -450,6 +474,7 @@ def main() -> int:
         input_path.write_text(json.dumps(request, ensure_ascii=False), encoding="utf-8")
         rust_report = directory / "rust_summary.json"
         environment = os.environ.copy()
+        environment["BASE_AUDIT_DATA_DIR"] = str(rs_data_dir)
         if use_rust_cli:
             rust_command = (
                 [str(args.rust_bin)]
@@ -572,6 +597,95 @@ def main() -> int:
             if left != right:
                 diffs.append(f"ledger.{field}")
 
+        structure_fields = (
+            "snapshot_id", "role", "source_id", "business", "sheet", "table_id",
+            "row_header_width", "configured_row_path_count", "configured_column_path_count",
+            "matched_row_path_count", "matched_column_path_count", "row_region", "column_region",
+            "status", "detail",
+        )
+
+        def canonical_region_reference(reference):
+            if not isinstance(reference, str) or not reference:
+                return reference
+            sheet, separator, coordinates = reference.rpartition("!")
+            if not separator:
+                return reference.replace("$", "").upper()
+            if len(sheet) >= 2 and sheet[0] == "'" and sheet[-1] == "'":
+                sheet = sheet[1:-1].replace("''", "'")
+            return f"{sheet}!{coordinates.replace('$', '').upper()}"
+
+        def structure_facts(ledger, normalize_python_baseline=False):
+            events = ledger.get("structure_checks", [])
+            return sorted(
+                ({
+                    field: canonical_region_reference(event.get(field))
+                    if field in {"row_region", "column_region"}
+                    else "UNCHANGED"
+                    if normalize_python_baseline and field == "status"
+                    and event.get(field) == "BASELINE_CREATED"
+                    else event.get(field)
+                    for field in structure_fields
+                } for event in events),
+                key=lambda event: event.get("snapshot_id") or "",
+            )
+
+        py_structure = structure_facts(py_ledger, normalize_python_baseline=args.structure_only)
+        rs_structure = structure_facts(rs_ledger)
+        python_events_by_id = {
+            event.get("snapshot_id"): event for event in py_ledger.get("structure_checks", [])
+        }
+        rust_events_by_id = {
+            event.get("snapshot_id"): event for event in rs_ledger.get("structure_checks", [])
+        }
+        region_reference_representation_difference_count = sum(
+            python_event.get(field) != rust_events_by_id[snapshot_id].get(field)
+            and canonical_region_reference(python_event.get(field))
+            == canonical_region_reference(rust_events_by_id[snapshot_id].get(field))
+            for snapshot_id, python_event in python_events_by_id.items()
+            if snapshot_id in rust_events_by_id
+            for field in ("row_region", "column_region")
+        )
+        region_geometry_differences = []
+        for snapshot_id, python_event in python_events_by_id.items():
+            rust_event = rust_events_by_id.get(snapshot_id)
+            if rust_event is None:
+                continue
+            for field in ("row_region", "column_region"):
+                python_reference = python_event.get(field)
+                rust_reference = rust_event.get(field)
+                if python_reference == rust_reference:
+                    continue
+
+                def bounds(reference):
+                    if not isinstance(reference, str) or not reference:
+                        return None
+                    _, separator, coordinates = reference.rpartition("!")
+                    if not separator:
+                        coordinates = reference
+                    try:
+                        return range_boundaries(coordinates.replace("$", ""))
+                    except ValueError:
+                        return None
+
+                if bounds(python_reference) != bounds(rust_reference):
+                    region_geometry_differences.append({
+                        "field": field,
+                        "python_bounds": bounds(python_reference),
+                        "rust_bounds": bounds(rust_reference),
+                    })
+        structure_diffs: list[str] = []
+        diff(py_structure, rs_structure, "ledger.structure_checks", structure_diffs)
+        if args.structure_only and (not py_structure or not rs_structure):
+            structure_diffs.append("ledger.structure_checks.empty")
+        structure_status_counts: dict[str, dict[str, int]] = {}
+        for engine_name, events in (("python", py_ledger.get("structure_checks", [])),
+                                    ("rust", rs_ledger.get("structure_checks", []))):
+            counts: dict[str, int] = {}
+            for event in events:
+                status = str(event.get("status", "missing"))
+                counts[status] = counts.get(status, 0) + 1
+            structure_status_counts[engine_name] = counts
+
         # 4. manifest: roles/order/snapshot flags (paths normalized to names)
         def manifest_facts(ledger):
             facts = []
@@ -606,20 +720,30 @@ def main() -> int:
         if not inputs_unchanged:
             diffs.append("inputs.modified_during_run")
 
+        selected_diffs = list(structure_diffs) if args.structure_only else list(diffs) + structure_diffs
+        if not inputs_unchanged and args.structure_only:
+            selected_diffs.append("inputs.modified_during_run")
+
         triggered = summary.get("triggered_rows")
         failures = summary.get("failure_rows")
         print(json.dumps({
             "rust_triggered_rows": triggered,
             "rust_failure_rows": failures,
             "py_status_counts": py_ledger.get("status_counts"),
-            "diff_count": len(diffs),
-            "diff_sample": sorted(set(diffs))[:15],
+            "structure_check_count": len(py_structure),
+            "structure_diff_count": len(structure_diffs),
+            "region_reference_representation_difference_count": region_reference_representation_difference_count,
+            "region_geometry_differences": region_geometry_differences,
+            "structure_diff_paths": sorted(set(structure_diffs)),
+            "diff_count": len(selected_diffs),
+            "diff_sample": [] if args.structure_only else sorted(set(selected_diffs))[:15],
         }, ensure_ascii=False))
 
     report = {
         "schema_version": 1,
         "suite": "audit.s5_run_outputs_parity",
-        "status": "completed" if not diffs else "mismatch",
+        "comparison_scope": "structure_snapshots_only" if args.structure_only else "full_run_output_and_structure_snapshot",
+        "status": "completed" if not selected_diffs else "mismatch",
         "sample_scope": {
             "business": businesses[0] if len(businesses) == 1 else "multiple",
             "business_count": len(businesses),
@@ -636,9 +760,15 @@ def main() -> int:
             "rust_entry": "s5-audit-run CLI" if use_rust_cli else "service test harness",
         },
         "comparison": {
-            "diff_count": len(diffs),
-            "diff_paths_sample": sorted(set(diffs))[:20],
-            "cell_value_differences": value_differences,
+            "diff_count": len(selected_diffs),
+            "diff_paths_sample": [] if args.structure_only else sorted(set(selected_diffs))[:20],
+            "structure_check_count": len(py_structure),
+            "structure_check_diff_count": len(structure_diffs),
+            "region_reference_representation_difference_count": region_reference_representation_difference_count,
+            "structure_check_status_counts": structure_status_counts,
+            "non_structure_output_diff_count": len(diffs),
+            "cell_value_difference_count": len(value_differences),
+            "cell_value_differences": [] if args.structure_only else value_differences,
             "status_counts": {
                 "python": py_ledger.get("status_counts"),
                 "rust": rs_ledger.get("status_counts"),
@@ -657,13 +787,16 @@ def main() -> int:
             "python_baseline_version": sys.version.split()[0],
             "inputs_unchanged": inputs_unchanged,
             "raw_values_persisted": False,
+            "python_snapshot_baseline_loaded_by_rust": python_snapshot_baseline_loaded_by_rust,
             "capability_status": "unverified",
             "production_route_eligible": False,
         },
         "limitations": [
             "Conditional-format and data-quality tables are compared empty; "
             "their populated paths belong to the S1 conditional-format bridge.",
-            "Structure snapshots and hash-integrity downgrade are out of scope.",
+            "Structure snapshots use one shared isolated HMAC key; structure-only mode seeds Rust with Python-created temporary snapshots and expects Rust UNCHANGED events.",
+            "Hash-integrity downgrade remains outside this comparison.",
+            "When comparison_scope is structure_snapshots_only, other output deltas are counted but do not affect status.",
             "Colors compare modulo the 8-digit alpha prefix and fitToWidth=1 "
             "compares equal to an omitted attribute under fitToPage: both are "
             "rust_xlsxwriter/openpyxl serializer representation deltas with "
@@ -674,8 +807,8 @@ def main() -> int:
     report_path.write_text(
         json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )
-    print(json.dumps({"status": report["status"], "diffs": len(diffs)}))
-    return 0 if not diffs else 1
+    print(json.dumps({"status": report["status"], "diffs": len(selected_diffs)}))
+    return 0 if not selected_diffs else 1
 
 
 if __name__ == "__main__":

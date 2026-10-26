@@ -51,6 +51,7 @@ pub mod s5_outputs;
 pub mod s5_period_recognition;
 pub mod s5_retrieval;
 pub mod s5_scan;
+pub mod s5_schema_snapshots;
 pub mod s5_service;
 pub mod s5_template_matching;
 pub mod template;

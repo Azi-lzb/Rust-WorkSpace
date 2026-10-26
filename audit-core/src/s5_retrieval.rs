@@ -167,6 +167,7 @@ struct BoundSource {
     book: ScanBook,
     numeric_scope: NumericScopeResolver,
     index_cache: BTreeMap<String, crate::s5_scan::ScanResult>,
+    schema_observations: Vec<crate::s5_schema_snapshots::S5StructureObservation>,
 }
 
 struct BoundCurrentSource {
@@ -253,6 +254,7 @@ impl BoundSource {
             book,
             numeric_scope,
             index_cache: BTreeMap::new(),
+            schema_observations: Vec::new(),
         })
     }
 }
@@ -546,6 +548,21 @@ impl S5Retrieval {
     /// pre-read snapshots, for inclusion in the run's audit-copy manifest.
     pub fn numeric_region_template_sources(&self) -> Vec<S5NumericTemplateSource> {
         self.numeric_template_source_order.clone()
+    }
+
+    /// Schema observations gathered while indexing configured current and
+    /// previous source tables. External source layouts use a separate contract.
+    pub fn structure_observations(
+        &self,
+    ) -> Vec<crate::s5_schema_snapshots::S5StructureObservation> {
+        let mut observations = self.current.schema_observations.clone();
+        for binding in &self.additional_current {
+            observations.extend(binding.source.schema_observations.clone());
+        }
+        if let Some(previous) = &self.previous {
+            observations.extend(previous.schema_observations.clone());
+        }
+        observations
     }
 
     /// SHA-256 captured when the current source was opened for this run.
@@ -1542,6 +1559,18 @@ impl S5Retrieval {
                 &key_pairs,
                 &data_regions,
             );
+            source
+                .schema_observations
+                .extend(crate::s5_schema_snapshots::collect_observations(
+                    &source.book,
+                    role,
+                    &source.source_id,
+                    &metric.business,
+                    &metric.sheet,
+                    &configuration.metrics,
+                    &result,
+                    &data_regions,
+                ));
             source.index_cache.insert(cache_key.clone(), result);
         }
         Ok(&source.index_cache[&cache_key])

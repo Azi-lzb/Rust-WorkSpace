@@ -232,4 +232,10 @@ Windows 原生 `s5-audit-run` 与原 Python `AuditEngine.run` 对拍覆盖业务
 
 同一批次将单位贷款、个人贷款两个真实当前工作簿和 `EXT_REAL` 默认外部源合并运行时，首次发现 Rust 总账中的两个布局模板条目按来源绑定顺序排列，与 Python 按规则首次使用顺序不同；业务结果状态计数一致，结果表单元格值差异为 0，差异仅在 12 个模板清单字段。`S5Retrieval` 现在按首次选用布局模板的顺序累积清单，并按路径去重。修复后同一真实组合的 Python/Rust 完整 CLI 输出差异为 0，状态计数均为 PASSED 719、TRIGGERED 8、STRUCTURE_ERROR 6，输入未变且报告不保存原始值；见 `probe/reports/s5_real_dual_business_current_external_default_parity_windows_native_20261026.json`。
 
-上述真实组合覆盖单位贷款和个人贷款各一本当前工作簿，但共用一个物理外部工作簿；多物理外部来源真实验收、条件格式/数据质量非空路径、结构快照/哈希完整性降级、Linux/deb、glibc 2.28、麒麟 V10/UOS V20 与完整 S5-F01 仍未验收，生产 capability 仍为 unverified。Audit 共享能力请求 #8 仍未解决。
+上述真实组合覆盖单位贷款和个人贷款各一本当前工作簿，但共用一个物理外部工作簿；多物理外部来源真实验收、条件格式/数据质量非空路径、输入哈希变化降级、Linux/deb、glibc 2.28、麒麟 V10/UOS V20 与完整 S5-F01 仍未验收，生产 capability 仍为 unverified。结构快照已有后续独立真实对拍，见下节。Audit 共享能力请求 #8 仍未解决。
+
+### S5-F01 来源结构快照切片（真实 Python 基线跨语言读取）
+
+`s5_schema_snapshots` 将 Python `SourceRepository` 的路径摘要、HMAC 令牌、结构/位置对比和原子持久化接入实际 `s5-audit-run` 取数及输出总账。无命名结构区域的回退范围现在使用共享 `excel_reader::read_xlsx_worksheet_extents` 的 OOXML 单元格边界，包含带样式的空白单元格，匹配 Python `openpyxl.max_row/max_column`。Windows 合成单测覆盖 HMAC RFC 4231 向量、基线/位置变化/逻辑变化、输入变化不持久化、非对象 JSON 快照错误映射、样式空白扩展范围和总账事件写入。
+
+Windows 原生真实对拍使用 config-real 的 5 逐笔审核配置和 2026-07-31 单位贷款当前工作簿；Python `AuditEngine` 生成 4 个隔离结构快照后，Rust 实际 `s5-audit-run` CLI 读取这些 Python 基线，4/4 均返回 `UNCHANGED`，结构事件差异 0；377 条审核结果状态计数一致（370 PASSED、6 TRIGGERED、1 RETRIEVAL_FAILED），输入哈希前后相同，报告不保存原始单元格值或本机路径。证据见 `probe/reports/s5_structure_snapshot_real_parity_windows_native_20261026.json`。验证范围仅含 Windows、单位贷款、一个本期来源及其实际回退布局；未验证 V_PRE/V_EXT、哈希并发变化、目标 Linux/deb、麒麟 V10/UOS V20，也不代表 S5-F01 整体完成；生产 capability 仍为 `unverified`，共享请求 #8 仍未解决。

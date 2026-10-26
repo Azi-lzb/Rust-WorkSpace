@@ -12,7 +12,7 @@
 //! projection machinery belongs to the source-reading slice.
 
 use crate::s5_layout::{NamedRegion, STRUCTURE_PREFIXES};
-use excel_reader::{read_workbook, WorkbookDump};
+use excel_reader::{read_workbook, read_xlsx_worksheet_extents, WorkbookDump};
 use roxmltree::Document;
 use serde::Serialize;
 use std::{
@@ -58,6 +58,9 @@ pub struct ScanBook {
     /// Numeric cells whose OOXML lexical form is an integer. openpyxl reads
     /// these as Python `int`, while Calamine may expose the same cell as f64.
     integer_numeric_labels: BTreeMap<(String, String), String>,
+    /// OOXML cell extents include styled blank cells that openpyxl counts in
+    /// worksheet.max_row/max_column even though the value reader omits them.
+    worksheet_extents: BTreeMap<String, (usize, usize)>,
     sheet_names: Vec<String>,
 }
 
@@ -270,6 +273,19 @@ impl ScanBook {
     pub fn open(path: &Path) -> Result<Self, String> {
         let dump = read_workbook(path).map_err(|error| error.to_string())?;
         let integer_numeric_labels = integer_numeric_labels(path)?;
+        let worksheet_extents = match path.extension().and_then(|extension| extension.to_str()) {
+            Some(extension)
+                if extension.eq_ignore_ascii_case("xlsx")
+                    || extension.eq_ignore_ascii_case("xlsm") =>
+            {
+                read_xlsx_worksheet_extents(path)
+                    .map_err(|error| format!("read OOXML worksheet extents: {error}"))?
+                    .into_iter()
+                    .map(|extent| (extent.name, (extent.max_row, extent.max_column)))
+                    .collect()
+            }
+            _ => BTreeMap::new(),
+        };
         let sheet_names = dump.sheets.iter().map(|sheet| sheet.name.clone()).collect();
         let mut merged_by_row: BTreeMap<(String, usize), Vec<(usize, usize, usize, usize)>> =
             BTreeMap::new();
@@ -291,12 +307,44 @@ impl ScanBook {
             dump,
             merged_by_row,
             integer_numeric_labels,
+            worksheet_extents,
             sheet_names,
         })
     }
 
     pub fn sheet_names(&self) -> &[String] {
         &self.sheet_names
+    }
+
+    /// Relative merged-cell geometry contained by a named structure region.
+    /// This is used by S5 schema snapshots and intentionally omits cell text.
+    pub fn merged_shapes_in_region(&self, sheet: &str, region: &NamedRegion) -> Vec<String> {
+        let mut shapes = self
+            .dump
+            .sheets
+            .iter()
+            .find(|candidate| candidate.name == sheet)
+            .into_iter()
+            .flat_map(|sheet_dump| sheet_dump.merges.iter())
+            .filter_map(|merge| {
+                let (min_row, min_col, max_row, max_col) = parse_bounds(merge)?;
+                (region.min_col <= min_col
+                    && max_col <= region.max_col
+                    && region.min_row <= min_row
+                    && max_row <= region.max_row)
+                    .then(|| {
+                        format!(
+                            "R{}C{}:R{}C{}",
+                            min_row - region.min_row,
+                            min_col - region.min_col,
+                            max_row - region.min_row,
+                            max_col - region.min_col,
+                        )
+                    })
+            })
+            .collect::<Vec<_>>();
+        shapes.sort();
+        shapes
     }
 
     pub fn path(&self) -> &Path {
@@ -453,6 +501,10 @@ impl ScanBook {
                 max_row = max_row.max(row);
                 max_col = max_col.max(column);
             }
+        }
+        if let Some((extent_row, extent_column)) = self.worksheet_extents.get(sheet) {
+            max_row = max_row.max(*extent_row);
+            max_col = max_col.max(*extent_column);
         }
         (max_row, max_col)
     }

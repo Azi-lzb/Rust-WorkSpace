@@ -1,0 +1,44 @@
+# S5-F01 来源结构快照真实迁移切片
+
+## 修改信息
+
+- 时间：2026-10-26 10:01（Asia/Shanghai）
+- 执行者：Codex
+- 修改前 HEAD：`5cdac9f6cf1297a168acf53cb5761afca8abb406`
+- 修改后 commit：本记录随本切片提交；SHA 由 Git 生成。
+- WIP：保留已有未提交 S5 修改、`HANDOFF_ZCODE_TO_CODEX.md`、`.pytest-tmp-v3/` 和其他未跟踪报告。提交范围只包含本切片源文件、测试、报告、迁移清单及本记录。
+
+## 目的与修改文件
+
+将 Python `SourceRepository` 的 HMAC 保护结构快照接入实际 `s5-audit-run` 读取、输出及运行总账。真实对拍发现，无命名结构区域时 Python 的 `openpyxl.max_row/max_column` 会计入带样式空白格，而 Rust 原先仅统计有值/公式的坐标，导致回退结构范围差异；Rust 现在复用共享 `excel_reader::read_xlsx_worksheet_extents` 获取只读 OOXML 范围，并覆盖样式空白坐标。
+
+- `audit-core/src/s5_schema_snapshots.rs`：新增 S5 结构观察、HMAC 路径令牌、快照比较、失败状态和原子持久化。
+- `audit-core/src/s5_scan.rs`：读取 XLSX/XLSM 的 OOXML 工作表 extent，令回退范围匹配 Python 工作表边界。
+- `audit-core/src/s5_retrieval.rs`：从已执行的本期/上期取数索引收集结构观察。
+- `audit-core/src/s5_outputs.rs`、`audit-core/src/bin/open-data-audit.rs`、`audit-core/src/lib.rs`：将快照事件接到输出阶段、CLI 总账和开发视图计数。
+- `audit-core/tests/s5_outputs_parity.rs`：更新输出测试请求。
+- `audit-core/tests/compare/compare_s5_outputs.py`：加入隔离密钥、Python 快照基线读取和结构事件对拍模式；导入只读源项目时禁止写入 pyc。
+- `audit-core/probe/reports/s5_structure_snapshot_real_parity_windows_native_20261026.json`：脱敏真实对拍报告。
+- `audit-core/MIGRATION_INVENTORY.md`：记录真实验证范围和未完成项。
+
+未更改配置格式、VBA、Cargo workspace、共享 crates、根 Cargo 配置或版本号；原 Python 源项目、真实配置和真实工作簿均只读。
+
+## 验证
+
+- `cargo test --offline --locked -p audit-core --lib s5_schema_snapshots::tests`：5 passed，覆盖 RFC 4231 HMAC 向量、结构状态流转、完整性变化不保存、无效快照 JSON 根类型和带样式空白单元格边界。
+- `cargo test --offline --locked -p audit-core --lib s5_outputs::tests`：7 passed，包含运行总账结构事件。
+- `cargo test --offline --locked -p audit-core --test s5_previous_source_cli s5_audit_cli_reads_and_copies_independent_previous_source`：1 passed。
+- `cargo build --offline --locked -p audit-core --bin open-data-audit`：成功。
+- Windows 原生 Python 3.12.10/Rust 真实 CLI 对拍：4 条 Python 结构快照基线均由 Rust 读取为 `UNCHANGED`，结构事件差异 0；377 条结果计数为 370 PASSED、6 TRIGGERED、1 RETRIEVAL_FAILED，输入前后哈希一致。完整报告仅比较结构快照事件为验收门槛，非结构输出差异计数 0。
+- 对改动 Rust 文件运行 `rustfmt --check`，比较器 AST 解析和 `git diff --check` 均通过。
+
+## 未执行与已知问题
+
+- 未运行 WSL/Linux、glibc 2.28、deb、麒麟 V10 或统信 UOS V20 验收。
+- 未对拍 V_PRE/V_EXT 快照、输入哈希并发变化、非空条件格式或数据质量表，也未验收完整 S5-F01/GUI。
+- S5-F01 整体及生产 capability 仍为 `unverified`；Audit 共享能力请求 #8 保持未解决。
+- 本轮仅验证 Windows 单位贷款、一个本期来源和无命名结构区域回退布局；不能外推至其他来源、布局或平台。
+
+## 回滚与版本
+
+回滚时仅撤回本切片提交，不覆盖其他工作区修改。没有删除文件；audit-core 组件版本保持 0.1.0，不升级。

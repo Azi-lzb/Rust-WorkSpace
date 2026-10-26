@@ -8,6 +8,7 @@
 //! format results remain a separate future slice; dynamic external-source data
 //! quality warnings are written to the baseline-compatible table and ledger.
 
+use crate::s5_schema_snapshots::{PendingSnapshots, S5StructureObservation};
 use crate::s5_service::S5RuleOutcome;
 use excel_writer::{Color, Format, FormatAlign, FormatUnderline, Workbook};
 use serde_json::{json, Value as JsonValue};
@@ -42,6 +43,8 @@ pub struct S5OutputRequest<'a> {
     pub config_path: &'a Path,
     pub config_sha256_before: &'a str,
     pub config_version: &'a str,
+    pub structure_observations: &'a [S5StructureObservation],
+    pub schema_snapshot_dir: Option<&'a Path>,
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
@@ -74,6 +77,7 @@ pub struct S5WriteOutputsSummary {
     pub input_integrity: String,
     pub configuration_integrity: String,
     pub status_counts: BTreeMap<String, usize>,
+    pub structure_checks: Vec<JsonValue>,
     pub triggered_rows: usize,
     pub failure_rows: usize,
     pub data_quality_warning_count: usize,
@@ -376,6 +380,13 @@ pub fn write_run_outputs(
     request: &S5OutputRequest<'_>,
     output_root: &Path,
 ) -> Result<S5WriteOutputsSummary, String> {
+    let pending_snapshots = request
+        .schema_snapshot_dir
+        .map(|directory| {
+            PendingSnapshots::compare(request.structure_observations, directory)
+                .map_err(|error| format!("比较 S5 结构快照失败：{error}"))
+        })
+        .transpose()?;
     for source in request.additional_sources {
         if !matches!(source.role, "current" | "previous" | "external") {
             return Err(format!("不支持的附加来源角色：{}", source.role));
@@ -586,6 +597,9 @@ pub fn write_run_outputs(
     } else {
         "COMPLETED"
     };
+    let structure_checks = pending_snapshots
+        .map(|pending| pending.finish(!integrity_changed))
+        .unwrap_or_default();
     let mut outcomes = request.outcomes.to_vec();
     let mut status_counts = request.status_counts.clone();
     if integrity_changed {
@@ -966,6 +980,7 @@ pub fn write_run_outputs(
         "configuration_integrity": configuration_integrity,
         "input_hashes": input_hashes,
         "status_counts": status_counts,
+        "structure_checks": structure_checks.clone(),
         "data_quality_warnings": request.data_quality_warnings,
         "audit_copy_manifest": manifest,
         "output_files": output_files_json,
@@ -984,6 +999,7 @@ pub fn write_run_outputs(
         input_integrity: input_integrity.to_owned(),
         configuration_integrity: configuration_integrity.to_owned(),
         status_counts,
+        structure_checks,
         triggered_rows,
         failure_rows,
         data_quality_warning_count: request.data_quality_warnings.len(),
@@ -997,6 +1013,9 @@ mod tests {
         S5OutputRequest, S5OutputSource,
     };
     use crate::s5_service::S5RuleOutcome;
+    use crate::{
+        s5_layout::NamedRegion, s5_scan::ScanTable, s5_schema_snapshots::S5StructureObservation,
+    };
     use std::{
         collections::BTreeMap,
         fs,
@@ -1094,6 +1113,8 @@ mod tests {
             config_path: &config,
             config_sha256_before: &config_sha,
             config_version: "test",
+            structure_observations: &[],
+            schema_snapshot_dir: None,
         };
 
         let summary = write_run_outputs(&request, &output).expect("write downgraded result");
@@ -1180,6 +1201,8 @@ mod tests {
             config_path: &config,
             config_sha256_before: &config_sha,
             config_version: "test",
+            structure_observations: &[],
+            schema_snapshot_dir: None,
         };
         fs::remove_file(&current).expect("remove current source");
         fs::remove_file(&previous).expect("remove previous source");
@@ -1258,6 +1281,8 @@ mod tests {
             config_path: &config,
             config_sha256_before: &config_sha,
             config_version: "test",
+            structure_observations: &[],
+            schema_snapshot_dir: None,
         };
 
         let summary = write_run_outputs(&request, &output).expect("write downgraded result");
@@ -1320,6 +1345,8 @@ mod tests {
             config_path: &config,
             config_sha256_before: &stale_config_sha,
             config_version: "test",
+            structure_observations: &[],
+            schema_snapshot_dir: None,
         };
 
         let summary = write_run_outputs(&request, &output).expect("write downgraded result");
@@ -1392,6 +1419,8 @@ mod tests {
             config_path: &config,
             config_sha256_before: &config_sha,
             config_version: "test",
+            structure_observations: &[],
+            schema_snapshot_dir: None,
         };
 
         let summary = write_run_outputs(&request, &output).expect("write run outputs");
@@ -1440,6 +1469,99 @@ mod tests {
             ledger["input_hashes"]["configuration"]["sha256_before"],
             config_sha
         );
+        fs::remove_dir_all(root).expect("remove test root");
+    }
+
+    #[test]
+    fn output_writer_records_structure_checks_in_the_run_ledger() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "audit_s5_schema_ledger_{}_{}",
+            std::process::id(),
+            nonce
+        ));
+        fs::create_dir_all(&root).expect("create test root");
+        let source = root.join("source.xlsx");
+        let config = root.join("config.xlsx");
+        let output = root.join("output");
+        let schema_dir = root.join("schema");
+        fs::write(&source, b"source snapshot").expect("write source");
+        fs::write(&config, b"configuration snapshot").expect("write config");
+        let source_sha = file_sha256(&source).expect("hash source");
+        let config_sha = file_sha256(&config).expect("hash config");
+        let outcomes = vec![test_outcome("PASSED")];
+        let counts = count_outcome_statuses(&outcomes);
+        let row_path = vec!["synthetic row label".to_owned()];
+        let column_path = vec!["current period".to_owned()];
+        let region = NamedRegion {
+            name: "表结构区域_1".to_owned(),
+            sheet: "审核表".to_owned(),
+            reference: "审核表!A1:D8".to_owned(),
+            min_row: 1,
+            min_col: 1,
+            max_row: 8,
+            max_col: 4,
+        };
+        let structure_observations = [S5StructureObservation {
+            role: "current".to_owned(),
+            source_id: "CURRENT".to_owned(),
+            business: "单位贷款".to_owned(),
+            sheet: "审核表".to_owned(),
+            table_id: "表结构区域_1#1".to_owned(),
+            table: ScanTable {
+                region,
+                column_region: None,
+                row_hits: BTreeMap::from([(row_path.clone(), vec![(5, 1, 1)])]),
+                column_hits: BTreeMap::from([(column_path.clone(), vec![2])]),
+            },
+            expected_row_paths: vec![row_path],
+            expected_column_paths: vec![column_path],
+            row_merge_shapes: vec!["R0C0:R0C1".to_owned()],
+            column_merge_shapes: vec![],
+            numeric_regions: vec![],
+        }];
+        let request = S5OutputRequest {
+            run_id: "structure-snapshot-ledger",
+            period: "2026-07-31",
+            institution_code: "123",
+            institution_name: "sample",
+            outcomes: &outcomes,
+            status_counts: &counts,
+            data_quality_warnings: &[],
+            source_path: &source,
+            source_id: "CURRENT",
+            source_sha256_before: &source_sha,
+            additional_sources: &[],
+            selected_templates: &[],
+            config_path: &config,
+            config_sha256_before: &config_sha,
+            config_version: "test",
+            structure_observations: &structure_observations,
+            schema_snapshot_dir: Some(&schema_dir),
+        };
+
+        let summary = write_run_outputs(&request, &output).expect("write run outputs");
+        assert_eq!(summary.structure_checks.len(), 1);
+        assert_eq!(summary.structure_checks[0]["status"], "BASELINE_CREATED");
+        let ledger: serde_json::Value = serde_json::from_slice(
+            &fs::read(&summary.output_files.run_ledger).expect("read run ledger"),
+        )
+        .expect("parse run ledger");
+        assert_eq!(ledger["structure_checks"][0]["status"], "BASELINE_CREATED");
+        assert!(!fs::read_dir(&schema_dir)
+            .expect("read schema snapshot directory")
+            .filter_map(Result::ok)
+            .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "json"))
+            .any(|entry| {
+                fs::read_to_string(entry.path())
+                    .map(|text| {
+                        text.contains("synthetic row label") || text.contains("current period")
+                    })
+                    .unwrap_or(true)
+            }));
         fs::remove_dir_all(root).expect("remove test root");
     }
 }

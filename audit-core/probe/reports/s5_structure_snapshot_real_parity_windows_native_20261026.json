@@ -1,0 +1,68 @@
+{
+  "schema_version": 1,
+  "suite": "audit.s5_run_outputs_parity",
+  "comparison_scope": "structure_snapshots_only",
+  "status": "completed",
+  "sample_scope": {
+    "business": "单位贷款",
+    "business_count": 1,
+    "current_source_count": 1,
+    "additional_current_sources_count": 0,
+    "external_source_count": 0,
+    "external_source_ids": [],
+    "default_external_source": null,
+    "run_id": "PARITYRUN",
+    "files_copied_to_temporary": true,
+    "template_path_supplied": false,
+    "template_dir_supplied": false,
+    "python_writer_engine": "openpyxl (styling baseline)",
+    "rust_entry": "s5-audit-run CLI"
+  },
+  "comparison": {
+    "diff_count": 0,
+    "diff_paths_sample": [],
+    "structure_check_count": 4,
+    "structure_check_diff_count": 0,
+    "region_reference_representation_difference_count": 0,
+    "structure_check_status_counts": {
+      "python": {
+        "BASELINE_CREATED": 4
+      },
+      "rust": {
+        "UNCHANGED": 4
+      }
+    },
+    "non_structure_output_diff_count": 0,
+    "cell_value_difference_count": 0,
+    "cell_value_differences": [],
+    "status_counts": {
+      "python": {
+        "PASSED": 370,
+        "TRIGGERED": 6,
+        "RETRIEVAL_FAILED": 1
+      },
+      "rust": {
+        "PASSED": 370,
+        "RETRIEVAL_FAILED": 1,
+        "TRIGGERED": 6
+      }
+    }
+  },
+  "verification": {
+    "rust_runner": "open-data-audit s5-audit-run CLI",
+    "python_baseline": "s1audit_configured.engine.run(output_dir=...) with AUDIT3_WRITER_ENGINE=openpyxl",
+    "python_baseline_version": "3.12.10",
+    "inputs_unchanged": true,
+    "raw_values_persisted": false,
+    "python_snapshot_baseline_loaded_by_rust": true,
+    "capability_status": "unverified",
+    "production_route_eligible": false
+  },
+  "limitations": [
+    "Conditional-format and data-quality tables are compared empty; their populated paths belong to the S1 conditional-format bridge.",
+    "Structure snapshots use one shared isolated HMAC key; structure-only mode seeds Rust with Python-created temporary snapshots and expects Rust UNCHANGED events.",
+    "Hash-integrity downgrade remains outside this comparison.",
+    "When comparison_scope is structure_snapshots_only, other output deltas are counted but do not affect status.",
+    "Colors compare modulo the 8-digit alpha prefix and fitToWidth=1 compares equal to an omitted attribute under fitToPage: both are rust_xlsxwriter/openpyxl serializer representation deltas with identical Excel semantics."
+  ]
+}
