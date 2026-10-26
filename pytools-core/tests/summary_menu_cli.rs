@@ -182,7 +182,7 @@ fn interactive_v2_named_range_summary_uses_named_regions_and_skips_bad_structure
     assert!(stdout.contains("3  按模板命名区域汇总"));
     assert!(stdout.contains("已选择文件 3 个"));
     assert!(stdout.contains(r#""saved": true"#));
-    assert!(!stdout.contains("[尚未实现] PT-6-2"));
+    assert!(!stdout.contains("尚未实现"));
 
     let logs = root.path().join("app").join("logs");
     let (history_path, history, history_text) = read_single_history(&logs, "PT-6-2_")?;

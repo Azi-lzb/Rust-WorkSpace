@@ -415,7 +415,7 @@ where
         writeln!(output, "------ 数据提取与汇总 ------")?;
         writeln!(output, "  1  时序宽表汇总")?;
         writeln!(output, "  2  按使用区域快速汇总")?;
-        writeln!(output, "  3  按模板命名区域汇总（尚未实现）")?;
+        writeln!(output, "  3  按模板命名区域汇总")?;
         writeln!(output, "  4  表头路径比对与映射")?;
         writeln!(output, "  5  时序配置预校验")?;
         writeln!(output, "  0  返回")?;
