@@ -151,11 +151,11 @@ impl SummaryProgressEmitter<'_> {
 }
 
 #[derive(Clone, Debug)]
-struct PendingErrorCell {
-    sheet_name: String,
-    address: String,
-    reader_value: String,
-    excel_value: &'static str,
+pub(crate) struct PendingErrorCell {
+    pub(crate) sheet_name: String,
+    pub(crate) address: String,
+    pub(crate) reader_value: String,
+    pub(crate) excel_value: &'static str,
 }
 
 pub fn summarize_used_ranges(sources: &[PathBuf], output_dir: &Path) -> Result<SummaryResult> {
@@ -1556,7 +1556,7 @@ fn is_xlsx_or_xlsm(path: &Path) -> bool {
         .is_some_and(|extension| matches!(extension.to_ascii_lowercase().as_str(), "xlsx" | "xlsm"))
 }
 
-fn excel_error_value(reader_value: &str) -> Result<&'static str> {
+pub(crate) fn excel_error_value(reader_value: &str) -> Result<&'static str> {
     match reader_value {
         "Div0" => Ok("#DIV/0!"),
         "NA" => Ok("#N/A"),
@@ -1589,6 +1589,51 @@ fn staging_path_for(output: &Path) -> Result<PathBuf> {
 }
 
 fn patch_error_cells(source: &Path, output: &Path, errors: &[PendingErrorCell]) -> Result<()> {
+    patch_error_cells_with_mode(source, output, errors, false)
+}
+
+pub(crate) fn patch_existing_error_cells(
+    source: &Path,
+    output: &Path,
+    errors: &[PendingErrorCell],
+) -> Result<()> {
+    anyhow::ensure!(
+        !errors.is_empty(),
+        "no error cells requested for OOXML patch"
+    );
+    validate_error_placeholders(source, errors)?;
+    patch_error_cells_with_mode(source, output, errors, true)
+}
+
+fn validate_error_placeholders(workbook: &Path, errors: &[PendingErrorCell]) -> Result<()> {
+    let dump = read_workbook(workbook)
+        .with_context(|| format!("reopen staged workbook {}", workbook.display()))?;
+    for error in errors {
+        let sheet = dump
+            .sheets
+            .iter()
+            .find(|sheet| sheet.name == error.sheet_name)
+            .with_context(|| format!("staged worksheet {:?} is missing", error.sheet_name))?;
+        let cell = sheet
+            .values
+            .get(&error.address)
+            .with_context(|| format!("staged error placeholder {} is missing", error.address))?;
+        anyhow::ensure!(
+            cell.get("type").and_then(serde_json::Value::as_str) == Some("string")
+                && cell.get("value").and_then(serde_json::Value::as_str) == Some(error.excel_value),
+            "staged error placeholder {} did not round trip: {cell}",
+            error.address
+        );
+    }
+    Ok(())
+}
+
+fn patch_error_cells_with_mode(
+    source: &Path,
+    output: &Path,
+    errors: &[PendingErrorCell],
+    replace_existing: bool,
+) -> Result<()> {
     anyhow::ensure!(
         !errors.is_empty(),
         "no error cells requested for OOXML patch"
@@ -1609,7 +1654,8 @@ fn patch_error_cells(source: &Path, output: &Path, errors: &[PendingErrorCell]) 
             for (sheet_name, sheet_errors) in errors_by_sheet {
                 let part = resolve_summary_worksheet_part(&mut archive, sheet_name)?;
                 let original = read_zip_part(&mut archive, &part)?;
-                let replacement = patch_worksheet_error_cells(&original, &sheet_errors)?;
+                let replacement =
+                    patch_worksheet_error_cells(&original, &sheet_errors, replace_existing)?;
                 anyhow::ensure!(
                     replacements.insert(part.clone(), replacement).is_none(),
                     "multiple worksheets resolve to the same package part {part}"
@@ -1748,7 +1794,11 @@ fn read_zip_part(archive: &mut ZipArchive<fs::File>, name: &str) -> Result<Vec<u
     Ok(bytes)
 }
 
-fn patch_worksheet_error_cells(xml: &[u8], errors: &[PendingErrorCell]) -> Result<Vec<u8>> {
+fn patch_worksheet_error_cells(
+    xml: &[u8],
+    errors: &[PendingErrorCell],
+    replace_existing: bool,
+) -> Result<Vec<u8>> {
     let source = std::str::from_utf8(xml).context("worksheet XML must be UTF-8")?;
     let document = roxmltree::Document::parse(source).context("parse summary worksheet XML")?;
     let root = document.root_element();
@@ -1784,6 +1834,7 @@ fn patch_worksheet_error_cells(xml: &[u8], errors: &[PendingErrorCell]) -> Resul
             .with_context(|| format!("summary output row {row_number} is missing"))?;
         let mut last_cell = None;
         let mut insertion = None;
+        let mut existing = None;
         for cell in row
             .children()
             .filter(|node| is_xml_element(*node, SPREADSHEET_MAIN_NS, "c"))
@@ -1793,31 +1844,63 @@ fn patch_worksheet_error_cells(xml: &[u8], errors: &[PendingErrorCell]) -> Resul
                 .context("summary output contains a cell without an address")?;
             let (_, cell_column) = parse_a1(cell_address)
                 .with_context(|| format!("invalid summary output cell {cell_address}"))?;
-            anyhow::ensure!(
-                cell_address != error.address,
-                "summary error cell {} already exists",
-                error.address
-            );
+            if cell_address == error.address {
+                existing = Some(cell);
+                continue;
+            }
             if cell_column > column_number {
                 insertion = Some(cell.range().start);
                 break;
             }
             last_cell = Some(cell);
         }
-        let offset = insertion
-            .or_else(|| last_cell.map(|cell| cell.range().end))
-            .with_context(|| format!("summary output row {row_number} has no cell anchor"))?;
         let markup = format!(
             "<{cell_tag} r=\"{}\" t=\"e\"><{value_tag}>{}</{value_tag}></{cell_tag}>",
             error.address, error.excel_value
         );
-        edits.push((offset, column_number, markup));
+        if replace_existing {
+            let cell = existing.with_context(|| {
+                format!("staged error placeholder {} is missing", error.address)
+            })?;
+            anyhow::ensure!(
+                !cell
+                    .children()
+                    .any(|node| is_xml_element(node, SPREADSHEET_MAIN_NS, "f")),
+                "refuse to replace formula at error cell {}",
+                error.address
+            );
+            let style_attribute = if let Some(style) = cell.attribute("s") {
+                anyhow::ensure!(
+                    style.bytes().all(|byte| byte.is_ascii_digit()),
+                    "invalid style id on staged error placeholder {}",
+                    error.address
+                );
+                format!(" s=\"{style}\"")
+            } else {
+                String::new()
+            };
+            let markup = format!(
+                "<{cell_tag} r=\"{}\"{style_attribute} t=\"e\"><{value_tag}>{}</{value_tag}></{cell_tag}>",
+                error.address, error.excel_value
+            );
+            edits.push((cell.range().start, cell.range().end, column_number, markup));
+        } else {
+            anyhow::ensure!(
+                existing.is_none(),
+                "summary error cell {} already exists",
+                error.address
+            );
+            let offset = insertion
+                .or_else(|| last_cell.map(|cell| cell.range().end))
+                .with_context(|| format!("summary output row {row_number} has no cell anchor"))?;
+            edits.push((offset, offset, column_number, markup));
+        }
     }
 
-    edits.sort_by(|left, right| right.0.cmp(&left.0).then_with(|| right.1.cmp(&left.1)));
+    edits.sort_by(|left, right| right.0.cmp(&left.0).then_with(|| right.2.cmp(&left.2)));
     let mut patched = source.to_owned();
-    for (offset, _, markup) in edits {
-        patched.insert_str(offset, &markup);
+    for (start, end, _, markup) in edits {
+        patched.replace_range(start..end, &markup);
     }
     roxmltree::Document::parse(&patched).context("validate patched summary worksheet XML")?;
     Ok(patched.into_bytes())

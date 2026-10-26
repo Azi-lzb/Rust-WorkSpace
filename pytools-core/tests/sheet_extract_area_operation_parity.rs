@@ -1871,6 +1871,61 @@ fn interactive_menu_extracts_elapsed_duration_values() {
 }
 
 #[test]
+fn interactive_menu_preserves_excel_error_cells_during_area_extraction() {
+    let root = temporary_directory("sheet-extract-error-cells-menu");
+    let source = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/summary_used_range/error_value.xlsx");
+    let source_bytes = fs::read(&source).unwrap();
+    let source_sheets = read_value_columns(&source, 16_384).unwrap();
+    let error_sheet = source_sheets
+        .iter()
+        .find(|sheet| sheet.name == "Errors")
+        .unwrap();
+    for address in ["A1", "B1", "C1", "D1", "E1", "F1", "G1"] {
+        assert!(matches!(
+            error_sheet.values.get(address),
+            Some(CellValue::Error(_))
+        ));
+    }
+
+    let mut task = load_tasks(&cases())[0].clone();
+    task.workbook_keywords.clear();
+    task.sheet_keywords = "Errors".to_owned();
+    task.exclude_keywords.clear();
+    task.area_spec = "A1:G1".to_owned();
+    task.output_folder = "错误值提取".to_owned();
+    task.output_name = "error-values-output.xlsx".to_owned();
+    let config = create_menu_config(&root, &[task]);
+    let output = run_menu(&config, &format!("7\n6\nn\n{}\n", source.display()));
+    assert!(
+        output.status.success(),
+        "error-cell extraction menu failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let output_path = root.join("app/output/错误值提取/error-values-output.xlsx");
+    assert!(output_path.is_file());
+    let output_sheets = read_value_columns(&output_path, 16_384).unwrap();
+    assert_eq!(output_sheets.len(), 1);
+    assert_eq!(output_sheets[0].name, error_sheet.name);
+    for address in ["A1", "B1", "C1", "D1", "E1", "F1", "G1"] {
+        assert_eq!(
+            output_sheets[0].values.get(address),
+            error_sheet.values.get(address),
+            "area extraction changed {address}"
+        );
+    }
+    for address in ["A1", "B1", "C1", "D1", "E1", "F1", "G1"] {
+        assert!(matches!(
+            output_sheets[0].values.get(address),
+            Some(CellValue::Error(_))
+        ));
+    }
+    assert_eq!(fs::read(&source).unwrap(), source_bytes);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn interactive_menu_extracts_iso_typed_elapsed_durations() {
     let root = temporary_directory("sheet-extract-iso-duration-menu");
     let source = fixture_path("iso-typed-durations.xlsx");

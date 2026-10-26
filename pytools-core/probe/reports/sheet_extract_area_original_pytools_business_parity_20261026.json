@@ -1,0 +1,56 @@
+{
+  "schema_version": 1,
+  "status": "passed",
+  "feature": "PT-7-6 original PyTools business workbook area extraction",
+  "sample_kind": "original PyTools business workbook; read-only source",
+  "source_basename": "1.报表分口径.xlsx",
+  "source_bytes": 816501,
+  "area_spec": "A1:XFD1048576",
+  "entry": "Rust PyTools CLI menu → 7 → 6",
+  "python_baseline": "PyCode/core/feature_1_6_extract_sheets.py::run_extract_sheets",
+  "python_stats": {
+    "files": 1,
+    "extracted_sheets": 24,
+    "output_files": 1,
+    "failed_files": 0
+  },
+  "rust_run_status": "succeeded",
+  "rust_engines": [
+    "Calamine + namespace-aware OOXML",
+    "OOXML Patch",
+    "calamine",
+    "hard_link create-only publication",
+    "rust_xlsxwriter"
+  ],
+  "rust_merge_value_compatibility": {
+    "actual_engine": "Calamine + namespace-aware OOXML",
+    "stored_merged_child_values_suppressed": 1
+  },
+  "rust_error_patch_succeeded": true,
+  "rust_error_cells_preserved": 1212,
+  "python_projection": {
+    "worksheet_count": 24,
+    "non_empty_cells": 25788,
+    "cell_type_counts": {
+      "error": 1212,
+      "int": 9594,
+      "str": 14982
+    },
+    "error_cells": 1212
+  },
+  "rust_projection": {
+    "worksheet_count": 24,
+    "non_empty_cells": 25788,
+    "cell_type_counts": {
+      "error": 1212,
+      "int": 9594,
+      "str": 14982
+    },
+    "error_cells": 1212
+  },
+  "exact_output_projection_match": true,
+  "difference_locations": [],
+  "source_unchanged": true,
+  "output_location": "local F: drive test folder; excluded from Git",
+  "scope_note": "This closes one original PyTools workbook comparison for the configured full-area value-extraction task. It does not complete all PT-7-6 templates, Windows manual acceptance, or Linux/deb validation."
+}

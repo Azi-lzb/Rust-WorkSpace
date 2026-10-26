@@ -1052,3 +1052,11 @@ Windows 原生 pytools-core 二进制构建通过；真实菜单入口为 pytool
 以当前 HEAD `c13dfa2` 的 Windows 原生 `pytools.exe` 重跑原 PyTools 只读 `xlsx/` 目录 13 份真实 XLSX，分四批经 `summary-used-range` CLI 与只读 PyCode 完整输出对拍：96 张工作表、203,580 行精确一致；工作簿值/类型、已填充样式、工作表名称/维度、冻结窗格/表头加粗、公式/合并/定义名称/页面属性均一致。第 2 批保留 1,212 个 Excel 错误单元格。四批运行历史与事件流一致，实际读取引擎为 Calamine，写入引擎为 rust_xlsxwriter；源文件处理前后 SHA-256 一致。机器报告：`probe/reports/summary_used_range_real_parity_20261026.json`。
 
 当前 HEAD 的 Windows 原生 `cargo build --offline --locked -p pytools-core --bin pytools -j 1` 通过；构建与临时对拍目录位于 `F:\PyTools_Rust_迁移资料_20261026`。本次仅复验真实 `summary-used-range` CLI，不代表重新验收交互文件弹窗、NoCom 变体、其他格式或全产品。PT-6-1 的所覆盖 XLSX Windows 真实样本回归通过；最终交互验收、目标系统/离线交付仍待后续阶段。PT-1-2 保持排除。
+
+### 2026-10-26 PT-7-6 原 PyTools 业务报表错误值与合并单元格对拍
+
+首次对原 PyTools 只读业务报表 `xlsx/1.报表分口径.xlsx` 执行全区域提取时，Rust 在 `S0700_F_26!S8` 遇到 Excel 错误单元格后中止；旧 Python 会保留该错误值。另发现源工作簿某个合并子单元格存有底层字符串值，旧 Python/openpyxl 普通读取会把它视作空值。Rust 现用已登记错误值映射、受校验占位和 OOXML Patch 保留错误类型；通过现有 Excel Reader 的合并范围元数据跳过合并区域的非锚点值。未修改共享 crate。
+
+Windows 原生验证：`cargo fmt --manifest-path pytools-core/Cargo.toml -- --check`、`cargo test --offline --locked -p pytools-core --lib merged_child_values_tests -j 1`（1/1）、`cargo test --offline --locked -p pytools-core --lib patch_error_cells_tests -j 1`（1/1）、`cargo test --offline --locked -p pytools-core --test sheet_extract_area_operation_parity -j 1`（17/17）、`cargo test --offline --locked -p pytools-core --test summary_used_range_error -j 1`（5/5）、`cargo build --offline --locked -p pytools-core --bin pytools -j 1` 通过。真实 `pytools menu → 7 → 6` 与旧 PyCode `run_extract_sheets` 在只读原报表上以 `A1:XFD1048576` 对拍：双方均 files=1、extracted_sheets=24、output_files=1、failed_files=0；24 张输出表、25,788 个非空单元格和 1,212 个 Excel 错误值的坐标、类型、值、数字格式完全一致。Rust 日志记录忽略 1 个存有底层值的合并子单元格；源文件字节未改变。机器报告：`probe/reports/sheet_extract_area_original_pytools_business_parity_20261026.json`。完整 Python/Rust 派生工作簿保存在 `F:\PyTools_Rust_本轮工作文件_20261026\PT-7-6_原PyTools业务样本_20261026_最终对拍`，不纳入 Git。
+
+PT-7-6 整体仍为迁移中：此证据闭合一份原业务报表和一个全区域配置的对拍，不代表所有模板、功能变体或 Windows 人工验收完成。未知 Calamine 错误码仍失败关闭；其他源报表、时长输入、原生文件弹窗、目标 Linux/deb 未在本轮验收。PT-1-2 继续排除。无共享能力请求。回滚方式：对本功能提交执行 `git revert`，不触碰本轮前已有 WIP。

@@ -1,0 +1,9 @@
+工作范围：PyTools PT-7-6 区域工作表提取。修复真实原 PyTools 业务报表暴露的 Excel 错误值中止问题，并对齐 openpyxl 对合并子单元格的空值语义；不修改原 Python 项目、真实源工作簿或共享 Excel-Core。
+
+修改文件：`pytools-core/src/sheet_extract.rs`、`pytools-core/src/summary_ops.rs`、`pytools-core/tests/sheet_extract_area_operation_parity.rs`、`pytools-core/probe/compare_pt7_6_original_business_workbook.py`、对应机器报告、`MIGRATION_INVENTORY.md`。
+
+验证：Windows 原生 Rust。格式检查通过；合并子单元格单测 1/1、错误值补丁单测 1/1、区域提取菜单集成测试 17/17、PT-6-1 错误值回归 5/5、pytools 二进制构建通过。原 PyTools 只读 `1.报表分口径.xlsx` 由 PyCode 与真实 Rust 菜单 7→6 执行全区域对拍：24 张表、25,788 格、1,212 个错误单元格逐坐标/类型/值/数字格式完全一致；源未改变。Python/Rust 输出工作簿只保存在 F 盘本轮工作目录，未纳入 Git。
+
+未执行：其他原 PyTools 模板、人工交互验收、Linux/glibc/deb/麒麟/UOS 验收。PT-7-6 总体保持迁移中；未知错误码仍失败关闭。共享 crate 无修改或待 main 请求。
+
+WIP 保护：提交前检查到既有 `MIGRATION_INVENTORY.md` 修改、`HANDOFF_ZCODE_TO_CODEX.md` 和两份未跟踪 GPT 记录；保留原状，不纳入本功能提交。回滚：使用 Git revert 回滚本功能提交。

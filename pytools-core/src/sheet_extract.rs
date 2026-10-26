@@ -7,7 +7,10 @@
 use crate::config::ExtractTask;
 use crate::edit_plan::apply_plan_with_capability_file;
 use crate::file_commit::{replace_target_from_candidate, sha256_file, verify_planning_snapshot};
-use crate::summary_ops::{SummaryProgress, SummaryRunEvent};
+use crate::summary_ops::{
+    excel_error_value, patch_existing_error_cells, PendingErrorCell, SummaryProgress,
+    SummaryRunEvent,
+};
 use anyhow::{bail, ensure, Context, Result};
 use chrono::Local;
 use excel_editor::{
@@ -64,6 +67,7 @@ struct PendingWorkbook {
     existing_sheet_names: Vec<String>,
     sheet_names: Vec<String>,
     import_operations: Vec<EditOperation>,
+    error_cells: Vec<PendingErrorCell>,
 }
 
 struct StagedWorkbook {
@@ -778,6 +782,34 @@ where
             .iter()
             .map(|sheet| sparse_sheet(sheet, subday_date_cells.get(&sheet.name)))
             .collect::<Result<Vec<_>>>()?;
+        let has_matching_area_task = tasks.iter().any(|task| {
+            !is_full_sheet_task(task)
+                && workbook_matches(&source_file_name, task)
+                && !name_matches_exclude(&source_file_name, &task.exclude_keywords)
+                && !find_matched_sheets_for_task(
+                    &sheet_names,
+                    &task.sheet_keywords,
+                    &task.exclude_keywords,
+                )
+                .is_empty()
+        });
+        if has_matching_area_task {
+            let merge_compatibility_started = Instant::now();
+            let merged_child_values_suppressed =
+                suppress_openpyxl_merged_child_values(source_path, &mut sparse_sheets)?;
+            emitter.emit(
+                "merge_value_compatibility",
+                "succeeded",
+                format!(
+                    "已按旧 Python 合并单元格读取语义忽略 {merged_child_values_suppressed} 个合并子单元格值"
+                ),
+                Some(source_path),
+                Some(merge_compatibility_started.elapsed()),
+                &["pytools-core", "excel-reader", "namespace-aware OOXML"],
+                Some("Calamine + namespace-aware OOXML"),
+                None,
+            );
+        }
         let extracted_sheets_before = result.extracted_sheets;
         let has_matching_full_sheet_task = tasks.iter().any(|task| {
             is_full_sheet_task(task)
@@ -929,6 +961,7 @@ where
                             sheet_names,
                             existing_sheet_names,
                             import_operations: Vec::new(),
+                            error_cells: Vec::new(),
                         });
                         index
                     }
@@ -997,7 +1030,7 @@ where
                                 .context("extracted worksheet exceeds Excel row index range")?;
                             let column = u16::try_from(column_index)
                                 .context("extracted worksheet exceeds Excel column index range")?;
-                            write_extracted_value(
+                            let reader_error = write_extracted_value(
                                 worksheet,
                                 row,
                                 column,
@@ -1014,6 +1047,16 @@ where
                                     source_sheet.name
                                 )
                             })?;
+                            if let Some(reader_value) = reader_error {
+                                let address =
+                                    format!("{}{}", column_name(column_index + 1), row_index + 1);
+                                pending.error_cells.push(PendingErrorCell {
+                                    sheet_name: sheet_name.clone(),
+                                    address,
+                                    excel_value: excel_error_value(&reader_value)?,
+                                    reader_value,
+                                });
+                            }
                             non_empty_cells += 1;
                             max_row = max_row.max(row_index + 1);
                             max_column = max_column.max(column_index + 1);
@@ -1404,9 +1447,61 @@ where
                     format!("remove extraction skeleton {}", skeleton_path.display())
                 })?;
             }
+            let mut validated_stage_path = stage_path.clone();
+            if !pending.error_cells.is_empty() {
+                let patch_started = Instant::now();
+                emitter.emit(
+                    "ooxml_error_patch",
+                    "started",
+                    format!("正在保留 {} 个 Excel 错误值", pending.error_cells.len()),
+                    Some(&pending.path),
+                    None,
+                    &["pytools-core", "ooxml-patch"],
+                    Some("OOXML Patch"),
+                    None,
+                );
+                let patched_path = unique_stage_path(&pending.path)?;
+                temporary_files.push(patched_path.clone());
+                if let Err(error) =
+                    patch_existing_error_cells(&stage_path, &patched_path, &pending.error_cells)
+                {
+                    emitter.emit(
+                        "ooxml_error_patch",
+                        "failed",
+                        format!("提取结果中的 Excel 错误值保留失败：{error:#}"),
+                        Some(&pending.path),
+                        Some(patch_started.elapsed()),
+                        &["pytools-core", "ooxml-patch"],
+                        Some("OOXML Patch"),
+                        Some("ooxml_error_patch_error"),
+                    );
+                    return Err(error);
+                }
+                fs::remove_file(&stage_path).with_context(|| {
+                    format!(
+                        "remove pre-patch extraction candidate {}",
+                        stage_path.display()
+                    )
+                })?;
+                staged
+                    .last_mut()
+                    .context("staged extraction workbook is missing")?
+                    .stage_path = patched_path.clone();
+                validated_stage_path = patched_path;
+                emitter.emit(
+                    "ooxml_error_patch",
+                    "succeeded",
+                    "提取结果中的 Excel 错误值已保留并通过回读验证",
+                    Some(&pending.path),
+                    Some(patch_started.elapsed()),
+                    &["pytools-core", "ooxml-patch"],
+                    Some("OOXML Patch"),
+                    None,
+                );
+            }
             let validation_started = Instant::now();
             if let Err(error) = validate_staged_workbook_with_prefix(
-                &stage_path,
+                &validated_stage_path,
                 &pending.existing_sheet_names,
                 &pending.sheets,
             ) {
@@ -1836,7 +1931,7 @@ fn write_extracted_value(
     datetime_format: &Format,
     duration_format: &Format,
     time_format: &Format,
-) -> Result<()> {
+) -> Result<Option<String>> {
     if value.get("type").and_then(Value::as_str) == Some("pytools_time_only") {
         let serial = value
             .get("value")
@@ -1847,7 +1942,7 @@ fn write_extracted_value(
             "time-only extraction serial is outside one day"
         );
         worksheet.write_number_with_format(row, column, serial, time_format)?;
-        return Ok(());
+        return Ok(None);
     }
     let cell_value = CellValue::from_probe_json(value)?;
     match cell_value {
@@ -1889,11 +1984,12 @@ fn write_extracted_value(
         CellValue::DurationIso(_) => {
             bail!("ISO-typed duration values are unsupported by the area-only writer; output was not committed")
         }
-        CellValue::Error(_) => {
-            bail!("unsupported cell type for the area-only writer; output was not committed")
+        CellValue::Error(reader_value) => {
+            worksheet.write_string(row, column, excel_error_value(&reader_value)?)?;
+            return Ok(Some(reader_value));
         }
     }
-    Ok(())
+    Ok(None)
 }
 
 fn parse_extracted_calendar_datetime(value: &str) -> Result<ExcelDateTime> {
@@ -2649,6 +2745,87 @@ fn is_empty_cell(value: Option<&Value>) -> bool {
     }
 }
 
+fn suppress_openpyxl_merged_child_values(
+    source_path: &Path,
+    sheets: &mut [SparseSheet],
+) -> Result<usize> {
+    let workbook = read_workbook(source_path)
+        .with_context(|| format!("read merged ranges from {}", source_path.display()))?;
+    ensure!(
+        workbook.sheets.len() == sheets.len(),
+        "merged-range inventory disagrees with worksheet count in {}",
+        source_path.display()
+    );
+    let mut suppressed = 0;
+    for sheet in sheets {
+        let metadata = workbook
+            .sheets
+            .iter()
+            .find(|candidate| candidate.name == sheet.name)
+            .with_context(|| {
+                format!(
+                    "merged-range inventory is missing worksheet {:?} in {}",
+                    sheet.name,
+                    source_path.display()
+                )
+            })?;
+        ensure!(
+            metadata.merge_status == "read_by_calamine",
+            "cannot reproduce Python merged-cell semantics for worksheet {:?} in {}: {}",
+            sheet.name,
+            source_path.display(),
+            metadata.merge_status
+        );
+        suppressed += suppress_merged_child_values(sheet, &metadata.merges)?;
+    }
+    Ok(suppressed)
+}
+
+fn suppress_merged_child_values(
+    sheet: &mut SparseSheet,
+    merged_ranges: &[String],
+) -> Result<usize> {
+    let mut bounds = Vec::with_capacity(merged_ranges.len());
+    for range in merged_ranges {
+        let (start, end) = range
+            .split_once(':')
+            .with_context(|| format!("invalid merged range {range:?} on {:?}", sheet.name))?;
+        let (start_row, start_column) = parse_cell(start)
+            .with_context(|| format!("invalid merged range start {start:?} on {:?}", sheet.name))?;
+        let (end_row, end_column) = parse_cell(end)
+            .with_context(|| format!("invalid merged range end {end:?} on {:?}", sheet.name))?;
+        ensure!(
+            start_row <= end_row && start_column <= end_column,
+            "reversed merged range {range:?} on {:?}",
+            sheet.name
+        );
+        bounds.push((start_row, start_column, end_row, end_column));
+    }
+    if bounds.is_empty() {
+        return Ok(0);
+    }
+    let children = sheet
+        .values
+        .keys()
+        .copied()
+        .filter(|&(row, column)| {
+            bounds
+                .iter()
+                .any(|&(start_row, start_column, end_row, end_column)| {
+                    row >= start_row
+                        && row <= end_row
+                        && column >= start_column
+                        && column <= end_column
+                        && (row != start_row || column != start_column)
+                })
+        })
+        .collect::<Vec<_>>();
+    for child in &children {
+        sheet.values.remove(child);
+    }
+    Ok(children.len())
+}
+
 fn parse_cell(token: &str) -> Option<(usize, usize)> {
     let letters = token
         .bytes()
@@ -2678,6 +2855,35 @@ fn column_number(letters: &str) -> usize {
         0
     } else {
         column
+    }
+}
+
+#[cfg(test)]
+mod merged_child_values_tests {
+    use super::*;
+
+    #[test]
+    fn suppresses_stored_values_in_merged_children_but_keeps_anchor() -> Result<()> {
+        let mut values = BTreeMap::new();
+        values.insert((1, 1), json!({"type":"string", "value":"anchor"}));
+        values.insert((1, 2), json!({"type":"string", "value":"child"}));
+        values.insert((2, 1), json!({"type":"string", "value":"child"}));
+        values.insert((2, 2), json!({"type":"string", "value":"child"}));
+        values.insert((3, 2), json!({"type":"string", "value":"outside"}));
+        let mut sheet = SparseSheet {
+            name: "Merged".to_owned(),
+            max_row: 3,
+            max_column: 2,
+            values,
+        };
+
+        let suppressed = suppress_merged_child_values(&mut sheet, &["A1:B2".to_owned()])?;
+
+        assert_eq!(suppressed, 3);
+        assert_eq!(sheet.values.len(), 2);
+        assert!(sheet.values.contains_key(&(1, 1)));
+        assert!(sheet.values.contains_key(&(3, 2)));
+        Ok(())
     }
 }
 
