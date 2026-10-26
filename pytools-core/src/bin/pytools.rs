@@ -230,6 +230,10 @@ fn fallback_menu_global(config_path: &Path) -> Result<GlobalConfig> {
 }
 
 fn default_app_config_path() -> PathBuf {
+    if let Some(config_path) = std::env::var_os("PYTOOLS_CONFIG_PATH") {
+        return PathBuf::from(config_path);
+    }
+
     std::env::current_exe()
         .ok()
         .and_then(|executable| executable.parent().map(Path::to_path_buf))
@@ -3134,7 +3138,7 @@ where
                     "不会保留样式、公式缓存、批注、合并区域、行列尺寸、定义名称、打印设置、",
                     "数据验证、条件格式、绘图对象或宏，也不会重算公式。\n",
                     "ISO 日期/时长、错误值、空文本等无法原样保留的单元格会导致转换失败，且不生成输出。\n",
-                    "检测到 1904 日期系统的 XLSM 也会拒绝，以免改变日期序列的日历含义。\n",
+                    "检测到 1904 日期系统的 XLS/XLSM/XLSB 也会拒绝，以免改变日期序列的日历含义。\n",
                     "遇到无法安全表示的单元格时会失败；源文件不会修改。"
                 )
             )?;
@@ -11886,7 +11890,7 @@ fn print_usage() {
          convert-word --config <config.xlsx> [--to docx] [--engine auto|lo] [--output-dir <dir>] [--log-dir <dir>] [--log-view user|developer|off] <file>...\n\
          convert-file --input <file> --to <extension> [--output <file>] [--engine auto|lo|native]\n\
          native = 按值重建（C01，丢弃样式/公式缓存）；Excel 公式文本保留但不重算，CSV 按文本写入\n\
-                   ISO 日期/时长、错误值、空文本和检测到的 1904 epoch XLSM 会拒绝转换\n\
+                   ISO 日期/时长、错误值、空文本和检测到的 1904 epoch XLS/XLSM/XLSB 会拒绝转换\n\
          pytools extract-sheets --config <workbook.xlsx> [--output-dir <dir>] [--log-dir <dir>] [--log-view user|developer|off] [--append-existing] [--capabilities <json> --platform <id>] <source.xlsx>...\n\
          pytools region-sum-check [--config <workbook.xlsx>] [--output-dir <dir>] [--log-dir <dir>] [--log-view user|developer|off] <source.xlsx>...\n\
          pytools file-sort-prefix --config <workbook.xlsx> [--output-dir <dir>] [--log-dir <dir>] [--log-view user|developer|off] <file>...\n\

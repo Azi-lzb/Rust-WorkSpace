@@ -1,0 +1,24 @@
+执行者：Codex
+修改前 HEAD：c69d2ccdc1b90e8e4b1bfbbf5b59313e8d6ec418
+修改后 HEAD：本记录随本次提交纳入，SHA 见 Git 历史。
+WIP：保留原有 pytools-core/MIGRATION_INVENTORY.md 未提交修改、HANDOFF_ZCODE_TO_CODEX.md 及两份 PT-4-2/PT-6-2 未跟踪记录；本次仅暂存本记录和下列三个 PyTools 源码/测试文件。未触碰 Audit、共享 crates 或原 Python 项目。
+
+目的：把 Windows CLI 配置路径兼容和 PT-4-2 1904 epoch 失败关闭提示同步到 pytools-dev。无参数启动时支持旧版 PYTOOLS_CONFIG_PATH；转换菜单与帮助明确列出共享 reader 能检测并拒绝的 XLS/XLSM/XLSB 1904 epoch 输入。未改变转换路由、Excel 业务规则或生产 capability。
+
+修改文件：
+- pytools-core/src/bin/pytools.rs：默认交互菜单配置读取 PYTOOLS_CONFIG_PATH；扩展 native 转换的 1904 epoch 警示文本。
+- pytools-core/tests/quick_menu_cli.rs：覆盖无参数菜单和环境变量配置路径。
+- pytools-core/tests/conversion_menu_cli.rs：覆盖菜单/帮助中的 legacy epoch 格式提示。
+- 本记录。
+
+验证（Windows 原生）：
+- cargo fmt --manifest-path pytools-core/Cargo.toml -- --check：通过。
+- cargo test --offline --locked -p pytools-core --test conversion_menu_cli --test quick_menu_cli -j 1：14/14 通过；包括直接启动数字菜单、PYTOOLS_CONFIG_PATH、转换菜单和帮助提示。
+- cargo build --offline --locked -p pytools-core --bin pytools -j 1：通过；构建输出在 F 盘 CARGO_TARGET_DIR。
+- git diff --check：通过。
+
+未执行/已知问题：没有真实 1904 .xls/.xlsb 样本；PT-4-2 既有真实 .xls 转换保真失败关闭证据仍有效，本次没有重跑 sidecar 转换。未执行 Python/Rust 真实业务对拍、Linux 或 deb 验收；PT-4-2 及相关平台状态不变。共享 Excel API 弃用警告和 PyTools 既有 unused import 警告仍存在，未修改共享 crate。
+
+删除清单：无。
+回滚：仅回滚本记录所列 pytools.rs、conversion_menu_cli.rs、quick_menu_cli.rs 和本记录；保留开始前已存在的 inventory WIP、交接文件及两份未跟踪验证记录。
+【组件版本】不升级；只同步 CLI 配置兼容和既有安全 guard 提示。
