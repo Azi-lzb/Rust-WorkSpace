@@ -127,7 +127,7 @@
 
 当前执行骨架只接受输入/输出扩展名与登记格式一致的新目标路径；为每个候选引擎从原始输入创建独立临时副本。只有 `UnsupportedBeforeWrite` 且候选输出未写入时才继续下一个已合格引擎；写入失败、协议违约或输出校验失败均停止。通过 validator 后以同目录 hard link 做原子 no-clobber 发布；目标已存在时拒绝覆盖。覆盖/备份替换策略、实际 Excel validator 和 backend 仍未实现。
 
-## 4. 三类候选引擎及能力边界
+## 4. 修改引擎候选能力边界
 
 三个候选引擎不要求全部实现或启用。下表是测试优先级/候选能力，不是已支持声明。
 
@@ -174,6 +174,18 @@ OOXML Patch 是狭窄的补丁工具，不是完整读写器。新建工作簿�
 样式完整性断言使用 namespace-aware XML 解析：核对 cellXfs 计数及元素数，并检查单元格/行 s 与列 style 索引均在界内。AutoFilter 的 _xlnm._FilterDatabase 范围更新/清除应同时保持 hidden 属性；合成回归见 crates/excel-editor/tests/freeze_panes_auto_filter.rs。
 
 能力矩阵须继续拆到具体源操作与 ExcelEditPlan 操作序列；不能用上表代替 PYTHON_EXCEL_OPERATION_INVENTORY.md 的调用链核验。操作、样本或契约未确认时保持 unverified。引擎注册和合成测试不等于生产验收；不得据此自动改路由或创建 Passed capability。
+
+### 4.3 当前开发优先级（2026-10-26）
+
+以下优先级按已确认的真实业务规模制定，并覆盖本文件前文“比较所有候选修改引擎”的通用建议；它不改变任何已验收路由，也不把合成测试提升为 Passed capability。
+
+- Read 继续以 Calamine 为主，Create 继续以 rust_xlsxwriter 为主；不增加其他通用读取器或新建引擎。XLSX/XLSM 的 1904 epoch 由 OOXML 元数据识别，Calamine 支持的 XLS/XLSB epoch 也由 reader API 暴露；legacy 真实 1904 样本仍需验收。
+- Edit 新增能力优先落在 OOXML Patch 和 umya-spreadsheet。按小批次、少量工作簿/工作表/单元格处理，修改必须保护非目标区域；不以大型通用 Excel 编辑器为目标。
+- 已有 openpyxl worker、接口、测试及业务依赖保留；当前停止扩展新操作。未被真实样本验证替代的既有打印兼容路径不得删除或切换到 Rust 默认。
+- Excelize 继续作为占位/未来候选，不开发 worker、FFI 或新能力；除非同一真实模板与操作批次证明 Rust 原生方案无法安全满足需求，并经重新授权评估。
+- Calculate 复用 sidecar/lo-convert：Linux 选择 LibreOffice，Windows COM 仅选择 Microsoft Excel。sidecar 目前执行完整重算，验证公式文本与缓存节点完整性；业务仍须校验关键计算值。该命令尚未接入 Audit/PyTools 真实业务流程。
+- 后续次序：先解决 Audit #8 的工作簿/工作表关系按操作范围验证；再完成 Audit S1-F01 公式复制—重算—关键值读回的真实样本对拍；接着补真实 XLS/XLSB 日期 epoch 验收；打印整理最后按真实模板端到端验证样式、合并、尺寸、页面设置和新文件安全，再决定是否能替代现有 openpyxl 路径。
+- `CopyRange` / `ImportRange` 保持公式原样复制。新增的公式引用平移是显式 opt-in 语义；复杂公式不能安全调整时必须拒绝。测试通过本身不开放生产路由。
 
 ## 5. Python Excel 操作入口与修改操作族盘点
 
@@ -226,7 +238,7 @@ OOXML Patch 是狭窄的补丁工具，不是完整读写器。新建工作簿�
 1. **读能力矩阵**：以格式签名和真实文件为准，分别验证 xls、xlsx、xlsm、xlsb、csv；列明值/公式/合并及 OOXML 元数据覆盖。不可从扩展名或 ZIP 容器推断。
 2. **新建写入**：用 rust_xlsxwriter 验证所有实际新建输出；测量批量与低内存写入，比较文件结构和业务输出。
 3. **标准修改计划**：先定义语义操作模型、前置条件、保留契约、报告关联及计划校验；把现存直接调用 umya 的候选业务适配器收敛到该边界。
-4. **候选编辑器矩阵**：按已盘点的真实操作组合逐批测试 OOXML Patch、umya 与现有 openpyxl worker；只有结果显示 Excelize 有实际收益时，才开发批量 Go worker。不得把实现四种引擎作为迁移前置要求。
+4. **候选编辑器矩阵**：按已盘点的真实操作组合优先补齐 OOXML Patch 与 umya；保留现有 openpyxl 兼容能力但暂不扩展，Excelize 仅保留占位。新增/替代路由须有对应真实样本和完整操作批次证据。
 5. **业务增量迁移**：每个功能独立 fixture、Python 基线、Rust 结果、差异分类、失败回退和旧实现保留/切换条件；不合并 audit-core 与 pytools-core。
 6. **交付验收**：两个 deb 分开，x86_64/glibc 2.28 构建；核心 Linux 路径不要求用户预装 Python、Go、Office/WPS/LO/JVM。产品若启用 openpyxl worker，将隔离 runtime 随包内置并做目标机动态依赖验收。未来 Windows COM 编辑不进入 Linux 包；若 Linux 启用 LibreOffice Calc 计算，先明确独立运行时来源并验证目标平台。外部能力缺失不阻塞其他功能。
 
