@@ -48,6 +48,9 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
+#[path = "pytools_menu/mod.rs"]
+mod pytools_menu;
+
 fn main() {
     if let Err(error) = run() {
         eprintln!("pytools: {error:#}");
@@ -56,8 +59,15 @@ fn main() {
 }
 
 fn run() -> Result<()> {
-    let mut arguments = std::env::args().skip(1);
-    let Some(command) = arguments.next() else {
+    let arguments = std::env::args().skip(1).collect::<Vec<_>>();
+    if arguments.is_empty() || arguments.as_slice() == ["menu"] {
+        return pytools_menu::run(run_command);
+    }
+    run_command(arguments)
+}
+
+fn run_command(mut arguments: Vec<String>) -> Result<()> {
+    let Some(command) = arguments.first().cloned() else {
         print_usage();
         bail!("missing command");
     };
@@ -65,7 +75,7 @@ fn run() -> Result<()> {
         print_usage();
         return Ok(());
     }
-    let arguments = arguments.collect::<Vec<_>>();
+    arguments.remove(0);
     if arguments
         .iter()
         .any(|argument| matches!(argument.as_str(), "--help" | "-h"))
