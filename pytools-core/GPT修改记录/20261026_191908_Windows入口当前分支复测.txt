@@ -1,0 +1,23 @@
+时间：2026-10-26 19:19（Asia/Shanghai）
+执行者：Codex
+分支：codex/windows-operable-entries
+修改前 commit：4945ace047c6c089fa2586dce442e8b84449d01d；工作树干净
+修改后 commit：本次记录所在提交
+
+目的：按 Windows 可操作入口要求复测既有 Rust CLI 数字菜单。
+
+文件：
+- `pytools-core/MIGRATION_INVENTORY.md`：记录当前 checkout 的 Windows Release 复测证据和边界。
+- 本记录。
+
+仅更新迁移状态证据；业务、配置格式、菜单实现及源 Python 项目无变化。
+
+验证：
+- Windows Rust 1.99.1：`cargo test --offline --locked -p pytools-core --test interactive_menu -j 1`，5/5 通过。
+- 联合 Windows Release 构建通过。`F:\CodexBuilds\windows-operable-entries-20261026-codex-current\release\pytools.exe` 直接运行、输入 `0` 后显示旧版 1–9 菜单并正常退出。
+
+未执行/已知问题：未逐项人工操作所有菜单；未运行真实业务样本或真实配置；菜单业务状态不因本轮入口复核提升。Linux/deb 未执行。
+
+组件版本：不升级（仅入口复测记录）。
+删除清单：无。
+回滚：仅需恢复本记录和迁移清单新增行。

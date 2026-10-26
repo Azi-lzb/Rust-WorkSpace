@@ -1,0 +1,24 @@
+时间：2026-10-26 19:19（Asia/Shanghai）
+执行者：Codex
+分支：codex/windows-operable-entries
+修改前 commit：4945ace047c6c089fa2586dce442e8b84449d01d；工作树干净
+修改后 commit：本次记录所在提交
+
+目的：复测现有 Audit Rust GUI bridge 的 Windows 启动和 API 状态；不修改业务代码或共享 Excel-Core。
+
+文件：
+- `audit-core/MIGRATION_INVENTORY.md`：记录当前 checkout 的 Windows Release 入口证据，保持真实业务验收状态不变。
+- 本记录。
+
+复用 Rust `open-data-audit-gui`、既有前端与 loopback bridge；源 Python 和真实工作簿未修改。
+
+验证：
+- Windows Rust 1.99.1：`cargo test --offline --locked -p audit-core --lib web_bridge::tests -j 1`，9/9 通过。
+- 联合 Release 构建通过；直接启动独立 GUI exe 的 `--no-browser --port 0` 服务后，`GET /` 和 `POST /api/get_state` 返回 200，页面显示 S2 入口，未接通 `start_dag_flow` 返回 501。
+- 可执行文件：`F:\CodexBuilds\windows-operable-entries-20261026-codex-current\release\open-data-audit-gui.exe`。
+
+未执行/已知问题：本轮进程检查使用无浏览器模式；默认浏览器启动由既有复测记录覆盖。未运行真实 S2 审核或完成 GUI 全功能人工验收；S1/S3/S4/S5 未接线或未验收；Linux/deb 未执行。
+
+组件版本：不升级（仅入口复测记录）。
+删除清单：无。
+回滚：仅需恢复本记录和迁移清单新增行。

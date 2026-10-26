@@ -81,6 +81,8 @@
 
 ## Rust 前端接入状态
 
+- 2026-10-26 当前 Windows 原生 Release 复测（HEAD `4945ace`）：`cargo test --offline --locked -p audit-core --lib web_bridge::tests -j 1` 9/9 通过，联合 Release 构建成功。直接运行 `F:\CodexBuilds\windows-operable-entries-20261026-codex-current\release\open-data-audit-gui.exe --no-browser --port 0 --config audit-core/tests/fixtures/s2_config/check_valid.xlsx`，原页面 `GET /` 为 200、`POST /api/get_state` 为 200，未接通的 `start_dag_flow` 为 501。此为入口/合成 API 冒烟，未执行真实 S2 审核或完整 GUI 人工验收。
+
 - 源项目 `core/frontend/web/index.html` 和 `core/frontend/assets/app-icon.{png,ico}` 已原样复制到 `frontend/`；HTML 与源文件 SHA-256 一致。源项目只读，没有修改。
 - Windows 可直接启动新增的 `open-data-audit-gui.exe`（无参数默认端口 8750，可用 `--port`/`--config` 覆盖）；它复用原 GUI 页面和同一 HTTP bridge，仅监听 `127.0.0.1`，默认启动尝试打开系统默认浏览器。原 `open-data-audit serve` 保留自动打开行为；`open-data-audit-gui --no-browser` 用于检查。打开失败时打印手动访问地址。该入口为沿用原页面的本机浏览器 GUI，不是嵌入式 pywebview 外壳；Windows 启动/接口冒烟已通过，真实 S2 业务和完整人工验收仍待验证。
 - bridge 在响应时注入运行时接口，并在响应中填入原页面的产品标题与 `/assets/app-icon.png` 图标地址；仓库中的 HTML 文件保持不变。当前页面启动后导航至已接入的 S2。
