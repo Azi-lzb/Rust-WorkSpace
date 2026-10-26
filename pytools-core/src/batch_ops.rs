@@ -184,7 +184,7 @@ pub fn build_rural_loan_plan(
         .find(|sheet| AREA_KEYS.iter().all(|key| sheet.name.contains(key)))
         .context("current workbook lacks a city area statistics sheet")?;
     let (current_values, current_rows, current_duplicates) = institution_values(current_inst);
-    let (previous_values, _, previous_duplicates) = institution_values(previous_inst);
+    let (previous_values, previous_rows, previous_duplicates) = institution_values(previous_inst);
     anyhow::ensure!(
         current_duplicates.is_empty(),
         "duplicate institution names in current workbook: {}",
@@ -199,9 +199,9 @@ pub fn build_rural_loan_plan(
     let mut fill_total = 0.0;
     let mut unmatched = Vec::new();
     let mut operations = Vec::new();
-    for (name, row) in &current_rows {
-        if let Some(previous_value) = previous_values.get(name) {
-            let difference = current_values[name] - previous_value;
+    for (name, row) in institution_rows_in_order(&current_rows) {
+        if let Some(previous_value) = previous_values.get(&name) {
+            let difference = current_values[&name] - previous_value;
             fill_total += difference;
             matched += 1;
             operations.push(EditOperation::SetCellValue {
@@ -210,7 +210,7 @@ pub fn build_rural_loan_plan(
                 value: CellValue::Decimal(exact_decimal_text(difference)),
             });
         } else {
-            unmatched.push(name.clone());
+            unmatched.push(name);
             // Preserve the source implementation's openpyxl behavior:
             // assigning cell(..., value=None) does not clear an existing value.
         }
@@ -220,10 +220,9 @@ pub fn build_rural_loan_plan(
     let city_row = find_exact_row(current_area, &[1, 2, 3], "惠州市")
         .context("area sheet lacks 惠州市 row")?;
     let area_total = numeric(&cell_value(current_area, city_row, header_col));
-    let previous_only = previous_values
-        .keys()
-        .filter(|name| !current_values.contains_key(*name))
-        .cloned()
+    let previous_only = institution_rows_in_order(&previous_rows)
+        .into_iter()
+        .filter_map(|(name, _)| (!current_values.contains_key(&name)).then_some(name))
         .collect();
     let summary = RuralLoanSummary {
         matched,
@@ -280,7 +279,6 @@ pub fn build_quarterly_rural_loan_plan(
         .context("regional statistics sheet lacks the month-on-month header")?;
     let mut operations = Vec::new();
     let mut regions = Vec::new();
-    let mut changed = 0;
     let mut total_fill = 0.0;
     let mut total_area = 0.0;
     let mut total_matched = 0;
@@ -303,7 +301,7 @@ pub fn build_quarterly_rural_loan_plan(
             continue;
         };
         let (cur_values, cur_rows, cur_dups) = institution_values(current_sheet);
-        let (prev_values, _, prev_dups) = institution_values(previous_sheet);
+        let (prev_values, prev_rows, prev_dups) = institution_values(previous_sheet);
         if !cur_dups.is_empty() || !prev_dups.is_empty() {
             let duplicates = cur_dups.into_iter().chain(prev_dups).collect::<Vec<_>>();
             let error = format!("分机构表存在重复机构名称：{}", duplicates.join("、"));
@@ -324,9 +322,9 @@ pub fn build_quarterly_rural_loan_plan(
         let mut region_fill = 0.0;
         let mut matched = 0;
         let mut unmatched = Vec::new();
-        for (name, row) in &cur_rows {
-            if let Some(previous_value) = prev_values.get(name) {
-                let delta = cur_values[name] - previous_value;
+        for (name, row) in institution_rows_in_order(&cur_rows) {
+            if let Some(previous_value) = prev_values.get(&name) {
+                let delta = cur_values[&name] - previous_value;
                 region_fill += delta;
                 matched += 1;
                 operations.push(EditOperation::SetCellValue {
@@ -335,7 +333,7 @@ pub fn build_quarterly_rural_loan_plan(
                     value: CellValue::Decimal(exact_decimal_text(delta)),
                 });
             } else {
-                unmatched.push(name.clone());
+                unmatched.push(name);
                 // Match the old openpyxl call cell(..., value=None), which
                 // leaves a previously stored D-column value untouched.
             }
@@ -353,7 +351,6 @@ pub fn build_quarterly_rural_loan_plan(
         };
         total_fill += region_fill;
         total_matched += matched;
-        changed += cur_rows.len();
         regions.push(QuarterlyRegionSummary {
             region,
             sheet: current_sheet.name.clone(),
@@ -362,10 +359,9 @@ pub fn build_quarterly_rural_loan_plan(
             area_total,
             consistent,
             unmatched_current: unmatched,
-            previous_only: prev_values
-                .keys()
-                .filter(|name| !cur_values.contains_key(*name))
-                .cloned()
+            previous_only: institution_rows_in_order(&prev_rows)
+                .into_iter()
+                .filter_map(|(name, _)| (!cur_values.contains_key(&name)).then_some(name))
                 .collect(),
             error,
         });
@@ -382,13 +378,14 @@ pub fn build_quarterly_rural_loan_plan(
         consistent,
         error: None,
     };
+    let changed_cells = operations.len();
     let plan = make_plan(current, output, operations, "adjust-quarterly-rural-loan")?;
     Ok((
         PlanBuildReport {
             input: current.into(),
             output: output.into(),
             matched_sheets: summary.regions.len(),
-            changed_cells: changed,
+            changed_cells,
             plan,
             warnings,
         },
@@ -483,6 +480,14 @@ fn institution_values(
         rows.insert(name, row);
     }
     (values, rows, duplicates)
+}
+fn institution_rows_in_order(rows: &HashMap<String, usize>) -> Vec<(String, usize)> {
+    let mut entries = rows
+        .iter()
+        .map(|(name, row)| (name.clone(), *row))
+        .collect::<Vec<_>>();
+    entries.sort_by_key(|(_, row)| *row);
+    entries
 }
 fn unique_sheet<'a>(book: &'a excel_reader::WorkbookDump, keys: &[&str]) -> Option<&'a SheetDump> {
     let hits = book

@@ -140,6 +140,62 @@ fn rural_loan_plan_preserves_unrounded_difference() -> Result<()> {
 }
 
 #[test]
+fn rural_loan_reports_and_plan_follow_institution_row_order() -> Result<()> {
+    let dir = TestDir::new();
+    let current = dir.path("current.xlsx");
+    let previous = dir.path("previous.xlsx");
+    write_book(
+        &current,
+        vec![
+            (
+                "惠州市涉农贷款分机构",
+                institution_sheet(&[
+                    ("机构乙", 15.0, 999.0),
+                    ("未匹配甲", 4.0, 998.0),
+                    ("机构甲", 11.0, 997.0),
+                    ("未匹配乙", 5.0, 996.0),
+                ]),
+            ),
+            (
+                "本外币涉农贷款分地区",
+                vec![
+                    vec![Cell::Text("地区"), Cell::Text("涉农贷款比上月")],
+                    vec![Cell::Text("惠州市"), Cell::Number(15.0)],
+                ],
+            ),
+        ],
+    )?;
+    write_book(
+        &previous,
+        vec![(
+            "惠州市涉农贷款分机构",
+            institution_sheet(&[
+                ("机构乙", 10.0, 0.0),
+                ("上期乙", 3.0, 0.0),
+                ("机构甲", 1.0, 0.0),
+                ("上期甲", 5.0, 0.0),
+            ]),
+        )],
+    )?;
+
+    let (report, summary) =
+        build_rural_loan_plan(&current, &previous, &dir.path("candidate.xlsx"))?;
+    assert_eq!(summary.unmatched_current, ["未匹配甲", "未匹配乙"]);
+    assert_eq!(summary.previous_only, ["上期乙", "上期甲"]);
+    let plan = report.plan.expect("rural-loan plan missing");
+    let edited_cells = plan
+        .operations
+        .iter()
+        .filter_map(|operation| match operation {
+            excel_editor::EditOperation::SetCellValue { cell, .. } => Some(cell.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(edited_cells, ["D3", "D5"]);
+    Ok(())
+}
+
+#[test]
 fn quarterly_summary_keeps_invalid_regions_and_fails_overall_check() -> Result<()> {
     let dir = TestDir::new();
     let current = dir.path("current.xlsx");
@@ -192,7 +248,7 @@ fn quarterly_summary_keeps_invalid_regions_and_fails_overall_check() -> Result<(
         ],
     )?;
 
-    let (_, summary) =
+    let (report, summary) =
         build_quarterly_rural_loan_plan(&current, &previous, &dir.path("candidate.xlsx"))?;
     assert_eq!(summary.regions.len(), 4);
     assert!(!summary.consistent);
@@ -210,5 +266,65 @@ fn quarterly_summary_keeps_invalid_regions_and_fails_overall_check() -> Result<(
         summary.regions[3].error.as_deref(),
         Some("“涉农贷款分地区统计表”未找到地区行：深圳市")
     );
+    assert_eq!(report.changed_cells, 2);
+    assert_eq!(report.plan.as_ref().unwrap().operations.len(), 2);
+    Ok(())
+}
+
+#[test]
+fn quarterly_rural_loan_reports_follow_institution_row_order() -> Result<()> {
+    let dir = TestDir::new();
+    let current = dir.path("current.xlsx");
+    let previous = dir.path("previous.xlsx");
+    write_book(
+        &current,
+        vec![
+            (
+                "江门市涉农贷款分机构",
+                institution_sheet(&[
+                    ("机构乙", 15.0, 999.0),
+                    ("未匹配甲", 4.0, 998.0),
+                    ("机构甲", 11.0, 997.0),
+                    ("未匹配乙", 5.0, 996.0),
+                ]),
+            ),
+            (
+                "涉农贷款分地区统计表",
+                vec![
+                    vec![Cell::Text("地区"), Cell::Text("涉农贷款比上月")],
+                    vec![Cell::Text("江门市"), Cell::Number(15.0)],
+                ],
+            ),
+        ],
+    )?;
+    write_book(
+        &previous,
+        vec![(
+            "江门市涉农贷款分机构",
+            institution_sheet(&[
+                ("机构乙", 10.0, 0.0),
+                ("上期乙", 3.0, 0.0),
+                ("机构甲", 1.0, 0.0),
+                ("上期甲", 5.0, 0.0),
+            ]),
+        )],
+    )?;
+
+    let (report, summary) =
+        build_quarterly_rural_loan_plan(&current, &previous, &dir.path("candidate.xlsx"))?;
+    let region = &summary.regions[0];
+    assert_eq!(region.unmatched_current, ["未匹配甲", "未匹配乙"]);
+    assert_eq!(region.previous_only, ["上期乙", "上期甲"]);
+    assert_eq!(report.changed_cells, 2);
+    let plan = report.plan.expect("quarterly rural-loan plan missing");
+    let edited_cells = plan
+        .operations
+        .iter()
+        .filter_map(|operation| match operation {
+            excel_editor::EditOperation::SetCellValue { cell, .. } => Some(cell.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(edited_cells, ["D3", "D5"]);
     Ok(())
 }

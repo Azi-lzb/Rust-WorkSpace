@@ -652,6 +652,8 @@ Windows 原生 Rust 验证：`cargo fmt --manifest-path pytools-core/Cargo.toml 
 
 这些证据仅覆盖合成 `.xlsx`，不登记生产 Passed capability，也不改变默认修改路由。真实业务模板/数据、Windows 原生文件弹窗手工操作、目标 Linux/glibc 2.28 与离线 deb 尚未验收；PT-7-7/PT-7-8 的产品验收状态仍为未验证。
 
+2026-10-27 回归补正：PT-7-7/PT-7-8 的机构处理与结果列表现按源工作表行序稳定输出，以匹配 Python 字典的插入顺序；PT-7-8 `changed_cells` 仅统计实际生成的编辑操作，不再把未匹配机构计入。新增回归覆盖摘要列表、计划操作顺序及计数。Windows 原生 `cargo check --offline --locked -p pytools-core -j 1`、`rural_loan_regressions` 4/4、真实 `pytools menu` → 7→8 合成 capability 执行冒烟 1/1、fmt 和 diff 检查通过。仍无真实样本 Python/Rust 对拍；业务与平台验收状态不变。
+
 ### 2026-10-25 PT-6-2 Windows 原生 Rust 菜单与 PyCode 对拍
 
 使用 Windows 原生 Rust 1.99.1 验证既有真实入口：`cargo test --manifest-path Cargo.toml -p pytools-core --test summary_comments_cli --test summary_menu_cli --offline --locked -j 1` 中 `summary_comments_cli` 4/4、`summary_menu_cli` 3/3 通过。CLI 测试覆盖 user/developer/off 三种视图和合并区域锚点语义；菜单测试验证 `pytools menu` → 6→2、配置输出/日志目录、运行历史及损坏输入错误。
