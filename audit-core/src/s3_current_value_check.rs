@@ -544,7 +544,7 @@ pub fn run_current_value_check_files(
     })
 }
 
-fn resolve_new_xlsx_path(path: &Path, description: &str) -> Result<PathBuf> {
+pub(crate) fn resolve_new_xlsx_path(path: &Path, description: &str) -> Result<PathBuf> {
     ensure!(
         path.extension()
             .and_then(|value| value.to_str())
@@ -622,7 +622,7 @@ pub fn input_reader_for_paths(paths: &[PathBuf]) -> String {
     }
 }
 
-fn load_central_dataset(
+pub(crate) fn load_central_dataset(
     paths: &[PathBuf],
     conversion_factor: f64,
     exempt_indicators: &BTreeSet<String>,
@@ -1181,6 +1181,10 @@ fn unit_factor(unit: &str) -> f64 {
     }
 }
 
+pub(crate) fn s3_target_unit_factor(unit: &str) -> f64 {
+    unit_factor(unit)
+}
+
 fn python_float_repr(value: f64) -> String {
     if value.is_nan() {
         return "nan".to_owned();
@@ -1204,6 +1208,10 @@ fn python_float_repr(value: f64) -> String {
         return fixed_to_scientific_notation(&representation);
     }
     representation
+}
+
+pub(crate) fn s3_python_float_repr(value: f64) -> String {
+    python_float_repr(value)
 }
 
 fn expand_scientific_notation(mantissa: &str, exponent: i32) -> String {
@@ -1370,21 +1378,28 @@ fn calculate_expression(
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-enum ExpressionValue {
+pub(crate) enum ExpressionValue {
     Number(f64),
     Boolean(bool),
 }
 
 impl ExpressionValue {
-    fn as_number(self) -> f64 {
+    pub(crate) fn as_number(self) -> f64 {
         match self {
             Self::Number(value) => value,
             Self::Boolean(value) => f64::from(value),
         }
     }
 
-    fn truthy(self) -> bool {
+    pub(crate) fn truthy(self) -> bool {
         self.as_number() != 0.0
+    }
+
+    pub(crate) fn as_boolean(self) -> Option<bool> {
+        match self {
+            Self::Boolean(value) => Some(value),
+            Self::Number(_) => None,
+        }
     }
 }
 
@@ -1427,6 +1442,13 @@ fn evaluate_expression(
         ));
     }
     Ok(value)
+}
+
+pub(crate) fn evaluate_s3_business_expression(
+    expression: &str,
+    tolerance: f64,
+) -> Result<ExpressionValue, String> {
+    evaluate_expression(expression, &[("Thd", tolerance)])
 }
 
 fn tokenize_expression(expression: &str) -> Result<Vec<ExpressionToken>, String> {
@@ -1762,6 +1784,9 @@ impl ExpressionParser<'_> {
             )),
             "NOT" if arguments.len() == 1 => Ok(ExpressionValue::Boolean(!arguments[0].truthy())),
             "AND" | "OR" | "NOT" => Err(format!("{normalized} 参数数量错误")),
+            "ABS" if arguments.len() == 1 => checked_number(arguments[0].as_number().abs()),
+            "ABS" => Err("ABS 参数数量错误".to_owned()),
+            "SUM" => checked_number(arguments.iter().map(|value| value.as_number()).sum()),
             _ => Err(format!("未知函数「{name}」")),
         }
     }
@@ -2066,6 +2091,18 @@ mod tests {
         );
         assert!(evaluate_expression("1 / 0", &[]).is_err());
         assert!(evaluate_expression("left > unknown", &[("left", 1.0)]).is_err());
+    }
+
+    #[test]
+    fn business_expression_supports_configured_abs_and_sum_functions() {
+        assert_eq!(
+            evaluate_s3_business_expression("AND(ABS(-3)=3,SUM(1,2,3)=6)", 0.01).unwrap(),
+            ExpressionValue::Boolean(true)
+        );
+        let value = evaluate_s3_business_expression("SUM(Thd,ABS(-2))", 0.01)
+            .unwrap()
+            .as_number();
+        assert!((value - 2.01).abs() < 1e-12);
     }
 
     #[test]
