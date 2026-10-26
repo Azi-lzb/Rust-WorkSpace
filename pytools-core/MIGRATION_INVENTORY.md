@@ -1046,3 +1046,9 @@ Windows 原生 `timeline_menu_cli` 27/27、`cargo fmt --check`、`cargo build --
 新增 probe/compare_real_rules_menu.py 与报告 probe/reports/real_rules_menu_parity_20261026.json。只读使用公开 VBA 配置夹具中的 15 条真实时序规则和 146 条路径映射，经临时桥接配置驱动 PyCode 基线与真实 Rust 交互菜单；全局路径和三个源工作簿为临时合成数据。菜单 1→3 与 1→4 各处理 3 个源簿，PyCode 与 Rust 输出的工作表顺序、维度、单元格值/类型、数值格式、有效样式、合并、公式、定义名称和冻结窗格均精确一致；两种模式输出维度相同，为 9×8、7×5、4×6。开发者历史两项均 succeeded、记录 3 个输入和实际引擎 calamine/rust_xlsxwriter，未记录源路径；源簿处理前后字节一致。
 
 Windows 原生 pytools-core 二进制构建通过；真实菜单入口为 pytools menu → 1 → 3/4，手动分号路径输入。PT-1-3/PT-1-4 的真实源报表仍不可用，功能生命周期仍为未验证；该证据是真实配置规则与合成数据的组合，不是业务验收。原生文件对话框、目标追加/生产 capability、Kylin/UOS、glibc 2.28、离线 deb 未验证。PT-1-2 继续保持排除。
+
+### 2026-10-26 PT-6-1 当前 pytools-dev HEAD Windows 真实样本回归
+
+以当前 HEAD `c13dfa2` 的 Windows 原生 `pytools.exe` 重跑原 PyTools 只读 `xlsx/` 目录 13 份真实 XLSX，分四批经 `summary-used-range` CLI 与只读 PyCode 完整输出对拍：96 张工作表、203,580 行精确一致；工作簿值/类型、已填充样式、工作表名称/维度、冻结窗格/表头加粗、公式/合并/定义名称/页面属性均一致。第 2 批保留 1,212 个 Excel 错误单元格。四批运行历史与事件流一致，实际读取引擎为 Calamine，写入引擎为 rust_xlsxwriter；源文件处理前后 SHA-256 一致。机器报告：`probe/reports/summary_used_range_real_parity_20261026.json`。
+
+当前 HEAD 的 Windows 原生 `cargo build --offline --locked -p pytools-core --bin pytools -j 1` 通过；构建与临时对拍目录位于 `F:\PyTools_Rust_迁移资料_20261026`。本次仅复验真实 `summary-used-range` CLI，不代表重新验收交互文件弹窗、NoCom 变体、其他格式或全产品。PT-6-1 的所覆盖 XLSX Windows 真实样本回归通过；最终交互验收、目标系统/离线交付仍待后续阶段。PT-1-2 保持排除。

@@ -1,0 +1,547 @@
+{
+  "schema_version": 1,
+  "suite": "pytools.summary_used_range_real_sample_parity",
+  "date": "2026-10-26",
+  "status": "passed_real_sample_cli_parity",
+  "data_origin": "read-only workbook assets in the original PyTools project",
+  "source_samples": [
+    {
+      "relative_path": "xlsx/2.报表不分口径.xlsx",
+      "sheet_count": 15,
+      "worksheet_dimensions_missing": 0,
+      "used_range_rows": 740,
+      "max_used_rows": 153,
+      "max_used_columns": 33
+    },
+    {
+      "relative_path": "xlsx/2.报表校验关系.xlsx",
+      "sheet_count": 15,
+      "worksheet_dimensions_missing": 15,
+      "used_range_rows": 427,
+      "max_used_rows": 70,
+      "max_used_columns": 257
+    },
+    {
+      "relative_path": "xlsx/2.报表校验关系(仅公式校验).xlsx",
+      "sheet_count": 15,
+      "worksheet_dimensions_missing": 0,
+      "used_range_rows": 362,
+      "max_used_rows": 69,
+      "max_used_columns": 257
+    },
+    {
+      "relative_path": "xlsx/2.报表校验关系((仅公式校验1).xlsx",
+      "sheet_count": 15,
+      "worksheet_dimensions_missing": 0,
+      "used_range_rows": 427,
+      "max_used_rows": 70,
+      "max_used_columns": 257
+    },
+    {
+      "relative_path": "xlsx/1.报表分口径.xlsx",
+      "sheet_count": 24,
+      "worksheet_dimensions_missing": 0,
+      "used_range_rows": 7462,
+      "max_used_rows": 1237,
+      "max_used_columns": 210
+    },
+    {
+      "relative_path": "xlsx/4.校验公式v1.xlsx",
+      "sheet_count": 1,
+      "worksheet_dimensions_missing": 0,
+      "used_range_rows": 1149,
+      "max_used_rows": 1149,
+      "max_used_columns": 13
+    },
+    {
+      "relative_path": "xlsx/4.校验公式v2.xlsx",
+      "sheet_count": 1,
+      "worksheet_dimensions_missing": 0,
+      "used_range_rows": 1149,
+      "max_used_rows": 1149,
+      "max_used_columns": 14
+    },
+    {
+      "relative_path": "xlsx/4.校验公式v3.xlsx",
+      "sheet_count": 1,
+      "worksheet_dimensions_missing": 0,
+      "used_range_rows": 1743,
+      "max_used_rows": 1743,
+      "max_used_columns": 13
+    },
+    {
+      "relative_path": "xlsx/4.校验公式（仅公式校验-AI分析版）.xlsx",
+      "sheet_count": 1,
+      "worksheet_dimensions_missing": 0,
+      "used_range_rows": 1756,
+      "max_used_rows": 1756,
+      "max_used_columns": 14
+    },
+    {
+      "relative_path": "xlsx/4.校验公式（程序生成）.xlsx",
+      "sheet_count": 2,
+      "worksheet_dimensions_missing": 0,
+      "used_range_rows": 38970,
+      "max_used_rows": 38951,
+      "max_used_columns": 14
+    },
+    {
+      "relative_path": "xlsx/4.校验公式（对比）.xlsx",
+      "sheet_count": 1,
+      "worksheet_dimensions_missing": 0,
+      "used_range_rows": 66896,
+      "max_used_rows": 66896,
+      "max_used_columns": 19
+    },
+    {
+      "relative_path": "xlsx/4.校验公式（AI分析版）.xlsx",
+      "sheet_count": 3,
+      "worksheet_dimensions_missing": 0,
+      "used_range_rows": 39166,
+      "max_used_rows": 39076,
+      "max_used_columns": 14
+    },
+    {
+      "relative_path": "xlsx/5.校验关系-规则定位索引.xlsx",
+      "sheet_count": 2,
+      "worksheet_dimensions_missing": 0,
+      "used_range_rows": 43333,
+      "max_used_rows": 42922,
+      "max_used_columns": 12
+    }
+  ],
+  "input_format": "xlsx",
+  "source_workbooks": 13,
+  "source_sha256_before_after_equal": true,
+  "source_sheet_count": 96,
+  "source_used_range_rows": 203580,
+  "source_max_used_rows": 66896,
+  "source_max_used_columns": 257,
+  "summary_rows": 203580,
+  "batches": [
+    {
+      "source_sample_relative_paths": [
+        "xlsx/2.报表不分口径.xlsx",
+        "xlsx/2.报表校验关系.xlsx",
+        "xlsx/2.报表校验关系(仅公式校验).xlsx",
+        "xlsx/2.报表校验关系((仅公式校验1).xlsx"
+      ],
+      "source_workbooks": 4,
+      "source_used_range_rows": 1956,
+      "summary_rows": 1956,
+      "pycode_dimensions": [
+        {
+          "name": "汇总",
+          "rows": 1957,
+          "columns": 260
+        }
+      ],
+      "rust_dimensions": [
+        {
+          "name": "汇总",
+          "rows": 1957,
+          "columns": 260
+        }
+      ],
+      "python_elapsed_ms": 5544,
+      "rust_cli_wall_elapsed_ms": 3462,
+      "rust_execution": {
+        "ooxml_error_cells_patched": 0,
+        "read_elapsed_ms": 1327,
+        "reader_engine": "calamine",
+        "total_elapsed_ms": 1837,
+        "write_elapsed_ms": 506,
+        "writer_engine": "rust_xlsxwriter"
+      },
+      "progress_log": {
+        "view": "developer",
+        "status": "succeeded",
+        "event_stream_matches_saved_history": true,
+        "event_count": 26,
+        "phases": [
+          "extent_scan",
+          "output_save",
+          "output_workbook",
+          "row_write",
+          "run",
+          "value_read"
+        ],
+        "actual_engines": [
+          "calamine",
+          "excel-reader::read_xlsx_worksheet_extents",
+          "rust_xlsxwriter"
+        ],
+        "completed_stage_elapsed_ms": {
+          "extent_scan": 47,
+          "value_read": 176,
+          "row_write": 31,
+          "output_save": 383,
+          "output_workbook": 506,
+          "run": 1837
+        },
+        "skipped_input_names": [],
+        "input_filter_events_have_no_engine": true
+      }
+    },
+    {
+      "source_sample_relative_paths": [
+        "xlsx/1.报表分口径.xlsx"
+      ],
+      "source_workbooks": 1,
+      "source_used_range_rows": 7462,
+      "summary_rows": 7462,
+      "pycode_dimensions": [
+        {
+          "name": "汇总",
+          "rows": 7463,
+          "columns": 213
+        }
+      ],
+      "rust_dimensions": [
+        {
+          "name": "汇总",
+          "rows": 7463,
+          "columns": 213
+        }
+      ],
+      "python_elapsed_ms": 11743,
+      "rust_cli_wall_elapsed_ms": 13323,
+      "rust_execution": {
+        "ooxml_error_cells_patched": 1212,
+        "read_elapsed_ms": 6223,
+        "reader_engine": "calamine",
+        "total_elapsed_ms": 13233,
+        "write_elapsed_ms": 7008,
+        "writer_engine": "rust_xlsxwriter"
+      },
+      "progress_log": {
+        "view": "developer",
+        "status": "succeeded",
+        "event_stream_matches_saved_history": true,
+        "event_count": 14,
+        "phases": [
+          "extent_scan",
+          "ooxml_error_patch",
+          "output_save",
+          "output_workbook",
+          "row_write",
+          "run",
+          "value_read"
+        ],
+        "actual_engines": [
+          "OOXML Patch",
+          "calamine",
+          "excel-reader::read_xlsx_worksheet_extents",
+          "rust_xlsxwriter"
+        ],
+        "completed_stage_elapsed_ms": {
+          "extent_scan": 1566,
+          "value_read": 4657,
+          "row_write": 334,
+          "output_save": 632,
+          "ooxml_error_patch": 5999,
+          "output_workbook": 7008,
+          "run": 13233
+        },
+        "skipped_input_names": [],
+        "input_filter_events_have_no_engine": true
+      }
+    },
+    {
+      "source_sample_relative_paths": [
+        "xlsx/4.校验公式v1.xlsx",
+        "xlsx/4.校验公式v2.xlsx",
+        "xlsx/4.校验公式v3.xlsx",
+        "xlsx/4.校验公式（仅公式校验-AI分析版）.xlsx"
+      ],
+      "source_workbooks": 4,
+      "source_used_range_rows": 5797,
+      "summary_rows": 5797,
+      "pycode_dimensions": [
+        {
+          "name": "汇总",
+          "rows": 5798,
+          "columns": 17
+        }
+      ],
+      "rust_dimensions": [
+        {
+          "name": "汇总",
+          "rows": 5798,
+          "columns": 17
+        }
+      ],
+      "python_elapsed_ms": 3989,
+      "rust_cli_wall_elapsed_ms": 5723,
+      "rust_execution": {
+        "ooxml_error_cells_patched": 0,
+        "read_elapsed_ms": 4125,
+        "reader_engine": "calamine",
+        "total_elapsed_ms": 5638,
+        "write_elapsed_ms": 1510,
+        "writer_engine": "rust_xlsxwriter"
+      },
+      "progress_log": {
+        "view": "developer",
+        "status": "succeeded",
+        "event_stream_matches_saved_history": true,
+        "event_count": 27,
+        "phases": [
+          "extent_scan",
+          "output_save",
+          "output_workbook",
+          "row_write",
+          "run",
+          "value_read"
+        ],
+        "actual_engines": [
+          "calamine",
+          "excel-reader::read_xlsx_worksheet_extents",
+          "rust_xlsxwriter"
+        ],
+        "completed_stage_elapsed_ms": {
+          "extent_scan": 540,
+          "value_read": 1891,
+          "row_write": 71,
+          "output_save": 1230,
+          "output_workbook": 1510,
+          "run": 5638
+        },
+        "skipped_input_names": [],
+        "input_filter_events_have_no_engine": true
+      }
+    },
+    {
+      "source_sample_relative_paths": [
+        "xlsx/4.校验公式（程序生成）.xlsx",
+        "xlsx/4.校验公式（对比）.xlsx",
+        "xlsx/4.校验公式（AI分析版）.xlsx",
+        "xlsx/5.校验关系-规则定位索引.xlsx"
+      ],
+      "source_workbooks": 4,
+      "source_used_range_rows": 188365,
+      "summary_rows": 188365,
+      "pycode_dimensions": [
+        {
+          "name": "汇总",
+          "rows": 188366,
+          "columns": 22
+        }
+      ],
+      "rust_dimensions": [
+        {
+          "name": "汇总",
+          "rows": 188366,
+          "columns": 22
+        }
+      ],
+      "python_elapsed_ms": 158223,
+      "rust_cli_wall_elapsed_ms": 258041,
+      "rust_execution": {
+        "ooxml_error_cells_patched": 0,
+        "read_elapsed_ms": 201931,
+        "reader_engine": "calamine",
+        "total_elapsed_ms": 257316,
+        "write_elapsed_ms": 55381,
+        "writer_engine": "rust_xlsxwriter"
+      },
+      "progress_log": {
+        "view": "developer",
+        "status": "succeeded",
+        "event_stream_matches_saved_history": true,
+        "event_count": 63,
+        "phases": [
+          "extent_scan",
+          "output_save",
+          "output_workbook",
+          "row_write",
+          "run",
+          "value_read"
+        ],
+        "actual_engines": [
+          "calamine",
+          "excel-reader::read_xlsx_worksheet_extents",
+          "rust_xlsxwriter"
+        ],
+        "completed_stage_elapsed_ms": {
+          "extent_scan": 5596,
+          "value_read": 19858,
+          "row_write": 2514,
+          "output_save": 41784,
+          "output_workbook": 55381,
+          "run": 257316
+        },
+        "skipped_input_names": [],
+        "input_filter_events_have_no_engine": true
+      }
+    }
+  ],
+  "progress_logging": {
+    "view": "developer",
+    "status": "validated",
+    "batch_count": 4,
+    "event_stream_matches_saved_history": true,
+    "batches": [
+      {
+        "view": "developer",
+        "status": "succeeded",
+        "event_stream_matches_saved_history": true,
+        "event_count": 26,
+        "phases": [
+          "extent_scan",
+          "output_save",
+          "output_workbook",
+          "row_write",
+          "run",
+          "value_read"
+        ],
+        "actual_engines": [
+          "calamine",
+          "excel-reader::read_xlsx_worksheet_extents",
+          "rust_xlsxwriter"
+        ],
+        "completed_stage_elapsed_ms": {
+          "extent_scan": 47,
+          "value_read": 176,
+          "row_write": 31,
+          "output_save": 383,
+          "output_workbook": 506,
+          "run": 1837
+        },
+        "skipped_input_names": [],
+        "input_filter_events_have_no_engine": true
+      },
+      {
+        "view": "developer",
+        "status": "succeeded",
+        "event_stream_matches_saved_history": true,
+        "event_count": 14,
+        "phases": [
+          "extent_scan",
+          "ooxml_error_patch",
+          "output_save",
+          "output_workbook",
+          "row_write",
+          "run",
+          "value_read"
+        ],
+        "actual_engines": [
+          "OOXML Patch",
+          "calamine",
+          "excel-reader::read_xlsx_worksheet_extents",
+          "rust_xlsxwriter"
+        ],
+        "completed_stage_elapsed_ms": {
+          "extent_scan": 1566,
+          "value_read": 4657,
+          "row_write": 334,
+          "output_save": 632,
+          "ooxml_error_patch": 5999,
+          "output_workbook": 7008,
+          "run": 13233
+        },
+        "skipped_input_names": [],
+        "input_filter_events_have_no_engine": true
+      },
+      {
+        "view": "developer",
+        "status": "succeeded",
+        "event_stream_matches_saved_history": true,
+        "event_count": 27,
+        "phases": [
+          "extent_scan",
+          "output_save",
+          "output_workbook",
+          "row_write",
+          "run",
+          "value_read"
+        ],
+        "actual_engines": [
+          "calamine",
+          "excel-reader::read_xlsx_worksheet_extents",
+          "rust_xlsxwriter"
+        ],
+        "completed_stage_elapsed_ms": {
+          "extent_scan": 540,
+          "value_read": 1891,
+          "row_write": 71,
+          "output_save": 1230,
+          "output_workbook": 1510,
+          "run": 5638
+        },
+        "skipped_input_names": [],
+        "input_filter_events_have_no_engine": true
+      },
+      {
+        "view": "developer",
+        "status": "succeeded",
+        "event_stream_matches_saved_history": true,
+        "event_count": 63,
+        "phases": [
+          "extent_scan",
+          "output_save",
+          "output_workbook",
+          "row_write",
+          "run",
+          "value_read"
+        ],
+        "actual_engines": [
+          "calamine",
+          "excel-reader::read_xlsx_worksheet_extents",
+          "rust_xlsxwriter"
+        ],
+        "completed_stage_elapsed_ms": {
+          "extent_scan": 5596,
+          "value_read": 19858,
+          "row_write": 2514,
+          "output_save": 41784,
+          "output_workbook": 55381,
+          "run": 257316
+        },
+        "skipped_input_names": [],
+        "input_filter_events_have_no_engine": true
+      }
+    ]
+  },
+  "verified_edge_cases": [
+    {
+      "kind": "worksheet_dimension_elements_missing",
+      "sample": "xlsx/2.报表校验关系.xlsx",
+      "worksheets_missing_dimension": 15,
+      "source_used_range_rows": 427,
+      "max_used_rows": 70,
+      "max_used_columns": 257,
+      "comparison": "exact in PyCode/Rust batch output"
+    },
+    {
+      "kind": "merged_non_anchor_cell",
+      "sample": "xlsx/1.报表分口径.xlsx",
+      "source_cell": "B1",
+      "merged_range": "A1:AG1",
+      "python_output_semantics": "empty",
+      "rust_output_semantics": "empty",
+      "comparison": "exact after filtering non-anchor merged values"
+    }
+  ],
+  "comparison": {
+    "cell_values_and_types": "exact",
+    "populated_cell_styles": "exact",
+    "worksheet_names_and_dimensions": "exact",
+    "freeze_panes_and_header_bold": "exact",
+    "formula_merge_name_and_page_properties": "exact"
+  },
+  "python_elapsed_ms": 179499,
+  "rust_cli_wall_elapsed_ms": 280549,
+  "execution_environment": {
+    "python_sys_platform": "win32",
+    "rust_cli_host": "Windows native MSVC x86_64-pc-windows-msvc",
+    "rust_cli_executable": "pytools.exe built by cargo 1.99.1 (x86_64-pc-windows-msvc)",
+    "rust_cli_wall_includes_cargo_run": false
+  },
+  "timing_note": "Single execution per batch for diagnostics; not a performance comparison.",
+  "limitations": [
+    "Original-project XLSX assets only; no production default or broad format acceptance inferred.",
+    "VBA-bearing XLSM, XLS/XLSB and target Linux/deb remain unvalidated.",
+    "Report contains no source cell values or output workbook; both outputs were temporary."
+  ]
+}

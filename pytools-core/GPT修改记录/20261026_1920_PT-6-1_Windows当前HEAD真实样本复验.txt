@@ -1,0 +1,13 @@
+目的：在 PT-6-1 上次真实样本对拍后，重新验证当前 `pytools-dev` HEAD 的 Windows 原生使用区域汇总，覆盖后续汇总/读取代码变更。
+
+修改/生成：`pytools-core/MIGRATION_INVENTORY.md` 新增本次状态证据；新增 `pytools-core/probe/reports/summary_used_range_real_parity_20261026.json`。本次没有修改 Rust 业务源代码、共享 crate、根 Cargo 文件或 Python 源项目。
+
+输入与安全：只读原 PyTools 项目 `xlsx/` 下 13 份 XLSX；输出只写到 F 盘收纳目录中的临时目录。报告记录文件名、结构计数和投影判等结果，不含单元格原始值；13 个输入处理前后 SHA-256 相同。
+
+验证：Windows 原生 `cargo build --offline --locked -p pytools-core --bin pytools -j 1` 成功。使用原 PyTools venv 运行 `compare_summary_tools.compare_real_used_range_sample()`，13 份真实 XLSX、96 张工作表、203,580 行分四批，PyCode/Rust 完整输出投影精确一致；值/类型、已填充样式、页签与维度、冻结窗格/表头加粗、公式/合并/定义名称/页面属性相同。第 2 批保留 1,212 个错误单元格；运行事件流与保存历史一致；读取 Calamine，写入 rust_xlsxwriter。机器报告见上述 JSON。
+
+未执行：全量 `cargo test`、菜单原生对话框重测、PT-1-3/1-4 真实匹配输入、PT-6-2 真实批注模板、Linux/麒麟/UOS、glibc 2.28 与离线 deb 集中验收。该回归不改变 PT-6-1 最终交付验收状态。
+
+回滚：若需撤回，仅移除此 JSON、此记录和清单中本条新增内容；保留原有工作区未提交修改和交接文件。
+
+工具链标签复核：rustc -Vv 报告 host 为 x86_64-pc-windows-msvc，Cargo 未设置其他 target，构建命令直接产出 debug/pytools.exe；机器报告已更正为 Windows 原生 MSVC，移除错误的未验证标记。
