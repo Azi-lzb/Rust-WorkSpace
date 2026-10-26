@@ -7,12 +7,33 @@ import logging
 import subprocess
 import sys
 import tempfile
-from datetime import time
 from pathlib import Path
 
 from openpyxl import Workbook
+from openpyxl.utils.datetime import MAC_EPOCH
 
 from compare_sheet_extract_area_durations import create_rust_config, project_workbook
+
+
+def create_source(path: Path, date_1904: bool) -> bytes:
+    workbook = Workbook()
+    if date_1904:
+        workbook.epoch = MAC_EPOCH
+    worksheet = workbook.active
+    cases = [
+        (0.0, "h:mm:ss"),
+        (0.5 / 86_400_000, "h:mm:ss"),
+        (1.5 / 86_400_000, "h:mm:ss"),
+        (86_399_999.5 / 86_400_000, "h:mm:ss"),
+        (0.5, "yyyy-mm-dd"),
+        (0.5, "h:mm"),
+        (0.5, "[h]:mm:ss"),
+    ]
+    for row, (value, number_format) in enumerate(cases, start=1):
+        worksheet.cell(row=row, column=1, value=value).number_format = number_format
+    workbook.save(path)
+    workbook.close()
+    return path.read_bytes()
 
 
 def main() -> int:
@@ -25,7 +46,7 @@ def main() -> int:
     sys.dont_write_bytecode = True
     probe_root = Path(__file__).resolve().parent
     report_path = args.report or (
-        probe_root / "reports" / "sheet_extract_area_time_only_blocker_20261026.json"
+        probe_root / "reports" / "sheet_extract_area_time_only_parity_20261026.json"
     )
     source_python = args.python_project.resolve() / "PyCode"
     sys.path.insert(0, str(source_python))
@@ -33,14 +54,11 @@ def main() -> int:
 
     with tempfile.TemporaryDirectory(prefix="pytools-time-only-blocker-") as temporary:
         root = Path(temporary)
-        source = root / "time-only.xlsx"
-        workbook = Workbook()
-        worksheet = workbook.active
-        worksheet["A1"] = time(0, 0, 0)
-        worksheet["A1"].number_format = "h:mm:ss"
-        workbook.save(source)
-        workbook.close()
-        source_bytes = source.read_bytes()
+        sources = [root / "time-only-1900.xlsx", root / "time-only-1904.xlsx"]
+        source_snapshots = {
+            source: create_source(source, date_1904=index == 1)
+            for index, source in enumerate(sources)
+        }
 
         python_output = root / "python-output"
         python_logs = root / "python-logs"
@@ -51,23 +69,23 @@ def main() -> int:
             "workbook_keywords": "",
             "sheet_keywords": "",
             "exclude_keywords": "",
-            "area_spec": "A1",
+            "area_spec": "A1:A7",
             "stitch_mode": "",
-            "output_folder": "时分秒",
-            "output_name": "time-output.xlsx",
-            "remark": "strict OOXML time-only reproducer",
+            "output_folder": "时长提取",
+            "output_name": "duration-output.xlsx",
+            "remark": "1900/1904 epoch time-only parity",
         }
 
         try:
             python_result = legacy.run_extract_sheets(
-                [source],
+                sources,
                 [task],
                 python_output,
                 python_logs,
                 append_existing=False,
                 default_output_name="unused.xlsx",
             )
-            create_rust_config(config_path, rust_output, 1)
+            create_rust_config(config_path, rust_output, 7)
             rust_process = subprocess.run(
                 [
                     str(args.pytools_cli.resolve()),
@@ -76,60 +94,64 @@ def main() -> int:
                     str(config_path),
                     "--output-dir",
                     str(rust_output),
-                    str(source),
+                    *(str(source) for source in sources),
                 ],
                 capture_output=True,
                 text=True,
                 check=False,
             )
 
-            python_path = python_output / "时分秒" / "time-output.xlsx"
-            rust_path = rust_output / "时分秒" / "time-output.xlsx"
+            python_path = python_output / "时长提取" / "duration-output.xlsx"
+            rust_path = rust_output / "时长提取" / "duration-output.xlsx"
             python_projection = project_workbook(python_path)
-            source_unchanged = source.read_bytes() == source_bytes
-            if not source_unchanged:
-                raise AssertionError("synthetic time-only source workbook changed")
-            if python_result["failed_files"] != 0:
-                raise AssertionError("PyCode rejected the synthetic time-only workbook")
-
+            sources_unchanged = all(
+                source.read_bytes() == source_snapshots[source] for source in sources
+            )
             if rust_process.returncode == 0 and rust_path.is_file():
                 rust_projection = project_workbook(rust_path)
-                status = "passed" if python_projection == rust_projection else "failed"
+                rust_stats = json.loads(rust_process.stdout)
             else:
                 rust_projection = None
-                expected_error = "ambiguous with a time-only value"
-                status = (
-                    "blocked"
-                    if rust_process.returncode == 2
-                    and expected_error in rust_process.stderr
-                    and not rust_path.exists()
-                    else "failed"
-                )
+                rust_stats = None
+            status = (
+                "passed"
+                if python_result["failed_files"] == 0
+                and rust_process.returncode == 0
+                and rust_stats is not None
+                and rust_stats["failed_files"] == 0
+                and python_projection == rust_projection
+                and sources_unchanged
+                else "failed"
+            )
 
             report = {
                 "schema_version": 1,
                 "status": status,
                 "feature": "PT-7-6 area extraction time-only value classification",
-                "sample_kind": "synthetic XLSX time value with h:mm:ss format",
+                "sample_kind": (
+                    "synthetic XLSX files in 1900 and 1904 epochs with midnight, rounding, "
+                    "date-only, built-in time, and elapsed-duration formats"
+                ),
                 "source_python": "PyCode/core/feature_1_6_extract_sheets.py::run_extract_sheets",
                 "rust_entry": "pytools extract-sheets-area",
-                "shared_api_gap": (
-                    "excel-reader returns CellValue without per-cell number-format metadata, "
-                    "so PyTools cannot distinguish a time-only value from an epoch date."
-                ),
                 "python_stats": {
                     key: value for key, value in python_result.items() if key != "paths"
                 },
-                "python_projection": python_projection,
                 "rust_returncode": rust_process.returncode,
+                "rust_stats": (
+                    {key: value for key, value in rust_stats.items() if key != "paths"}
+                    if rust_stats is not None
+                    else None
+                ),
+                "python_projection": python_projection,
                 "rust_error": rust_process.stderr.strip(),
                 "rust_output_created": rust_path.is_file(),
                 "rust_projection": rust_projection,
-                "source_unchanged": source_unchanged,
+                "sources_unchanged": sources_unchanged,
                 "scope_note": (
-                    "Synthetic reproducer only. Real business time-only cells and other "+
-                    "formats/platforms remain unverified. A reader metadata API is needed "+
-                    "before implementing value classification without a PyTools-local OOXML reader."
+                    "Synthetic parity only. Real business time-only cells, row/column default "
+                    "styles, unknown built-in number formats, other formats, and target-platform "
+                    "delivery remain unverified. Unsupported or ambiguous metadata must fail closed."
                 ),
             }
             report_path.parent.mkdir(parents=True, exist_ok=True)
@@ -137,7 +159,7 @@ def main() -> int:
                 json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
             )
             print(json.dumps(report, ensure_ascii=False, indent=2))
-            return 0 if status in {"blocked", "passed"} else 1
+            return 0 if status == "passed" else 1
         finally:
             logging.shutdown()
 

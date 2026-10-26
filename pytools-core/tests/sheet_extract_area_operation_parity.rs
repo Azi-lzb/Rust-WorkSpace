@@ -4,7 +4,7 @@ use excel_editor::{
     EditOperationKind, EngineId, PreservationRequirement, WorkbookFormat,
 };
 use excel_reader::{
-    read_ooxml_comments, read_value_columns_with_iso_dates, read_workbook,
+    read_ooxml_comments, read_value_columns, read_value_columns_with_iso_dates, read_workbook,
     read_xlsx_worksheet_extents, CellValue,
 };
 use pytools_core::config::ExtractTask;
@@ -1624,16 +1624,23 @@ fn append_mode_creates_a_missing_output_and_unsupported_operations_are_rejected_
     time_task.area_spec = "A1".to_owned();
     time_task.output_name = "time-output.xlsx".to_owned();
     let time_output = root.join("time-output");
-    let time_error = run_extract_sheets_area_candidate(
+    let time_result = run_extract_sheets_area_candidate(
         std::slice::from_ref(&time_source),
         &[time_task],
         &time_output,
         false,
         Some("unused.xlsx"),
     )
-    .unwrap_err();
-    assert!(format!("{time_error:#}").contains("ambiguous with a time-only value"));
-    assert!(!time_output.join("区域提取/time-output.xlsx").exists());
+    .unwrap();
+    assert_eq!(time_result.extracted_sheets, 1);
+    let time_output_path = time_output.join("区域提取/time-output.xlsx");
+    assert!(time_output_path.is_file());
+    let time_sheets = read_value_columns(&time_output_path, 16_384).unwrap();
+    assert_eq!(time_sheets.len(), 1);
+    assert!(matches!(
+        time_sheets[0].values.get("A1"),
+        Some(CellValue::DateTimeSerial(value)) if (*value - 12.5 / 24.0).abs() < 1e-15
+    ));
 
     let duration_source = root.join("duration.xlsx");
     let mut duration_workbook = rust_xlsxwriter::Workbook::new();
@@ -1718,6 +1725,47 @@ fn interactive_menu_extracts_calendar_datetime_values() {
         ))
     );
     assert_eq!(fs::read(source).unwrap(), original_source);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn interactive_menu_extracts_time_only_values_with_number_format_metadata() {
+    let root = temporary_directory("sheet-extract-time-only-menu");
+    let source = root.join("time-only-source.xlsx");
+    let mut source_workbook = rust_xlsxwriter::Workbook::new();
+    let time_format = rust_xlsxwriter::Format::new().set_num_format("h:mm:ss");
+    let time = rust_xlsxwriter::ExcelDateTime::parse_from_str("12:30:00").unwrap();
+    source_workbook
+        .add_worksheet()
+        .write_datetime_with_format(0, 0, &time, &time_format)
+        .unwrap();
+    source_workbook.save(&source).unwrap();
+    let source_bytes = fs::read(&source).unwrap();
+
+    let mut task = load_tasks(&cases())[0].clone();
+    task.workbook_keywords.clear();
+    task.sheet_keywords.clear();
+    task.exclude_keywords.clear();
+    task.area_spec = "A1".to_owned();
+    task.output_folder = "时刻提取".to_owned();
+    task.output_name = "time-only-output.xlsx".to_owned();
+    let config = create_menu_config(&root, &[task]);
+    let output = run_menu(&config, &format!("7\n6\nn\n{}\n", source.display()));
+    assert!(
+        output.status.success(),
+        "time-only extraction menu failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let output_path = root.join("app/output/时刻提取/time-only-output.xlsx");
+    assert!(output_path.is_file());
+    let sheets = read_value_columns(&output_path, 16_384).unwrap();
+    assert_eq!(sheets.len(), 1);
+    assert!(matches!(
+        sheets[0].values.get("A1"),
+        Some(CellValue::DateTimeSerial(value)) if (*value - 12.5 / 24.0).abs() < 1e-15
+    ));
+    assert_eq!(fs::read(source).unwrap(), source_bytes);
     fs::remove_dir_all(root).unwrap();
 }
 

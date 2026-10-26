@@ -1,0 +1,31 @@
+时间：2026-10-26 17:24:59（Windows 11，UTC+8）
+执行者：Codex
+修改前 HEAD：dc9856de2eeafb16b3de2d6539e221a6adeec9f7
+修改后 HEAD：记录生成时尚未提交；功能提交待执行。
+WIP：继承并保留 pytools-dev 原有未提交工作。交接文件 HANDOFF_ZCODE_TO_CODEX.md、PT-4-2/PT-6-2 既有未跟踪记录、迁移清单的其他功能段均未暂存、覆盖或清理。本次只打算提交 PT-7-6 time-only 相关代码、测试、对拍报告、迁移清单增补和本记录。工作树已有的共享 reader 同步提交 dc9856d 尚未推送，按同一安全分支提交链处理。
+
+目的：用主线已经提供的单元格 number-format 元数据能力，继续完成 PT-7-6 区域提取中 Python datetime.time 子集；保持 elapsed duration 与 calendar datetime 区分，并保留元数据不足时的失败关闭行为。
+
+修改/新增文件：
+- pytools-core/src/sheet_extract.rs：读取原始 subday serial、1900/1904 epoch 与按坐标读取的 number format，识别 time-only；保留 [h] 累计时长语义，以 h:mm:ss 写出。毫秒舍入按 openpyxl 实际运算顺序执行；对无法识别的 epoch 时间仍拒绝提交。
+- pytools-core/tests/sheet_extract_area_operation_parity.rs：把显式 h:mm:ss 样本的旧拒绝断言改为真实输出检查；增加 pytools menu → 7 → 6 的 time-only 回归，并断言输出值及源簿不变。
+- pytools-core/probe/compare_sheet_extract_area_time_only.py：扩展为 1900/1904 日期系统，覆盖午夜、0.5/1.5ms 舍入、日末舍入、日期格式、h:mm 与 [h]:mm:ss。
+- pytools-core/probe/reports/sheet_extract_area_time_only_parity_20261026.json：记录只读 PyCode 与 Rust extract-sheets-area 合成完整投影对拍，状态 passed。
+- pytools-core/MIGRATION_INVENTORY.md：追加共享 API 同步、time-only 子集合成验证及未完成真实/平台验收边界；整体 PT-7-6 仍标记迁移中。
+- 本记录。
+
+共享能力：main 提交 ecac5bd 的 excel-reader::read_xlsx_cell_number_formats 已安全同步为本地提交 dc9856d；本次未修改任何共享 crate、根 Cargo.toml、Cargo.lock、Audit 或 Python 源项目。
+
+测试与验证（均为 Windows 原生；Cargo 产物在 F 盘已有 PyTools 构建缓存目录）：
+- cargo fmt --manifest-path pytools-core/Cargo.toml -- --check：通过。
+- cargo test --offline --locked -p pytools-core --lib sheet_extract::duration_tests -j 1：7/7 通过，含 epoch fail-closed 与 Python 舍入边界。
+- cargo build --offline --locked -p pytools-core --bin pytools -j 1：通过。
+- sheet_extract_area_operation_parity 的 append_mode 安全/输出测试：1/1 通过。
+- 交互菜单 time-only 测试及既有区域菜单完整回归：各 1/1 通过。
+- Python/Rust 对拍：2 个合成 XLSX（1900/1904），两侧各处理 7 个单元格并输出 2 张表；类型、值、工作表名、number format 完整投影一致，源工作簿字节未变化。Rust CLI 返回 0，输出 1 个工作簿、失败 0。
+
+未执行/已知问题：没有真实业务 time-only 工作簿；未知内置 number format、行/列默认样式、其他格式、原生 Windows 文件选择弹窗、完整模板保真及 Linux/glibc 2.28/deb/麒麟/UOS 未验证。对拍是合成证据，不构成 PT-7-6 或 PyTools Windows 真实验收完成。未运行全仓库测试。
+
+删除清单：无。
+回滚：若需撤销本次子集，仅回滚本次 PT-7-6 time-only 代码/测试/对拍/报告/清单增补和本记录；保留 main 提供并同步的通用 number-format API、此前完成的累计时长/ISO 时长能力以及其他 WIP。
+【组件版本】不升级（pytools-core Cargo 版本未变）。

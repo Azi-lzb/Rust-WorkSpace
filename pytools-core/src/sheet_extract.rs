@@ -15,12 +15,13 @@ use excel_editor::{
     WorkbookFormat,
 };
 use excel_reader::{
-    read_value_columns_with_iso_dates, read_workbook, read_xlsx_worksheet_extents, CellValue,
-    SheetValues,
+    read_value_columns, read_value_columns_with_iso_dates, read_workbook,
+    read_xlsx_cell_number_formats, read_xlsx_worksheet_extents, uses_1904_date_system,
+    CellNumberFormatRequest, CellValue, SheetValues,
 };
 use excel_writer::{ExcelDateTime, Format, Workbook};
 use serde::Serialize;
-use serde_json::Value;
+use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -768,9 +769,10 @@ where
             .iter()
             .map(|sheet| sheet.name.clone())
             .collect::<Vec<_>>();
+        let subday_date_cells = read_subday_date_cells(source_path, &source_sheets)?;
         let mut sparse_sheets = source_sheets
             .iter()
-            .map(sparse_sheet)
+            .map(|sheet| sparse_sheet(sheet, subday_date_cells.get(&sheet.name)))
             .collect::<Result<Vec<_>>>()?;
         let extracted_sheets_before = result.extracted_sheets;
         let has_matching_full_sheet_task = tasks.iter().any(|task| {
@@ -978,6 +980,7 @@ where
                     let mut max_column = 0;
                     let datetime_format = Format::new().set_num_format("yyyy-mm-dd h:mm:ss");
                     let duration_format = Format::new().set_num_format("[hh]:mm:ss");
+                    let time_format = Format::new().set_num_format("h:mm:ss");
                     for (row_index, row) in values.iter().enumerate() {
                         for (column_index, value) in row.iter().enumerate() {
                             let Some(value) = value.as_ref() else {
@@ -997,6 +1000,7 @@ where
                                 value,
                                 &datetime_format,
                                 &duration_format,
+                                &time_format,
                             )
                             .with_context(|| {
                                 format!(
@@ -1551,7 +1555,10 @@ where
     Ok(result)
 }
 
-fn sparse_sheet(sheet: &SheetValues) -> Result<SparseSheet> {
+fn sparse_sheet(
+    sheet: &SheetValues,
+    subday_date_cells: Option<&BTreeMap<String, f64>>,
+) -> Result<SparseSheet> {
     ensure!(
         sheet.max_column <= EXCEL_MAX_COLUMNS,
         "worksheet {:?} exceeds Excel's column limit",
@@ -1565,7 +1572,18 @@ fn sparse_sheet(sheet: &SheetValues) -> Result<SparseSheet> {
             row <= sheet.max_row && column <= sheet.max_column,
             "Calamine cell {address} falls outside worksheet dimensions"
         );
-        values.insert((row, column), serde_json::to_value(value)?);
+        let projected = if let Some(serial) = subday_date_cells
+            .and_then(|cells| cells.get(address))
+            .copied()
+        {
+            json!({
+                "type": "pytools_time_only",
+                "value": serial
+            })
+        } else {
+            serde_json::to_value(value)?
+        };
+        values.insert((row, column), projected);
     }
     Ok(SparseSheet {
         name: sheet.name.clone(),
@@ -1573,6 +1591,207 @@ fn sparse_sheet(sheet: &SheetValues) -> Result<SparseSheet> {
         max_column: sheet.max_column,
         values,
     })
+}
+
+fn read_subday_date_cells(
+    path: &Path,
+    sheets: &[SheetValues],
+) -> Result<BTreeMap<String, BTreeMap<String, f64>>> {
+    let is_ooxml = path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| {
+            extension.eq_ignore_ascii_case("xlsx") || extension.eq_ignore_ascii_case("xlsm")
+        });
+    if !is_ooxml {
+        return Ok(BTreeMap::new());
+    }
+
+    let has_epoch_candidate = sheets.iter().any(|sheet| {
+        sheet.values.values().any(
+            |value| matches!(value, CellValue::DateTimeIso(iso) if is_excel_epoch_candidate(iso)),
+        )
+    });
+    if !has_epoch_candidate {
+        return Ok(BTreeMap::new());
+    }
+
+    let date_1904 = uses_1904_date_system(path)?;
+    let (epoch_date, next_day) = excel_epoch_dates(date_1904);
+    let raw_sheets = read_value_columns(path, EXCEL_MAX_COLUMNS)
+        .with_context(|| format!("read raw epoch-cell serials from {}", path.display()))?
+        .into_iter()
+        .map(|sheet| (sheet.name, sheet.values))
+        .collect::<BTreeMap<_, _>>();
+    let mut requests = Vec::new();
+    let mut time_serials = Vec::new();
+    for sheet in sheets {
+        for (address, value) in &sheet.values {
+            if let CellValue::DateTimeIso(iso) = value {
+                let date = iso
+                    .split_once('T')
+                    .or_else(|| iso.split_once(' '))
+                    .map_or(iso.as_str(), |(date, _)| date);
+                if date != epoch_date && date != next_day {
+                    continue;
+                }
+                let Some(CellValue::DateTimeSerial(raw_serial)) = raw_sheets
+                    .get(&sheet.name)
+                    .and_then(|values| values.get(address))
+                else {
+                    continue;
+                };
+                let Some(time_serial) = openpyxl_subday_time_serial(*raw_serial) else {
+                    continue;
+                };
+                requests.push(CellNumberFormatRequest {
+                    sheet_name: sheet.name.clone(),
+                    cell_reference: address.clone(),
+                });
+                time_serials.push(time_serial);
+            }
+        }
+    }
+    if requests.is_empty() {
+        return Ok(BTreeMap::new());
+    }
+
+    let formats = read_xlsx_cell_number_formats(path, &requests)
+        .with_context(|| format!("read epoch-cell number formats from {}", path.display()))?;
+    ensure!(
+        requests.len() == formats.len(),
+        "cell number-format reader returned an unexpected result count"
+    );
+
+    let mut cells_by_sheet = BTreeMap::<String, BTreeMap<String, f64>>::new();
+    for ((request, format), time_serial) in requests.iter().zip(formats).zip(time_serials) {
+        let Some(format_code) = format.format_code.as_deref() else {
+            continue;
+        };
+        if is_openpyxl_date_format(format_code) && !is_openpyxl_timedelta_format(format_code) {
+            cells_by_sheet
+                .entry(request.sheet_name.clone())
+                .or_default()
+                .insert(format.cell_reference, time_serial);
+        }
+    }
+    Ok(cells_by_sheet)
+}
+
+fn is_excel_epoch_candidate(value: &str) -> bool {
+    let date = value
+        .split_once('T')
+        .or_else(|| value.split_once(' '))
+        .map_or(value, |(date, _)| date);
+    matches!(
+        date,
+        "1899-12-31" | "1900-01-01" | "1904-01-01" | "1904-01-02"
+    )
+}
+
+fn excel_epoch_dates(date_1904: bool) -> (&'static str, &'static str) {
+    if date_1904 {
+        ("1904-01-01", "1904-01-02")
+    } else {
+        ("1899-12-31", "1900-01-01")
+    }
+}
+
+fn openpyxl_subday_time_serial(serial: f64) -> Option<f64> {
+    const MILLISECONDS_PER_DAY: f64 = 86_400_000.0;
+    if !serial.is_finite() || !(0.0..1.0).contains(&serial) {
+        return None;
+    }
+    let milliseconds = (serial * 86_400.0 * 1_000.0).round_ties_even();
+    if !(0.0..MILLISECONDS_PER_DAY).contains(&milliseconds) {
+        return None;
+    }
+    Some(milliseconds / MILLISECONDS_PER_DAY)
+}
+
+fn is_openpyxl_date_format(format_code: &str) -> bool {
+    let first_section = format_code.split(';').next().unwrap_or_default();
+    let chars = strip_openpyxl_date_format_literals(first_section)
+        .chars()
+        .collect::<Vec<_>>();
+    chars.iter().enumerate().any(|(index, character)| {
+        matches!(character.to_ascii_lowercase(), 'd' | 'm' | 'h' | 'y' | 's')
+            && index
+                .checked_sub(1)
+                .and_then(|previous| chars.get(previous))
+                .is_none_or(|previous| !matches!(previous, '_' | '\\'))
+    })
+}
+
+fn strip_openpyxl_date_format_literals(format_code: &str) -> String {
+    let chars = format_code.chars().collect::<Vec<_>>();
+    let mut stripped = String::with_capacity(format_code.len());
+    let mut index = 0;
+    while index < chars.len() {
+        match chars[index] {
+            '"' => {
+                index += 1;
+                while index < chars.len() && chars[index] != '"' {
+                    index += 1;
+                }
+                if index < chars.len() {
+                    index += 1;
+                }
+            }
+            '[' => {
+                let Some(relative_end) = chars[index + 1..]
+                    .iter()
+                    .position(|character| *character == ']')
+                else {
+                    stripped.push(chars[index]);
+                    index += 1;
+                    continue;
+                };
+                let end = index + 1 + relative_end;
+                let bracket_code = chars[index + 1..end]
+                    .iter()
+                    .collect::<String>()
+                    .to_ascii_lowercase();
+                if matches!(bracket_code.as_str(), "h" | "hh" | "m" | "mm" | "s" | "ss") {
+                    stripped.extend(chars[index..=end].iter());
+                }
+                index = end + 1;
+            }
+            character => {
+                stripped.push(character);
+                index += 1;
+            }
+        }
+    }
+    stripped
+}
+
+fn is_openpyxl_timedelta_format(format_code: &str) -> bool {
+    let first_section = format_code.split(';').next().unwrap_or_default();
+    let chars = first_section.chars().collect::<Vec<_>>();
+    let mut index = 0;
+    while index < chars.len() {
+        if chars[index] != '[' {
+            index += 1;
+            continue;
+        }
+        let Some(relative_end) = chars[index + 1..]
+            .iter()
+            .position(|character| *character == ']')
+        else {
+            return false;
+        };
+        let end = index + 1 + relative_end;
+        let bracket_code = chars[index + 1..end]
+            .iter()
+            .collect::<String>()
+            .to_ascii_lowercase();
+        if matches!(bracket_code.as_str(), "h" | "hh" | "m" | "mm" | "s" | "ss") {
+            return true;
+        }
+        index = end + 1;
+    }
+    false
 }
 
 fn extract_sparse_configured_values(
@@ -1612,7 +1831,20 @@ fn write_extracted_value(
     value: &Value,
     datetime_format: &Format,
     duration_format: &Format,
+    time_format: &Format,
 ) -> Result<()> {
+    if value.get("type").and_then(Value::as_str) == Some("pytools_time_only") {
+        let serial = value
+            .get("value")
+            .and_then(Value::as_f64)
+            .context("time-only extraction marker has no numeric serial")?;
+        ensure!(
+            serial.is_finite() && (0.0..1.0).contains(&serial),
+            "time-only extraction serial is outside one day"
+        );
+        worksheet.write_number_with_format(row, column, serial, time_format)?;
+        return Ok(());
+    }
     let cell_value = CellValue::from_probe_json(value)?;
     match cell_value {
         CellValue::Text(text) => {
@@ -1878,7 +2110,12 @@ fn normalize_openpyxl_duration_serial(value: f64) -> Result<f64> {
 
 #[cfg(test)]
 mod duration_tests {
-    use super::{normalize_openpyxl_duration_serial, parse_openpyxl_iso_duration_serial};
+    use super::{
+        excel_epoch_dates, is_excel_epoch_candidate, is_openpyxl_date_format,
+        is_openpyxl_timedelta_format, normalize_openpyxl_duration_serial,
+        openpyxl_subday_time_serial, parse_extracted_calendar_datetime,
+        parse_openpyxl_iso_duration_serial,
+    };
 
     const MILLISECOND_IN_DAYS: f64 = 1.0 / 86_400_000.0;
 
@@ -1926,6 +2163,62 @@ mod duration_tests {
         assert!(parse_openpyxl_iso_duration_serial("PT").is_err());
         assert!(parse_openpyxl_iso_duration_serial("PT1.1234S").is_err());
         assert!(parse_openpyxl_iso_duration_serial("PT1H2M3Sx").is_err());
+    }
+
+    #[test]
+    fn epoch_candidate_dates_are_scoped_to_the_workbook_date_system() {
+        assert_eq!(excel_epoch_dates(false), ("1899-12-31", "1900-01-01"));
+        assert_eq!(excel_epoch_dates(true), ("1904-01-01", "1904-01-02"));
+        assert!(is_excel_epoch_candidate("1899-12-31T00:00:00.000"));
+        assert!(is_excel_epoch_candidate("1900-01-01T00:00:00.000"));
+        assert!(is_excel_epoch_candidate("1904-01-01T00:00:00.000"));
+        assert!(is_excel_epoch_candidate("1904-01-02T00:00:00.000"));
+        assert!(!is_excel_epoch_candidate("1904-01-03T00:00:00.000"));
+    }
+
+    #[test]
+    fn date_format_detection_ignores_literals_and_elapsed_tokens() {
+        assert!(is_openpyxl_date_format("[$-409]h:mm"));
+        assert!(is_openpyxl_date_format("yyyy-mm-dd"));
+        assert!(!is_openpyxl_date_format("General"));
+        assert!(!is_openpyxl_date_format("0.00 \"days\""));
+        assert!(!is_openpyxl_date_format(r"0 \\m"));
+        assert!(!is_openpyxl_date_format("[Red]0.00"));
+        assert!(is_openpyxl_timedelta_format("[h]:mm:ss"));
+        assert!(!is_openpyxl_timedelta_format("h:mm:ss"));
+    }
+
+    #[test]
+    fn epoch_calendar_dates_remain_rejected_when_time_metadata_is_unavailable() {
+        for value in ["1899-12-31T00:00:00.000", "1904-01-01T00:00:00.000"] {
+            let error = parse_extracted_calendar_datetime(value)
+                .err()
+                .expect("epoch date must be rejected");
+            assert!(format!("{error:#}").contains("ambiguous with a time-only value"));
+        }
+        assert!(parse_extracted_calendar_datetime("1900-01-01T00:00:00.000").is_ok());
+        assert!(parse_extracted_calendar_datetime("1904-01-02T00:00:00.000").is_ok());
+    }
+
+    #[test]
+    fn subday_time_serial_matches_openpyxl_millisecond_ties_to_even() {
+        const MILLISECONDS_PER_DAY: f64 = 86_400_000.0;
+        assert_eq!(openpyxl_subday_time_serial(0.0), Some(0.0));
+        assert_eq!(
+            openpyxl_subday_time_serial(0.5 / MILLISECONDS_PER_DAY),
+            Some(0.0)
+        );
+        assert_eq!(
+            openpyxl_subday_time_serial(1.5 / MILLISECONDS_PER_DAY),
+            Some(1.0 / MILLISECONDS_PER_DAY)
+        );
+        assert_eq!(
+            openpyxl_subday_time_serial(86_399_999.5 / MILLISECONDS_PER_DAY),
+            Some(86_399_999.0 / MILLISECONDS_PER_DAY)
+        );
+        assert_eq!(openpyxl_subday_time_serial(1.0), None);
+        assert_eq!(openpyxl_subday_time_serial(-0.5), None);
+        assert_eq!(openpyxl_subday_time_serial(f64::NAN), None);
     }
 }
 fn validate_staged_workbook_with_prefix(
