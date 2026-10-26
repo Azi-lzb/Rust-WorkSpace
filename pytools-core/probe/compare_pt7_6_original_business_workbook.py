@@ -67,7 +67,16 @@ def project_workbook(path: Path) -> dict[str, object]:
         workbook.close()
 
 
-def create_rust_config(path: Path, output_dir: Path, output_folder: str, output_name: str) -> None:
+def create_rust_config(
+    path: Path,
+    output_dir: Path,
+    output_folder: str,
+    output_name: str,
+    area_spec: str,
+    sheet_keywords: str,
+    stitch_mode: str,
+    case_label: str,
+) -> None:
     workbook = Workbook()
     global_config = workbook.active
     global_config.title = "全局配置"
@@ -82,13 +91,13 @@ def create_rust_config(path: Path, output_dir: Path, output_folder: str, output_
         [
             "是",
             "",
+            sheet_keywords,
             "",
-            "",
-            AREA_SPEC,
-            "",
+            area_spec,
+            stitch_mode,
             output_folder,
             output_name,
-            "PT-7-6 original PyTools business workbook",
+            case_label,
         ]
     )
     workbook.save(path)
@@ -159,6 +168,13 @@ def main() -> int:
     parser.add_argument("--source", type=Path, required=True)
     parser.add_argument("--output-root", type=Path, required=True)
     parser.add_argument("--report", type=Path, required=True)
+    parser.add_argument("--area-spec", default=AREA_SPEC)
+    parser.add_argument("--sheet-keywords", default="")
+    parser.add_argument("--stitch-mode", default="")
+    parser.add_argument("--expected-merged-child-values-suppressed", type=int)
+    parser.add_argument(
+        "--case-label", default="full-area value extraction"
+    )
     args = parser.parse_args()
 
     if not args.source.is_file():
@@ -182,13 +198,13 @@ def main() -> int:
     task = {
         "row_no": 2,
         "workbook_keywords": "",
-        "sheet_keywords": "",
+        "sheet_keywords": args.sheet_keywords,
         "exclude_keywords": "",
-        "area_spec": AREA_SPEC,
-        "stitch_mode": "",
+        "area_spec": args.area_spec,
+        "stitch_mode": args.stitch_mode,
         "output_folder": output_folder,
         "output_name": output_name,
-        "remark": "PT-7-6 original PyTools business workbook",
+        "remark": args.case_label,
     }
 
     try:
@@ -200,7 +216,16 @@ def main() -> int:
             append_existing=False,
             default_output_name="unused.xlsx",
         )
-        create_rust_config(config_path, rust_output, output_folder, output_name)
+        create_rust_config(
+            config_path,
+            rust_output,
+            output_folder,
+            output_name,
+            args.area_spec,
+            args.sheet_keywords,
+            args.stitch_mode,
+            args.case_label,
+        )
         rust_process = subprocess.run(
             [
                 str(args.pytools_cli.resolve()),
@@ -243,16 +268,30 @@ def main() -> int:
         )
         if merge_match is None:
             raise AssertionError("Rust menu merge compatibility event omitted its cell count")
+        merged_child_values_suppressed = int(merge_match.group(1))
+        if (
+            args.expected_merged_child_values_suppressed is not None
+            and merged_child_values_suppressed
+            != args.expected_merged_child_values_suppressed
+        ):
+            raise AssertionError(
+                "Rust menu merge compatibility count did not match the expected selected sheets"
+            )
         source_unchanged = args.source.read_bytes() == source_before
 
         if python_stats.get("failed_files") != 0:
             raise AssertionError("Python baseline reported failed source files")
         if run_log.get("status") != "succeeded":
             raise AssertionError("Rust menu run log did not report success")
-        if python_summary["error_cells"] == 0:
-            raise AssertionError("the selected original business sample no longer contains errors")
-        if not patch_events or patch_events[-1].get("status") != "succeeded":
+        patch_succeeded = bool(
+            patch_events and patch_events[-1].get("status") == "succeeded"
+        )
+        if python_summary["error_cells"] and not patch_succeeded:
             raise AssertionError("Rust menu did not report successful Excel error-cell preservation")
+        if patch_events and not patch_succeeded:
+            raise AssertionError("Rust menu reported a failed Excel error-cell patch")
+        if python_summary["error_cells"] != rust_summary["error_cells"]:
+            raise AssertionError("Rust menu changed the number of Excel error cells")
         if not exact_match:
             raise AssertionError(
                 f"Python/Rust projection differs at {len(difference_locations)} sampled locations"
@@ -264,10 +303,12 @@ def main() -> int:
             "schema_version": 1,
             "status": "passed",
             "feature": "PT-7-6 original PyTools business workbook area extraction",
+            "case_label": args.case_label,
+            "stitch_mode": args.stitch_mode,
             "sample_kind": "original PyTools business workbook; read-only source",
             "source_basename": args.source.name,
             "source_bytes": len(source_before),
-            "area_spec": AREA_SPEC,
+            "area_spec": args.area_spec,
             "entry": "Rust PyTools CLI menu → 7 → 6",
             "python_baseline": "PyCode/core/feature_1_6_extract_sheets.py::run_extract_sheets",
             "python_stats": {
@@ -283,12 +324,14 @@ def main() -> int:
             ),
             "rust_merge_value_compatibility": {
                 "actual_engine": merge_events[-1].get("actual_engine"),
-                "stored_merged_child_values_suppressed": int(merge_match.group(1)),
+                "stored_merged_child_values_suppressed": merged_child_values_suppressed,
+                "expected_stored_merged_child_values_suppressed": args.expected_merged_child_values_suppressed,
             },
-            "rust_error_patch_succeeded": bool(
-                patch_events and patch_events[-1].get("status") == "succeeded"
+            "rust_error_patch_required": python_summary["error_cells"] > 0,
+            "rust_error_patch_succeeded": patch_succeeded,
+            "rust_error_cells_preserved": (
+                python_summary["error_cells"] == rust_summary["error_cells"]
             ),
-            "rust_error_cells_preserved": rust_summary["error_cells"],
             "python_projection": python_summary,
             "rust_projection": rust_summary,
             "exact_output_projection_match": exact_match,
@@ -296,7 +339,7 @@ def main() -> int:
             "source_unchanged": source_unchanged,
             "output_location": "local F: drive test folder; excluded from Git",
             "scope_note": (
-                "This closes one original PyTools workbook comparison for the configured full-area "
+                f"This records one original PyTools workbook comparison for the configured {args.case_label} "
                 "value-extraction task. It does not complete all PT-7-6 templates, Windows manual "
                 "acceptance, or Linux/deb validation."
             ),

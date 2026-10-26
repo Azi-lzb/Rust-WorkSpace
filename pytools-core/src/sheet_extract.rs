@@ -782,21 +782,28 @@ where
             .iter()
             .map(|sheet| sparse_sheet(sheet, subday_date_cells.get(&sheet.name)))
             .collect::<Result<Vec<_>>>()?;
-        let has_matching_area_task = tasks.iter().any(|task| {
-            !is_full_sheet_task(task)
-                && workbook_matches(&source_file_name, task)
-                && !name_matches_exclude(&source_file_name, &task.exclude_keywords)
-                && !find_matched_sheets_for_task(
+        let matching_area_sheet_indexes = tasks
+            .iter()
+            .filter(|task| {
+                !is_full_sheet_task(task)
+                    && workbook_matches(&source_file_name, task)
+                    && !name_matches_exclude(&source_file_name, &task.exclude_keywords)
+            })
+            .flat_map(|task| {
+                find_matched_sheets_for_task(
                     &sheet_names,
                     &task.sheet_keywords,
                     &task.exclude_keywords,
                 )
-                .is_empty()
-        });
-        if has_matching_area_task {
+            })
+            .collect::<BTreeSet<_>>();
+        if !matching_area_sheet_indexes.is_empty() {
             let merge_compatibility_started = Instant::now();
-            let merged_child_values_suppressed =
-                suppress_openpyxl_merged_child_values(source_path, &mut sparse_sheets)?;
+            let merged_child_values_suppressed = suppress_openpyxl_merged_child_values(
+                source_path,
+                &mut sparse_sheets,
+                &matching_area_sheet_indexes,
+            )?;
             emitter.emit(
                 "merge_value_compatibility",
                 "succeeded",
@@ -2748,6 +2755,7 @@ fn is_empty_cell(value: Option<&Value>) -> bool {
 fn suppress_openpyxl_merged_child_values(
     source_path: &Path,
     sheets: &mut [SparseSheet],
+    selected_sheet_indexes: &BTreeSet<usize>,
 ) -> Result<usize> {
     let workbook = read_workbook(source_path)
         .with_context(|| format!("read merged ranges from {}", source_path.display()))?;
@@ -2757,18 +2765,24 @@ fn suppress_openpyxl_merged_child_values(
         source_path.display()
     );
     let mut suppressed = 0;
-    for sheet in sheets {
-        let metadata = workbook
-            .sheets
-            .iter()
-            .find(|candidate| candidate.name == sheet.name)
-            .with_context(|| {
-                format!(
-                    "merged-range inventory is missing worksheet {:?} in {}",
-                    sheet.name,
-                    source_path.display()
-                )
-            })?;
+    for &sheet_index in selected_sheet_indexes {
+        let sheet = sheets.get_mut(sheet_index).with_context(|| {
+            format!(
+                "selected worksheet index {sheet_index} is missing from {}",
+                source_path.display()
+            )
+        })?;
+        let metadata = workbook.sheets.get(sheet_index).with_context(|| {
+            format!(
+                "merged-range metadata is missing worksheet index {sheet_index} in {}",
+                source_path.display()
+            )
+        })?;
+        ensure!(
+            metadata.name == sheet.name,
+            "merged-range inventory worksheet order disagrees at index {sheet_index} in {}",
+            source_path.display()
+        );
         ensure!(
             metadata.merge_status == "read_by_calamine",
             "cannot reproduce Python merged-cell semantics for worksheet {:?} in {}: {}",

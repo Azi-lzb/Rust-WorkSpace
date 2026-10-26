@@ -1060,3 +1060,11 @@ Windows 原生 pytools-core 二进制构建通过；真实菜单入口为 pytool
 Windows 原生验证：`cargo fmt --manifest-path pytools-core/Cargo.toml -- --check`、`cargo test --offline --locked -p pytools-core --lib merged_child_values_tests -j 1`（1/1）、`cargo test --offline --locked -p pytools-core --lib patch_error_cells_tests -j 1`（1/1）、`cargo test --offline --locked -p pytools-core --test sheet_extract_area_operation_parity -j 1`（17/17）、`cargo test --offline --locked -p pytools-core --test summary_used_range_error -j 1`（5/5）、`cargo build --offline --locked -p pytools-core --bin pytools -j 1` 通过。真实 `pytools menu → 7 → 6` 与旧 PyCode `run_extract_sheets` 在只读原报表上以 `A1:XFD1048576` 对拍：双方均 files=1、extracted_sheets=24、output_files=1、failed_files=0；24 张输出表、25,788 个非空单元格和 1,212 个 Excel 错误值的坐标、类型、值、数字格式完全一致。Rust 日志记录忽略 1 个存有底层值的合并子单元格；源文件字节未改变。机器报告：`probe/reports/sheet_extract_area_original_pytools_business_parity_20261026.json`。完整 Python/Rust 派生工作簿保存在 `F:\PyTools_Rust_本轮工作文件_20261026\PT-7-6_原PyTools业务样本_20261026_最终对拍`，不纳入 Git。
 
 PT-7-6 整体仍为迁移中：此证据闭合一份原业务报表和一个全区域配置的对拍，不代表所有模板、功能变体或 Windows 人工验收完成。未知 Calamine 错误码仍失败关闭；其他源报表、时长输入、原生文件弹窗、目标 Linux/deb 未在本轮验收。PT-1-2 继续排除。无共享能力请求。回滚方式：对本功能提交执行 `git revert`，不触碰本轮前已有 WIP。
+
+### 2026-10-26 PT-7-6 原业务报表多区域拼接与命中工作表合并兼容复验
+
+继续使用原 PyTools 只读业务报表 xlsx/1.报表分口径.xlsx 和旧 PyCode.core.feature_1_6_extract_sheets.run_extract_sheets，通过真实 Rust 菜单 7→6 验证两个区域拼接模式。横向拼接选中 S0700_F_26 的 A1:S8;T1:U8：双方均 1 个文件/工作表、40 个非空格、1 个 Excel 错误值，坐标/类型/值/数字格式精确一致。纵向追加使用 A1:B10;D1:E8：双方均 1 个文件/工作表、15 个非空格，投影精确一致。两次源文件字节均未改变。
+
+复验还发现合并兼容阶段原先遍历全部工作表，会把未命中页的 1 个合并子格计入区域任务日志，并对未命中页执行不必要的合并状态检查；现仅对实际命中区域任务的工作表执行合并状态验证和非锚点值过滤。共享 reader 仍按工作簿读取，工作簿级读取错误仍按原路径失败关闭。区域筛选复验的抑制计数为 0；全区域复验仍为 1。全区域输出继续与 Python 精确一致：24 张表、25,788 个非空格、1,212 个错误值。探针通过 --expected-merged-child-values-suppressed 固定断言选择页计数。机器报告：probe/reports/sheet_extract_area_original_pytools_horizontal_stitch_parity_20261026.json、probe/reports/sheet_extract_area_original_pytools_vertical_stitch_parity_20261026.json，全区域报告仍为 probe/reports/sheet_extract_area_original_pytools_business_parity_20261026.json。
+
+PT-7-6 仍为迁移中：这仍是一个原业务工作簿的三种配置对拍，不代表其他模板、Windows 人工文件选择流程或 Linux/deb 验收。原 Python 项目与源工作簿保持只读；未改共享 crate。PT-1-2 继续排除。

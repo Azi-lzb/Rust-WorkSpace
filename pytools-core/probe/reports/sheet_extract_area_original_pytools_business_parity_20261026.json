@@ -2,6 +2,8 @@
   "schema_version": 1,
   "status": "passed",
   "feature": "PT-7-6 original PyTools business workbook area extraction",
+  "case_label": "full-area extraction",
+  "stitch_mode": "",
   "sample_kind": "original PyTools business workbook; read-only source",
   "source_basename": "1.报表分口径.xlsx",
   "source_bytes": 816501,
@@ -24,10 +26,12 @@
   ],
   "rust_merge_value_compatibility": {
     "actual_engine": "Calamine + namespace-aware OOXML",
-    "stored_merged_child_values_suppressed": 1
+    "stored_merged_child_values_suppressed": 1,
+    "expected_stored_merged_child_values_suppressed": 1
   },
+  "rust_error_patch_required": true,
   "rust_error_patch_succeeded": true,
-  "rust_error_cells_preserved": 1212,
+  "rust_error_cells_preserved": true,
   "python_projection": {
     "worksheet_count": 24,
     "non_empty_cells": 25788,
@@ -52,5 +56,5 @@
   "difference_locations": [],
   "source_unchanged": true,
   "output_location": "local F: drive test folder; excluded from Git",
-  "scope_note": "This closes one original PyTools workbook comparison for the configured full-area value-extraction task. It does not complete all PT-7-6 templates, Windows manual acceptance, or Linux/deb validation."
+  "scope_note": "This records one original PyTools workbook comparison for the configured full-area extraction value-extraction task. It does not complete all PT-7-6 templates, Windows manual acceptance, or Linux/deb validation."
 }

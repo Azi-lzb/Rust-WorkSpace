@@ -1,0 +1,28 @@
+执行者：Codex（pytools-dev）
+修改前 HEAD：d1c7d9b；分支：pytools-dev；修改前 HEAD 与 origin/pytools-dev 同步。
+工作树保护：清单已有未提交修改，以及未跟踪交接文件和两份既有 GPT 记录；均保留。原 Python 项目与业务工作簿只读。
+
+目的：扩展 PT-7-6 原 PyTools 报表对拍到横向/纵向多区域拼接，并将合并子格兼容处理限定到实际命中的区域工作表，避免未命中工作表的合并状态检查影响日志计数或误拒绝区域任务；共享 reader 仍按整个工作簿读取，工作簿级读取错误继续失败关闭。
+
+修改文件：
+- pytools-core/src/sheet_extract.rs：按命中的区域任务工作表索引读取和应用合并范围兼容。
+- pytools-core/probe/compare_pt7_6_original_business_workbook.py：支持参数化区域、工作表关键字、拼接模式和预期合并子格计数。
+- pytools-core/probe/reports/sheet_extract_area_original_pytools_horizontal_stitch_parity_20261026.json
+- pytools-core/probe/reports/sheet_extract_area_original_pytools_vertical_stitch_parity_20261026.json
+- pytools-core/probe/reports/sheet_extract_area_original_pytools_business_parity_20261026.json
+- pytools-core/MIGRATION_INVENTORY.md
+
+【组件版本】pytools-core 0.1.0；不升级。
+
+验证（Windows 原生，构建目标、TEMP/TMP 均在 F:\PyTools_Rust_本轮工作文件_20261026）：
+- cargo fmt --manifest-path pytools-core/Cargo.toml -- --check 通过。
+- cargo test --offline --locked -q -p pytools-core --lib merged_child_values_tests -j 1：1/1。
+- cargo test --offline --locked -q -p pytools-core --test sheet_extract_area_operation_parity -j 1：17/17。
+- cargo test --offline --locked -q -p pytools-core --test summary_used_range_error -j 1：5/5。
+- cargo build --offline --locked -q -p pytools-core --bin pytools -j 1 通过。
+- 原报表横向拼接 A1:S8;T1:U8、纵向追加 A1:B10;D1:E8，均通过真实 pytools menu→7→6 与只读 PyCode 精确投影对拍；两侧输入统计一致、源文件字节未变。
+- 全区域复验 24 张表、25,788 个非空格、1,212 个 Excel 错误值完全一致；仅命中区域工作表时合并兼容计数 0，全页时计数 1。
+
+未执行项/限制：PT-7-6 其他原业务模板、原生文件弹窗人工验收、Linux/glibc 2.28、麒麟/UOS 和 deb 未验收；共享 reader 的工作簿级读取错误仍可能影响已选页。PT-7-6 整体仍为迁移中，PT-1-2 保持排除。未修改共享 crate、Cargo 文件或原始业务文件。
+
+修改后提交：本记录随本功能提交，具体 SHA 以提交历史为准；回滚可 git revert 该功能提交，不清理 F 盘工作目录。
