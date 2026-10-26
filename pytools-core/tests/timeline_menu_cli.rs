@@ -167,6 +167,51 @@ fn interactive_v2_data_menu_routes_compare_wide_summary_and_precheck() -> Result
 }
 
 #[test]
+fn wide_summary_menu_current_folder_mode_excludes_nested_sources() -> Result<()> {
+    let root = TestDirectory::new()?;
+    let config = create_timeline_config(root.path())?;
+    let source_dir = root.path().join("sample current-level sources");
+    let nested_dir = source_dir.join("nested");
+    fs::create_dir_all(&nested_dir)?;
+    let current_source = source_dir.join("sample current-level source.xlsx");
+    let nested_source = nested_dir.join("sample nested source.xlsx");
+    create_wide_source(&current_source, "仅当前层", 17.5)?;
+    create_wide_source(&nested_source, "不应进入", 27.5)?;
+    let current_source_before = fs::read(&current_source)?;
+    let nested_source_before = fs::read(&nested_source)?;
+
+    let output = run_menu(&config, &format!("1\n1\n2\n{}\n0\n", source_dir.display()))?;
+    assert!(
+        output.status.success(),
+        "current-folder wide summary menu failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("当前层共识别文件 1 个"));
+    assert!(stdout.contains("sample current-level source.xlsx"));
+    assert!(!stdout.contains("sample nested source.xlsx"));
+
+    let output_dir = root.path().join("app").join("output");
+    let output_path = find_output(&output_dir, "行头不加后缀")?;
+    let dump = read_workbook(&output_path)?;
+    let wide_sheet = dump
+        .sheets
+        .iter()
+        .find(|sheet| sheet.name == "WideRule")
+        .context("current-folder summary sheet missing")?;
+    let values = wide_sheet
+        .values
+        .values()
+        .filter_map(|cell| cell.get("value").and_then(Value::as_str))
+        .collect::<Vec<_>>();
+    assert!(values.contains(&"仅当前层"));
+    assert!(!values.contains(&"不应进入"));
+    assert_eq!(fs::read(&current_source)?, current_source_before);
+    assert_eq!(fs::read(&nested_source)?, nested_source_before);
+    Ok(())
+}
+
+#[test]
 fn wide_summary_cli_filters_missing_and_unconfigured_extensions_before_reading() -> Result<()> {
     let root = TestDirectory::new()?;
     let config = create_timeline_config(root.path())?;
