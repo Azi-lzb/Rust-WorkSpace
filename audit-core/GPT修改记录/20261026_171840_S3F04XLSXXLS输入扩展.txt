@@ -1,0 +1,45 @@
+# S3-F04 XLSX/XLS 输入扩展
+
+- 时间：2026-10-26 17:18:40（本地）
+- 执行者：Codex
+- 修改前 commit：e370baa39e04a078d60b9bba1d88b63981704899
+- 功能代码 commit：c1ecd7d（`feat(audit): support XLSX/XLS S3-F04 inputs`）
+- 修改前 WIP：保留已有 `open-data-audit.rs`、`central_csv.rs`、`s3_current_value_check.rs`、`web_bridge.rs` 及 S3/S5 报告、`.pytest-tmp-v3/` 和 `HANDOFF_ZCODE_TO_CODEX.md`；未覆盖、清理或纳入本次提交。
+- 【组件版本】不升级；未采用旧版 Sx-Fxx 组件版本制度。
+
+## 目的与变更
+
+为既有 S3-F04 数值核对增加 XLSX/XLS 输入，复用共享 Calamine 读取和既有 Rust 业务计算/输出链；原 Python 项目和真实工作簿保持只读。
+
+- `audit-core/src/central_csv.rs`：抽出 CSV/工作簿共用的行号感知归一化；工作簿稀疏行的问题位置沿用物理行号。
+- `audit-core/src/s3_current_value_check.rs`：增加 XLSX/XLS 读取、按首个匹配 14 列表头的工作表选取、值类型转成 Python 兼容文本；明确拒绝无法还原的时长值。按实际输入格式写 reader 日志。
+- `audit-core/src/bin/open-data-audit.rs`：保留 `--current-csv`/`--previous-csv` 参数兼容，扩展帮助文本并调用同一文件服务。
+- `audit-core/src/web_bridge.rs`：S3-F04 文件选择器接受 CSV/XLSX/XLS；同一 Rust service 在线程中执行，继续写结果/可选运行日志和用户/开发者引擎及耗时日志。测试验证 XLSX 选择、真实服务调用和输入字节不变。
+- `audit-core/tests/compare/compare_s3_f04_service.py`：只更新说明文字；对拍逻辑未变。
+- `audit-core/MIGRATION_INVENTORY.md`：记录新输入范围、证据及仍未验收项，S3-F04 保持“迁移中”。
+- `audit-core/probe/reports/s3_f04_workbook_input_python_rust_parity_windows_native_20261026.json`：新增脱敏聚合对拍报告，不包含业务路径或单元格值。
+- 本修改记录。
+
+未修改共享 crates、根 Cargo 配置、配置工作簿或 VBA；没有写入原 Python 项目和真实输入样本。
+
+## 验证
+
+- `rustfmt --check --edition 2021` 对本次触及的 4 个 Rust 文件通过；`git diff --check` 通过。`cargo fmt -p audit-core -- --check` 仍报告未改动文件 `audit-core/src/s3_explanation_export.rs` 的既有格式差异；未格式化无关文件。
+- `cargo test -p audit-core --lib s3_current_value_check::tests --locked --offline`：13/13 通过。
+- `cargo test -p audit-core --lib web_bridge::tests --locked --offline`：14/14 通过，包含 S3-F04 Web API 合成端到端用例。
+- `cargo build -p audit-core --bin open-data-audit --locked --offline` 与 `cargo build -p audit-core --bin open-data-audit-gui --locked --offline`：均通过。
+- Windows CLI `s3-check-current-values --help` 显示 current/previous 可接 CSV/XLSX/XLS，且旧 flag 名保留。
+- 已有只读真实 CSV 两期对拍：本期 4,212、上期 2,586 条记录，183 条规则（163 启用），生成 214 行及 3 条日志，差异 0、输入未变；见 `probe/reports/s3_f04_python_rust_real_parity_windows_native_20261026_after_safety_v3.json`。
+- 新增只读真实 XLSX 对拍：2,610 条本期记录，183 条规则（163 启用），本期-only 因此 0 结果行；输出工作簿/日志差异 0、输入/配置未变。临时合成 XLS 对拍 1 条记录，差异 0；见新增机器报告。Python 对拍运行于 Windows Python 3.12.10。
+
+## 未完成与已知限制
+
+- 真实 XLSX 样本没有上期数据且没有非空结果行；真实 CSV 214 行证据不能替代两期 XLSX/XLS 对拍。
+- 未找到可用真实 XLS 样本，XLS 仅为合成对拍；所有值类型和完整错误矩阵未验证。
+- `DurationIso` 单元格因共享 reader 未提供与 Python 等价的时间/时长格式信息而显式拒绝。
+- 本轮未做 GUI 人工点击验收、Linux/deb 或目标系统测试；S3-F04 整体仍为“迁移中”，不得标记 Windows 验收通过。
+
+## 删除与回滚
+
+- 删除清单：无。
+- 回滚：使用 `git revert c1ecd7d` 撤回本次业务实现、报告和迁移清单更新；不得清理本记录前已存在的其他未提交成果。
