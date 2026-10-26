@@ -172,6 +172,59 @@ fn submission_check_cli_matches_python_workbook_and_statistics() -> Result<()> {
         "Excel date config values must match Python's string form"
     );
 
+    let recursive_sources = root.join("recursive-sources");
+    for (relative_path, (source_path, bytes)) in [
+        "division-a/2026_Area_Bank_base.txt",
+        "division-a/nested/2026_Area_Bank_multi.txt",
+        "division-b/misc_submission.txt",
+    ]
+    .into_iter()
+    .zip(original_files.iter())
+    {
+        let destination = recursive_sources.join(relative_path);
+        fs::create_dir_all(
+            destination
+                .parent()
+                .context("recursive input parent missing")?,
+        )?;
+        assert_eq!(fs::read(source_path)?, *bytes);
+        fs::write(destination, bytes)?;
+    }
+    let recursive_output = Command::new(env!("CARGO_BIN_EXE_pytools"))
+        .arg("submission-check")
+        .arg("--config")
+        .arg(&config)
+        .arg("--output-dir")
+        .arg(root.join("recursive-output"))
+        .arg(&recursive_sources)
+        .output()
+        .context("run submission-check CLI with a recursively selected directory")?;
+    assert!(
+        recursive_output.status.success(),
+        "recursive submission-check failed: {}",
+        String::from_utf8_lossy(&recursive_output.stderr)
+    );
+    let recursive_report: Value = serde_json::from_slice(&recursive_output.stdout)?;
+    for field in [
+        "rules",
+        "files",
+        "submitted",
+        "missing",
+        "unmatched",
+        "multi",
+    ] {
+        assert_eq!(
+            recursive_report[field], report[field],
+            "recursive directory statistic {field} must match explicit file list"
+        );
+    }
+    assert!(PathBuf::from(
+        recursive_report["output"]
+            .as_str()
+            .context("recursive report path missing")?
+    )
+    .is_file());
+
     assert_eq!(fs::read(&config)?, original_config);
     for (path, bytes) in original_files {
         assert_eq!(fs::read(&path)?, bytes, "input changed: {}", path.display());
