@@ -83,7 +83,7 @@
 
 - 源项目 `core/frontend/web/index.html` 和 `core/frontend/assets/app-icon.{png,ico}` 已原样复制到 `frontend/`；HTML 与源文件 SHA-256 一致。源项目只读，没有修改。
 - Windows 可直接启动新增的 `open-data-audit-gui.exe`（无参数默认端口 8750，可用 `--port`/`--config` 覆盖）；它复用原 GUI 页面和同一 HTTP bridge，仅监听 `127.0.0.1`，默认启动尝试打开系统默认浏览器。原 `open-data-audit serve` 保留自动打开行为；`open-data-audit-gui --no-browser` 用于检查。打开失败时打印手动访问地址。该入口为沿用原页面的本机浏览器 GUI，不是嵌入式 pywebview 外壳；Windows 启动/接口冒烟已通过，真实 S2 业务和完整人工验收仍待验证。
-- bridge 在响应时注入运行时接口，保持 HTML 文件本身不变。当前页面启动后导航至已接入的 S2。
+- bridge 在响应时注入运行时接口，并在响应中填入原页面的产品标题与 `/assets/app-icon.png` 图标地址；仓库中的 HTML 文件保持不变。当前页面启动后导航至已接入的 S2。
 - 当前连接 `get_state`、浏览器路径浏览、S2 配置检查、S2 路径选择/清除、输出目录固定/跟随、审核启动、进度和结果回传，以及有限的 UI 设置更新。选择或清除本期/上期目录会刷新两期文件配对预览，并支持 `.xls`/`.xlsx` 文件名列举。
 - 未迁移接口返回 HTTP 501；点击尚未接通的 DAG 工作流会在原界面明确提示“该功能尚未接入 Rust 版本”。取消和设置持久化尚未接入；S1/S3/S4/S5 的前端入口不表示其功能已经迁移。
 - 合成 S2 输入经 HTTP bridge 完整运行并生成三表 XLSX；该结果不替代真实业务模板、Windows 原生、麒麟/UOS、glibc 2.28 与 deb 验收。
@@ -91,3 +91,4 @@
 - 本轮修复了页面同步空的旧 S1 路径字段会阻断 S2 配置检查的问题：只忽略 `input/templateDir/template/external/output` 的空值，非空未迁移值仍返回 501。两条回归覆盖空值兼容与非空拒绝。Release 二进制输出到本机 F: 隔离 Cargo target，未纳入 Git。
 - 本次独立 Windows Release 构建通过；`open-data-audit-gui.exe --port 18752` 默认启动模式可提供原界面，页面标题为 `Open-Data-Audit (Rust)`，主导航和 S2 配置面板可见。运行中 `GET /`、`POST /api/get_state`、`POST /api/check_period_audit_config` 均返回 200（配置检查读取 workspace 默认配置）；随后在 GUI 实际点击“检查配置”，页面显示配置检查结果和警告明细；未接通的 `POST /api/start_dag_flow` 返回 501。此次未运行真实 S2 审核或修改任何工作簿，真实样本/完整人工验收仍待验证。
 - 2026-10-26 Codex 本地 Debug 复核：`cargo test -p audit-core --lib web_bridge::tests --locked --offline` 9/9 通过；新增测试通过 GUI API 启动 `run_s2_audit`，在临时目录生成审核报告并确认两份输入工作簿字节未变。`cargo build -p pytools-core --bin pytools -p audit-core --bin open-data-audit-gui --locked --offline` 通过；Windows GUI 进程的 `GET /` 与 `POST /api/get_state` 返回 200，未迁移 `start_dag_flow` 返回 501。使用的是合成夹具，S2 真实业务验收和其他未接通页面仍未通过验收。
+- 2026-10-26 Windows 原生 Release 入口复核：`cargo test -p audit-core --lib web_bridge::tests --locked --offline` 9/9 通过；`cargo build --locked --offline --release -p audit-core --bin open-data-audit-gui` 成功。发现并修复 Rust 响应未替换旧 Python 外壳负责填入的标题/图标占位符；回归断言要求页面响应替换占位符而保留原 HTML 文件。GUI 服务 `GET /`、`POST /api/get_state` 和配置检查均返回 200，未接通的 `start_dag_flow` 返回 501。S2 后台线程测试使用合成工作簿，真实业务人工验收和目标 Linux/deb 仍未完成。

@@ -33,6 +33,7 @@ use tokio::{net::TcpListener, runtime::Builder};
 const ORIGINAL_HTML: &str = include_str!("../frontend/web/index.html");
 const APP_ICON_PNG: &[u8] = include_bytes!("../frontend/assets/app-icon.png");
 const APP_ICON_ICO: &[u8] = include_bytes!("../frontend/assets/app-icon.ico");
+const APP_TITLE: &str = "Open-Data-Audit (Rust)";
 
 const BRIDGE_JS: &str = r#"
 <script>
@@ -91,7 +92,7 @@ impl AppState {
         let config_path = config_path.to_string_lossy().into_owned();
         let config_report = check_s2_config(&config_path);
         let mut state = json!({
-            "appInfo": {"title": "Open-Data-Audit (Rust)"},
+            "appInfo": {"title": APP_TITLE},
             "busy": false,
             "cancelRequested": false,
             "status": "Rust 迁移版已启动；当前接通报表采集 S2 功能",
@@ -268,7 +269,10 @@ fn router(state: AppState) -> Router {
 }
 
 fn render_index() -> String {
-    ORIGINAL_HTML.replacen("</head>", &format!("{BRIDGE_JS}</head>"), 1)
+    ORIGINAL_HTML
+        .replace("__AUDIT_APP_TITLE__", APP_TITLE)
+        .replace("__AUDIT_ICON_URL__", "/assets/app-icon.png")
+        .replacen("</head>", &format!("{BRIDGE_JS}</head>"), 1)
 }
 
 async fn index() -> Response {
@@ -1027,9 +1031,14 @@ mod tests {
     #[test]
     fn served_page_is_original_markup_plus_runtime_bridge() {
         let served = render_index();
-        assert_eq!(served.replace(super::BRIDGE_JS, ""), super::ORIGINAL_HTML);
+        let expected = super::ORIGINAL_HTML
+            .replace("__AUDIT_APP_TITLE__", super::APP_TITLE)
+            .replace("__AUDIT_ICON_URL__", "/assets/app-icon.png");
+        assert_eq!(served.replace(super::BRIDGE_JS, ""), expected);
         assert!(served.contains("window.bridge = { api: api }"));
         assert!(served.contains("该功能尚未接入 Rust 版本。"));
+        assert!(!served.contains("__AUDIT_APP_TITLE__"));
+        assert!(!served.contains("__AUDIT_ICON_URL__"));
     }
 
     #[test]

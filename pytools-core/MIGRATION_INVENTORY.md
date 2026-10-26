@@ -31,6 +31,7 @@
 - 本轮 Release 二进制因 C: 无空间输出到本机 F: 隔离 Cargo target，未纳入 Git。真实业务样本、完整菜单逐项验收和目标 Linux/deb 仍未验证；已接通菜单项不因此提升业务验收状态。
 - 本次独立复核的 Windows Release 构建命令 `cargo build --locked --offline --release -p pytools-core --bin pytools -p audit-core --bin open-data-audit-gui` 通过；直接运行该 `pytools.exe` 并输入 `0`，确认 1–9 主菜单显示且正常退出。入口可启动，不代表各菜单业务已逐项验收。
 - 2026-10-26 Codex 本地 Debug 复核：`cargo test -p pytools-core --test interactive_menu --locked --offline` 5/5 通过；`target/debug/pytools.exe` 无参数启动并输入 `0`，实际显示 1–9 菜单后正常退出。菜单中已接通和未接通项目仍按上述清单区分，未提升真实样本验收状态。
+- 本轮 Windows 原生 Release 复核：`cargo test -p pytools-core --test interactive_menu --locked --offline` 5/5 通过；联合 Release 构建成功，直接运行 `target/release/pytools.exe` 并输入 `0` 显示完整 1–9 主菜单后正常退出。可执行文件路径为工作树下 `target/release/pytools.exe`。本轮未逐项运行菜单功能，不提升任何业务验收状态。
 
 ## 输入与转换矩阵
 
