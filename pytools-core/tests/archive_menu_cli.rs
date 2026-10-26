@@ -53,13 +53,13 @@ fn interactive_archive_menu_routes_all_five_workflows() -> Result<()> {
     let date_target = root.path().join("date-preview-target");
     fs::create_dir_all(&date_target)?;
     let date_input = format!(
-        "8\n1\n1\n{}\n{}\n0\n",
+        "6\n1\n1\n{}\n{}\n0\n",
         date_source.display(),
         date_target.display()
     );
     let date_preview = run_menu(&config, "user", &date_input)?;
     assert_menu_success(&date_preview, "PT-8-1")?;
-    assert!(String::from_utf8_lossy(&date_preview.stdout).contains("8  归档工具"));
+    assert!(String::from_utf8_lossy(&date_preview.stdout).contains("6  归档整理"));
     assert!(String::from_utf8_lossy(&date_preview.stdout).contains("按日期归档预览"));
     assert!(String::from_utf8_lossy(&date_preview.stdout).contains("用时="));
     assert_eq!(fs::read(&date_source)?, b"date preview source");
@@ -77,7 +77,7 @@ fn interactive_archive_menu_routes_all_five_workflows() -> Result<()> {
     let type_target = root.path().join("type-preview-target");
     fs::create_dir_all(&type_target)?;
     let type_input = format!(
-        "8\n2\n2\n{}\n{}\n0\n",
+        "6\n2\n2\n{}\n{}\n0\n",
         type_folder.display(),
         type_target.display()
     );
@@ -115,7 +115,7 @@ fn interactive_archive_menu_routes_all_five_workflows() -> Result<()> {
     )?
     .output;
     let histories_before_off = fs::read_dir(&log_dir)?.count();
-    let plan_input = format!("8\n3\n{}\n0\n", plan.display());
+    let plan_input = format!("6\n3\n{}\n0\n", plan.display());
     let plan_execute = run_menu(&config, "off", &plan_input)?;
     assert_menu_success(&plan_execute, "PT-8-3")?;
     assert_eq!(
@@ -130,7 +130,7 @@ fn interactive_archive_menu_routes_all_five_workflows() -> Result<()> {
     let date_copy_target = root.path().join("date-copy-target");
     fs::create_dir_all(&date_copy_target)?;
     let date_copy_input = format!(
-        "8\n4\n1\n{}\n{}\n0\n",
+        "6\n4\n1\n{}\n{}\n0\n",
         date_copy_source.display(),
         date_copy_target.display()
     );
@@ -155,7 +155,7 @@ fn interactive_archive_menu_routes_all_five_workflows() -> Result<()> {
     let type_copy_target = root.path().join("type-copy-target");
     fs::create_dir_all(&type_copy_target)?;
     let type_copy_input = format!(
-        "8\n5\n1\n{}\n{}\n0\n",
+        "6\n5\n1\n{}\n{}\n0\n",
         type_copy_source.display(),
         type_copy_target.display()
     );
@@ -245,7 +245,7 @@ fn assert_menu_success(output: &Output, feature_id: &str) -> Result<()> {
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stdout.contains("8  归档工具"));
+    assert!(stdout.contains("6  归档整理"));
     assert!(
         stdout.contains(feature_id) || stderr.contains(feature_id) || feature_id == "PT-8-3",
         "{feature_id} run identifier missing from menu output"

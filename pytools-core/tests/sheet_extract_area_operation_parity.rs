@@ -672,7 +672,7 @@ fn interactive_menu_routes_area_extraction_matches_python_and_records_engines() 
         .map(|path| (path.clone(), fs::read(path).unwrap()))
         .collect::<Vec<_>>();
     let input = format!(
-        "7\n6\nn\n{}\n",
+        "5\n6\nn\n{}\n",
         sources
             .iter()
             .map(|path| path.to_string_lossy())
@@ -882,7 +882,7 @@ fn interactive_menu_routes_full_sheet_import_against_python_helper_baseline() ->
     let capability = write_full_sheet_test_capability(&root, &source, PLATFORM)?;
     let output = run_menu_with_capability(
         &config,
-        &format!("7\n6\nn\n{}\n", source.display()),
+        &format!("5\n6\nn\n{}\n", source.display()),
         "developer",
         &capability,
         PLATFORM,
@@ -1171,7 +1171,7 @@ fn interactive_menu_stops_when_extract_tasks_are_missing_or_full_sheet_capabilit
     let cases = cases();
     let root = temporary_directory("sheet-extract-menu-gates");
     let no_tasks_config = create_menu_config(&root.join("no-tasks"), &[]);
-    let no_tasks = run_menu(&no_tasks_config, "7\n6\n");
+    let no_tasks = run_menu(&no_tasks_config, "5\n6\n");
     assert!(no_tasks.status.success());
     let no_tasks_stdout = String::from_utf8_lossy(&no_tasks.stdout);
     assert!(no_tasks_stdout.contains("配置无启用任务"));
@@ -1181,7 +1181,7 @@ fn interactive_menu_stops_when_extract_tasks_are_missing_or_full_sheet_capabilit
     let mut full_sheet_tasks = load_tasks(&cases);
     full_sheet_tasks[0].area_spec.clear();
     let full_sheet_config = create_menu_config(&root.join("full-sheet"), &full_sheet_tasks);
-    let full_sheet = run_menu(&full_sheet_config, "7\n6\n");
+    let full_sheet = run_menu(&full_sheet_config, "5\n6\n");
     assert!(full_sheet.status.success());
     let full_sheet_stdout = String::from_utf8_lossy(&full_sheet.stdout);
     assert!(full_sheet_stdout.contains("整表提取任务"));
@@ -1218,7 +1218,7 @@ fn interactive_menu_appends_only_after_confirmation_and_with_matching_capability
     };
     let config = create_menu_config(&root, &[task]);
 
-    let refused = run_menu(&config, "7\n6\nyes\n");
+    let refused = run_menu(&config, "5\n6\nyes\n");
     assert!(
         refused.status.success(),
         "menu should report the missing capability without launching extraction: {}",
@@ -1232,7 +1232,7 @@ fn interactive_menu_appends_only_after_confirmation_and_with_matching_capability
     let capability = write_append_test_capability(&root, &output_path, &source, PLATFORM)?;
     let appended = run_menu_with_capability(
         &config,
-        &format!("7\n6\nyes\n{}\n", source.display()),
+        &format!("5\n6\nyes\n{}\n", source.display()),
         "developer",
         &capability,
         PLATFORM,
@@ -1292,7 +1292,7 @@ fn interactive_menu_supports_user_and_off_log_views() {
     let user_config = create_menu_config(&user_root, &tasks);
     let user_output = run_menu_with_view(
         &user_config,
-        &format!("7\n6\nn\n{}\n", input_path.display()),
+        &format!("5\n6\nn\n{}\n", input_path.display()),
         "user",
     );
     assert!(user_output.status.success());
@@ -1308,7 +1308,7 @@ fn interactive_menu_supports_user_and_off_log_views() {
     let off_config = create_menu_config(&off_root, &tasks);
     let off_output = run_menu_with_view(
         &off_config,
-        &format!("7\n6\nn\n{}\n", input_path.display()),
+        &format!("5\n6\nn\n{}\n", input_path.display()),
         "off",
     );
     assert!(off_output.status.success());

@@ -79,14 +79,14 @@ fn interactive_batch_menu_runs_region_sum_check_through_real_cli() -> Result<()>
         + ";"
         + &unsupported_xls.to_string_lossy();
 
-    let output = run_menu(&config, &format!("7\n5\n1\n{input_list}\n0\n"))?;
+    let output = run_menu(&config, &format!("5\n5\n1\n{input_list}\n0\n"))?;
     assert!(
         output.status.success(),
         "batch menu failed: {}",
         String::from_utf8_lossy(&output.stderr)
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("7  一二批处理工具"));
+    assert!(stdout.contains("5  专用报表处理"));
     assert!(stdout.contains("5  地区总分校验"));
     assert!(stdout.contains("已选择文件 6 个"));
     assert!(stdout.contains("先显式转换为 .xlsx"));
@@ -136,7 +136,7 @@ fn interactive_region_sum_menu_records_user_developer_and_off_views() -> Result<
     let balanced = fixture_dir.join("balanced.xlsx");
     let broken = fixture_dir.join("broken.xlsx");
     let input = format!(
-        "7\n5\n1\n{};{}\n0\n0\n",
+        "5\n5\n1\n{};{}\n0\n0\n",
         balanced.display(),
         broken.display()
     );
@@ -508,7 +508,7 @@ fn interactive_foreign_bank_menu_saves_read_only_plans_and_user_history() -> Res
         String::from_utf8_lossy(&output.stderr)
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("当前接入 7-1 至 7-8"));
+    assert!(stdout.contains("------ 专用报表处理 ------"));
     assert!(stdout.contains("删除分机构表中的外资行"));
     assert!(stdout.contains("PT-7-3 当前只接受 .xlsx"));
     assert!(stdout.contains(r#""planned_files": 2"#));
@@ -587,7 +587,7 @@ fn interactive_foreign_bank_menu_off_view_has_no_events_or_history() -> Result<(
 fn interactive_foreign_bank_menu_stops_before_file_selection_when_mapping_is_empty() -> Result<()> {
     let root = TestDirectory::new()?;
     let config = create_config(root.path())?;
-    let output = run_menu(&config, "7\n3\n0\n0\n")?;
+    let output = run_menu(&config, "5\n3\n0\n0\n")?;
     assert!(
         output.status.success(),
         "foreign-bank menu failed: {}",
@@ -781,7 +781,7 @@ fn foreign_bank_menu_input(sources: &[&Path]) -> String {
         .map(|path| path.to_string_lossy())
         .collect::<Vec<_>>()
         .join(";");
-    format!("7\n3\n1\n{paths}\n0\n0\n")
+    format!("5\n3\n1\n{paths}\n0\n0\n")
 }
 
 fn foreign_bank_capability(
@@ -825,7 +825,7 @@ fn interactive_institution_normalize_menu_supports_user_developer_and_off_views(
         } else {
             target.display().to_string()
         };
-        let input = format!("7\n2\n1\n{input_paths}\n0\n");
+        let input = format!("5\n2\n1\n{input_paths}\n0\n");
         let output =
             run_menu_with_arguments(&config, &input, &["--log-view".to_owned(), view.to_owned()])?;
         assert!(
@@ -894,7 +894,7 @@ fn interactive_institution_normalize_menu_recursively_plans_xlsx_files_only() ->
     fs::write(first_folder.join("unsupported.xlsm"), b"unverified format")?;
     fs::write(second_folder.join("~$locked.xlsx"), b"Excel lock file")?;
 
-    let input = format!("7\n2\n3\n{}\n0\n", source_root.display());
+    let input = format!("5\n2\n3\n{}\n0\n", source_root.display());
     let output = run_menu(&config, &input)?;
     assert!(
         output.status.success(),
@@ -967,7 +967,7 @@ fn interactive_institution_normalize_menu_applies_only_with_temporary_capability
         serde_json::to_vec_pretty(&institution_normalize_capability(&plan))?,
     )?;
 
-    let input = format!("7\n2\n1\n{}\n0\n", target.display());
+    let input = format!("5\n2\n1\n{}\n0\n", target.display());
     let output = run_menu_with_capability(
         &config,
         &input,
@@ -1622,7 +1622,7 @@ fn rural_loan_capability(
 
 fn rural_loan_menu_input(choice: u8, current: &Path, previous: &Path) -> String {
     format!(
-        "7\n{choice}\n{}\n{}\n0\n0\n",
+        "5\n{choice}\n{}\n{}\n0\n0\n",
         current.display(),
         previous.display()
     )
@@ -1630,7 +1630,7 @@ fn rural_loan_menu_input(choice: u8, current: &Path, previous: &Path) -> String 
 
 fn village_menu_input(current: &Path, previous: &Path, target: &Path) -> String {
     format!(
-        "7\n1\n{}\n{}\n1\n{}\n0\n0\n",
+        "5\n1\n{}\n{}\n1\n{}\n0\n0\n",
         current.display(),
         previous.display(),
         target.display()

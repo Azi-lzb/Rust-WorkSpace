@@ -45,7 +45,7 @@ impl Drop for TestDirectory {
 }
 
 #[test]
-fn interactive_timeline_menu_routes_compare_wide_modes_and_precheck() -> Result<()> {
+fn interactive_v2_data_menu_routes_compare_wide_summary_and_precheck() -> Result<()> {
     let root = TestDirectory::new()?;
     let config = create_timeline_config(root.path())?;
     let template = root.path().join("template.xlsx");
@@ -59,7 +59,7 @@ fn interactive_timeline_menu_routes_compare_wide_modes_and_precheck() -> Result<
         &config,
         &format!(
             "1
-1
+4
 {}
 {}
 0
@@ -74,45 +74,18 @@ fn interactive_timeline_menu_routes_compare_wide_modes_and_precheck() -> Result<
         String::from_utf8_lossy(&compare.stderr)
     );
     let compare_stdout = String::from_utf8_lossy(&compare.stdout);
-    assert!(compare_stdout.contains("1  时序工具"));
-    assert!(compare_stdout.contains("1  表头路径比对"));
+    assert!(compare_stdout.contains("1  数据提取与汇总"));
+    assert!(compare_stdout.contains("4  表头路径比对与映射"));
     assert!(compare_stdout.contains("表头路径比对模板"));
     assert!(compare_stdout.contains(r#""output""#));
     let output_dir = root.path().join("app").join("output");
     assert!(find_output(&output_dir, "compare_3_9_3_")?.is_file());
 
-    let row_suffix = run_menu(
-        &config,
-        &format!(
-            "1
-3
-{}
-0
-",
-            wide_source.display()
-        ),
-    )?;
-    assert!(
-        row_suffix.status.success(),
-        "row-suffix wide summary menu failed: {}",
-        String::from_utf8_lossy(&row_suffix.stderr)
-    );
-    assert!(String::from_utf8_lossy(&row_suffix.stdout).contains("3  宽表汇总"));
-    assert!(String::from_utf8_lossy(&row_suffix.stdout).contains(r#""output""#));
-    let row_suffix_output = find_output(&output_dir, "行头加后缀")?;
-    let row_suffix_dump = read_workbook(&row_suffix_output)?;
-    let row_suffix_sheet = row_suffix_dump
-        .sheets
-        .iter()
-        .find(|sheet| sheet.name == "WideRule")
-        .context("row-suffix summary sheet missing")?;
-    assert!(!row_suffix_sheet.values.is_empty());
-
     let no_suffix = run_menu(
         &config,
         &format!(
             "1
-4
+1
 {}
 0
 ",
@@ -124,7 +97,7 @@ fn interactive_timeline_menu_routes_compare_wide_modes_and_precheck() -> Result<
         "no-suffix wide summary menu failed: {}",
         String::from_utf8_lossy(&no_suffix.stderr)
     );
-    assert!(String::from_utf8_lossy(&no_suffix.stdout).contains("4  宽表汇总"));
+    assert!(String::from_utf8_lossy(&no_suffix.stdout).contains("1  时序宽表汇总"));
     let no_suffix_output = find_output(&output_dir, "行头不加后缀")?;
     let no_suffix_dump = read_workbook(&no_suffix_output)?;
     assert!(no_suffix_dump
@@ -144,7 +117,7 @@ fn interactive_timeline_menu_routes_compare_wide_modes_and_precheck() -> Result<
         String::from_utf8_lossy(&precheck.stderr)
     );
     let precheck_stdout = String::from_utf8_lossy(&precheck.stdout);
-    assert!(precheck_stdout.contains("5  预校验"));
+    assert!(precheck_stdout.contains("5  时序配置预校验"));
     assert!(precheck_stdout.contains("=== 预校验完成: 错误 0 项，警告 0 项 ==="));
     assert!(precheck_stdout.contains("[完成] 时序配置预校验通过。"));
     assert!(precheck_stdout.contains("再见。"));
@@ -853,7 +826,7 @@ fn header_path_compare_menu_supports_user_developer_and_off_views() -> Result<()
     let user = run_menu_with_view(
         &config,
         "user",
-        &format!("1\n1\n{}\n{}\n0\n", template.display(), source.display()),
+        &format!("1\n4\n{}\n{}\n0\n", template.display(), source.display()),
     )?;
     assert!(
         user.status.success(),
@@ -882,7 +855,7 @@ fn header_path_compare_menu_supports_user_developer_and_off_views() -> Result<()
     let developer = run_menu_with_view(
         &config,
         "developer",
-        &format!("1\n1\n{}\n{}\n0\n", template.display(), developer_sources),
+        &format!("1\n4\n{}\n{}\n0\n", template.display(), developer_sources),
     )?;
     assert!(
         developer.status.success(),
@@ -940,7 +913,7 @@ fn header_path_compare_menu_supports_user_developer_and_off_views() -> Result<()
     let off = run_menu_with_view(
         &config,
         "off",
-        &format!("1\n1\n{}\n{}\n0\n", template.display(), source.display()),
+        &format!("1\n4\n{}\n{}\n0\n", template.display(), source.display()),
     )?;
     assert!(
         off.status.success(),
@@ -964,7 +937,7 @@ fn header_path_compare_formats_date_headers_as_python_datetime_text() -> Result<
     create_date_header_source(&template, 2024, 1, 31)?;
     create_date_header_source(&source, 2024, 2, 29)?;
 
-    let input = format!("1\n1\n{}\n{}\n0\n", template.display(), source.display());
+    let input = format!("1\n4\n{}\n{}\n0\n", template.display(), source.display());
     let output = run_menu_with_view(&config, "off", &input)?;
     assert!(
         output.status.success(),
@@ -1014,7 +987,7 @@ fn header_path_compare_menu_records_terminal_failure_summary() -> Result<()> {
     let user = run_menu_with_view(
         &config,
         "user",
-        &format!("1\n1\n{}\n{}\n0\n", template.display(), source.display()),
+        &format!("1\n4\n{}\n{}\n0\n", template.display(), source.display()),
     )?;
     assert!(!user.status.success());
     let user_stderr = String::from_utf8_lossy(&user.stderr);
@@ -1030,7 +1003,7 @@ fn header_path_compare_menu_records_terminal_failure_summary() -> Result<()> {
     let developer = run_menu_with_view(
         &config,
         "developer",
-        &format!("1\n1\n{}\n{}\n0\n", template.display(), source.display()),
+        &format!("1\n4\n{}\n{}\n0\n", template.display(), source.display()),
     )?;
     assert!(!developer.status.success());
     let history = read_single_run_history(&log_dir, "PT-1-1")?;
@@ -1060,7 +1033,7 @@ fn interactive_wide_summary_menu_commits_new_target_after_confirmation() -> Resu
     let source = root.path().join("sample wide source.xlsx");
     create_wide_source(&source, "交互汇总甲", 23.5)?;
 
-    let completed = run_menu(&config, &format!("1\n3\n{}\ny\n0\n", source.display()))?;
+    let completed = run_menu(&config, &format!("1\n1\n{}\ny\n0\n", source.display()))?;
     assert!(
         completed.status.success(),
         "confirmed target append failed: {}",
@@ -1109,17 +1082,25 @@ fn interactive_wide_summary_menu_commits_new_target_after_confirmation() -> Resu
 }
 
 #[test]
-fn interactive_wide_summary_menu_preserves_negative_date_serial_in_new_target() -> Result<()> {
-    assert_negative_date_serial_menu_target("3")
+fn interactive_v2_data_menu_hides_cancelled_row_suffix_summary() -> Result<()> {
+    let root = TestDirectory::new()?;
+    let config = create_timeline_config(root.path())?;
+    let output = run_menu(&config, "1\n0\n0\n")?;
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("1  时序宽表汇总"));
+    assert!(!stdout.contains("行头加后缀"));
+    assert!(!stdout.contains("PT-1-3"));
+    Ok(())
 }
 
 #[test]
 fn interactive_wide_summary_no_suffix_menu_preserves_negative_date_serial_in_new_target(
 ) -> Result<()> {
-    assert_negative_date_serial_menu_target("4")
+    assert_negative_date_serial_menu_target()
 }
 
-fn assert_negative_date_serial_menu_target(menu_choice: &str) -> Result<()> {
+fn assert_negative_date_serial_menu_target() -> Result<()> {
     let root = TestDirectory::new()?;
     let target = root.path().join("configured target.xlsx");
     let config = create_timeline_config_with_target(root.path(), Some(&target))?;
@@ -1128,10 +1109,7 @@ fn assert_negative_date_serial_menu_target(menu_choice: &str) -> Result<()> {
     create_wide_source_with_negative_date(&source, "负序列分行")?;
     let source_before = fs::read(&source)?;
 
-    let completed = run_menu(
-        &config,
-        &format!("1\n{menu_choice}\n{}\ny\n0\n", source.display()),
-    )?;
+    let completed = run_menu(&config, &format!("1\n1\n{}\ny\n0\n", source.display()))?;
     assert!(
         completed.status.success(),
         "wide-summary negative serial target write failed: {}",
@@ -1162,12 +1140,7 @@ fn assert_negative_date_serial_menu_target(menu_choice: &str) -> Result<()> {
         report["target_append_executions"][0]["operation"],
         "created"
     );
-    let feature_id = if menu_choice == "3" {
-        "PT-1-3"
-    } else {
-        "PT-1-4"
-    };
-    let history = read_single_run_history(&root.path().join("app").join("logs"), feature_id)?;
+    let history = read_single_run_history(&root.path().join("app").join("logs"), "PT-1-4")?;
     assert_eq!(history["status"], "succeeded");
     Ok(())
 }
@@ -1180,7 +1153,7 @@ fn interactive_wide_summary_menu_does_not_commit_without_confirmation() -> Resul
     let source = root.path().join("sample wide source.xlsx");
     create_wide_source(&source, "交互汇总乙", 24.5)?;
 
-    let declined = run_menu(&config, &format!("1\n3\n{}\nn\n0\n", source.display()))?;
+    let declined = run_menu(&config, &format!("1\n1\n{}\nn\n0\n", source.display()))?;
     assert!(
         declined.status.success(),
         "declining target append failed: {}",
@@ -1205,12 +1178,12 @@ fn interactive_wide_summary_existing_target_requires_capability_and_commits_safe
 
     let created = run_menu(
         &config,
-        &format!("1\n3\n{}\ny\n0\n", first_source.display()),
+        &format!("1\n1\n{}\ny\n0\n", first_source.display()),
     )?;
     assert!(created.status.success());
     let original_target = fs::read(&target)?;
 
-    let without_capability = run_menu(&config, &format!("1\n3\n{}\n0\n", second_source.display()))?;
+    let without_capability = run_menu(&config, &format!("1\n1\n{}\n0\n", second_source.display()))?;
     assert!(
         without_capability.status.success(),
         "plan-only existing target route failed: {}",
@@ -1245,7 +1218,7 @@ fn interactive_wide_summary_existing_target_requires_capability_and_commits_safe
         "user",
         &capability_path,
         "synthetic-pt-1-wide-menu-umya",
-        &format!("1\n3\n{}\ny\n0\n", second_source.display()),
+        &format!("1\n1\n{}\ny\n0\n", second_source.display()),
     )?;
     assert!(
         committed.status.success(),
@@ -1298,7 +1271,7 @@ fn wide_summary_menu_logging_views_record_progress_and_respect_off() -> Result<(
     let source = root.path().join("sample wide source.xlsx");
     create_wide_source(&source, "宽表甲", 17.5)?;
 
-    let user = run_menu_with_view(&config, "user", &format!("1\n3\n{}\n0\n", source.display()))?;
+    let user = run_menu_with_view(&config, "user", &format!("1\n1\n{}\n0\n", source.display()))?;
     assert!(
         user.status.success(),
         "user-view wide summary failed: {}",
@@ -1309,37 +1282,41 @@ fn wide_summary_menu_logging_views_record_progress_and_respect_off() -> Result<(
     assert!(!user_stderr.contains("\"phase\""));
 
     let log_dir = root.path().join("app").join("logs");
-    let row_suffix_history = read_single_run_history(&log_dir, "PT-1-3")?;
-    assert_eq!(row_suffix_history["status"], "succeeded");
-    assert_eq!(row_suffix_history["completed_inputs"], 1);
-    assert_eq!(row_suffix_history["failed_inputs"], 0);
-    assert!(row_suffix_history["actual_engines"]
+    let user_history = read_single_run_history(&log_dir, "PT-1-4")?;
+    assert_eq!(user_history["status"], "succeeded");
+    assert_eq!(user_history["completed_inputs"], 1);
+    assert_eq!(user_history["failed_inputs"], 0);
+    assert!(user_history["actual_engines"]
         .as_array()
         .is_some_and(|engines| engines.iter().any(|engine| engine == "calamine")
             && engines.iter().any(|engine| engine == "rust_xlsxwriter")));
-    assert_history_has_phase(&row_suffix_history, "source_read", "completed", "calamine")?;
-    assert_history_has_phase(&row_suffix_history, "rule_aggregation", "completed", "")?;
+    assert_history_has_phase(&user_history, "source_read", "completed", "calamine")?;
+    assert_history_has_phase(&user_history, "rule_aggregation", "completed", "")?;
     assert_history_has_phase(
-        &row_suffix_history,
+        &user_history,
         "summary_write",
         "completed",
         "rust_xlsxwriter",
     )?;
-    let append_plan_event = row_suffix_history["events"]
+    let append_plan_event = user_history["events"]
         .as_array()
         .context("run history events must be an array")?
         .iter()
         .find(|event| event["phase"] == "target_append_plan" && event["status"] == "completed")
         .context("target append-plan completion event missing")?;
     assert!(append_plan_event["progress"]["current_input"].is_null());
-    let history_text = serde_json::to_string(&row_suffix_history)?;
+    let history_text = serde_json::to_string(&user_history)?;
     assert!(!history_text.contains(&source.display().to_string()));
     assert!(!history_text.contains("宽表甲"));
 
+    let developer_root = TestDirectory::new()?;
+    let developer_config = create_timeline_config(developer_root.path())?;
+    let developer_source = developer_root.path().join("sample wide source.xlsx");
+    create_wide_source(&developer_source, "宽表甲", 17.5)?;
     let developer = run_menu_with_view(
-        &config,
+        &developer_config,
         "developer",
-        &format!("1\n4\n{}\n0\n", source.display()),
+        &format!("1\n1\n{}\n0\n", developer_source.display()),
     )?;
     assert!(
         developer.status.success(),
@@ -1360,7 +1337,7 @@ fn wide_summary_menu_logging_views_record_progress_and_respect_off() -> Result<(
     }));
     assert!(developer_events.iter().all(|event| {
         let text = event.to_string();
-        !text.contains(&source.display().to_string()) && !text.contains("宽表甲")
+        !text.contains(&developer_source.display().to_string()) && !text.contains("宽表甲")
     }));
     assert!(developer_events.windows(2).all(|pair| {
         pair[0]["total_elapsed_ms"]
@@ -1368,12 +1345,13 @@ fn wide_summary_menu_logging_views_record_progress_and_respect_off() -> Result<(
             .zip(pair[1]["total_elapsed_ms"].as_u64())
             .is_some_and(|(previous, next)| previous <= next)
     }));
-    let no_suffix_history = read_single_run_history(&log_dir, "PT-1-4")?;
-    assert_eq!(no_suffix_history["status"], "succeeded");
-    assert_history_has_phase(&no_suffix_history, "source_read", "completed", "calamine")?;
+    let developer_log_dir = developer_root.path().join("app").join("logs");
+    let developer_history = read_single_run_history(&developer_log_dir, "PT-1-4")?;
+    assert_eq!(developer_history["status"], "succeeded");
+    assert_history_has_phase(&developer_history, "source_read", "completed", "calamine")?;
 
     let history_count_before_off = run_history_paths(&log_dir)?.len();
-    let off = run_menu_with_view(&config, "off", &format!("1\n3\n{}\n0\n", source.display()))?;
+    let off = run_menu_with_view(&config, "off", &format!("1\n1\n{}\n0\n", source.display()))?;
     assert!(
         off.status.success(),
         "off-view wide summary failed: {}",
@@ -1395,7 +1373,7 @@ fn wide_summary_menu_failure_history_identifies_read_stage_without_source_data()
     let source = root.path().join("broken source.xlsx");
     fs::write(&source, b"not an xlsx workbook")?;
 
-    let failure = run_menu_with_view(&config, "user", &format!("1\n3\n{}\n0\n", source.display()))?;
+    let failure = run_menu_with_view(&config, "user", &format!("1\n1\n{}\n0\n", source.display()))?;
     assert!(!failure.status.success());
     let user_stderr = String::from_utf8_lossy(&failure.stderr);
     assert!(user_stderr.contains("读取失败"));
@@ -1404,7 +1382,7 @@ fn wide_summary_menu_failure_history_identifies_read_stage_without_source_data()
     assert!(!user_stderr.contains("calamine"));
 
     let log_dir = root.path().join("app").join("logs");
-    let history = read_single_run_history(&log_dir, "PT-1-3")?;
+    let history = read_single_run_history(&log_dir, "PT-1-4")?;
     assert_eq!(history["status"], "failed");
     assert_eq!(history["failure"]["stage"], "source_read");
     assert_eq!(history["failure"]["input_index"], 1);
@@ -1909,15 +1887,13 @@ fn launching_without_arguments_opens_the_numbered_main_menu() -> Result<()> {
     let stdout = String::from_utf8_lossy(&output.stdout);
     for expected in [
         "======== PyTools 菜单 ========",
-        "1  时序工具",
-        "2  去重工具",
-        "3  打印工具",
-        "4  转换与文件命名工具",
-        "5  配置工具",
-        "6  汇总工具",
-        "7  一二批处理工具",
-        "8  归档工具",
-        "9  快捷工具",
+        "1  数据提取与汇总",
+        "2  数据去重与追加",
+        "3  报表打印",
+        "4  文件处理",
+        "5  专用报表处理",
+        "6  归档整理",
+        "7  配置与快捷操作",
         "0  退出",
         "再见。",
     ] {
@@ -1930,21 +1906,20 @@ fn launching_without_arguments_opens_the_numbered_main_menu() -> Result<()> {
 }
 
 #[test]
-fn excluded_pt_1_2_menu_item_does_not_start_the_legacy_candidate() -> Result<()> {
+fn excluded_pt_1_2_is_not_exposed_by_the_v2_data_menu() -> Result<()> {
     let directory = TestDirectory::new()?;
     let config = create_timeline_config(directory.path())?;
-    let output = run_menu(&config, "1\n2\n0\n")?;
+    let output = run_menu(&config, "1\n0\n0\n")?;
     assert!(
         output.status.success(),
-        "PT-1-2 exclusion menu route failed: {}",
+        "V2 data menu failed: {}",
         String::from_utf8_lossy(&output.stderr)
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
-        stdout.contains("1-2 范围排除"),
-        "main menu must preserve the exclusion: {stdout}"
+        !stdout.contains("时序提取（PT-1-2"),
+        "the excluded PT-1-2 action must not be listed: {stdout}"
     );
-    assert!(stdout.contains("PT-1-2 时序提取不在已确认迁移范围内"));
     assert!(!stdout.contains("选择时序提取源文件"));
     assert!(!stdout.contains("PT-1-2 开始"));
     assert!(stdout.contains("0  退出"));

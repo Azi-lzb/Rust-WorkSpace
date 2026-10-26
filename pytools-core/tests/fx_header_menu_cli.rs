@@ -110,7 +110,7 @@ fn fx_header_menu_plans_without_capability_and_skips_unverified_xls() -> Result<
 
     let output = run_menu(
         &config,
-        &format!("7\n4\n{};{}\n0\n", target.display(), unsupported.display()),
+        &format!("5\n4\n{};{}\n0\n", target.display(), unsupported.display()),
         &[],
     )?;
     assert!(
@@ -187,7 +187,7 @@ fn fx_header_menu_commits_only_with_matching_capability_and_matches_python_basel
 
     let output = run_menu(
         &config,
-        &format!("7\n4\n{}\n0\n", target.display()),
+        &format!("5\n4\n{}\n0\n", target.display()),
         &[
             "--capabilities".to_owned(),
             capability_path.to_string_lossy().into_owned(),
@@ -310,7 +310,7 @@ fn fx_header_menu_off_view_saves_no_history_or_events() -> Result<()> {
 
     let output = run_menu(
         &config,
-        &format!("7\n4\n{}\n0\n", target.display()),
+        &format!("5\n4\n{}\n0\n", target.display()),
         &["--log-view".to_owned(), "off".to_owned()],
     )?;
     assert!(

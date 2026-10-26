@@ -996,3 +996,15 @@ Windows 原生 `timeline_menu_cli` 27/27、`cargo fmt --check`、`cargo build --
 核实当前分支已包含共享 reader 提交 `040e774`：`uses_1904_date_system` 对 `.xls` 使用 Calamine BIFF epoch 元数据，对 `.xlsb` 使用 Calamine XLSB epoch 元数据，对 OOXML 格式读取 `workbookPr`；PT-4-2 原生值转换已在创建候选文件前调用该 API。此前记录“helper 不支持 `.xls/.xlsb`”及等待 main 的描述已被该共享修复替代。菜单确认提示和 `--help` 现统一列出 `.xls/.xlsm/.xlsb` 的 1904 epoch 失败关闭保护。
 
 Windows 原生验证：`cargo fmt --manifest-path pytools-core/Cargo.toml -- --check` 通过；`cargo test --offline --locked -p pytools-core --test conversion_menu_cli -j 1` 10/10 通过，含 `.xls` 1900 epoch 测试夹具经实际菜单确认完成值转换、菜单警告列出三种格式及 CLI 帮助断言。未运行 Python/Rust 对拍；当前无可用的正向 BIFF `.xls`/`.xlsb` 1904 样本，故只确认代码路由和已有合成 OOXML 1904 失败关闭证据，不宣称 legacy 1904 正样本已验收。PT-4-2 真实业务与平台验收状态不变。
+
+### 2026-10-26 PyTools Rust V2 七分类菜单与既有业务入口接线
+
+本节更新此前“1–9 主菜单”入口记录：新版现为 7 个一级分类；此前 PT-1-2 排除和逐项业务验收证据仍有效。
+
+- `pytools-core/src/bin/pytools.rs`：主菜单数字先映射到分类 ID；时序/汇总、去重追加、打印、文件处理、配置快捷操作及专用报表子菜单均经稳定功能 ID 分发。归档继续沿用 PT-8-* 功能 ID。现有业务 API、配置合同、Excel 引擎未改。
+- 数据提取与汇总：1-1 接入无后缀宽表汇总（PT-1-4）；1-2 调用 PT-6-1 使用区域汇总；1-3 对 PT-6-2 明确提示尚未实现且不读写工作簿；1-4 接入表头路径比对；1-5 接入时序配置预校验。PT-1-2 保持排除；已取消的行头加后缀宽表模式不出现在菜单。
+- 去重追加：按配置检查/删除、独立去重追加、配置预校验接入已有 PT-2-3/4/5/6；批注去重不出现在菜单。打印菜单接入 PT-3-3 静态报表与 PT-3-4 预校验；批注打印和 PDF 不出现在菜单。
+- 文件处理：既有批量重命名、排序前缀添加/清理、单元格内容命名、Excel/Word 转换、Sheet 改名、提交检查接入各自现有 handler；不含取消内容前缀、局部重命名和原生值转换菜单入口。专用报表、归档与配置快捷操作保留已有入口。
+- 生命周期：七分类菜单/入口接线为“已实现，待 Windows 真实验收”；PT-6-2 命名区域业务仍未实现。菜单可运行不代表所有具体业务或真实样本验收完成。
+
+Windows 原生验证：`cargo fmt --manifest-path pytools-core/Cargo.toml -- --check`；12 个受影响集成测试目标合计 93 项通过。工作表区域提取测试中有 1 项按名称过滤：该未修改的候选路径测试断言单日期单元格必须报“不支持类型”，当前实现实际写出结果；本轮未据此改动业务逻辑，后续需独立确认该断言的 Python 业务语义。其余工作表提取菜单/对拍测试 10/10 通过。独立 `pytools.exe` 无参数启动、显示 7 个菜单并输入 0 正常退出。测试主要使用合成工作簿/临时配置；本轮未进行用户真实样本对拍、Windows 原生文件对话框人工验证或 Linux 阶段验收。既有真实样本对拍证据不变。

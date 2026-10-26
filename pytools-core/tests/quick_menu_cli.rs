@@ -39,7 +39,8 @@ impl Drop for TestDirectory {
 }
 
 #[test]
-fn main_menu_routes_all_three_quick_actions_without_starting_a_desktop_app() -> Result<()> {
+fn v2_configuration_menu_routes_all_three_quick_actions_without_starting_a_desktop_app(
+) -> Result<()> {
     let root = TestDirectory::new()?;
     let blocked_parent = root.path().join("blocked-parent");
     fs::write(&blocked_parent, b"not a directory")?;
@@ -61,7 +62,7 @@ fn main_menu_routes_all_three_quick_actions_without_starting_a_desktop_app() -> 
         .stdin
         .take()
         .context("menu stdin was not piped")?
-        .write_all(b"9\n1\n9\n2\n9\n3\n0\n")?;
+        .write_all(b"7\n3\n4\n5\n0\n0\n")?;
     let result = child.wait_with_output()?;
     assert!(
         result.status.success(),
@@ -71,12 +72,12 @@ fn main_menu_routes_all_three_quick_actions_without_starting_a_desktop_app() -> 
 
     let stdout = String::from_utf8_lossy(&result.stdout);
     assert!(
-        stdout.contains("  9  快捷工具"),
-        "main menu missing option 9: {stdout}"
+        stdout.contains("  7  配置与快捷操作"),
+        "main menu missing configuration/quick-actions option: {stdout}"
     );
     assert!(
-        stdout.contains("------ 快捷工具 ------"),
-        "quick menu missing: {stdout}"
+        stdout.contains("------ 配置与快捷操作 ------"),
+        "configuration and quick-actions menu missing: {stdout}"
     );
     assert!(
         stdout.contains("[失败] 打开配置文件失败:"),
@@ -87,7 +88,7 @@ fn main_menu_routes_all_three_quick_actions_without_starting_a_desktop_app() -> 
         "latest-output route missing: {stdout}"
     );
     assert!(
-        stdout.contains("[失败] 打开输出文件夹失败:"),
+        stdout.contains("[失败] 打开输出目录失败:"),
         "output-folder route missing: {stdout}"
     );
     assert!(
@@ -119,15 +120,13 @@ fn launching_without_arguments_opens_the_legacy_numbered_main_menu() -> Result<(
     let stdout = String::from_utf8_lossy(&result.stdout);
     for legacy_entry in [
         "======== PyTools 菜单 ========",
-        "  1  时序工具",
-        "  2  去重工具",
-        "  3  打印工具",
-        "  4  转换",
-        "  5  配置工具",
-        "  6  汇总工具",
-        "  7  一二批处理工具",
-        "  8  归档工具",
-        "  9  快捷工具",
+        "  1  数据提取与汇总",
+        "  2  数据去重与追加",
+        "  3  报表打印",
+        "  4  文件处理",
+        "  5  专用报表处理",
+        "  6  归档整理",
+        "  7  配置与快捷操作",
         "  0  退出",
         "再见。",
     ] {
@@ -183,7 +182,7 @@ fn cli_help_lists_quick_tools_menu_category() -> Result<()> {
 
     let usage = String::from_utf8_lossy(&result.stderr);
     assert!(
-        usage.contains("9 (quick tools 1-3)"),
+        usage.contains("7 (configuration and quick actions 1-5)"),
         "usage should list the quick tools menu category: {usage}"
     );
     Ok(())

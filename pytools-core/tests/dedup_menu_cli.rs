@@ -45,7 +45,7 @@ impl Drop for TestDirectory {
 }
 
 #[test]
-fn interactive_dedup_menu_routes_all_six_actions_without_committing_edits() -> Result<()> {
+fn interactive_dedup_menu_routes_four_v2_actions_without_committing_edits() -> Result<()> {
     let root = TestDirectory::new()?;
     let config = create_dedup_config(root.path())?;
     let source = root.path().join("source.xlsx");
@@ -53,53 +53,13 @@ fn interactive_dedup_menu_routes_all_six_actions_without_committing_edits() -> R
     create_duplicate_source(&source)?;
     let source_before = fs::read(&source)?;
 
-    let comment_check = run_menu(&config, &format!("2\n1\n{}\n0\n", source.display()))?;
-    assert!(comment_check.status.success());
-    let comment_check_output = String::from_utf8_lossy(&comment_check.stdout);
-    assert!(comment_check_output.contains("开始处理：按批注检查重复并生成计划"));
-    assert!(comment_check_output.contains("发现 1 条重复行，计划操作 3 项"));
-    let comment_check_json = output_json(&comment_check)?;
-    assert_eq!(comment_check_json["duplicate_rows"], 1);
-    assert_eq!(comment_check_json["execution"], "plan_only");
-    assert_eq!(
-        comment_check_json["plan"]["operations"]
-            .as_array()
-            .unwrap()
-            .len(),
-        3
-    );
-    assert!(PathBuf::from(
-        comment_check_json["plan_file"]
-            .as_str()
-            .context("comment check plan path missing")?
-    )
-    .is_file());
-    assert!(!PathBuf::from(
-        comment_check_json["plan"]["output"]
-            .as_str()
-            .context("comment check candidate path missing")?
-    )
-    .exists());
+    let menu = run_menu(&config, "2\n0\n0\n")?;
+    assert!(menu.status.success());
+    let menu_text = String::from_utf8_lossy(&menu.stdout);
+    assert!(menu_text.contains("按配置检查重复"));
+    assert!(!menu_text.contains("按批注"));
 
-    let comment_delete = run_menu(&config, &format!("2\n2\n{}\n0\n", source.display()))?;
-    assert!(comment_delete.status.success());
-    let comment_delete_json = output_json(&comment_delete)?;
-    assert_eq!(comment_delete_json["duplicate_rows"], 1);
-    assert_eq!(comment_delete_json["execution"], "plan_only");
-    let comment_plan = PathBuf::from(
-        comment_delete_json["plan_file"]
-            .as_str()
-            .context("comment delete plan path missing")?,
-    );
-    assert!(comment_plan.is_file());
-    assert!(!PathBuf::from(
-        comment_delete_json["plan"]["output"]
-            .as_str()
-            .context("comment delete candidate path missing")?
-    )
-    .exists());
-
-    let config_check = run_menu(&config, "2\n3\n0\n")?;
+    let config_check = run_menu(&config, "2\n1\n0\n")?;
     assert!(config_check.status.success());
     let config_check_json = output_json(&config_check)?;
     assert_eq!(config_check_json[0]["report"]["duplicate_rows"], 1);
@@ -124,7 +84,7 @@ fn interactive_dedup_menu_routes_all_six_actions_without_committing_edits() -> R
     )
     .exists());
 
-    let config_delete = run_menu(&config, "2\n4\n0\n")?;
+    let config_delete = run_menu(&config, "2\n2\n0\n")?;
     assert!(config_delete.status.success());
     let config_delete_json = output_json(&config_delete)?;
     assert_eq!(config_delete_json[0]["report"]["duplicate_rows"], 1);
@@ -142,7 +102,7 @@ fn interactive_dedup_menu_routes_all_six_actions_without_committing_edits() -> R
     )
     .exists());
 
-    let append_plan = run_menu(&config, "2\n5\n0\n")?;
+    let append_plan = run_menu(&config, "2\n3\n0\n")?;
     assert!(append_plan.status.success());
     let append_json = output_json(&append_plan)?;
     assert_eq!(append_json[0]["target_existed"], false);
@@ -161,7 +121,7 @@ fn interactive_dedup_menu_routes_all_six_actions_without_committing_edits() -> R
     )
     .exists());
 
-    let precheck = run_menu(&config, "2\n6\n0\n")?;
+    let precheck = run_menu(&config, "2\n4\n0\n")?;
     assert!(precheck.status.success());
     let precheck_json = output_json(&precheck)?;
     assert_eq!(precheck_json["fail"], 0);
@@ -186,7 +146,7 @@ fn interactive_dedup_append_requires_confirmation_then_creates_a_new_target() ->
     create_duplicate_source(&source)?;
     let source_before = fs::read(&source)?;
 
-    let output = run_menu_with_view(&config, "2\n5\nyes\n0\n", "developer")?;
+    let output = run_menu_with_view(&config, "2\n3\nyes\n0\n", "developer")?;
     assert!(
         output.status.success(),
         "confirmed append failed: {}",
@@ -248,7 +208,7 @@ fn interactive_dedup_append_keeps_existing_target_plan_only_without_capability()
     let source_before = fs::read(&source)?;
     let target_before = fs::read(&target)?;
 
-    let output = run_menu(&config, "2\n5\n0\n")?;
+    let output = run_menu(&config, "2\n3\n0\n")?;
     assert!(
         output.status.success(),
         "plan-only append failed: {}",
@@ -315,7 +275,7 @@ fn interactive_dedup_append_commits_existing_target_with_matching_capability() -
 
     let output = run_menu_with_capability(
         &config,
-        "2\n5\nyes\n0\n",
+        "2\n3\nyes\n0\n",
         &capability_path,
         "synthetic-pt-2-5-menu-test",
     )?;
@@ -351,7 +311,7 @@ fn interactive_dedup_menu_writes_developer_history_and_off_suppresses_it() -> Re
     let config = create_dedup_config(root.path())?;
     let source = root.path().join("source.xlsx");
     create_duplicate_source(&source)?;
-    let input = format!("2\n1\n{}\n0\n", source.display());
+    let input = "2\n1\n0\n".to_owned();
 
     let developer = run_menu_with_view(&config, &input, "developer")?;
     assert!(
@@ -359,9 +319,9 @@ fn interactive_dedup_menu_writes_developer_history_and_off_suppresses_it() -> Re
         "developer menu failed: {}",
         String::from_utf8_lossy(&developer.stderr)
     );
-    assert!(String::from_utf8_lossy(&developer.stdout).contains("PT-2 完成：PT-2-1"));
+    assert!(String::from_utf8_lossy(&developer.stdout).contains("PT-2 完成：PT-2-3"));
     let developer_report = output_json(&developer)?;
-    assert_eq!(developer_report["duplicate_rows"], 1);
+    assert_eq!(developer_report[0]["report"]["duplicate_rows"], 1);
 
     let log_dir = root.path().join("logs");
     let histories = fs::read_dir(&log_dir)?
@@ -374,8 +334,8 @@ fn interactive_dedup_menu_writes_developer_history_and_off_suppresses_it() -> Re
     assert_eq!(histories.len(), 1);
     let history_text = fs::read_to_string(&histories[0])?;
     let history: Value = serde_json::from_str(&history_text)?;
-    assert_eq!(history["feature_id"], "PT-2-1");
-    assert_eq!(history["action"], "comment_check");
+    assert_eq!(history["feature_id"], "PT-2-3");
+    assert_eq!(history["action"], "config_check");
     assert_eq!(history["status"], "succeeded");
     assert_eq!(history["metrics"]["duplicate_rows"], 1);
     assert_eq!(history["metrics"]["hit_sheets"], 1);

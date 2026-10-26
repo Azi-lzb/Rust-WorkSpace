@@ -342,7 +342,7 @@ fn interactive_region_sum_menu_matches_python_baseline_workbook() -> Result<()> 
         .map(|path| path.to_string_lossy())
         .collect::<Vec<_>>()
         .join(";");
-    let input = format!("7\n5\n1\n{paths}\n0\n0\n");
+    let input = format!("5\n5\n1\n{paths}\n0\n0\n");
     let mut child = Command::new(env!("CARGO_BIN_EXE_pytools"))
         .arg("menu")
         .arg("--config")

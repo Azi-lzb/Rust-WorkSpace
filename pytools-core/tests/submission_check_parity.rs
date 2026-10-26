@@ -206,7 +206,7 @@ fn submission_check_menu_matches_python_date_keyword_semantics() -> Result<()> {
         })
         .collect::<std::io::Result<Vec<_>>>()?;
 
-    let input = format!("4\n8\n2\n{}\n0\n", sources.display());
+    let input = format!("4\n6\n2\n{}\n0\n", sources.display());
     let output = run_menu(&config, &input)?;
     assert!(
         output.status.success(),
@@ -276,7 +276,7 @@ fn submission_check_menu_logs_user_developer_and_off_views() -> Result<()> {
     {
         fs::write(sources.join(name), format!("synthetic payload {index}"))?;
     }
-    let input = format!("4\n8\n2\n{}\n0\n", sources.display());
+    let input = format!("4\n6\n2\n{}\n0\n", sources.display());
 
     for log_view in ["user", "off", "developer"] {
         let output = run_menu_with_log_view(&config, &input, log_view)?;

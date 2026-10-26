@@ -45,7 +45,7 @@ impl Drop for TestDirectory {
 fn missing_configuration_bootstraps_through_menu_and_can_be_viewed() -> Result<()> {
     let root = TestDirectory::new()?;
     let config = root.path().join("app/config/config.xlsx");
-    let input = "1\n5\n2\n1\n2\n0\n0\n";
+    let input = "2\n7\n2\n1\n2\n0\n0\n";
 
     let output = run_menu(&config, input, "user")?;
     anyhow::ensure!(
@@ -54,11 +54,11 @@ fn missing_configuration_bootstraps_through_menu_and_can_be_viewed() -> Result<(
         String::from_utf8_lossy(&output.stderr)
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("5  配置工具"));
+    assert!(stdout.contains("7  配置与快捷操作"));
     assert!(stdout.contains("当前配置不可用，该工具暂不能运行"));
-    assert!(stdout.contains("请先选择 5-1 初始化/修复配置表"));
+    assert!(stdout.contains("请先选择 7-1 初始化/修复配置表"));
     assert!(stdout.contains("已新建配置表"));
-    assert!(stdout.contains("查看当前配置（重新读取磁盘）"));
+    assert!(stdout.contains("重新加载并查看配置状态"));
     assert!(!stdout.contains("实际读取组件"));
 
     let workbook = read_workbook(&config)?;
@@ -96,7 +96,7 @@ fn default_menu_configuration_is_created_beside_executable_not_working_directory
         .stdin
         .take()
         .context("default-path menu stdin missing")?
-        .write_all(b"5\n1\n0\n0\n")
+        .write_all(b"7\n1\n0\n0\n")
         .context("initialize the default menu configuration")?;
     let output = child
         .wait_with_output()
@@ -123,7 +123,7 @@ fn existing_configuration_repair_menu_saves_a_plan_without_modifying_source() ->
     write_incomplete_config(&config)?;
     let source_before = fs::read(&config)?;
 
-    let output = run_menu(&config, "5\n1\n0\n0\n", "developer")?;
+    let output = run_menu(&config, "7\n1\n0\n0\n", "developer")?;
     anyhow::ensure!(
         output.status.success(),
         "configuration repair menu failed: {}",
@@ -187,7 +187,7 @@ fn config_menu_history_records_writer_and_view_without_config_contents() -> Resu
     let root = TestDirectory::new()?;
     let config = root.path().join("app/config/config.xlsx");
 
-    let initialized = run_menu(&config, "5\n1\n0\n0\n", "developer")?;
+    let initialized = run_menu(&config, "7\n1\n0\n0\n", "developer")?;
     anyhow::ensure!(
         initialized.status.success(),
         "developer config initialization failed: {}",
@@ -214,7 +214,7 @@ fn config_menu_history_records_writer_and_view_without_config_contents() -> Resu
     assert_eq!(init_history["excel_writer_invoked"], true);
     assert_eq!(init_history["excel_modifier_invoked"], false);
 
-    let viewed = run_menu(&config, "5\n2\n0\n0\n", "developer")?;
+    let viewed = run_menu(&config, "7\n2\n0\n0\n", "developer")?;
     anyhow::ensure!(
         viewed.status.success(),
         "developer config view failed: {}",
@@ -249,7 +249,7 @@ fn config_view_off_keeps_requested_view_but_suppresses_progress_and_history() ->
     let config = root.path().join("app/config/config.xlsx");
     write_incomplete_config(&config)?;
 
-    let output = run_menu(&config, "5\n2\n0\n0\n", "off")?;
+    let output = run_menu(&config, "7\n2\n0\n0\n", "off")?;
     anyhow::ensure!(
         output.status.success(),
         "off config view failed: {}",
@@ -274,7 +274,7 @@ fn malformed_configuration_repair_logs_failure_without_config_contents() -> Resu
     fs::create_dir_all(config.parent().context("configuration parent missing")?)?;
     fs::write(&config, b"not a workbook")?;
 
-    let output = run_menu(&config, "5\n1\n0\n0\n", "developer")?;
+    let output = run_menu(&config, "7\n1\n0\n0\n", "developer")?;
     anyhow::ensure!(
         output.status.success(),
         "developer config repair failure path exited unexpectedly: {}",

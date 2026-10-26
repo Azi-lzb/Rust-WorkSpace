@@ -259,31 +259,26 @@ where
 {
     loop {
         writeln!(output, "======== PyTools 菜单 ========")?;
-        writeln!(
-            output,
-            "  1  时序工具（接入 1-1、1-3 至 1-5；1-2 范围排除）"
-        )?;
-        writeln!(output, "  2  去重工具（检查、计划与确认提交）")?;
-        writeln!(output, "  3  打印工具（生成页面设置计划）")?;
-        writeln!(output, "  4  转换与文件命名工具")?;
-        writeln!(output, "  5  配置工具")?;
-        writeln!(output, "  6  汇总工具")?;
-        writeln!(output, "  7  一二批处理工具（当前接入 7-1 至 7-8）")?;
-        writeln!(output, "  8  归档工具")?;
-        writeln!(output, "  9  快捷工具")?;
+        writeln!(output, "  1  数据提取与汇总")?;
+        writeln!(output, "  2  数据去重与追加")?;
+        writeln!(output, "  3  报表打印")?;
+        writeln!(output, "  4  文件处理")?;
+        writeln!(output, "  5  专用报表处理")?;
+        writeln!(output, "  6  归档整理")?;
+        writeln!(output, "  7  配置与快捷操作")?;
         writeln!(output, "  0  退出")?;
         writeln!(output, "==============================")?;
         if let Some(error) = config_error.as_deref() {
             if log_view == "developer" {
                 writeln!(
                     output,
-                    "[配置不可用] {}；请先使用 5-1 初始化/修复配置表（{error}）",
+                    "[配置不可用] {}；请先使用 7-1 初始化/修复配置表（{error}）",
                     config_path.display()
                 )?;
             } else {
                 writeln!(
                     output,
-                    "[配置不可用] {}；请先使用 5-1 初始化/修复配置表。",
+                    "[配置不可用] {}；请先使用 7-1 初始化/修复配置表。",
                     config_path.display()
                 )?;
             }
@@ -292,17 +287,51 @@ where
             writeln!(output, "再见。")?;
             return Ok(());
         };
-        if matches!(choice.as_str(), "1" | "2" | "3" | "4" | "6" | "7" | "8")
-            && config_error.is_some()
+        let category_id = match choice.as_str() {
+            "1" => "data.extract_and_summarize",
+            "2" => "data.deduplicate_and_append",
+            "3" => "reports.static_print",
+            "4" => "files.process_and_convert",
+            "5" => "reports.specialized",
+            "6" => "archive.organize",
+            "7" => "configuration.and_quick_actions",
+            "0" => {
+                writeln!(output, "再见。")?;
+                return Ok(());
+            }
+            _ => {
+                writeln!(output, "仅接受 1、2、3、4、5、6、7 或 0")?;
+                continue;
+            }
+        };
+        if matches!(
+            category_id,
+            "data.deduplicate_and_append"
+                | "reports.static_print"
+                | "files.process_and_convert"
+                | "reports.specialized"
+                | "archive.organize"
+        ) && config_error.is_some()
         {
             writeln!(
                 output,
-                "当前配置不可用，该工具暂不能运行；请先进入 5 配置工具。"
+                "当前配置不可用，该工具暂不能运行；请先进入 7 配置与快捷操作。"
             )?;
             continue;
         }
-        match choice.as_str() {
-            "1" => run_interactive_timeline_menu(
+        match category_id {
+            "data.extract_and_summarize" => run_interactive_data_menu(
+                input,
+                output,
+                config_path,
+                global,
+                config_error,
+                log_view,
+                allow_native_dialog,
+                capabilities,
+                platform,
+            )?,
+            "data.deduplicate_and_append" => run_interactive_dedup_menu(
                 input,
                 output,
                 config_path,
@@ -312,7 +341,7 @@ where
                 capabilities,
                 platform,
             )?,
-            "2" => run_interactive_dedup_menu(
+            "reports.static_print" => run_interactive_print_menu(
                 input,
                 output,
                 config_path,
@@ -322,7 +351,7 @@ where
                 capabilities,
                 platform,
             )?,
-            "3" => run_interactive_print_menu(
+            "files.process_and_convert" => run_interactive_convert_menu(
                 input,
                 output,
                 config_path,
@@ -332,7 +361,7 @@ where
                 capabilities,
                 platform,
             )?,
-            "4" => run_interactive_convert_menu(
+            "reports.specialized" => run_interactive_batch_menu(
                 input,
                 output,
                 config_path,
@@ -342,7 +371,15 @@ where
                 capabilities,
                 platform,
             )?,
-            "5" => run_interactive_config_menu(
+            "archive.organize" => run_interactive_archive_menu(
+                input,
+                output,
+                config_path,
+                global,
+                log_view,
+                allow_native_dialog,
+            )?,
+            "configuration.and_quick_actions" => run_interactive_config_menu(
                 input,
                 output,
                 config_path,
@@ -352,33 +389,167 @@ where
                 capabilities,
                 platform,
             )?,
-            "6" => {
-                run_interactive_summary_menu(input, output, global, log_view, allow_native_dialog)?
+            _ => unreachable!("resolved PyTools V2 category ID"),
+        }
+    }
+}
+
+fn run_interactive_data_menu<R, W>(
+    input: &mut R,
+    output: &mut W,
+    config_path: &Path,
+    global: &GlobalConfig,
+    config_error: &Option<String>,
+    log_view: &str,
+    allow_native_dialog: bool,
+    capabilities: Option<&Path>,
+    platform: Option<&str>,
+) -> Result<()>
+where
+    R: BufRead,
+    W: Write,
+{
+    loop {
+        writeln!(output, "------ 数据提取与汇总 ------")?;
+        writeln!(output, "  1  时序宽表汇总")?;
+        writeln!(output, "  2  按使用区域快速汇总")?;
+        writeln!(output, "  3  按模板命名区域汇总（尚未实现）")?;
+        writeln!(output, "  4  表头路径比对与映射")?;
+        writeln!(output, "  5  时序配置预校验")?;
+        writeln!(output, "  0  返回")?;
+        writeln!(output, "--------------------------")?;
+        let Some(choice) = read_menu_choice(input, output, "子菜单选择> ")? else {
+            return Ok(());
+        };
+
+        let feature_id = match choice.as_str() {
+            "1" => "data.timeline_wide_summary",
+            "2" => "data.used_range_summary",
+            "3" => "data.named_range_summary",
+            "4" => "data.header_path_compare",
+            "5" => "data.timeline_precheck",
+            "0" => return Ok(()),
+            _ => {
+                writeln!(output, "仅接受 1、2、3、4、5 或 0")?;
+                continue;
             }
-            "7" => run_interactive_batch_menu(
-                input,
-                output,
-                config_path,
-                global,
-                log_view,
-                allow_native_dialog,
-                capabilities,
-                platform,
-            )?,
-            "8" => run_interactive_archive_menu(
-                input,
-                output,
-                config_path,
-                global,
-                log_view,
-                allow_native_dialog,
-            )?,
-            "9" => run_interactive_quick_menu(input, output, config_path, global)?,
-            "0" => {
-                writeln!(output, "再见。")?;
+        };
+
+        match feature_id {
+            "data.timeline_wide_summary" => {
+                if config_error.is_some() {
+                    writeln!(output, "当前配置不可用；请先进入 7-1 初始化/修复配置。")?;
+                    return Ok(());
+                }
+                let Some(sources) = choose_workbooks(
+                    "选择时序宽表汇总源文件（可多选）",
+                    true,
+                    input,
+                    output,
+                    allow_native_dialog,
+                )?
+                else {
+                    writeln!(output, "[已取消]")?;
+                    return Ok(());
+                };
+                let mut arguments = config_cli_arguments(config_path);
+                arguments.extend(summary_cli_arguments(global, log_view));
+                arguments.extend(
+                    sources
+                        .into_iter()
+                        .map(|path| path.to_string_lossy().into_owned()),
+                );
+                run_interactive_wide_summary_menu(
+                    input,
+                    output,
+                    arguments,
+                    false,
+                    log_view,
+                    capabilities,
+                    platform,
+                )?;
                 return Ok(());
             }
-            _ => writeln!(output, "仅接受 1、2、3、4、5、6、7、8、9 或 0")?,
+            "data.used_range_summary" => {
+                let Some(sources) = choose_workbooks(
+                    "选择按使用区域快速汇总的源文件（可多选）",
+                    true,
+                    input,
+                    output,
+                    allow_native_dialog,
+                )?
+                else {
+                    writeln!(output, "[已取消]")?;
+                    return Ok(());
+                };
+                let mut arguments = summary_cli_arguments(global, log_view);
+                arguments.extend(
+                    sources
+                        .into_iter()
+                        .map(|path| path.to_string_lossy().into_owned()),
+                );
+                run_summary_used_range_cli(arguments)?;
+                return Ok(());
+            }
+            "data.named_range_summary" => {
+                writeln!(
+                    output,
+                    "[尚未实现] PT-6-2 按模板命名区域汇总；当前不会读取或修改任何工作簿。"
+                )?;
+            }
+            "data.header_path_compare" => {
+                if config_error.is_some() {
+                    writeln!(output, "当前配置不可用；请先进入 7-1 初始化/修复配置。")?;
+                    return Ok(());
+                }
+                let Some(template) = choose_workbooks(
+                    "选择表头路径比对模板",
+                    false,
+                    input,
+                    output,
+                    allow_native_dialog,
+                )?
+                .and_then(|paths| paths.into_iter().next()) else {
+                    writeln!(output, "[已取消]")?;
+                    return Ok(());
+                };
+                let Some(sources) = choose_workbooks(
+                    "选择表头路径比对源文件（可多选）",
+                    true,
+                    input,
+                    output,
+                    allow_native_dialog,
+                )?
+                else {
+                    writeln!(output, "[已取消]")?;
+                    return Ok(());
+                };
+                let mut arguments = config_cli_arguments(config_path);
+                arguments.extend([
+                    "--log-dir".to_owned(),
+                    global.log_dir.to_string_lossy().into_owned(),
+                    "--log-view".to_owned(),
+                    log_view.to_owned(),
+                    "--template".to_owned(),
+                    template.to_string_lossy().into_owned(),
+                ]);
+                arguments.extend(
+                    sources
+                        .into_iter()
+                        .map(|path| path.to_string_lossy().into_owned()),
+                );
+                run_timeline_compare_cli(arguments)?;
+                return Ok(());
+            }
+            "data.timeline_precheck" => {
+                if config_error.is_some() {
+                    writeln!(output, "当前配置不可用；请先进入 7-1 初始化/修复配置。")?;
+                    return Ok(());
+                }
+                run_interactive_timeline_precheck(output, config_path)?;
+                return Ok(());
+            }
+            _ => unreachable!("resolved stable PyTools feature ID"),
         }
     }
 }
@@ -631,16 +802,31 @@ where
     W: Write,
 {
     loop {
-        writeln!(output, "------ 配置工具 ------")?;
-        writeln!(output, "  1  初始化/修复配置表")?;
-        writeln!(output, "  2  查看当前配置（重新读取磁盘）")?;
+        writeln!(output, "------ 配置与快捷操作 ------")?;
+        writeln!(output, "  1  初始化 / 修复配置")?;
+        writeln!(output, "  2  重新加载并查看配置状态")?;
+        writeln!(output, "  3  打开配置文件")?;
+        writeln!(output, "  4  打开最近输出")?;
+        writeln!(output, "  5  打开输出目录")?;
         writeln!(output, "  0  返回")?;
-        writeln!(output, "----------------------")?;
+        writeln!(output, "--------------------------")?;
         let Some(choice) = read_menu_choice(input, output, "子菜单选择> ")? else {
             return Ok(());
         };
-        match choice.as_str() {
-            "1" => {
+        let action_id = match choice.as_str() {
+            "1" => "config.initialize_or_repair",
+            "2" => "config.reload_and_view",
+            "3" => "quick.open_config",
+            "4" => "quick.open_latest_output",
+            "5" => "quick.open_output_folder",
+            "0" => return Ok(()),
+            _ => {
+                writeln!(output, "仅接受 1、2、3、4、5 或 0")?;
+                continue;
+            }
+        };
+        match action_id {
+            "config.initialize_or_repair" => {
                 let started_at = Local::now();
                 let started = Instant::now();
                 let mut facts = ConfigMenuRunFacts::new();
@@ -683,7 +869,7 @@ where
                     &facts,
                 )?;
             }
-            "2" => {
+            "config.reload_and_view" => {
                 let started_at = Local::now();
                 let view_started = Instant::now();
                 let mut facts = ConfigMenuRunFacts::new();
@@ -779,7 +965,7 @@ where
                                         facts.error_type = Some("global_config_parse_failed");
                                         writeln!(
                                             output,
-                                            "  [全局配置解析失败] 请使用 5-1 初始化/修复配置表。"
+                                            "  [全局配置解析失败] 请使用 7-1 初始化/修复配置表。"
                                         )?;
                                     }
                                 }
@@ -828,7 +1014,7 @@ where
                             } else {
                                 writeln!(
                                     output,
-                                    "[全局配置不可用] 请使用 5-1 初始化/修复配置表。"
+                                    "[全局配置不可用] 请使用 7-1 初始化/修复配置表。"
                                 )?;
                             }
                         } else {
@@ -842,7 +1028,7 @@ where
                             serde_json::json!({ "sheet_count": 0, "non_empty_rows": 0 });
                         writeln!(
                             output,
-                            "[缺失] 配置文件 {} 不存在，请先选择 5-1 初始化/修复配置表。",
+                            "[缺失] 配置文件 {} 不存在，请先选择 7-1 初始化/修复配置表。",
                             config_path.display()
                         )?;
                     }
@@ -855,7 +1041,7 @@ where
                         } else {
                             writeln!(
                                 output,
-                                "[读取失败] 请检查配置文件，或使用 5-1 初始化/修复配置表。"
+                                "[读取失败] 请检查配置文件，或使用 7-1 初始化/修复配置表。"
                             )?;
                         }
                     }
@@ -873,8 +1059,30 @@ where
                     &facts,
                 )?;
             }
-            "0" => return Ok(()),
-            _ => writeln!(output, "仅接受 1、2 或 0")?,
+            "quick.open_config" => match open_config(config_path) {
+                Ok(()) => writeln!(output, "[完成] 已打开配置文件: {}", config_path.display())?,
+                Err(error) => writeln!(output, "[失败] 打开配置文件失败: {error:#}")?,
+            },
+            "quick.open_latest_output" => match open_latest_output(&global.output_dir) {
+                Ok(Some(path)) => {
+                    writeln!(output, "[完成] 已打开最新输出文件: {}", path.display())?
+                }
+                Ok(None) => writeln!(
+                    output,
+                    "[提示] 未找到输出文件: {}",
+                    global.output_dir.display()
+                )?,
+                Err(error) => writeln!(output, "[失败] 打开输出文件失败: {error:#}")?,
+            },
+            "quick.open_output_folder" => match open_output_directory(&global.output_dir) {
+                Ok(()) => writeln!(
+                    output,
+                    "[完成] 已打开输出目录: {}",
+                    global.output_dir.display()
+                )?,
+                Err(error) => writeln!(output, "[失败] 打开输出目录失败: {error:#}")?,
+            },
+            _ => unreachable!("resolved PyTools V2 configuration action ID"),
         }
     }
 }
@@ -943,7 +1151,7 @@ where
             } else {
                 writeln!(
                     output,
-                    "[全局配置加载失败] 请检查新建配置表，必要时选择 5-1 修复。"
+                    "[全局配置加载失败] 请检查新建配置表，必要时选择 7-1 修复。"
                 )?;
             }
         }
@@ -1151,7 +1359,7 @@ where
     W: Write,
 {
     loop {
-        writeln!(output, "------ 归档工具 ------")?;
+        writeln!(output, "------ 归档整理 ------")?;
         writeln!(output, "  1  按日期归档（预览）")?;
         writeln!(output, "  2  按类型归档（预览，使用归档类型配置）")?;
         writeln!(output, "  3  执行归档计划")?;
@@ -1868,19 +2076,35 @@ where
     W: Write,
 {
     loop {
-        writeln!(output, "------ 去重工具 ------")?;
-        writeln!(output, "  1  按批注检查并标记重复（生成计划）")?;
-        writeln!(output, "  2  按批注删除重复（生成计划）")?;
-        writeln!(output, "  3  按配置检查并标记重复（生成计划）")?;
-        writeln!(output, "  4  按配置删除重复（生成计划）")?;
-        writeln!(output, "  5  按配置追加到目标（确认后提交）")?;
-        writeln!(output, "  6  按配置预校验")?;
+        writeln!(output, "------ 数据去重与追加 ------")?;
+        writeln!(output, "  1  按配置检查重复")?;
+        writeln!(output, "  2  按配置删除重复")?;
+        writeln!(output, "  3  去重追加到历史工作簿（独立操作）")?;
+        writeln!(output, "  4  去重/追加配置预校验")?;
         writeln!(output, "  0  返回")?;
         writeln!(output, "----------------------")?;
-        let Some(choice) = read_menu_choice(input, output, "子菜单选择> ")? else {
+        let Some(menu_choice) = read_menu_choice(input, output, "子菜单选择> ")? else {
             return Ok(());
         };
-        match choice.as_str() {
+        let feature_id = match menu_choice.as_str() {
+            "1" => "dedup.config_check",
+            "2" => "dedup.config_delete",
+            "3" => "dedup.append_to_history",
+            "4" => "dedup.config_precheck",
+            "0" => return Ok(()),
+            _ => {
+                writeln!(output, "仅接受 1、2、3、4 或 0")?;
+                continue;
+            }
+        };
+        let choice = match feature_id {
+            "dedup.config_check" => "3",
+            "dedup.config_delete" => "4",
+            "dedup.append_to_history" => "5",
+            "dedup.config_precheck" => "6",
+            _ => unreachable!("resolved stable PyTools feature ID"),
+        };
+        match choice {
             "1" | "2" => {
                 let Some(input_path) = choose_workbooks(
                     if choice == "1" {
@@ -2009,7 +2233,7 @@ where
                 return Ok(());
             }
             "0" => return Ok(()),
-            _ => writeln!(output, "仅接受 1、2、3、4、5、6 或 0")?,
+            _ => unreachable!("stable dedup feature maps to a supported operation"),
         }
     }
 }
@@ -2640,27 +2864,29 @@ where
     W: Write,
 {
     loop {
-        writeln!(output, "------ 打印工具 ------")?;
-        writeln!(
-            output,
-            "  1  按批注保留格式（默认计划；有执行能力时可确认）"
-        )?;
-        writeln!(
-            output,
-            "  2  按批注快速复制（默认计划；有执行能力时可确认）"
-        )?;
-        writeln!(output, "  3  按配置准备打印文件（生成计划）")?;
-        writeln!(output, "  4  按配置预校验")?;
-        writeln!(
-            output,
-            "  5  按配置打印 → 导出 PDF（尚未实现；当前范围不含 PDF）"
-        )?;
+        writeln!(output, "------ 报表打印 ------")?;
+        writeln!(output, "  1  按配置生成静态打印报表")?;
+        writeln!(output, "  2  打印配置预校验")?;
         writeln!(output, "  0  返回")?;
         writeln!(output, "----------------------")?;
-        let Some(choice) = read_menu_choice(input, output, "子菜单选择> ")? else {
+        let Some(menu_choice) = read_menu_choice(input, output, "子菜单选择> ")? else {
             return Ok(());
         };
-        match choice.as_str() {
+        let feature_id = match menu_choice.as_str() {
+            "1" => "print.static_report",
+            "2" => "print.config_precheck",
+            "0" => return Ok(()),
+            _ => {
+                writeln!(output, "仅接受 1、2 或 0")?;
+                continue;
+            }
+        };
+        let choice = match feature_id {
+            "print.static_report" => "3",
+            "print.config_precheck" => "4",
+            _ => unreachable!("resolved stable PyTools feature ID"),
+        };
+        match choice {
             "1" | "2" => {
                 let Some(input_path) = choose_workbooks(
                     if choice == "1" {
@@ -3112,22 +3338,74 @@ where
     W: Write,
 {
     loop {
-        writeln!(output, "------ 转换工具 ------")?;
-        writeln!(output, "  1  批量重命名文件")?;
-        writeln!(output, "  2  批量 Excel 格式转换（按配置，调用已选引擎）")?;
-        writeln!(output, "  3  批量 Word 格式转换（按配置，调用已选引擎）")?;
-        writeln!(output, "  4  批量修改 Sheet 名（默认计划；可显式确认执行）")?;
-        writeln!(output, "  5  根据文件内容添加前缀")?;
-        writeln!(output, "  6  根据文件内容取消前缀")?;
-        writeln!(output, "  7  按局部映射重命名文件")?;
-        writeln!(output, "  8  提交缺失检查")?;
-        writeln!(output, "  9  添加文件排序前缀")?;
-        writeln!(output, " 10  取消文件排序前缀")?;
-        writeln!(output, " 11  原生值转换到 XLSX（仅保留值/公式文本）")?;
+        writeln!(output, "------ 文件处理 ------")?;
+        writeln!(output, "  1  文件名机构标准化")?;
+        writeln!(output, "  2  文件排序前缀管理（添加 / 清理）")?;
+        writeln!(output, "  3  根据工作簿单元格内容命名")?;
+        writeln!(
+            output,
+            "  4  Office 格式转换（XLS / ET → XLSX，DOC → DOCX）"
+        )?;
+        writeln!(output, "  5  按配置修改 Sheet 名")?;
+        writeln!(output, "  6  机构提交完整性检查")?;
         writeln!(output, "  0  返回")?;
         writeln!(output, "----------------------")?;
-        let Some(choice) = read_menu_choice(input, output, "子菜单选择> ")? else {
+        let Some(menu_choice) = read_menu_choice(input, output, "子菜单选择> ")? else {
             return Ok(());
+        };
+        let feature_id = match menu_choice.as_str() {
+            "1" => "files.institution_filename_normalize",
+            "2" => "files.sort_prefix",
+            "3" => "files.name_from_workbook_cells",
+            "4" => "files.office_conversion",
+            "5" => "files.rename_sheets",
+            "6" => "files.submission_check",
+            "0" => return Ok(()),
+            _ => {
+                writeln!(output, "仅接受 1、2、3、4、5、6 或 0")?;
+                continue;
+            }
+        };
+        let choice = match feature_id {
+            "files.institution_filename_normalize" => "1",
+            "files.sort_prefix" => {
+                writeln!(output, "文件排序前缀操作：")?;
+                writeln!(output, "  1  添加前缀")?;
+                writeln!(output, "  2  清理前缀")?;
+                let Some(action) = read_menu_choice(input, output, "选择操作> ")? else {
+                    return Ok(());
+                };
+                match action.as_str() {
+                    "1" => "9",
+                    "2" => "10",
+                    "0" => continue,
+                    _ => {
+                        writeln!(output, "仅接受 1、2 或 0")?;
+                        continue;
+                    }
+                }
+            }
+            "files.name_from_workbook_cells" => "5",
+            "files.office_conversion" => {
+                writeln!(output, "选择格式转换：")?;
+                writeln!(output, "  1  Excel 格式转换（XLS / ET → XLSX）")?;
+                writeln!(output, "  2  Word 格式转换（DOC → DOCX）")?;
+                let Some(format_choice) = read_menu_choice(input, output, "选择格式> ")? else {
+                    return Ok(());
+                };
+                match format_choice.as_str() {
+                    "1" => "2",
+                    "2" => "3",
+                    "0" => continue,
+                    _ => {
+                        writeln!(output, "仅接受 1、2 或 0")?;
+                        continue;
+                    }
+                }
+            }
+            "files.rename_sheets" => "4",
+            "files.submission_check" => "8",
+            _ => unreachable!("resolved stable PyTools feature ID"),
         };
         if choice == "11" {
             writeln!(
@@ -3155,7 +3433,7 @@ where
                 continue;
             }
         }
-        let operation = match choice.as_str() {
+        let operation = match choice {
             "1" => Some(("批量重命名文件", NativeFileFilter::AllFiles)),
             "2" => Some(("批量转换 Excel 文件", NativeFileFilter::ExcelConversion)),
             "3" => Some(("批量转换 Word 文件", NativeFileFilter::WordDocuments)),
@@ -3170,10 +3448,7 @@ where
                 NativeFileFilter::NativeValueConversion,
             )),
             "0" => return Ok(()),
-            _ => {
-                writeln!(output, "仅接受 1 至 11 或 0")?;
-                continue;
-            }
+            _ => unreachable!("stable file feature maps to a supported operation"),
         };
         let (title, filter) = operation.expect("validated conversion menu choice");
         let Some(paths) =
@@ -3188,7 +3463,7 @@ where
         }
 
         let mut arguments = config_cli_arguments(config_path);
-        match choice.as_str() {
+        match choice {
             "1" => {
                 arguments.push("--log-dir".to_owned());
                 arguments.push(global.log_dir.to_string_lossy().into_owned());
@@ -3497,7 +3772,7 @@ where
     W: Write,
 {
     loop {
-        writeln!(output, "------ 一二批处理工具 ------")?;
+        writeln!(output, "------ 专用报表处理 ------")?;
         writeln!(output, "  1  拆分村镇银行数据（Rust 计划/能力门控执行）")?;
         writeln!(output, "  2  机构名称规范化（Rust 计划/能力门控执行）")?;
         writeln!(
@@ -3520,8 +3795,23 @@ where
         let Some(choice) = read_menu_choice(input, output, "子菜单选择> ")? else {
             return Ok(());
         };
-        match choice.as_str() {
-            "1" => {
+        let feature_id = match choice.as_str() {
+            "1" => "PT-7-1",
+            "2" => "PT-7-2",
+            "3" => "PT-7-3",
+            "4" => "PT-7-4",
+            "5" => "PT-7-5",
+            "6" => "PT-7-6",
+            "7" => "PT-7-7",
+            "8" => "PT-7-8",
+            "0" => return Ok(()),
+            _ => {
+                writeln!(output, "仅接受 1、2、3、4、5、6、7、8 或 0")?;
+                continue;
+            }
+        };
+        match feature_id {
+            "PT-7-1" => {
                 let Some(current) = choose_single_xlsx_workbook(
                     "选择本期村镇银行数据工作簿",
                     input,
@@ -3612,7 +3902,7 @@ where
                 run_village_split_batch(arguments)?;
                 return Ok(());
             }
-            "2" => {
+            "PT-7-2" => {
                 let Some(selected) = choose_source_files_or_folders(
                     "选择需要规范化机构名称的目标工作簿",
                     NativeFileFilter::XlsxOnly,
@@ -3697,7 +3987,7 @@ where
                 run_institution_normalize_batch(arguments)?;
                 return Ok(());
             }
-            "3" => {
+            "PT-7-3" => {
                 let foreign = pytools_core::config::load_foreign_banks(config_path)?;
                 if foreign.is_empty() {
                     writeln!(
@@ -3795,7 +4085,7 @@ where
                 run_remove_foreign_bank_batch(arguments)?;
                 return Ok(());
             }
-            "4" => {
+            "PT-7-4" => {
                 let Some(selected) = choose_workbooks(
                     "选择要修改外汇页眉的 Excel 文件（可多选）",
                     true,
@@ -3862,7 +4152,7 @@ where
                 run_fx_header_batch(arguments)?;
                 return Ok(());
             }
-            "5" => {
+            "PT-7-5" => {
                 let Some(selected) = choose_source_files_or_folders(
                     "选择要做地区总分校验的 Excel 文件",
                     NativeFileFilter::XlsxOrXlsm,
@@ -3910,7 +4200,7 @@ where
                 run_region_sum(arguments)?;
                 return Ok(());
             }
-            "6" => {
+            "PT-7-6" => {
                 let tasks = load_extract_tasks(config_path).with_context(|| {
                     format!(
                         "load worksheet-extraction tasks from {}",
@@ -4015,9 +4305,8 @@ where
                 run_extract_sheets(arguments)?;
                 return Ok(());
             }
-            "7" | "8" => {
-                let quarterly = choice == "8";
-                let feature_id = if quarterly { "PT-7-8" } else { "PT-7-7" };
+            "PT-7-7" | "PT-7-8" => {
+                let quarterly = feature_id == "PT-7-8";
                 let operation = if quarterly {
                     "季度涉农贷款比上月修正及分地区核对"
                 } else {
@@ -4077,8 +4366,7 @@ where
                 )?;
                 return Ok(());
             }
-            "0" => return Ok(()),
-            _ => writeln!(output, "仅接受 1、2、3、4、5、6、7、8 或 0")?,
+            _ => unreachable!("resolved specialized report feature ID"),
         }
     }
 }
@@ -11845,7 +12133,7 @@ fn print_usage() {
     eprintln!(
         "Usage:\n\
          pytools [menu] [--config <config.xlsx>] [--log-view user|developer|off] [--capabilities <json> --platform <id>]\n\
-         no command opens the migrated menu; available categories: 1 (timeline 1-1 and 1-3 through 1-5; 1-2 excluded), 2 (dedup 1-6), 3 (print 1-4; legacy PDF item 5 is not implemented), 4 (conversion and file naming 1-10), 5 (configuration 1/2), 6 (summary 1/2), 7 (batch 7-1/7-8), 8 (archive 1-5), and 9 (quick tools 1-3)\n\
+         no command opens the PyTools Rust V2 menu; available categories: 1 (data extraction and summaries 1-5), 2 (configured deduplication and append 1-4), 3 (static print and precheck 1-2), 4 (file processing 1-6), 5 (special reports 1-8), 6 (archive preview and copy), and 7 (configuration and quick actions 1-5)\n\
          timeline-precheck --config <workbook.xlsx>\n\
          timeline-compare --config <workbook.xlsx> --template <workbook.xlsx> [--log-dir <dir>] [--log-view user|developer|off] <source.xlsx>...\n\
          timeline-extract --config <workbook.xlsx> [--output-dir <dir>] [--log-dir <dir>] [--log-view user|developer|off] [--capabilities <json> --platform <id> [--commit-target]] [<source.xlsx>...]\n\
