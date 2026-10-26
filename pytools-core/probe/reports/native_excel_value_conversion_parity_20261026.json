@@ -2,11 +2,11 @@
   "schema_version": 1,
   "suite": "pytools.conversion.native_excel_value_only",
   "date": "2026-10-26",
-  "status": "passed_synthetic_python_rust_value_projection",
+  "status": "passed_synthetic_python_rust_value_projection_and_type_guard",
   "environment": {
     "os": "Windows-11-10.0.26200-SP0",
     "rust_entry": "Windows-native pytools convert-excel --engine native",
-    "python_baseline": "xlrd 2.0.1 source reader + openpyxl 3.1.5 output reader"
+    "python_baseline": "xlrd 2.0.2 source reader + openpyxl 3.1.5 output reader"
   },
   "input": {
     "format": "xls",
@@ -38,9 +38,17 @@
     "numeric_cells": 1,
     "numeric_type_projection": "XLS integer storage is read by xlrd as NUMBER and emitted by Rust as an XLSX numeric cell; values compare exactly."
   },
+  "type_guard": {
+    "input": "synthetic .xlsm containing an ISO-typed Excel date generated with openpyxl iso_dates=True",
+    "rust_result": "conversion refused before publishing because rust_xlsxwriter output would change the cell type to text",
+    "converted": 0,
+    "failed": 1,
+    "output_published": false,
+    "source_unchanged": true
+  },
   "unverified": [
     "Real business XLS workbooks and configurations.",
-    "Formula text, formula caches, date/time cells, booleans, error cells and empty-string cells.",
+    "Formula text/cache parity against legacy XLS conversion, numeric serial date/time cells, booleans, error cells and empty-string cells.",
     "Styles, comments, merged regions, dimensions, names, print settings, validations, conditional formatting, drawings and macros are intentionally not preserved by this value-only route.",
     "Windows desktop file dialog, glibc 2.28, Kylin V10/UOS V20 and offline deb delivery."
   ]

@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import tempfile
 from datetime import date
+from datetime import datetime
 from pathlib import Path
 
 import openpyxl
@@ -184,11 +185,58 @@ def main() -> int:
         if not source_unchanged:
             raise AssertionError("the synthetic XLS source was modified")
 
+        iso_source = output_dir / "iso-date.xlsm"
+        iso_workbook = Workbook()
+        iso_workbook.iso_dates = True
+        iso_sheet = iso_workbook.active
+        iso_sheet.title = "日期"
+        iso_sheet["A1"] = datetime(2024, 2, 29, 12, 30)
+        iso_workbook.save(iso_source)
+        iso_source_before = iso_source.read_bytes()
+        iso_result = subprocess.run(
+            [
+                str(RUST_CLI),
+                "convert-excel",
+                "--config",
+                str(config),
+                "--to",
+                "xlsx",
+                "--engine",
+                "native",
+                "--output-dir",
+                str(output_dir),
+                "--log-dir",
+                str(output_dir / "logs"),
+                "--log-view",
+                "developer",
+                str(iso_source),
+            ],
+            check=False,
+            capture_output=True,
+        )
+        iso_stdout = iso_result.stdout.decode("utf-8-sig", errors="replace").replace("\x00", "")
+        if iso_result.returncode != 2:
+            raise AssertionError(
+                f"ISO-typed date input must fail closed; exit={iso_result.returncode}, "
+                f"stdout={iso_stdout[-1000:]!r}"
+            )
+        iso_report = json.loads(iso_stdout)
+        if iso_report.get("converted") != 0 or iso_report.get("failed") != 1:
+            raise AssertionError(f"unexpected ISO date refusal result: {iso_report}")
+        iso_output = output_dir / "iso-date.xlsx"
+        if iso_output.exists():
+            raise AssertionError("ISO-typed date refusal published an output workbook")
+        if iso_source.read_bytes() != iso_source_before:
+            raise AssertionError("the ISO date source workbook was modified")
+        iso_failure_detail = str(iso_report["items"][0].get("detail", ""))
+        if "ISO-typed date/time" not in iso_failure_detail or "cell type" not in iso_failure_detail:
+            raise AssertionError(f"ISO date refusal detail is incomplete: {iso_failure_detail!r}")
+
     report = {
         "schema_version": 1,
         "suite": "pytools.conversion.native_excel_value_only",
         "date": date.today().isoformat(),
-        "status": "passed_synthetic_python_rust_value_projection",
+        "status": "passed_synthetic_python_rust_value_projection_and_type_guard",
         "environment": {
             "os": platform.platform(),
             "rust_entry": "Windows-native pytools convert-excel --engine native",
@@ -208,9 +256,17 @@ def main() -> int:
             "source_unchanged": source_unchanged,
         },
         "comparison": comparison,
+        "type_guard": {
+            "input": "synthetic .xlsm containing an ISO-typed Excel date generated with openpyxl iso_dates=True",
+            "rust_result": "conversion refused before publishing because rust_xlsxwriter output would change the cell type to text",
+            "converted": iso_report["converted"],
+            "failed": iso_report["failed"],
+            "output_published": False,
+            "source_unchanged": True,
+        },
         "unverified": [
             "Real business XLS workbooks and configurations.",
-            "Formula text, formula caches, date/time cells, booleans, error cells and empty-string cells.",
+            "Formula text/cache parity against legacy XLS conversion, numeric serial date/time cells, booleans, error cells and empty-string cells.",
             "Styles, comments, merged regions, dimensions, names, print settings, validations, conditional formatting, drawings and macros are intentionally not preserved by this value-only route.",
             "Windows desktop file dialog, glibc 2.28, Kylin V10/UOS V20 and offline deb delivery.",
         ],

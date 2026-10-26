@@ -953,3 +953,11 @@ Windows 原生验证：`cargo fmt --manifest-path pytools-core/Cargo.toml -- --c
 合成值投影报告为 `probe/reports/native_excel_value_conversion_parity_20261026.json`，复跑入口为 `probe/compare_native_excel_value_conversion.py`。只读 `xlrd 2.0.1` 读取合成 XLS，`openpyxl 3.1.5` 读回 Rust 输出；1 个工作表、2 个非空格（1 文本、1 数值）的坐标与值一致，源文件未变。XLS 整数 42 在 Rust 读取投影中为 integer，XLSX 数字 42.0 为 number，Excel 数值精确相等；该投影差异已在报告中注明。该值投影不等于与旧 PyCode 保真转换结果对拍。
 
 该验证不覆盖真实业务样本、公式文本/缓存、日期时间、空字符串/错误值、样式及其他明确不保留对象，也未手工验证 Windows 文件选择器、glibc 2.28、麒麟/UOS 或离线 deb。之前记录的真实 `.xls` sidecar 保真失败仍有效；PT-4-2 整体仍为未验收。
+
+### 2026-10-26 PT-4-2 ISO 日期/时长单元格类型失败关闭
+
+隔离合成 XLSM（openpyxl `iso_dates=True`）发现原生按值转换会把 Calamine 的 `datetime_iso` 写成文本，而自校验曾将日期文本与普通文本视为相等并报告成功。现对 ISO-typed 日期/时长在写入前拒绝，并收紧输出值校验，禁止把普通文本当作日期/时长类型匹配；菜单确认时说明此类值、错误值和空文本会导致失败且不发布输出。未修改共享 crate、原 Python 项目或真实数据。
+
+Windows 原生 `cargo fmt --manifest-path pytools-core/Cargo.toml -- --check` 通过；`cargo test --offline --locked -p pytools-core --lib conversion::tests -j 1` 7/7、`cargo test --offline --locked -p pytools-core --test conversion_menu_cli -j 1` 9/9 通过。`probe/compare_native_excel_value_conversion.py` 复跑通过：原合成 XLS 值投影仍与 xlrd/openpyxl 一致；ISO 日期合成工作簿被 Rust CLI 拒绝、失败计数 1、无输出且源字节不变。报告：`probe/reports/native_excel_value_conversion_parity_20261026.json`。
+
+仅证明 ISO-typed 日期/时长安全拒绝，不代表数值序列日期/时长或真实 XLS/XLSM 保真对拍；PT-4-2 仍未验收。公式缓存、错误值/空文本入口、Windows 原生文件对话框、glibc 2.28、麒麟/UOS 与离线 deb 仍未完成本功能验收。

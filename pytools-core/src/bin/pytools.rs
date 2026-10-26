@@ -3140,6 +3140,7 @@ where
                     "CSV 输入则将每个非空值作为文本写入。\n",
                     "不会保留样式、公式缓存、批注、合并区域、行列尺寸、定义名称、打印设置、",
                     "数据验证、条件格式、绘图对象或宏，也不会重算公式。\n",
+                    "ISO 日期/时长、错误值、空文本等无法原样保留的单元格会导致转换失败，且不生成输出。\n",
                     "遇到无法安全表示的单元格时会失败；源文件不会修改。"
                 )
             )?;
@@ -11882,6 +11883,7 @@ fn print_usage() {
          convert-word --config <config.xlsx> [--to docx] [--engine auto|lo] [--output-dir <dir>] [--log-dir <dir>] [--log-view user|developer|off] <file>...\n\
          convert-file --input <file> --to <extension> [--output <file>] [--engine auto|lo|native]\n\
          native = 按值重建（C01，丢弃样式/公式缓存）；Excel 公式文本保留但不重算，CSV 按文本写入\n\
+                   ISO 日期/时长、错误值、空文本等不支持的单元格会拒绝转换\n\
          pytools extract-sheets --config <workbook.xlsx> [--output-dir <dir>] [--log-dir <dir>] [--log-view user|developer|off] [--append-existing] [--capabilities <json> --platform <id>] <source.xlsx>...\n\
          pytools region-sum-check [--config <workbook.xlsx>] [--output-dir <dir>] [--log-dir <dir>] [--log-view user|developer|off] <source.xlsx>...\n\
          pytools file-sort-prefix --config <workbook.xlsx> [--output-dir <dir>] [--log-dir <dir>] [--log-view user|developer|off] <file>...\n\

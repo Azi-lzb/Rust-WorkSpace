@@ -972,6 +972,11 @@ fn validate_native_source_values(source: &excel_reader::WorkbookDump) -> Result<
 
 fn validate_native_cell_value(sheet_name: &str, address: &str, value: CellValue) -> Result<()> {
     match value {
+        CellValue::DateTimeIso(_) | CellValue::DurationIso(_) => bail!(
+            "native value-only conversion refuses ISO-typed date/time cell {}!{} because the writer cannot preserve its cell type; use an external fidelity engine",
+            sheet_name,
+            address
+        ),
         CellValue::Text(text) if text.is_empty() => bail!(
             "native value-only conversion cannot preserve an empty-text cell {}!{}; use an external fidelity engine",
             sheet_name,
@@ -1144,10 +1149,6 @@ fn native_values_equal(left: &serde_json::Value, right: &serde_json::Value) -> R
         (CellValue::Text(left), CellValue::Text(right))
         | (CellValue::DateTimeIso(left), CellValue::DateTimeIso(right))
         | (CellValue::DurationIso(left), CellValue::DurationIso(right)) => left == right,
-        (CellValue::Text(left), CellValue::DateTimeIso(right))
-        | (CellValue::DateTimeIso(left), CellValue::Text(right))
-        | (CellValue::Text(left), CellValue::DurationIso(right))
-        | (CellValue::DurationIso(left), CellValue::Text(right)) => left == right,
         (CellValue::Boolean(left), CellValue::Boolean(right)) => left == right,
         (CellValue::Integer(left), CellValue::Integer(right)) => left == right,
         (CellValue::Integer(left), CellValue::Number(right))
@@ -1247,7 +1248,7 @@ fn find_sidecar() -> Result<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::{
-        convert_excel_files_in_source_folders, convert_one, invoke_sidecar,
+        convert_excel_files_in_source_folders, convert_one, invoke_sidecar, native_values_equal,
         validate_native_source_values,
     };
     use excel_reader::{read_workbook, SheetDump, WorkbookDump};
@@ -1343,6 +1344,30 @@ mod tests {
         assert!(message.contains("empty-text cell 数据!A1"));
         assert!(message.contains("external fidelity engine"));
         assert!(!message.contains("value="));
+    }
+
+    #[test]
+    fn native_value_conversion_refuses_iso_date_and_duration_cells_before_writing() {
+        let iso_date = json!({"type":"datetime_iso", "value":"2024-02-29T12:30:00"});
+        let date_text = json!({"type":"string", "value":"2024-02-29T12:30:00"});
+        assert!(!native_values_equal(&iso_date, &date_text).unwrap());
+
+        for (value, expected_kind) in [
+            (iso_date, "ISO-typed date/time"),
+            (
+                json!({"type":"duration_iso", "value":"PT26H"}),
+                "ISO-typed date/time",
+            ),
+        ] {
+            let mut source = workbook_with_value_and_formula("", None);
+            source.sheets[0].values.insert("A1".to_owned(), value);
+            let error = validate_native_source_values(&source)
+                .expect_err("ISO-typed values must not be silently converted to text");
+            let message = format!("{error:#}");
+            assert!(message.contains("数据!A1"), "{message}");
+            assert!(message.contains(expected_kind), "{message}");
+            assert!(message.contains("cell type"), "{message}");
+        }
     }
 
     #[test]
