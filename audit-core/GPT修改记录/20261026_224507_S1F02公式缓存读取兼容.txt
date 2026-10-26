@@ -1,0 +1,30 @@
+时间：2026-10-26（Windows 原生）
+执行者：Codex Audit migration agent
+分支：audit-dev
+修改前 HEAD：801ebf1e4af2c308c5031ca6d712923c48ecd2cd
+修改后提交：随本记录纳入，SHA 以 Git 日志为准
+WIP：保留原有 `audit-core/src/s1_history.rs` 修改、交接文件、需求文件、报告和 `.pytest-tmp-v3/`；未纳入本次提交。
+
+目的：修正 S1-F02 对含公式工作簿的过度拒绝。旧 Python 打开 Excel 前设置手动计算，区域汇总读取 `Value2` 保存值；历史表使用 `openpyxl data_only=True`。Rust 改为仅读取 Calamine 提供的已保存公式结果，不触发 Excel/LibreOffice 重算。
+
+修改文件：
+- `audit-core/src/s1_region_summary.rs`：移除按整张工作表拒绝公式的逻辑；仅对实际消费的表头、数据、附加元数据及历史键/字段区域检查已保存公式缓存；缺缓存或缓存结果为 Excel 错误的消费公式明确失败，其他范围的公式不阻断汇总。
+- `audit-core/tests/s1_region_summary_cli.rs`：新增 Rust CLI 源数据公式缓存与历史公式缓存覆盖，并断言源工作簿和历史工作簿字节不变、输出使用值而不复制公式。
+- `audit-core/MIGRATION_INVENTORY.md`：登记缓存语义切片及未完成的 Python/Rust 文件级对拍、真实模板和 Linux/deb 验收；S1-F02 整体状态仍为未验证。
+- 本修改记录。
+
+验证：
+- `cargo fmt --all`：通过。
+- `cargo test --offline --locked -p audit-core --lib s1_region_summary::tests::formula_cache_guard_only_requires_saved_values_in_consumed_ranges -j 1`：1 passed。
+- `cargo test --offline --locked -p audit-core --test s1_region_summary_cli -j 1`：5 passed，覆盖保存的源公式值、保存的历史公式值、输入不变、历史合并和既有任意行/固定行/兜底路径。
+- `cargo build --offline --locked -p audit-core --bin open-data-audit -j 1`：通过。
+- `target/debug/open-data-audit.exe s1-region-summary --help`：CLI 入口正常。
+- Windows 原生临时合成簿 Python Microsoft Excel/Rust CLI 源公式对拍：读取缓存值 2，输出逐格值/结构差异 0，源文件和模板未变。
+- Windows 原生临时合成簿 Python/Rust 历史公式缓存对拍：历史公式缓存“公式缓存”按旧 Python `data_only=True` 与 Rust 语义读取，匹配 1 行，历史富化值均为“公式缓存|未通过”，输出逐格差异 0，模板、源文件和历史输入未变。
+- `git diff --check`：通过。
+
+未执行/已知问题：未运行真实 F02 模板；已完成的 Python/Rust 文件级对拍仅覆盖临时合成源公式和内置历史公式缓存；列宽精确性、S1-F02 整体真实验收、Linux/deb/glibc 2.28 和目标发行版验收仍未完成。已验证的只是合成公式缓存读取和 Rust CLI 路径，不代表业务功能整体验收。
+
+配置/源 Python/真实样本影响：均未修改。测试工作簿在系统临时目录中生成并清理；生产读取仅使用保存值。组件版本：不升级。
+
+删除与回滚：无文件删除。需要回滚时仅回滚本次 S1-F02 公式缓存读取提交及本记录，不处理保留的其他 WIP。

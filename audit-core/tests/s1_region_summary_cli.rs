@@ -15,7 +15,7 @@ enum SampleCell<'a> {
     Text(&'a str),
     Number(f64),
     Blank,
-    Formula(&'a str),
+    Formula(&'a str, &'a str),
 }
 
 fn temporary_root(label: &str) -> PathBuf {
@@ -67,10 +67,11 @@ fn write_sample_workbook_with_metadata(
                             .write_blank(row_index, column_index, &blank_format)
                             .expect("write test blank");
                     }
-                    SampleCell::Formula(value) => {
+                    SampleCell::Formula(formula, cached_value) => {
                         worksheet
-                            .write_formula(row_index, column_index, *value)
+                            .write_formula(row_index, column_index, *formula)
                             .expect("write test formula");
+                        worksheet.set_formula_result(row_index, column_index, *cached_value);
                     }
                 }
             }
@@ -414,8 +415,9 @@ fn write_history_workbook(path: &Path, include_formula: bool) {
     }
     if include_formula {
         worksheet
-            .write_formula(1, 10, "=1+1")
+            .write_formula(1, 10, "=\"公式缓存\"")
             .expect("write formula to history sheet");
+        worksheet.set_formula_result(1, 10, "公式缓存");
     }
     workbook.save(path).expect("save history workbook");
 }
@@ -694,12 +696,13 @@ fn cli_summarizes_unmatched_source_sheets_with_the_fallback_template() {
 }
 
 #[test]
-fn cli_refuses_formula_sources_without_creating_output() {
+fn cli_summarizes_formula_sources_from_saved_values_without_recalculation() {
     let root = temporary_root("formula_guard");
     let input_dir = root.join("input");
     fs::create_dir_all(&input_dir).expect("create synthetic source directory");
+    let source_path = input_dir.join("formula.xlsx");
     write_sample_workbook(
-        &input_dir.join("formula.xlsx"),
+        &source_path,
         &[
             vec![SampleCell::Blank; 3],
             vec![SampleCell::Blank; 3],
@@ -707,16 +710,32 @@ fn cli_refuses_formula_sources_without_creating_output() {
             vec![
                 SampleCell::Blank,
                 SampleCell::Text("甲"),
-                SampleCell::Formula("=1+1"),
+                SampleCell::Formula("=1+1", "2"),
+            ],
+            vec![
+                SampleCell::Blank,
+                SampleCell::Text("乙"),
+                SampleCell::Formula("=\"\"", ""),
             ],
         ],
     );
+    let source_before = fs::read(&source_path).expect("read formula source snapshot");
     let output_path = root.join("summary.xlsx");
     let result = run_summary(&input_dir, &output_path, false);
-    assert!(!result.status.success());
-    let error = String::from_utf8_lossy(&result.stderr);
-    assert!(error.contains("含公式的工作表"), "{error}");
-    assert!(!output_path.exists());
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let payload: Value = serde_json::from_slice(&result.stdout).expect("parse formula summary");
+    assert_eq!(payload["summary"]["data_rows"], 4);
+    let output = read_workbook(&output_path).expect("read summary using cached formula value");
+    assert_eq!(read_numeric(&output.sheets[0], "F2"), 2.0);
+    assert!(!output.sheets[0].formulas.contains_key("F2"));
+    assert_eq!(
+        fs::read(&source_path).expect("read formula source after summary"),
+        source_before
+    );
     fs::remove_dir_all(&root).expect("remove synthetic test directory");
 }
 
@@ -785,7 +804,7 @@ fn cli_appends_builtin_history_fields_with_numeric_text_key_normalization() {
 }
 
 #[test]
-fn cli_refuses_formula_history_sheet_before_creating_output() {
+fn cli_enriches_history_using_saved_formula_values_without_recalculation() {
     let root = temporary_root("history_formula_guard");
     let input_dir = root.join("input");
     fs::create_dir_all(&input_dir).expect("create history summary source directory");
@@ -797,15 +816,28 @@ fn cli_refuses_formula_history_sheet_before_creating_output() {
     write_history_summary_source(&source);
     write_history_workbook(&history, true);
     let source_before = fs::read(&source).expect("read original source snapshot");
+    let history_before = fs::read(&history).expect("read history workbook snapshot");
 
     let result = run_summary_with_history(&template, &input_dir, &history, &output_path, false);
-    assert!(!result.status.success());
-    let error = String::from_utf8_lossy(&result.stderr);
-    assert!(error.contains("包含公式"), "{error}");
-    assert!(!output_path.exists());
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let output = read_workbook(&output_path).expect("read history-enriched summary");
+    let sheet = output
+        .sheets
+        .iter()
+        .find(|sheet| sheet.name == "本地校验结果")
+        .expect("find history-enriched summary sheet");
+    assert_eq!(read_text(sheet, "K2"), "公式缓存|未通过");
     assert_eq!(
-        fs::read(&source).expect("read source after refusal"),
+        fs::read(&source).expect("read source after summary"),
         source_before
+    );
+    assert_eq!(
+        fs::read(&history).expect("read history workbook after summary"),
+        history_before
     );
 
     fs::remove_dir_all(&root).expect("remove synthetic test directory");

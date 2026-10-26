@@ -1,10 +1,11 @@
-//! S1-F02 named-range summaries for formula-free XLSX input.
+//! S1-F02 named-range summaries for XLSX input.
 //!
 //! This migrates the `任意行汇总` and `固定行汇总` value paths, including the
 //! optional fallback template for unmatched source worksheets. Formula-bearing
-//! sources remain rejected until their calculation semantics have an
-//! Audit-specific parity contract. Optional history enrichment follows the
-//! source project's built-in sheet/key rules.
+//! cells use saved cached values only; the summary never recalculates formulas.
+//! Formula cells in consumed ranges without a saved value or with an Excel error
+//! result are rejected. Optional history enrichment follows the source project's
+//! built-in sheet/key rules.
 
 use crate::{
     models::CopyRange,
@@ -225,12 +226,6 @@ pub fn summarize_s1_named_regions(
                 "无法确认源工作表“{}”是否含公式，停止 S1-F02 汇总",
                 sheet.name
             );
-            if !sheet.formulas.is_empty() {
-                bail!(
-                    "S1-F02 命名区域汇总暂不处理含公式的工作表；工作表“{}”含公式单元格，需先明确本轮计算语义",
-                    sheet.name
-                );
-            }
         }
         source_workbooks.push((source_path, workbook, extents));
     }
@@ -287,17 +282,17 @@ pub fn summarize_s1_named_regions(
                     template_sheet.name
                 );
                 let template_grid = decode_sheet_values(template_sheet)?;
-                for formula_address in template_sheet.formulas.keys() {
-                    let (formula_row, formula_column) = parse_cell(formula_address)
-                        .with_context(|| format!("模板公式坐标无效：{formula_address}"))?;
-                    ensure!(
-                        formula_row < fallback.header_bounds.top
-                            || formula_row > fallback.header_bounds.bottom
-                            || formula_column < fallback.left
-                            || formula_column > fallback.right,
-                        "S1-F02 表头区域含公式单元格 {formula_address}，需先明确公式缓存语义"
-                    );
-                }
+                ensure_formula_cache_values(
+                    template_sheet,
+                    &template_grid,
+                    Bounds {
+                        top: fallback.header_bounds.top,
+                        left: fallback.left,
+                        bottom: fallback.header_bounds.bottom,
+                        right: fallback.right,
+                    },
+                    "S1-F02 兜底模板表头",
+                )?;
                 let headers = read_header_values(
                     template_sheet,
                     &template_grid,
@@ -368,17 +363,17 @@ pub fn summarize_s1_named_regions(
                 template_sheet.name
             );
             let template_grid = decode_sheet_values(template_sheet)?;
-            for formula_address in template_sheet.formulas.keys() {
-                let (formula_row, formula_column) = parse_cell(formula_address)
-                    .with_context(|| format!("模板公式坐标无效：{formula_address}"))?;
-                ensure!(
-                    formula_row < header_bounds.top
-                        || formula_row > header_bounds.bottom
-                        || formula_column < left
-                        || formula_column > right,
-                    "S1-F02 表头区域含公式单元格 {formula_address}，需先明确公式缓存语义"
-                );
-            }
+            ensure_formula_cache_values(
+                template_sheet,
+                &template_grid,
+                Bounds {
+                    top: header_bounds.top,
+                    left,
+                    bottom: header_bounds.bottom,
+                    right,
+                },
+                "S1-F02 模板表头",
+            )?;
             let header_values =
                 read_header_values(template_sheet, &template_grid, header_bounds, left, right)?;
             let extra_fields = summary_fields_for_sheet(
@@ -460,6 +455,17 @@ pub fn summarize_s1_named_regions(
 
                 let calculation_started = Instant::now();
                 let source_grid = decode_sheet_values(source_sheet)?;
+                ensure_formula_cache_values(
+                    source_sheet,
+                    &source_grid,
+                    Bounds {
+                        top: first_row,
+                        left,
+                        bottom: last_row,
+                        right,
+                    },
+                    "S1-F02 源数据区域",
+                )?;
                 let mut source_grids =
                     HashMap::<String, Option<BTreeMap<(usize, usize), CellValue>>>::new();
                 source_grids.insert(source_sheet.name.to_lowercase(), Some(source_grid.clone()));
@@ -473,6 +479,23 @@ pub fn summarize_s1_named_regions(
                             .find(|sheet| sheet.name.eq_ignore_ascii_case(&field.range.sheet_name));
                         let metadata_grid = metadata_sheet.map(decode_sheet_values).transpose()?;
                         source_grids.insert(metadata_sheet_key.clone(), metadata_grid);
+                    }
+                    let metadata_sheet = source_workbook
+                        .sheets
+                        .iter()
+                        .find(|sheet| sheet.name.eq_ignore_ascii_case(&field.range.sheet_name));
+                    if let (Some(metadata_sheet), Some(metadata_grid)) = (
+                        metadata_sheet,
+                        source_grids
+                            .get(&metadata_sheet_key)
+                            .and_then(Option::as_ref),
+                    ) {
+                        ensure_formula_cache_values(
+                            metadata_sheet,
+                            metadata_grid,
+                            field.bounds,
+                            "S1-F02 附加字段",
+                        )?;
                     }
                     match source_grids
                         .get(&metadata_sheet_key)
@@ -549,6 +572,17 @@ pub fn summarize_s1_named_regions(
 
                     let calculation_started = Instant::now();
                     let source_grid = decode_sheet_values(source_sheet)?;
+                    ensure_formula_cache_values(
+                        source_sheet,
+                        &source_grid,
+                        Bounds {
+                            top: first_row,
+                            left: fallback.left,
+                            bottom: last_row,
+                            right: fallback.right,
+                        },
+                        "S1-F02 兜底数据区域",
+                    )?;
                     let rows = (first_row..=last_row)
                         .map(|row_number| {
                             (fallback.left..=fallback.right)
@@ -617,6 +651,23 @@ pub fn summarize_s1_named_regions(
                             let metadata_grid =
                                 metadata_sheet.map(decode_sheet_values).transpose()?;
                             source_grids.insert(metadata_sheet_key.clone(), metadata_grid);
+                        }
+                        let metadata_sheet = source_workbook
+                            .sheets
+                            .iter()
+                            .find(|sheet| sheet.name.eq_ignore_ascii_case(&field.range.sheet_name));
+                        if let (Some(metadata_sheet), Some(metadata_grid)) = (
+                            metadata_sheet,
+                            source_grids
+                                .get(&metadata_sheet_key)
+                                .and_then(Option::as_ref),
+                        ) {
+                            ensure_formula_cache_values(
+                                metadata_sheet,
+                                metadata_grid,
+                                field.bounds,
+                                "S1-F02 兜底附加字段",
+                            )?;
                         }
                         match source_grids
                             .get(&metadata_sheet_key)
@@ -1030,18 +1081,31 @@ fn enrich_summary_group_with_history(
     else {
         return Ok(0);
     };
-    ensure!(
-        history_sheet.formulas.is_empty(),
-        "S1-F02 历史工作表“{}”包含公式；当前只迁移其普通存储值历史记录",
-        history_sheet.name
-    );
-
     let grid = decode_sheet_values(history_sheet)?;
     let mut max_row = 1;
     let mut max_column = 0;
     for (row, column) in grid.keys() {
         max_row = max_row.max(*row);
         max_column = max_column.max(*column);
+    }
+    for address in history_sheet.formulas.keys() {
+        let (row, column) =
+            parse_cell(address).with_context(|| format!("S1-F02 历史公式坐标无效：{address}"))?;
+        max_row = max_row.max(row);
+        max_column = max_column.max(column);
+    }
+    if max_column > 0 {
+        ensure_formula_cache_values(
+            history_sheet,
+            &grid,
+            Bounds {
+                top: 1,
+                left: 1,
+                bottom: 1,
+                right: max_column,
+            },
+            "S1-F02 历史表头",
+        )?;
     }
     let history_headers = (1..=max_column)
         .map(|column| history_header_text(&cell_value(&grid, 1, column)))
@@ -1064,6 +1128,26 @@ fn enrich_summary_group_with_history(
         .iter()
         .map(|field| header_indexes.get(field).copied())
         .collect::<Vec<_>>();
+    let consumed_history_columns = key_indexes
+        .iter()
+        .chain(value_indexes.iter())
+        .filter_map(|column| *column)
+        .collect::<HashSet<_>>();
+    if max_row >= 2 {
+        for column in consumed_history_columns {
+            ensure_formula_cache_values(
+                history_sheet,
+                &grid,
+                Bounds {
+                    top: 2,
+                    left: column,
+                    bottom: max_row,
+                    right: column,
+                },
+                "S1-F02 历史键/字段",
+            )?;
+        }
+    }
     let mut grouped = HashMap::<Vec<NormalizedHistoryKeyValue>, Vec<Vec<String>>>::new();
     for row in 2..=max_row {
         let key = key_indexes
@@ -1508,6 +1592,32 @@ fn cell_value(grid: &BTreeMap<(usize, usize), CellValue>, row: usize, column: us
         .unwrap_or(CellValue::Empty)
 }
 
+fn ensure_formula_cache_values(
+    sheet: &SheetDump,
+    grid: &BTreeMap<(usize, usize), CellValue>,
+    bounds: Bounds,
+    scope: &str,
+) -> Result<()> {
+    for address in sheet.formulas.keys() {
+        let (row, column) =
+            parse_cell(address).with_context(|| format!("{scope}公式坐标无效：{address}"))?;
+        if row < bounds.top || row > bounds.bottom || column < bounds.left || column > bounds.right
+        {
+            continue;
+        }
+        let cached_value = cell_value(grid, row, column);
+        ensure!(
+            !matches!(cached_value, CellValue::Empty),
+            "{scope}公式单元格 {address} 没有可用的已保存结果值；S1-F02 只读取缓存，不会触发公式重算"
+        );
+        ensure!(
+            !matches!(cached_value, CellValue::Error(_)),
+            "{scope}公式单元格 {address} 的已保存结果是 Excel 错误值，当前无法按 S1-F02 输出契约安全汇总"
+        );
+    }
+    Ok(())
+}
+
 fn read_header_values(
     sheet: &SheetDump,
     grid: &BTreeMap<(usize, usize), CellValue>,
@@ -1797,6 +1907,96 @@ mod tests {
         );
         let error = parse_summary_fields(&[record]).unwrap_err().to_string();
         assert!(error.contains("必须只定位一个单元格"), "{error}");
+    }
+
+    #[test]
+    fn formula_cache_guard_only_requires_saved_values_in_consumed_ranges() {
+        let sheet = SheetDump {
+            name: "Data".to_owned(),
+            values: BTreeMap::new(),
+            formulas: BTreeMap::from([("C4".to_owned(), "=1+1".to_owned())]),
+            formula_status: "read_by_calamine".to_owned(),
+            merges: Vec::new(),
+            merge_status: "read_by_calamine".to_owned(),
+            comments: BTreeMap::new(),
+            comments_status: "not_used".to_owned(),
+            conditional_formatting: Vec::new(),
+            conditional_formatting_status: "not_used".to_owned(),
+            data_validations: Vec::new(),
+            data_validations_status: "not_used".to_owned(),
+        };
+        let cached_grid = BTreeMap::from([((4, 3), CellValue::Number(2.0))]);
+
+        ensure_formula_cache_values(
+            &sheet,
+            &BTreeMap::new(),
+            Bounds {
+                top: 1,
+                left: 1,
+                bottom: 3,
+                right: 2,
+            },
+            "test range",
+        )
+        .expect("formulas outside consumed ranges do not block summaries");
+
+        ensure_formula_cache_values(
+            &sheet,
+            &cached_grid,
+            Bounds {
+                top: 4,
+                left: 3,
+                bottom: 4,
+                right: 3,
+            },
+            "test range",
+        )
+        .expect("a saved formula result is accepted");
+
+        let cached_blank_text = BTreeMap::from([((4, 3), CellValue::Text(String::new()))]);
+        ensure_formula_cache_values(
+            &sheet,
+            &cached_blank_text,
+            Bounds {
+                top: 4,
+                left: 3,
+                bottom: 4,
+                right: 3,
+            },
+            "test range",
+        )
+        .expect("an explicitly stored empty-string result is distinct from a missing cache");
+
+        let cached_error = BTreeMap::from([((4, 3), CellValue::Error("Div0".to_owned()))]);
+        let error = ensure_formula_cache_values(
+            &sheet,
+            &cached_error,
+            Bounds {
+                top: 4,
+                left: 3,
+                bottom: 4,
+                right: 3,
+            },
+            "test range",
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("Excel 错误值"), "{error}");
+
+        let error = ensure_formula_cache_values(
+            &sheet,
+            &BTreeMap::new(),
+            Bounds {
+                top: 4,
+                left: 3,
+                bottom: 4,
+                right: 3,
+            },
+            "test range",
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("没有可用的已保存结果值"), "{error}");
     }
 
     #[test]
