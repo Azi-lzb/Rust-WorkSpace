@@ -10,15 +10,15 @@
 use crate::{
     models::CopyRange,
     name_config::{
-        load_s1_region_summary_mappings, resolve_named_ranges_for_mappings, NamedRangeArea,
-        FIXED_ROW_SUMMARY_FUNCTION, USED_RANGE_SUMMARY_FUNCTION,
+        FIXED_ROW_SUMMARY_FUNCTION, NamedRangeArea, USED_RANGE_SUMMARY_FUNCTION,
+        load_s1_region_summary_mappings, resolve_named_ranges_for_mappings,
     },
     template::normalize_template_name,
 };
-use anyhow::{bail, ensure, Context, Result};
+use anyhow::{Context, Result, bail, ensure};
 use excel_reader::{
-    read_defined_names, read_workbook, read_xlsx_worksheet_extents, CellValue,
-    DefinedNameParseStatus, DefinedNameRecord, SheetDump, WorkbookDump, WorksheetExtent,
+    CellValue, DefinedNameParseStatus, DefinedNameRecord, SheetDump, WorkbookDump, WorksheetExtent,
+    read_defined_names, read_workbook, read_xlsx_worksheet_extents,
 };
 use excel_writer::{Color, Format, FormatAlign, Workbook};
 use serde::Serialize;
@@ -68,6 +68,15 @@ pub struct S1RegionSummarySummary {
     pub validation_time_ms: u128,
     pub elapsed_ms: u128,
     pub sheets: Vec<S1RegionSummarySheetSummary>,
+}
+
+/// List the eligible S1-F02 source files using the legacy recursive/nested
+/// directory preference. Generated output folders are never inputs.
+pub fn s1_region_summary_source_workbooks(
+    input_dir: impl AsRef<Path>,
+    recursive: bool,
+) -> Result<Vec<PathBuf>> {
+    discover_source_workbooks(input_dir.as_ref(), recursive)
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -136,6 +145,31 @@ pub fn summarize_s1_named_regions(
     feature_names: &[String],
     recursive: bool,
 ) -> Result<S1RegionSummarySummary> {
+    summarize_s1_named_regions_selected(
+        template_path,
+        input_dir,
+        output_path,
+        mapping_config,
+        history_workbook_path,
+        feature_names,
+        recursive,
+        &[],
+    )
+}
+
+/// Summarize configured named regions from the discovered source workbooks,
+/// optionally restricting the run to the caller's selected paths. An empty
+/// selection keeps the legacy meaning of “all eligible files”.
+pub fn summarize_s1_named_regions_selected(
+    template_path: impl AsRef<Path>,
+    input_dir: impl AsRef<Path>,
+    output_path: impl AsRef<Path>,
+    mapping_config: Option<&Path>,
+    history_workbook_path: Option<&Path>,
+    feature_names: &[String],
+    recursive: bool,
+    selected_source_files: &[PathBuf],
+) -> Result<S1RegionSummarySummary> {
     let started = Instant::now();
     let template_path = fs::canonicalize(template_path.as_ref()).with_context(|| {
         format!(
@@ -174,7 +208,34 @@ pub fn summarize_s1_named_regions(
     );
 
     let discovery_started = Instant::now();
-    let sources = discover_source_workbooks(&input_dir, recursive)?;
+    let mut sources = discover_source_workbooks(&input_dir, recursive)?;
+    if !selected_source_files.is_empty() {
+        let selected = selected_source_files
+            .iter()
+            .map(|path| {
+                fs::canonicalize(path)
+                    .with_context(|| format!("读取 S1-F02 已选源文件失败：{}", path.display()))
+            })
+            .collect::<Result<HashSet<_>>>()?;
+        let discovered = sources
+            .iter()
+            .map(|path| fs::canonicalize(path))
+            .collect::<std::io::Result<HashSet<_>>>()?;
+        let outside = selected
+            .difference(&discovered)
+            .map(|path| path.display().to_string())
+            .collect::<Vec<_>>();
+        ensure!(
+            outside.is_empty(),
+            "S1-F02 已选文件不在当前可汇总源目录或扫描范围内：{}",
+            outside.join("、")
+        );
+        sources.retain(|path| {
+            fs::canonicalize(path)
+                .ok()
+                .is_some_and(|canonical| selected.contains(&canonical))
+        });
+    }
     ensure!(!sources.is_empty(), "源数据目录中没有可汇总的 .xlsx 文件");
     let discovery_time_ms = discovery_started.elapsed().as_millis();
 
@@ -1486,7 +1547,9 @@ fn discover_source_workbooks(input_dir: &Path, recursive: bool) -> Result<Vec<Pa
             let path = entry.path();
             let kind = entry.file_type()?;
             if kind.is_dir() && recursive {
-                visit(&path, recursive, files)?;
+                if entry.file_name() != "执行结果" {
+                    visit(&path, recursive, files)?;
+                }
             } else if kind.is_file()
                 && path
                     .extension()

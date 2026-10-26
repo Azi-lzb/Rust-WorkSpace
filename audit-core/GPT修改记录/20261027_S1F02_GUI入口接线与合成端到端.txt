@@ -1,0 +1,26 @@
+时间：2026-10-27 01:53 +08:00
+执行者：Codex
+修改前 HEAD：d815815ae60a3e547fb18b28d74a40aadcc31185
+工作树：audit-dev；修改前已有多项未提交业务与交接材料，本轮仅编辑 web_bridge.rs、s1_region_summary.rs 并追加迁移记录；其他 WIP 均保留。
+
+目的：把原 GUI 的 S1-F02「汇总校验结果说明」入口接到现有 Rust 汇总能力，满足现有路径选择、模板识别/手选、源文件选择、后台运行、输出和日志反馈。
+
+修改文件：
+- audit-core/src/web_bridge.rs：支持 S1 文件夹/历史配置选择、源工作簿扫描与选择、F2 工作流分发、后台 Rust 汇总和状态/日志。
+- audit-core/src/s1_region_summary.rs：保留现有 API，新增按所选源文件汇总的入口；源发现跳过生成结果目录。
+- audit-core/MIGRATION_INVENTORY.md：追加本轮功能与验证边界。
+
+测试与构建：
+- cargo test --offline --locked -p audit-core --lib web_bridge::tests::s1_f2 -- --nocapture：2 passed。
+- cargo test --offline --locked -p audit-core --test s1_region_summary_cli：5 passed。
+- cargo build --offline --locked -p audit-core --bin open-data-audit-gui：通过；输出 F:/RustBuild/audit/debug/open-data-audit-gui.exe。
+- F:/RustBuild/audit/debug/open-data-audit-gui.exe --help：通过。
+- 合成 GUI API 端到端生成可读 XLSX；源与历史配置副本均未改变。
+- git diff --check：通过；未执行 Linux/WSL。
+
+未验证与已知问题：真实 S1-F02 模板/历史配置与 Python 输出对拍、结构异常过滤、真实业务人工 GUI 验收未做；F2 整体不标记验收通过。S1-F01 的 sidecar COM 复测仍为 RPC_E_DISCONNECTED，已报告 main；ImportRange 保真问题仍属共享能力，本轮未修改共享 crate。测试模板为合成 fixture，不是业务数据。
+
+配置及 VBA：未修改配置；无 VBA 迁移变更。
+安全：旧 Python 项目、真实配置和样本保持只读；测试只在系统临时目录生成合成工作簿并清理；未覆盖输入或历史配置；未 stage 交接文件或其他已有 WIP。
+组件版本：不升级。
+回滚：撤销本次两个 Rust 文件的提交并移除此记录；迁移清单当前含历史 WIP，未将该整文件纳入本次提交。
