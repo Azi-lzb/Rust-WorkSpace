@@ -1100,3 +1100,7 @@ Windows 原生验证：`cargo fmt --manifest-path pytools-core/Cargo.toml -- --c
 V2 菜单 2→1（PT-2-3）与 2→2（PT-2-4）复用现有 Rust 配置去重计划和 ExcelModifier，不复制去重算法。传入匹配的 capability/platform 并经用户确认时，检查生成唯一标记副本（重复行的已用列整行着色），删除生成唯一去重副本；未提供能力时明确仅生成计划，输入工作簿保持不变。Windows 合成菜单测试覆盖两种执行路径、输出结果及源文件字节不变；未提供能力时另验证不创建候选。
 
 验证：cargo fmt 检查通过；dedup_menu_cli 集成测试 8/8 通过；pytools 二进制离线构建通过。PT-2-3/2-4 本轮未新增 Python/Rust 数据结果对拍，既有合成算法对拍报告仍为历史证据。临时 Passed capability 只用于测试，不是生产能力。生产 SetCellFillColor/DeleteRows capability、真实业务工作簿、Windows 人工验收和 Linux/目标机仍未验证；两项继续迁移中，不提升验收状态。PT-1-2 继续排除。
+
+### 2026-10-26 PT-2-5 V2 去重追加菜单冒烟
+
+Windows 合成菜单测试使用 V2 2→3 选择 PT-2-5，确认后通过现有 Rust 追加流程为新历史目标生成工作簿；核对目标与候选相同、运行历史记录 PT-2-5/rust_xlsxwriter，源工作簿字节不变。此路径与 PT-6-1 中间表生成分开调用。完整 dedup_menu_cli 测试 9/9、格式检查及 pytools 二进制构建通过。本轮只补 V2 入口回归，没有新增 Python/Rust 数据对拍；真实样本、生产编辑 capability 及 PT-2-5 既有目标修改仍未验证，生命周期状态不升级。

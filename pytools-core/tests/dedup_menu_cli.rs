@@ -404,6 +404,62 @@ fn v2_config_delete_creates_a_deduplicated_copy_without_changing_source() -> Res
     Ok(())
 }
 #[test]
+fn v2_config_append_is_an_independent_confirmed_action() -> Result<()> {
+    let root = TestDirectory::new()?;
+    let config = create_dedup_config(root.path())?;
+    let source = root.path().join("source.xlsx");
+    let target = root.path().join("target.xlsx");
+    create_duplicate_source(&source)?;
+    let source_before = fs::read(&source)?;
+
+    let output = run_v2_menu(&config, "2\n3\nyes\n0\n", "developer")?;
+    assert!(
+        output.status.success(),
+        "V2 confirmed append failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("2-3 去重追加到历史工作簿"),
+        "V2 menu output did not show the append entry:\n{stdout}"
+    );
+    assert!(stdout.contains("确认提交上述追加"));
+
+    let report = output_json_after_menu(&output)?;
+    assert_eq!(report[0]["status"], "succeeded");
+    assert_eq!(report[0]["execution"], "committed");
+    assert_eq!(report[0]["target_existed"], false);
+    assert_eq!(
+        report[0]["execution_result"]["target_commit"]["operation"],
+        "created"
+    );
+    assert!(target.is_file());
+    let candidate = PathBuf::from(
+        report[0]["candidate"]
+            .as_str()
+            .context("V2 append candidate path missing")?,
+    );
+    assert!(candidate.is_file());
+    assert_eq!(fs::read(&target)?, fs::read(&candidate)?);
+    assert_eq!(fs::read(&source)?, source_before);
+
+    let log_dir = root.path().join("logs");
+    let histories = fs::read_dir(&log_dir)?
+        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+        .filter(|path| {
+            path.extension()
+                .is_some_and(|extension| extension == "json")
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(histories.len(), 1);
+    let history: Value = serde_json::from_slice(&fs::read(&histories[0])?)?;
+    assert_eq!(history["feature_id"], "PT-2-5");
+    assert_eq!(history["excel_writer_invoked"], true);
+    assert_eq!(history["plan_only"], false);
+    Ok(())
+}
+
+#[test]
 fn interactive_dedup_append_requires_confirmation_then_creates_a_new_target() -> Result<()> {
     let root = TestDirectory::new()?;
     let config = create_dedup_config(root.path())?;

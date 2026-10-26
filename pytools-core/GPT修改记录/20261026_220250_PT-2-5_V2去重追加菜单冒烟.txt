@@ -1,0 +1,23 @@
+时间：2026-10-26（Windows 本地时间）
+执行者：Codex（pytools-dev）
+修改前 HEAD：0c6d871；分支：pytools-dev；origin/pytools-dev 已同步。迁移清单含既有未提交 WIP；本次仅追加本条状态，未暂存或覆盖其他清单修改。
+
+目的：验证 PyTools Rust V2 的 2-3 菜单稳定路由到既有 PT-2-5 追加流程，并与中间宽表步骤独立。
+
+修改文件：
+- pytools-core/tests/dedup_menu_cli.rs：新增 V2 2→3 真实 CLI 集成测试，检查确认提示、PT-2-5 结果、目标/候选一致及源不变。
+- pytools-core/MIGRATION_INVENTORY.md：记录 V2 追加入口冒烟证据和未验收范围。
+- 本工作记录文件：记录本次验证。
+
+验证（Windows 原生，构建及临时文件位于 F:\PyTools_Rust_本轮工作文件_20261026）：
+- cargo fmt --manifest-path pytools-core/Cargo.toml -- --check：通过。
+- cargo test --offline --locked --manifest-path pytools-core/Cargo.toml --test dedup_menu_cli -j 1 -q：9/9 通过。
+- cargo build --offline --locked --manifest-path pytools-core/Cargo.toml --bin pytools -j 1 -q：通过。
+- git diff --check：通过。
+- V2 入口选择 2→3 并确认后，PT-2-5 创建目标；目标字节等于候选，源工作簿字节保持不变，开发者历史为 succeeded、engine rust_xlsxwriter、plan_only false。
+
+未执行/限制：合成 XLSX，仅覆盖新目标追加菜单路径；未新增 Python/Rust 数据对拍。既有目标编辑仍需 capability，生产能力、真实业务工作簿、Windows 人工验收及 Linux/deb 未验证。未修改 Rust 业务逻辑、共享 crate、根 Cargo 文件、Audit 或原 Python 源树。
+
+【组件版本】pytools-core 0.1.0；不升级。
+删除清单：无。
+回滚：仅回滚本次测试/记录提交，不清理 F 盘输出，不丢弃已有 WIP。提交及推送状态以 Git 历史为准。
