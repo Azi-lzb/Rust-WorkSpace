@@ -121,6 +121,8 @@ Windows 原生 Python/Rust 对拍将 `config-real` 的非空历史簿接入 2026
 
 Windows 原生 Microsoft Excel/Python 与 Rust 对拍将全角字宽估算由 15px 校准为 14px；7 个真实源簿、27 张源表的输出表名/结构/值/类型/数字格式/字体/对齐/筛选/冻结差异均为 0，列宽最大差从 3.07421875 降至 0.7890625 字符，仍有 48 列宽不同，不能视为格式契约通过。合成任意行/固定行/历史/兜底对拍的值与样式差异为 0，列宽仍有估算差异。完整列宽精确性及 S1-F02 保持未验证；本次真实输入未变，输出位于临时目录。证据见 `probe/reports/s1_f02_dengxian_width_calibration_real_windows_native_20261025.json`。
 
+边界修复：`CellValue::Integer` 的估算现在按完整十进制整数文本计位，避免先转 `f64` 后以科学计数表示而低估超大整数列宽；定向单测覆盖 `10^18`。本修复未重新测量上述 48 个真实列宽差，不改变 S1-F02 状态。
+
 ### S5-F01 配置 DSL 解析与静态校验切片（真实配置对拍）
 
 将源项目 `s1audit_configured.dsl` 的解析与静态校验半边（词法/语法分析、`parse_expression`、`parse_dictionary`、`validate_call`、`validate_node`、`validate_static_types`、`static_kind`、`validate_dictionary_dependencies`、`variables_in`、`calls_in`）忠实移植为 `audit-core/src/s5_config_dsl.rs`，错误消息与位置逐字对齐 Python；`evaluate` 运行时属后续规则执行切片。Windows 原生对拍以真实 config-real 生效配置（`5.逐笔统计系统_审核配置.xlsx`）的 2,392 条启用规则为样本，比较器按 `load_configuration` 规则循环的 DSL 段逐行复刻（字典解析→依赖检查→字典静态类型→各表达式解析→静态类型与字段种类约束→未定义变量检查），Python/Rust 逐字段比较状态、错误类别与原始消息：2,392/2,392 匹配、0 差异，全部规则两侧均通过校验（python_ok/rust_ok 2,392），0 个公式单元格拒绝。合成单测 11 例覆盖优先级、连续比较、转义与位置、V 函数别名/具名参数/元组路径、字典循环引用、静态类型错误等。已知 Unicode 边界差：Python `str.isdigit` 接受全部 Unicode 十进制数字而 Rust 端仅接受 ASCII 加上标三符（后者随后以相同"无效数字"错误拒绝）。该切片不覆盖配置工作簿加载、适用范围/业务行级检查和规则执行；S5-F01 整体仍未验证。证据见 `probe/reports/s5_config_dsl_parity_windows_native_20261025.json`。

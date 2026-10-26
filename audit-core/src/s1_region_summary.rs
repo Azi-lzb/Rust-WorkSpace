@@ -895,7 +895,7 @@ fn summary_autofit_cell_width_pixels(value: &CellValue, filter_header: bool) -> 
         CellValue::Number(value) | CellValue::DateTimeSerial(value) => {
             7 * value.to_string().len() as u32
         }
-        CellValue::Integer(value) => 7 * (*value as f64).to_string().len() as u32,
+        CellValue::Integer(value) => 7 * value.to_string().len() as u32,
         CellValue::Boolean(true) => 31,
         CellValue::Boolean(false) => 36,
     };
@@ -1822,6 +1822,14 @@ mod tests {
         assert_eq!(
             summary_autofit_cell_width_pixels(&CellValue::Text("A".to_owned()), true),
             32
+        );
+        assert_eq!(
+            summary_autofit_cell_width_pixels(
+                &CellValue::Integer(1_000_000_000_000_000_000),
+                false,
+            ),
+            140,
+            "integer width must use all decimal digits rather than f64 scientific notation"
         );
 
         let long_wide_text = CellValue::Text("银".repeat(30));

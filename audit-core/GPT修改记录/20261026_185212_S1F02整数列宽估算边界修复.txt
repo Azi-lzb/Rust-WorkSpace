@@ -1,0 +1,26 @@
+时间：2026-10-26（Windows 原生）
+执行者：Codex Audit migration agent
+分支：audit-dev
+修改前 HEAD：dec1f55
+修改后提交：随本记录纳入，SHA 以 Git 日志为准
+WIP：保留现有未跟踪交接文件、报告和 `.pytest-tmp-v3/`；均未暂存。
+
+目的：修正 S1-F02 列宽估算对 `CellValue::Integer` 先转换为 `f64` 再统计文本长度的错误。较大的整数会被格式化为科学计数法，导致估算显著低于其完整十进制文本宽度。
+
+修改文件：
+- audit-core/src/s1_region_summary.rs：直接使用整数的十进制文本长度；新增 10^18 单测。
+- audit-core/MIGRATION_INVENTORY.md：记录该边界修复并明确 S1-F02 仍未验证。
+- 本修改记录。
+
+验证：
+- `cargo test --offline --locked -p audit-core --lib s1_region_summary::tests::summary_output_width_uses_full_width_cjk_pixels_and_preserves_ascii_metrics -j 1`：1 passed。
+- `cargo test --offline --locked -p audit-core --test s1_region_summary_cli -j 1`：5 passed。
+- `cargo build --offline --locked -p audit-core --bin open-data-audit -j 1`：通过。
+- `target/debug/open-data-audit.exe s1-region-summary --help`：入口帮助正常返回。
+- `git diff --check`：通过。
+
+未执行/已知问题：未重跑 7 个真实源簿，也未重新统计既有 48 个列宽差；本修复只覆盖大整数文本长度这一边界，不能证明列宽精确性。S1-F02 保持未验证；未执行 Linux/WSL、glibc 2.28、deb 或目标发行版验收。
+
+配置/VBA/源 Python/真实样本影响：均未修改。
+组件版本：不升级。
+删除与回滚：无文件删除；如需回滚，仅 revert 本次列宽边界修复、清单和记录。
