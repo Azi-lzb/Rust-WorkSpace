@@ -2,7 +2,7 @@
   "schema_version": 1,
   "suite": "pytools.conversion.native_excel_value_only",
   "date": "2026-10-26",
-  "status": "passed_synthetic_python_rust_value_projection_and_date_type_checks",
+  "status": "passed_synthetic_and_repository_fixture_python_rust_value_projection",
   "environment": {
     "os": "Windows-11-10.0.26200-SP0",
     "rust_entry": "Windows-native pytools convert-excel --engine native",
@@ -76,9 +76,35 @@
     "output_published": false,
     "source_unchanged": true
   },
+  "repository_vba_fixture_projection": {
+    "fixture": "pytools-core/tests/fixtures/vba_config/VbaV2.4.2.xlsm",
+    "kind": "repository VBA config fixture; not a real user business template",
+    "actual_engine": "calamine + rust_xlsxwriter",
+    "actual_components": [
+      "Rust",
+      "pytools-core::conversion",
+      "excel-reader/calamine",
+      "excel-writer/rust_xlsxwriter"
+    ],
+    "source_has_vba": true,
+    "output_has_vba": false,
+    "formatting_dropped": true,
+    "source_unchanged": true,
+    "worksheets": 14,
+    "source_nonempty_cells": 39015,
+    "output_nonempty_cells": 39015,
+    "date_cells": 1781,
+    "formula_cells": 0,
+    "boolean_cells": 0,
+    "numeric_cells": 4775,
+    "text_cells": 32459,
+    "max_numeric_abs_diff": 0.0,
+    "mismatches": 0,
+    "unexpected_output_cells": 0
+  },
   "unverified": [
     "Real business XLS workbooks and configurations.",
-    "Formula text/cache parity against legacy XLS conversion, 1904 epoch detection for legacy .xls/.xlsb inputs, booleans, error cells and empty-string cells.",
+    "Formula text/cache parity against legacy XLS conversion, 1904 epoch detection for legacy .xls/.xlsb inputs, error cells and empty-string cells.",
     "Styles, comments, merged regions, dimensions, names, print settings, validations, conditional formatting, drawings and macros are intentionally not preserved by this value-only route.",
     "Windows desktop file dialog, glibc 2.28, Kylin V10/UOS V20 and offline deb delivery."
   ]

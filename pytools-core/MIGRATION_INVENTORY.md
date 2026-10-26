@@ -962,4 +962,6 @@ Windows 原生 `cargo fmt --manifest-path pytools-core/Cargo.toml -- --check` �
 
 另用合成 1904 日期系统 XLSM 确认原转换曾成功写出默认 1900 epoch，使日期 serial 43889 从源日期 2024-02-29 被重新解释为 2020-02-28；PyTools 现调用共享 reader `uses_1904_date_system` 在 native 写入前拒绝检测到 1904 epoch 的 OOXML 输入，菜单与帮助也提示。已向 main 请求把共享 epoch 检测扩至 BIFF `.xls` 与 `.xlsb`；当前 helper 对这两种格式返回 false，修复需安全同步后再补防护。
 
-目前合成覆盖 1900 日期系统数值序列、ISO-typed 日期/时长拒绝、1904 `.xlsm` 失败关闭；不覆盖 `.xls/.xlsb` 的 1904 epoch 检测或真实 XLS/XLSM 保真对拍。PT-4-2 仍未验收。公式缓存、错误值/空文本入口、Windows 原生文件对话框、glibc 2.28、麒麟/UOS 与离线 deb 仍未完成本功能验收。
+另对仓库只读 VBA 配置 fixture `VbaV2.4.2.xlsm` 经真实 Rust CLI 做完整值投影：14 个工作表、39,015 个非空格（1,781 个日期、4,775 个数值、32,459 个文本），零差异；源未变，目标按合同移除 VBA。它是仓库测试 fixture，不是用户业务模板，且不含公式。
+
+目前合成覆盖 1900 日期系统数值序列、ISO-typed 日期/时长拒绝、1904 `.xlsm` 失败关闭和上述仓库 fixture；不覆盖 `.xls/.xlsb` 的 1904 epoch 检测或真实 XLS/XLSM 保真对拍。PT-4-2 仍未验收。公式缓存、错误值/空文本入口、Windows 原生文件对话框、glibc 2.28、麒麟/UOS 与离线 deb 仍未完成本功能验收。

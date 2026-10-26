@@ -9,6 +9,7 @@ import tempfile
 from datetime import date
 from datetime import datetime, time, timedelta
 from pathlib import Path
+import zipfile
 
 import openpyxl
 import xlrd
@@ -353,11 +354,159 @@ def main() -> int:
         if "1904 date system" not in epoch_failure_detail:
             raise AssertionError(f"1904 date-system refusal detail is incomplete: {epoch_failure_detail!r}")
 
+        vba_source = REPO / "pytools-core" / "tests" / "fixtures" / "vba_config" / "VbaV2.4.2.xlsm"
+        vba_source_before = vba_source.read_bytes()
+        vba_result = subprocess.run(
+            [
+                str(RUST_CLI),
+                "convert-excel",
+                "--config",
+                str(config),
+                "--to",
+                "xlsx",
+                "--engine",
+                "native",
+                "--output-dir",
+                str(output_dir),
+                "--log-dir",
+                str(output_dir / "logs"),
+                "--log-view",
+                "developer",
+                str(vba_source),
+            ],
+            check=False,
+            capture_output=True,
+        )
+        vba_stdout = vba_result.stdout.decode("utf-8-sig", errors="replace").replace("\x00", "")
+        if vba_result.returncode != 0:
+            raise AssertionError(
+                f"native VBA-config fixture conversion failed: {vba_stdout[-1000:]!r}"
+            )
+        vba_report = json.loads(vba_stdout)
+        if vba_report.get("converted") != 1 or vba_report.get("failed") != 0:
+            raise AssertionError(f"unexpected VBA-config fixture result: {vba_report}")
+        vba_history_path = Path(vba_report["run_history_path"])
+        vba_history = json.loads(vba_history_path.read_text(encoding="utf-8"))
+        vba_conversion_event = next(
+            (
+                event
+                for event in vba_history.get("events", [])
+                if event.get("phase") == "convert_file" and event.get("status") == "completed"
+            ),
+            None,
+        )
+        if (
+            not vba_conversion_event
+            or vba_conversion_event.get("actual_engine") != "calamine + rust_xlsxwriter"
+        ):
+            raise AssertionError(f"unexpected VBA-config conversion engine: {vba_history}")
+        if vba_source.name.lower() in vba_history_path.read_text(encoding="utf-8").lower():
+            raise AssertionError("VBA-config run history contains the source file name")
+        vba_output_path = Path(vba_report["items"][0]["output"])
+        vba_source_workbook = load_workbook(
+            vba_source, data_only=False, read_only=False, keep_vba=True
+        )
+        vba_output_workbook = load_workbook(vba_output_path, data_only=False, read_only=False)
+        vba_counts = {
+            "worksheets": len(vba_source_workbook.sheetnames),
+            "source_nonempty_cells": 0,
+            "output_nonempty_cells": 0,
+            "date_cells": 0,
+            "formula_cells": 0,
+            "boolean_cells": 0,
+            "numeric_cells": 0,
+            "text_cells": 0,
+            "max_numeric_abs_diff": 0.0,
+            "mismatches": 0,
+            "unexpected_output_cells": 0,
+        }
+        if vba_source_workbook.sheetnames != vba_output_workbook.sheetnames:
+            raise AssertionError("VBA-config conversion changed worksheet names or order")
+        for source_sheet, output_sheet in zip(
+            vba_source_workbook.worksheets, vba_output_workbook.worksheets
+        ):
+            max_row = max(source_sheet.max_row or 1, output_sheet.max_row or 1)
+            max_column = max(source_sheet.max_column or 1, output_sheet.max_column or 1)
+            source_rows = source_sheet.iter_rows(
+                min_row=1, max_row=max_row, min_col=1, max_col=max_column
+            )
+            output_rows = output_sheet.iter_rows(
+                min_row=1, max_row=max_row, min_col=1, max_col=max_column
+            )
+            for source_row, output_row in zip(source_rows, output_rows):
+                for source_cell, output_cell in zip(source_row, output_row):
+                    if output_cell.value is not None:
+                        vba_counts["output_nonempty_cells"] += 1
+                    value = source_cell.value
+                    if value is None:
+                        if output_cell.value is not None:
+                            vba_counts["unexpected_output_cells"] += 1
+                            vba_counts["mismatches"] += 1
+                        continue
+                    vba_counts["source_nonempty_cells"] += 1
+                    if source_cell.data_type == "f":
+                        vba_counts["formula_cells"] += 1
+                        equal = output_cell.data_type == "f" and output_cell.value == value
+                    elif source_cell.data_type == "e":
+                        vba_counts["mismatches"] += 1
+                        continue
+                    elif source_cell.is_date:
+                        vba_counts["date_cells"] += 1
+                        expected = to_excel(value, epoch=vba_source_workbook.epoch)
+                        actual = output_cell.value
+                        equal = (
+                            isinstance(actual, (int, float))
+                            and not isinstance(actual, bool)
+                            and math.isclose(float(actual), expected, rel_tol=0.0, abs_tol=1e-10)
+                        )
+                        if equal:
+                            vba_counts["max_numeric_abs_diff"] = max(
+                                vba_counts["max_numeric_abs_diff"], abs(float(actual) - expected)
+                            )
+                    elif isinstance(value, bool):
+                        vba_counts["boolean_cells"] += 1
+                        equal = output_cell.value is value
+                    elif isinstance(value, (int, float)):
+                        vba_counts["numeric_cells"] += 1
+                        equal = (
+                            isinstance(output_cell.value, (int, float))
+                            and not isinstance(output_cell.value, bool)
+                            and math.isclose(
+                                float(output_cell.value), float(value), rel_tol=0.0, abs_tol=1e-10
+                            )
+                        )
+                        if equal:
+                            vba_counts["max_numeric_abs_diff"] = max(
+                                vba_counts["max_numeric_abs_diff"],
+                                abs(float(output_cell.value) - float(value)),
+                            )
+                    else:
+                        vba_counts["text_cells"] += 1
+                        equal = isinstance(output_cell.value, str) and output_cell.value == value
+                    if not equal:
+                        vba_counts["mismatches"] += 1
+        vba_source_workbook.close()
+        vba_output_workbook.close()
+        with zipfile.ZipFile(vba_source) as source_archive, zipfile.ZipFile(
+            vba_output_path
+        ) as output_archive:
+            source_has_vba = "xl/vbaProject.bin" in source_archive.namelist()
+            output_has_vba = "xl/vbaProject.bin" in output_archive.namelist()
+        if not source_has_vba or output_has_vba:
+            raise AssertionError("native .xlsm conversion did not remove VBA as documented")
+        if vba_source.read_bytes() != vba_source_before:
+            raise AssertionError("the repository VBA-config fixture was modified")
+        if (
+            vba_counts["source_nonempty_cells"] != vba_counts["output_nonempty_cells"]
+            or vba_counts["mismatches"] != 0
+        ):
+            raise AssertionError(f"VBA-config fixture projection differs: {vba_counts}")
+
     report = {
         "schema_version": 1,
         "suite": "pytools.conversion.native_excel_value_only",
         "date": date.today().isoformat(),
-        "status": "passed_synthetic_python_rust_value_projection_and_date_type_checks",
+        "status": "passed_synthetic_and_repository_fixture_python_rust_value_projection",
         "environment": {
             "os": platform.platform(),
             "rust_entry": "Windows-native pytools convert-excel --engine native",
@@ -406,9 +555,20 @@ def main() -> int:
             "output_published": False,
             "source_unchanged": True,
         },
+        "repository_vba_fixture_projection": {
+            "fixture": "pytools-core/tests/fixtures/vba_config/VbaV2.4.2.xlsm",
+            "kind": "repository VBA config fixture; not a real user business template",
+            "actual_engine": vba_conversion_event["actual_engine"],
+            "actual_components": vba_conversion_event.get("components"),
+            "source_has_vba": source_has_vba,
+            "output_has_vba": output_has_vba,
+            "formatting_dropped": True,
+            "source_unchanged": True,
+            **vba_counts,
+        },
         "unverified": [
             "Real business XLS workbooks and configurations.",
-            "Formula text/cache parity against legacy XLS conversion, 1904 epoch detection for legacy .xls/.xlsb inputs, booleans, error cells and empty-string cells.",
+            "Formula text/cache parity against legacy XLS conversion, 1904 epoch detection for legacy .xls/.xlsb inputs, error cells and empty-string cells.",
             "Styles, comments, merged regions, dimensions, names, print settings, validations, conditional formatting, drawings and macros are intentionally not preserved by this value-only route.",
             "Windows desktop file dialog, glibc 2.28, Kylin V10/UOS V20 and offline deb delivery.",
         ],
