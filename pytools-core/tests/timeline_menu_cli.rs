@@ -353,6 +353,56 @@ fn wide_summary_cli_projects_1900_zero_serial_as_midnight_time() -> Result<()> {
 }
 
 #[test]
+fn wide_summary_cli_preserves_time_format_serials_at_and_above_one_day() -> Result<()> {
+    for command in ["wide-summary", "wide-summary-row-suffix"] {
+        for serial in [1.0, 1.5] {
+            let root = TestDirectory::new()?;
+            let config = create_timeline_config(root.path())?;
+            let source = root
+                .path()
+                .join(format!("sample_time_serial_{serial}.xlsx"));
+            create_wide_source_with_number_format_serial(&source, "跨日时分秒", serial, "h:mm:ss")?;
+            let source_before = fs::read(&source)?;
+
+            let output = Command::new(env!("CARGO_BIN_EXE_pytools"))
+                .arg(command)
+                .arg("--config")
+                .arg(&config)
+                .arg("--log-view")
+                .arg("developer")
+                .arg(&source)
+                .output()
+                .context("run wide-summary CLI with a full-day time-format serial")?;
+            assert!(
+                output.status.success(),
+                "{command} did not process serial {serial}: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+
+            let report: Value = serde_json::from_slice(&output.stdout)?;
+            let summary_path = report["output"]
+                .as_str()
+                .map(PathBuf::from)
+                .context("full-day time summary output path missing")?;
+            let dump = read_workbook(&summary_path)?;
+            let summary = dump
+                .sheets
+                .iter()
+                .find(|sheet| sheet.name == "WideRule")
+                .context("full-day time summary sheet missing")?;
+            assert_eq!(summary.values["G2"]["type"], "datetime_serial");
+            assert_eq!(
+                summary.values["G2"]["value"].as_f64(),
+                Some(serial),
+                "time-format serial {serial} changed in {command}"
+            );
+            assert_eq!(fs::read(&source)?, source_before);
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn wide_summary_cli_processes_legacy_xls_without_ooxml_metadata() -> Result<()> {
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests")
@@ -1662,6 +1712,15 @@ fn create_wide_source_with_elapsed_duration(
 }
 
 fn create_wide_source_with_date_serial(path: &Path, organization: &str, serial: f64) -> Result<()> {
+    create_wide_source_with_number_format_serial(path, organization, serial, "yyyy/m/d")
+}
+
+fn create_wide_source_with_number_format_serial(
+    path: &Path,
+    organization: &str,
+    serial: f64,
+    number_format: &str,
+) -> Result<()> {
     let mut workbook = rust_xlsxwriter::Workbook::new();
     let sheet = workbook.add_worksheet();
     sheet.set_name("Report")?;
@@ -1675,8 +1734,8 @@ fn create_wide_source_with_date_serial(path: &Path, organization: &str, serial: 
     sheet.write_string(3, 2, "余额")?;
     sheet.write_string(3, 3, "本息")?;
     sheet.write_string(4, 0, organization)?;
-    let date_format = rust_xlsxwriter::Format::new().set_num_format("yyyy/m/d");
-    sheet.write_number_with_format(4, 1, serial, &date_format)?;
+    let format = rust_xlsxwriter::Format::new().set_num_format(number_format);
+    sheet.write_number_with_format(4, 1, serial, &format)?;
     sheet.write_number(4, 2, 12.0)?;
     sheet.write_number(4, 3, 23.0)?;
     workbook
