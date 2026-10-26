@@ -18,6 +18,8 @@ use axum::{
     Json, Router,
 };
 use serde_json::{json, Value};
+#[cfg(any(windows, target_os = "macos", target_os = "linux"))]
+use std::process::Command;
 use std::{
     fs,
     net::{IpAddr, Ipv4Addr, SocketAddr},
@@ -26,8 +28,6 @@ use std::{
     thread,
     time::Instant,
 };
-#[cfg(any(windows, target_os = "macos", target_os = "linux"))]
-use std::process::Command;
 use tokio::{net::TcpListener, runtime::Builder};
 
 const ORIGINAL_HTML: &str = include_str!("../frontend/web/index.html");
@@ -176,6 +176,20 @@ impl AppState {
 
 /// Run the local-only frontend/API service. It never binds to a LAN address.
 pub fn serve_web_ui(port: u16, config_path: PathBuf) -> Result<()> {
+    serve_web_ui_inner(port, config_path, true)
+}
+
+/// Launch the existing Audit interface in the user's system browser, then serve its Rust bridge.
+pub fn launch_web_ui(port: u16, config_path: PathBuf) -> Result<()> {
+    serve_web_ui(port, config_path)
+}
+
+/// Run the local-only frontend/API service without opening a browser window.
+pub fn serve_web_ui_headless(port: u16, config_path: PathBuf) -> Result<()> {
+    serve_web_ui_inner(port, config_path, false)
+}
+
+fn serve_web_ui_inner(port: u16, config_path: PathBuf, open_browser: bool) -> Result<()> {
     let runtime = Builder::new_multi_thread()
         .enable_all()
         .build()
@@ -191,8 +205,10 @@ pub fn serve_web_ui(port: u16, config_path: PathBuf) -> Result<()> {
         let app = router(AppState::new(config_path));
         let url = format!("http://{address}");
         println!("Open-Data-Audit Rust web UI: {url}");
-        if let Err(error) = open_default_browser(&url) {
-            eprintln!("无法自动打开浏览器，请手动访问 {url}：{error}");
+        if open_browser {
+            if let Err(error) = open_default_browser(&url) {
+                eprintln!("无法自动打开浏览器，请手动访问 {url}：{error}");
+            }
         }
         axum::serve(listener, app)
             .await

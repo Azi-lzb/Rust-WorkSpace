@@ -1,0 +1,26 @@
+时间：2026-10-26（Asia/Shanghai）
+执行者：Codex
+修改前 commit：efb1aba0cf907717f2a31168019657984cfcbc0d
+修改后 commit：随本次功能提交；以 Git 历史为准。
+修改前 WIP：Audit GUI 启动器已有本地提交；本轮只保留旧 serve 启动语义并增加 headless 冒烟选项。
+
+目的：为 Audit GUI 启动器提供可测试的 `--no-browser` 模式，同时保留 `open-data-audit serve` 和默认 GUI 启动时自动打开系统浏览器的既有行为。
+
+修改文件：
+- `audit-core/src/web_bridge.rs`：明确区分自动打开浏览器的既有入口与 headless 服务入口。
+- `audit-core/src/bin/open-data-audit-gui.rs`：只在显式 `--no-browser` 时调用 headless 服务。
+- `audit-core/MIGRATION_INVENTORY.md`：记录启动选项及既有行为。
+- 本修改记录。
+
+验证：
+- Windows `cargo test -p audit-core --lib web_bridge::tests::served_page_is_original_markup_plus_runtime_bridge --offline --locked`：1 passed。
+- Windows `cargo build --release -p audit-core --bin open-data-audit-gui --offline --locked`：通过；构建产物位于 `F:\CodexBuilds\windows-operable-entries-20261026\release\open-data-audit-gui.exe`。
+- Windows `rustfmt --edition 2021 --check` 对本次涉及的 Audit/PyTools Rust 文件通过。
+- 启动新 GUI 二进制 `--port 0 --no-browser --config audit-core/config/默认配置/2.报表采集系统_配置.xlsx`：首页 GET 为 200 且包含 `window.bridge`；POST `/api/get_state`（JSON 数组契约）为 200；未迁移 API 明确返回 501。
+- `open-data-audit-gui.exe --help` 正常显示参数。默认自动打开浏览器的 GUI 行为与旧 `serve_web_ui` 路径一致；其实际浏览器启动曾在前一启动器记录中验证。
+
+未执行项与限制：没有做完整 GUI 人工业务验收、真实业务样本对拍、Linux/deb 或目标系统验收；此变更不扩大当前 GUI 已连接的业务 API。
+
+删除清单：无。
+回滚提示：恢复 `web_bridge.rs` 与 GUI binary 的本次入口差异，并恢复 inventory 对应行；不需要回滚业务或共享 Excel 代码。
+【组件版本】：不升级。

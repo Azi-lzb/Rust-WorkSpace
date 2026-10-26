@@ -1,5 +1,5 @@
 use anyhow::Result;
-use audit_core::web_bridge::serve_web_ui;
+use audit_core::web_bridge::{launch_web_ui, serve_web_ui_headless};
 use clap::Parser;
 use std::path::PathBuf;
 
@@ -17,6 +17,10 @@ struct Cli {
     /// Audit S2 configuration workbook.
     #[arg(long)]
     config: Option<PathBuf>,
+
+    /// Keep the HTTP bridge available without opening a browser window (useful for headless checks).
+    #[arg(long, default_value_t = false)]
+    no_browser: bool,
 }
 
 fn main() {
@@ -29,7 +33,11 @@ fn main() {
 fn run() -> Result<()> {
     let cli = Cli::parse();
     let config_path = cli.config.unwrap_or_else(default_s2_config_path);
-    serve_web_ui(cli.port, config_path)
+    if cli.no_browser {
+        serve_web_ui_headless(cli.port, config_path)
+    } else {
+        launch_web_ui(cli.port, config_path)
+    }
 }
 
 fn default_s2_config_path() -> PathBuf {
