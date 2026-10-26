@@ -78,11 +78,15 @@ OOXML 是补丁和缺失元数据读取层，不是主要读写库。使用 name
 
 以下能力都必须显式触发、按具体能力登记并验证结果；它们不得成为核心主路径的启动依赖：
 
-1. **公式计算（独立 ExcelCalculator）**：默认不计算。候选为 LibreOffice Calc（Windows/Linux）、Microsoft Excel COM、WPS COM（后两者仅 Windows且须分别验证）。允许显式请求普通重算或完整重算；必须对拍公式语义、结果和依赖关系，并检查保存引起的公式、样式、结构变化。不得宣称 LO、Excel、WPS 完全等价。LibreOffice 基础公式计算的可行性已由用户实际测试确认，不重复泛泛的可行性调研；具体业务公式覆盖、文件保真和目标系统部署仍须验收。ExcelCalculator 与 ExcelModifier 分离；不强制其全部实现 JSON IPC。运行时不可用时报告“该功能需要外部引擎”，不得用旧缓存或值重建冒充重算。
+1. **公式计算（独立 ExcelCalculator）**：默认不计算。本阶段目标为 LibreOffice Calc（Windows/Linux）和 Microsoft Excel COM（Windows）；此前列出的 WPS COM 是历史候选，不属于当前计算范围，除非用户另行确认。允许显式请求普通重算或完整重算；必须对拍公式语义、结果和依赖关系，并检查保存引起的公式、样式、结构变化。不得宣称 LO 与 Excel 完全等价。LibreOffice 基础公式计算的可行性已由用户实际测试确认，不重复泛泛的可行性调研；具体业务公式覆盖、文件保真和目标系统部署仍须验收。ExcelCalculator 与 ExcelModifier 分离；不强制其全部实现 JSON IPC。运行时不可用时报告“该功能需要外部引擎”，不得用旧缓存或值重建冒充重算。
 2. **同类格式转换**：首批为 Excel .et→.xlsx、Excel .xls→.xlsx（供 sheet 改名等 Rust 不支持的修改前转换）、Word .doc→.docx。用户可选择保真转换或经说明的 Rust/Go 原生转换；转换后检查工作表和数据。PDF 导出、跨类别转换不在范围内。
 3. **Windows COM 修改**：未来由 ExcelModifier 显式调用 Microsoft Excel COM 或 WPS 表格 COM，仅在真实 COM 接口可用且具体操作 capability 已验收时开放。优先用独立 pywin32 Worker 与 JSON IPC。COM 不提供读取或新建能力，也不作为 Linux 依赖。
 
 主程序启动不检查外部引擎；用户显式触发能力时才检测其可用性。失败不能阻塞其他主路径功能，也不能将未校验输出报告为成功。主 deb 不含 Office/WPS/LO/COM 运行时。可选 LibreOffice 计算能力在 Linux 上发布前须明确其独立运行时来源；不得假设目标机已安装。
+
+### 当前 Excel-Core 优先级（2026-10-26）
+
+Read 继续使用 calamine，Create 继续使用 rust_xlsxwriter；Edit 新增能力优先落在 OOXML Patch 与 umya-spreadsheet。按少量工作簿、工作表和单元格修改及固定区域复制的真实业务规模实现，并保护非目标区域。保留现有 openpyxl worker、接口、测试和仍依赖它的兼容路径，但暂停新增扩展；只有对应 Rust 替代方案通过真实模板保真验收后才能移除。Go Excelize worker 与 FFI 暂缓开发，不是业务迁移前置条件。公式复制保持原样复制为既有语义，引用平移必须显式选择；公式重算使用 LibreOffice 或 Windows Microsoft Excel COM，并验证缓存和关键业务结果。打印整理须单独通过真实模板端到端保真验收。以上优先级不改变 Audit/PyTools 的业务范围或任何已验收生产默认路由，合成测试不等于生产验收。
 
 ### 明确禁止
 
