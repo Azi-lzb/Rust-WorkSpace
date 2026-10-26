@@ -1878,6 +1878,77 @@ fn run_menu(config: &Path, input: &str) -> Result<Output> {
     run_menu_with_view(config, "user", input)
 }
 
+fn run_default_menu(input: &str) -> Result<Output> {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_pytools"))
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .context("start pytools directly without arguments")?;
+    child
+        .stdin
+        .take()
+        .context("default menu stdin missing")?
+        .write_all(input.as_bytes())
+        .context("send default menu selection")?;
+    child
+        .wait_with_output()
+        .context("wait for default interactive menu")
+}
+
+#[test]
+fn launching_without_arguments_opens_the_numbered_main_menu() -> Result<()> {
+    let output = run_default_menu("0\n")?;
+    assert!(
+        output.status.success(),
+        "direct menu launch failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    for expected in [
+        "======== PyTools 菜单 ========",
+        "1  时序工具",
+        "2  去重工具",
+        "3  打印工具",
+        "4  转换与文件命名工具",
+        "5  配置工具",
+        "6  汇总工具",
+        "7  一二批处理工具",
+        "8  归档工具",
+        "9  快捷工具",
+        "0  退出",
+        "再见。",
+    ] {
+        assert!(
+            stdout.contains(expected),
+            "missing {expected:?} in menu output: {stdout}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn excluded_pt_1_2_menu_item_does_not_start_the_legacy_candidate() -> Result<()> {
+    let directory = TestDirectory::new()?;
+    let config = create_timeline_config(directory.path())?;
+    let output = run_menu(&config, "1\n2\n0\n")?;
+    assert!(
+        output.status.success(),
+        "PT-1-2 exclusion menu route failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("1-2 范围排除"),
+        "main menu must preserve the exclusion: {stdout}"
+    );
+    assert!(stdout.contains("PT-1-2 时序提取不在已确认迁移范围内"));
+    assert!(!stdout.contains("选择时序提取源文件"));
+    assert!(!stdout.contains("PT-1-2 开始"));
+    assert!(stdout.contains("0  退出"));
+    Ok(())
+}
+
 fn run_menu_with_view(config: &Path, log_view: &str, input: &str) -> Result<Output> {
     let mut child = Command::new(env!("CARGO_BIN_EXE_pytools"))
         .arg("menu")

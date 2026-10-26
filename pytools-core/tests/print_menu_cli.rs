@@ -565,3 +565,26 @@ fn menu_object_json(output: &Output) -> Result<Value> {
     let mut deserializer = serde_json::Deserializer::from_slice(&output.stdout[start..]);
     Value::deserialize(&mut deserializer).context("decode menu JSON object")
 }
+
+#[test]
+fn legacy_pdf_menu_number_is_visible_but_does_not_create_output() -> Result<()> {
+    let root = TestDirectory::new()?;
+    let source = root.path().join("unused-source.xlsx");
+    let target = root.path().join("must-not-be-created.xlsx");
+    let config = create_print_config(root.path(), &source, &target)?;
+
+    let output = run_menu(&config, "3\n5\n0\n")?;
+    assert!(
+        output.status.success(),
+        "legacy PDF menu selection failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("5  按配置打印 → 导出 PDF"));
+    assert!(stdout.contains("[尚未实现] PDF 导出未纳入当前迁移范围"));
+    assert!(
+        !target.exists(),
+        "PDF placeholder must not create an output"
+    );
+    Ok(())
+}

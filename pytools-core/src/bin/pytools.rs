@@ -255,7 +255,10 @@ where
 {
     loop {
         writeln!(output, "======== PyTools 菜单 ========")?;
-        writeln!(output, "  1  时序工具（已接入 1-5）")?;
+        writeln!(
+            output,
+            "  1  时序工具（接入 1-1、1-3 至 1-5；1-2 范围排除）"
+        )?;
         writeln!(output, "  2  去重工具（检查、计划与确认提交）")?;
         writeln!(output, "  3  打印工具（生成页面设置计划）")?;
         writeln!(output, "  4  转换与文件命名工具")?;
@@ -1383,7 +1386,7 @@ where
     loop {
         writeln!(output, "------ 时序工具 ------")?;
         writeln!(output, "  1  表头路径比对")?;
-        writeln!(output, "  2  时序提取（精简）")?;
+        writeln!(output, "  2  时序提取（PT-1-2，当前迁移范围排除）")?;
         writeln!(output, "  3  宽表汇总（行头加后缀）")?;
         writeln!(output, "  4  宽表汇总（行头不加后缀）")?;
         writeln!(output, "  5  预校验")?;
@@ -1434,30 +1437,9 @@ where
                 return Ok(());
             }
             "2" => {
-                let Some(sources) = choose_workbooks(
-                    "选择时序提取源文件（可多选）",
-                    true,
-                    input,
+                writeln!(
                     output,
-                    allow_native_dialog,
-                )?
-                else {
-                    writeln!(output, "[已取消]")?;
-                    return Ok(());
-                };
-                let mut arguments = config_cli_arguments(config_path);
-                arguments.extend(summary_cli_arguments(global, log_view));
-                arguments.extend(
-                    sources
-                        .into_iter()
-                        .map(|path| path.to_string_lossy().into_owned()),
-                );
-                run_interactive_timeline_extract_menu(
-                    input,
-                    output,
-                    arguments,
-                    capabilities,
-                    platform,
+                    "[范围排除] PT-1-2 时序提取不在已确认迁移范围内；不会启动该候选功能。"
                 )?;
                 return Ok(());
             }
@@ -2665,6 +2647,10 @@ where
         )?;
         writeln!(output, "  3  按配置准备打印文件（生成计划）")?;
         writeln!(output, "  4  按配置预校验")?;
+        writeln!(
+            output,
+            "  5  按配置打印 → 导出 PDF（尚未实现；当前范围不含 PDF）"
+        )?;
         writeln!(output, "  0  返回")?;
         writeln!(output, "----------------------")?;
         let Some(choice) = read_menu_choice(input, output, "子菜单选择> ")? else {
@@ -2802,8 +2788,15 @@ where
                 )?;
                 return Ok(());
             }
+            "5" => {
+                writeln!(
+                    output,
+                    "[尚未实现] PDF 导出未纳入当前迁移范围，未生成文件。"
+                )?;
+                return Ok(());
+            }
             "0" => return Ok(()),
-            _ => writeln!(output, "仅接受 1、2、3、4 或 0")?,
+            _ => writeln!(output, "仅接受 1、2、3、4、5 或 0")?,
         }
     }
 }
@@ -8350,30 +8343,6 @@ fn run_convert_file_cli(arguments: Vec<String>) -> Result<()> {
     Ok(())
 }
 
-fn run_interactive_timeline_extract_menu<R, W>(
-    input: &mut R,
-    output: &mut W,
-    mut arguments: Vec<String>,
-    capabilities: Option<&Path>,
-    platform: Option<&str>,
-) -> Result<()>
-where
-    R: BufRead,
-    W: Write,
-{
-    if let Some(capabilities) = capabilities {
-        arguments.push("--capabilities".to_owned());
-        arguments.push(capabilities.to_string_lossy().into_owned());
-    }
-    if let Some(platform) = platform {
-        arguments.push("--platform".to_owned());
-        arguments.push(platform.to_owned());
-    }
-    let report = run_timeline_extract_cli_report(arguments, Some((input, output)))?;
-    writeln!(output, "{}", serde_json::to_string_pretty(&report)?)?;
-    Ok(())
-}
-
 fn run_timeline_extract_cli(arguments: Vec<String>) -> Result<()> {
     let report = run_timeline_extract_cli_report(arguments, None)?;
     println!("{}", serde_json::to_string_pretty(&report)?);
@@ -11840,10 +11809,11 @@ fn print_usage() {
     eprintln!(
         "Usage:\n\
          pytools [menu] [--config <config.xlsx>] [--log-view user|developer|off] [--capabilities <json> --platform <id>]\n\
-         no command opens the migrated menu; available categories: 1 (timeline 1-5), 2 (dedup 1-6), 3 (print 1-4), 4 (conversion and file naming 1-10), 5 (configuration 1/2), 6 (summary 1/2), 7 (batch 7-1/7-8), 8 (archive 1-5), and 9 (quick tools 1-3)\n\
+         no command opens the migrated menu; available categories: 1 (timeline 1-1 and 1-3 through 1-5; 1-2 excluded), 2 (dedup 1-6), 3 (print 1-4; legacy PDF item 5 is not implemented), 4 (conversion and file naming 1-10), 5 (configuration 1/2), 6 (summary 1/2), 7 (batch 7-1/7-8), 8 (archive 1-5), and 9 (quick tools 1-3)\n\
          timeline-precheck --config <workbook.xlsx>\n\
          timeline-compare --config <workbook.xlsx> --template <workbook.xlsx> [--log-dir <dir>] [--log-view user|developer|off] <source.xlsx>...\n\
          timeline-extract --config <workbook.xlsx> [--output-dir <dir>] [--log-dir <dir>] [--log-view user|developer|off] [--capabilities <json> --platform <id> [--commit-target]] [<source.xlsx>...]\n\
+         note: timeline-extract is a retained standalone candidate; PT-1-2 is excluded from the confirmed migration scope and interactive menu\n\
          wide-summary --config <workbook.xlsx> [<source.xlsx>...]\n\
          wide-summary-row-suffix --config <workbook.xlsx> [<source.xlsx>...]\n\
          wide-summary target writes produce append-plan JSON; execute with dedup-append-execute and matching capability evidence\n\

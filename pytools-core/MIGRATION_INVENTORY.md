@@ -11,6 +11,8 @@
 
 ## 菜单功能清单
 
+2026-10-26 入口复核：Windows 下直接启动 `pytools.exe`（不带参数）与 `pytools menu` 共用原有数字菜单；类别 1–9 有 Rust 交互分发，实际实现/执行方式按各功能条目区分，部分操作仅生成计划并受 ExcelModifier capability 门控。交互终端优先使用 Windows 原生文件/目录对话框，非交互时保留路径输入回退。打印子菜单保留旧编号 5 并明确提示 PDF 导出未实现/不在范围内，选择后不生成文件。PT-1-2 的历史 Rust 候选代码与独立子命令保留，但交互菜单 1→2 明确显示“范围排除”并停止，不纳入本轮迁移或人工验收。菜单入口可启动不等同于各菜单业务已通过真实 Windows 验收；具体范围仍以各功能条目为准。
+
 | 菜单组 | 来源入口中的功能 | 迁移边界 | 当前状态 |
 |---|---|---|---|
 | 时序 | 表头路径比对；时序提取；宽表汇总（行头加后缀）；宽表汇总（行头不加后缀）；预校验 | 迁移时序/路径映射规则、输出列和异常行为 | PT-1-1 现通过原交互菜单 1→1 路由接入 user/developer/off 三视图及开发者运行历史；日期表头（含混合 1900/1904 日期系统）已按 Python datetime 文本语义归一化，合成 CLI 对拍中的输出值/类型/结构及既有标题样式精确一致；真实样本未验收，整体仍未验证。PT-1-3/1-4 两种行头模式已通过 Windows 原生 Rust CLI 合成 Python/Rust 对拍及显式安全目标提交；汇总输出、新目标追加和临时测试 capability 下的既有目标替换有效样式逐格一致，源与配置未变。新增无可解析日期且含缓存公式的菜单对拍：缓存值按 PyCode 行为投影，空日期列格式一致。PT-1-3/1-4 新增合成 1904 日期系统宽表对拍：日历日期值曾因 epoch 输出偏移；Rust 现仅对含 datetime_serial 的 1904 工作簿调用现有 Calamine ISO 日期投影，并按坐标覆盖日历日期值，不平移时长序列。真实菜单入口 Python/Rust 完整工作簿及目标追加候选投影精确一致，历史记录实际 Calamine 引擎与阶段耗时，源和配置未变；小于 1 天的 time-only 序列现有 1900/1904 × 两种行头模式合成对拍，含午夜、毫秒精度与跨日舍入，输出精确一致；PT-1-3/1-4 负日期序列的两种菜单变体均通过合成 Python/Rust 完整工作簿投影对拍（PT-1-3：`probe/reports/wide_summary_negative_serial_parity_20261026.json`；PT-1-4：`probe/reports/wide_summary_negative_serial_no_suffix_parity_20261026.json`）；真实业务样本、其他时间/时长格式、生产 capability 与目标平台仍未验收。整体状态仍未验证 |
@@ -766,6 +768,10 @@ Windows 原生菜单 `1→2` 另以系统 Open 对话框选取 1 个临时合成
 新增无位置参数入口 `pytools timeline-extract --config <配置簿>`：按 PyCode `source_paths=None` 语义递归扫描配置输入目录，按 `source_exts` 匹配扩展名、跳过 `~$` Excel 锁文件并排序；显式源文件列表与菜单选取不变。Windows 原生集成测试覆盖递归子目录、扩展名大小写、锁文件、未配置格式和空目录。合成 Python/Rust 对拍中默认扫描 4 个已配置扩展名文件（3 个有效、1 个损坏），锁文件排除，输出完整工作簿投影一致。报告已更新至 `probe/reports/timeline_extract_parity_20261025.json`。本项只证明合成样本行为，真实业务样本及目标 Linux/deb 验收仍未完成，PT-1-2 整体保持未验证。
 
 真实业务样本尚不可用：原 PyCode 默认配置的输入目录不存在，源项目树中的工作簿文件没有命中该配置的时序规则。现有证据仅为合成 XLSX；PT-1-2 仍未通过真实数据验收。D01 将 PT-1-2 排除在已确认目标写入合同之外，因此既有目标写入只作为 capability-gated 候选，不能作为生产能力或迁移完成依据。其他格式、麒麟 V10/UOS V20、glibc 2.28 与 deb 离线交付未验证；PT-1-2 整体状态仍为未验证。
+
+入口范围补充（2026-10-26）：按已确认迁移范围，数字菜单 1→2 现在只提示 PT-1-2 被排除并返回，不调用上述历史候选；独立 `timeline-extract` 子命令和实现保留以保护既有代码，但不计入可操作菜单迁移范围或业务验收。
+
+本轮 Windows 验证：原生 Rust `pytools.exe` 无参数启动后显示 1–9/0 主菜单并正常退出；菜单 `1→2` 输出明确的 PT-1-2 范围排除提示，不进入选文件或业务处理；打印子菜单 `3→5` 保留旧 PDF 编号、明确提示尚未实现且不创建配置目标文件。`cargo fmt --manifest-path pytools-core/Cargo.toml -- --check` 通过；`cargo test --offline --locked -p pytools-core --test timeline_menu_cli --test print_menu_cli` 的结果见本轮验证记录；`cargo build --offline --locked -p pytools-core --bin pytools` 通过。该验证只确认入口和排除保护，不新增 Python/Rust 业务对拍，不提升 PT-1-1/1-3/1-4 或其他功能的验收状态。机器记录：`probe/reports/windows_interactive_menu_entry_20261026.json`。
 
 ### 2026-10-25 PT-1-3/PT-1-4 Windows 原生文件对话框实测
 
