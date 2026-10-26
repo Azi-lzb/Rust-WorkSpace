@@ -499,7 +499,7 @@ const V2_DEDUP_ENTRIES: &[V2MenuEntry] = &[
     V2MenuEntry {
         choice: "1",
         feature_id: "dedup.config_check",
-        label: "2-1 按配置检查重复数据（PT-2-3；生成计划）",
+        label: "2-1 按配置检查重复数据（PT-2-3；能力可用时生成标记副本）",
         action: V2MenuAction::Legacy {
             menu: V2LegacyMenu::Dedup,
             choice: "3",
@@ -508,7 +508,7 @@ const V2_DEDUP_ENTRIES: &[V2MenuEntry] = &[
     V2MenuEntry {
         choice: "2",
         feature_id: "dedup.config_delete",
-        label: "2-2 按配置删除重复数据（PT-2-4；计划/能力门控）",
+        label: "2-2 按配置删除重复数据（PT-2-4；能力可用时生成去重副本）",
         action: V2MenuAction::Legacy {
             menu: V2LegacyMenu::Dedup,
             choice: "4",
@@ -2748,8 +2748,14 @@ where
         writeln!(output, "------ 去重工具 ------")?;
         writeln!(output, "  1  按批注检查并标记重复（生成计划）")?;
         writeln!(output, "  2  按批注删除重复（生成计划）")?;
-        writeln!(output, "  3  按配置检查并标记重复（生成计划）")?;
-        writeln!(output, "  4  按配置删除重复（生成计划）")?;
+        writeln!(
+            output,
+            "  3  按配置检查并标记重复（可执行时生成副本，否则仅计划）"
+        )?;
+        writeln!(
+            output,
+            "  4  按配置删除重复（可执行时生成副本，否则仅计划）"
+        )?;
         writeln!(output, "  5  按配置追加到目标（确认后提交）")?;
         writeln!(output, "  6  按配置预校验")?;
         writeln!(output, "  0  返回")?;
@@ -2820,6 +2826,10 @@ where
                 return Ok(());
             }
             "3" | "4" => {
+                anyhow::ensure!(
+                    capabilities.is_some() == platform.is_some(),
+                    "--capabilities and --platform must be provided together"
+                );
                 let action_name = if choice == "3" {
                     "config-check"
                 } else {
@@ -2837,10 +2847,42 @@ where
                         "delete".to_owned()
                     },
                 ]);
-                let (feature_id, action, label) = if choice == "3" {
-                    ("PT-2-3", "config_check", "按配置检查重复并生成计划")
+                let execute_with_capability = if capabilities.is_some() {
+                    writeln!(
+                        output,
+                        "[确认] 将在输出目录生成独立的去重结果副本，源工作簿保持不变；按配置继续？"
+                    )?;
+                    read_menu_choice(input, output, "输入 y/yes/是 执行；其他输入只生成计划> ")?
+                        .is_some_and(|answer| {
+                            matches!(
+                                answer.trim().to_ascii_lowercase().as_str(),
+                                "y" | "yes" | "是"
+                            )
+                        })
                 } else {
-                    ("PT-2-4", "config_delete", "按配置删除重复并生成计划")
+                    writeln!(
+                        output,
+                        "[仅计划] 未提供已验收的 ExcelModifier capability/platform；不会修改源工作簿。"
+                    )?;
+                    false
+                };
+                if execute_with_capability {
+                    let (Some(capability), Some(platform)) = (capabilities, platform) else {
+                        unreachable!("confirmed dedup execution requires capability and platform")
+                    };
+                    arguments.extend([
+                        "--capabilities".to_owned(),
+                        capability.to_string_lossy().into_owned(),
+                        "--platform".to_owned(),
+                        platform.to_owned(),
+                    ]);
+                } else if capabilities.is_some() {
+                    writeln!(output, "已取消副本生成；修改计划保留，源工作簿未改变。")?;
+                }
+                let (feature_id, action, label) = if choice == "3" {
+                    ("PT-2-3", "config_check", "按配置检查重复")
+                } else {
+                    ("PT-2-4", "config_delete", "按配置删除重复")
                 };
                 run_dedup_menu_action(
                     output,
@@ -3290,6 +3332,8 @@ fn run_dedup_menu_action<W: Write>(
                     elapsed_ms,
                     &serde_json::json!({}),
                     &[],
+                    false,
+                    action != "config_precheck",
                     Some("dedup_operation_failed"),
                 ) {
                     Ok(path) => writeln!(output, "PT-2 失败：{feature_id}，耗时 {elapsed_ms} ms；运行记录：{}；错误：{error:#}", path.display())?,
@@ -3304,6 +3348,21 @@ fn run_dedup_menu_action<W: Write>(
 
     let elapsed_ms = started.elapsed().as_millis();
     let metrics = dedup_menu_metrics(&report);
+    let execution_engines = dedup_menu_execution_engines(&report);
+    let excel_modifier_invoked = !execution_engines.is_empty();
+    let plan_only = action != "config_precheck" && !excel_modifier_invoked;
+    let mut logged_components = actual_components
+        .iter()
+        .map(|component| (*component).to_owned())
+        .collect::<Vec<_>>();
+    if excel_modifier_invoked {
+        logged_components.push("ExcelModifier".to_owned());
+        logged_components.extend(execution_engines.iter().cloned());
+    }
+    let logged_component_refs = logged_components
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>();
     let failed_precheck =
         action == "config_precheck" && metrics["failed_tasks"].as_u64().unwrap_or_default() > 0;
     let status = if failed_precheck {
@@ -3327,11 +3386,13 @@ fn run_dedup_menu_action<W: Write>(
                 &started_at,
                 elapsed_ms,
                 &metrics,
-                actual_components,
+                &logged_component_refs,
+                excel_modifier_invoked,
+                plan_only,
                 failed_precheck.then_some("dedup_precheck_failures"),
             ) {
-                Ok(path) => writeln!(output, "PT-2 完成：{feature_id}，{}，实际组件：{}，ExcelModifier 未调用，耗时 {elapsed_ms} ms；运行记录：{}", dedup_menu_summary(action, &metrics), actual_components.join(", "), path.display())?,
-                Err(error) => writeln!(output, "PT-2 完成：{feature_id}，{}，实际组件：{}，ExcelModifier 未调用，耗时 {elapsed_ms} ms；运行记录写入失败：{error:#}", dedup_menu_summary(action, &metrics), actual_components.join(", "))?,
+                Ok(path) => writeln!(output, "PT-2 完成：{feature_id}，{}，实际组件：{}，{}，耗时 {elapsed_ms} ms；运行记录：{}", dedup_menu_summary(action, &metrics), logged_components.join(", "), if excel_modifier_invoked { "ExcelModifier 已调用" } else { "ExcelModifier 未调用" }, path.display())?,
+                Err(error) => writeln!(output, "PT-2 完成：{feature_id}，{}，实际组件：{}，{}，耗时 {elapsed_ms} ms；运行记录写入失败：{error:#}", dedup_menu_summary(action, &metrics), logged_components.join(", "), if excel_modifier_invoked { "ExcelModifier 已调用" } else { "ExcelModifier 未调用" })?,
             }
         }
         _ => {}
@@ -3361,6 +3422,9 @@ fn dedup_menu_metrics(report: &serde_json::Value) -> serde_json::Value {
     let mut committed_targets = 0u64;
     let mut planned_only_targets = 0u64;
     let mut failed_targets = 0u64;
+    let mut executed_groups = 0u64;
+    let mut plan_only_groups = 0u64;
+    let mut excel_modifier_invoked = false;
     for item in &items {
         let details = item.get("report").unwrap_or(item);
         duplicate_rows += details["duplicate_rows"].as_u64().unwrap_or_default();
@@ -3378,6 +3442,12 @@ fn dedup_menu_metrics(report: &serde_json::Value) -> serde_json::Value {
         planned_only_targets +=
             u64::from(item["status"] == "planned_only" || item["status"] == "cancelled");
         failed_targets += u64::from(item["status"] == "failed");
+        if item["execution"]["engine"].as_str().is_some() {
+            executed_groups += 1;
+            excel_modifier_invoked = true;
+        } else if item["execution"] == "plan_only" {
+            plan_only_groups += 1;
+        }
     }
     serde_json::json!({
         "processed_groups": items.len(),
@@ -3387,6 +3457,9 @@ fn dedup_menu_metrics(report: &serde_json::Value) -> serde_json::Value {
         "appended_rows": appended_rows,
         "duplicate_rows_filtered": duplicate_rows_filtered,
         "planned_operations": planned_operations,
+        "executed_groups": executed_groups,
+        "plan_only_groups": plan_only_groups,
+        "excel_modifier_invoked": excel_modifier_invoked,
         "committed_targets": committed_targets,
         "planned_only_targets": planned_only_targets,
         "failed_targets": failed_targets,
@@ -3394,6 +3467,23 @@ fn dedup_menu_metrics(report: &serde_json::Value) -> serde_json::Value {
         "warning_tasks": report["warn"].as_u64().unwrap_or_default(),
         "failed_tasks": report["fail"].as_u64().unwrap_or_default(),
     })
+}
+
+fn dedup_menu_execution_engines(report: &serde_json::Value) -> Vec<String> {
+    let items = report
+        .as_array()
+        .map(|items| items.iter().collect::<Vec<_>>())
+        .unwrap_or_else(|| vec![report]);
+    let mut engines = Vec::new();
+    for engine in items
+        .iter()
+        .filter_map(|item| item["execution"]["engine"].as_str())
+    {
+        if !engines.iter().any(|seen| seen == engine) {
+            engines.push(engine.to_owned());
+        }
+    }
+    engines
 }
 
 fn dedup_menu_summary(action: &str, metrics: &serde_json::Value) -> String {
@@ -3417,6 +3507,22 @@ fn dedup_menu_summary(action: &str, metrics: &serde_json::Value) -> String {
             metrics["skipped_tasks"].as_u64().unwrap_or_default()
         );
     }
+    if action == "config_check" || action == "config_delete" {
+        let result_kind = if action == "config_check" {
+            "标记结果副本"
+        } else {
+            "去重结果副本"
+        };
+        return format!(
+            "处理 {} 个工作簿组，命中 {} 张表，发现 {} 条重复行，{result_kind} {} 个，仅计划 {} 个，计划操作 {} 项",
+            metrics["processed_groups"].as_u64().unwrap_or_default(),
+            metrics["hit_sheets"].as_u64().unwrap_or_default(),
+            metrics["duplicate_rows"].as_u64().unwrap_or_default(),
+            metrics["executed_groups"].as_u64().unwrap_or_default(),
+            metrics["plan_only_groups"].as_u64().unwrap_or_default(),
+            metrics["planned_operations"].as_u64().unwrap_or_default()
+        );
+    }
     format!(
         "处理 {} 个工作簿组，命中 {} 张表，发现 {} 条重复行，计划操作 {} 项",
         metrics["processed_groups"].as_u64().unwrap_or_default(),
@@ -3435,6 +3541,8 @@ fn write_dedup_menu_run_history(
     elapsed_ms: u128,
     metrics: &serde_json::Value,
     actual_components: &[&str],
+    excel_modifier_invoked: bool,
+    plan_only: bool,
     error_type: Option<&str>,
 ) -> Result<PathBuf> {
     fs::create_dir_all(&global.log_dir)
@@ -3450,9 +3558,9 @@ fn write_dedup_menu_run_history(
         "stages": [{"name": if action == "config_precheck" { "configuration_precheck" } else { "workbook_read_and_plan" }, "elapsed_ms": elapsed_ms}],
         "metrics": metrics,
         "actual_engines": actual_components,
-        "excel_modifier_invoked": false,
+        "excel_modifier_invoked": excel_modifier_invoked,
         "excel_writer_invoked": false,
-        "plan_only": action != "config_precheck",
+        "plan_only": plan_only,
         "error_type": error_type,
     });
     for suffix in 1..=1000 {

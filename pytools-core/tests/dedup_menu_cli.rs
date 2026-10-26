@@ -178,6 +178,232 @@ fn interactive_dedup_menu_routes_all_six_actions_without_committing_edits() -> R
 }
 
 #[test]
+fn v2_config_check_without_capability_is_plan_only_and_preserves_source() -> Result<()> {
+    let root = TestDirectory::new()?;
+    let config = create_dedup_config(root.path())?;
+    let source = root.path().join("source.xlsx");
+    create_plain_duplicate_source(&source)?;
+    let source_before = fs::read(&source)?;
+
+    let output = run_v2_menu(&config, "2\n1\n0\n", "off")?;
+    assert!(
+        output.status.success(),
+        "V2 plan-only config duplicate check failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("[仅计划] 未提供已验收的 ExcelModifier capability/platform"));
+    assert!(!stdout.contains("ExcelModifier 已调用"));
+
+    let report = output_json_after_menu(&output)?;
+    assert_eq!(report[0]["report"]["duplicate_rows"], 1);
+    assert_eq!(report[0]["execution"], "plan_only");
+    let candidate = PathBuf::from(
+        report[0]["report"]["plan"]["output"]
+            .as_str()
+            .context("planned marked-copy path missing")?,
+    );
+    assert!(
+        !candidate.exists(),
+        "plan-only mode must not create a candidate"
+    );
+    assert_eq!(
+        fs::read(&source)?,
+        source_before,
+        "source remains unchanged"
+    );
+    Ok(())
+}
+#[test]
+fn v2_config_check_executes_whole_row_marking_to_a_safe_result_copy() -> Result<()> {
+    let root = TestDirectory::new()?;
+    let config = create_dedup_config(root.path())?;
+    let source = root.path().join("source.xlsx");
+    let capability_path = root.path().join("test-capability.json");
+    create_plain_duplicate_source(&source)?;
+    let source_before = fs::read(&source)?;
+
+    let seed_output = root.path().join("plan-seed");
+    let seed = Command::new(env!("CARGO_BIN_EXE_pytools"))
+        .args(["dedup-config-plan", "--config"])
+        .arg(&config)
+        .args(["--output-dir"])
+        .arg(&seed_output)
+        .args(["--action", "check"])
+        .output()
+        .context("build the synthetic PT-2-3 plan for its capability")?;
+    assert!(
+        seed.status.success(),
+        "seed plan failed: {}",
+        String::from_utf8_lossy(&seed.stderr)
+    );
+    let seed_report: Value = serde_json::from_slice(&seed.stdout)?;
+    let plan: ExcelEditPlan = serde_json::from_value(seed_report[0]["report"]["plan"].clone())?;
+    assert_eq!(seed_report[0]["report"]["duplicate_rows"], 1);
+    assert_eq!(plan.operations.len(), 3, "the full duplicate row is marked");
+    fs::write(
+        &capability_path,
+        serde_json::to_vec_pretty(&capability_for_feature(&plan, "pt-2-3"))?,
+    )?;
+
+    let output = run_v2_menu_with_capability(
+        &config,
+        "2\n1\ny\n0\n",
+        &capability_path,
+        "synthetic-pt-2-3-menu-test",
+        "developer",
+    )?;
+    assert!(
+        output.status.success(),
+        "V2 config duplicate check failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("2-1 按配置检查重复数据"));
+    assert!(stdout.contains("标记结果副本 1 个"));
+    assert!(stdout.contains("ExcelModifier 已调用"));
+
+    let report = output_json_after_menu(&output)?;
+    assert_eq!(report[0]["report"]["duplicate_rows"], 1);
+    assert_eq!(
+        report[0]["report"]["plan"]["operations"]
+            .as_array()
+            .unwrap()
+            .len(),
+        3
+    );
+    assert_eq!(report[0]["execution"]["engine"], "umya_spreadsheet");
+    let candidate = PathBuf::from(
+        report[0]["report"]["plan"]["output"]
+            .as_str()
+            .context("marked candidate path missing")?,
+    );
+    assert!(candidate.is_file());
+    assert_eq!(
+        fs::read(&source)?,
+        source_before,
+        "source remains unchanged"
+    );
+
+    let marked_book = excel_editor::open_xlsx(&candidate)?;
+    for address in ["A3", "B3", "C3"] {
+        assert_eq!(
+            style_fill(&marked_book, "Commented", address)?,
+            Some("FFFF0000".to_owned()),
+            "duplicate data row must be filled across the used row at {address}"
+        );
+    }
+    for address in ["A2", "B2", "C2"] {
+        assert_eq!(
+            style_fill(&marked_book, "Commented", address)?,
+            None,
+            "first occurrence must remain unmarked at {address}"
+        );
+    }
+
+    let log_dir = root.path().join("logs");
+    let histories = fs::read_dir(&log_dir)?
+        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+        .filter(|path| {
+            path.extension()
+                .is_some_and(|extension| extension == "json")
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(histories.len(), 1);
+    let history_text = fs::read_to_string(&histories[0])?;
+    let history: Value = serde_json::from_str(&history_text)?;
+    assert_eq!(history["feature_id"], "PT-2-3");
+    assert_eq!(history["excel_modifier_invoked"], true);
+    assert_eq!(history["plan_only"], false);
+    assert!(history["actual_engines"]
+        .as_array()
+        .is_some_and(|engines| { engines.iter().any(|engine| engine == "umya_spreadsheet") }));
+    assert!(!history_text.contains("source.xlsx"));
+    assert!(!history_text.contains(&root.path().to_string_lossy().to_string()));
+    Ok(())
+}
+
+#[test]
+fn v2_config_delete_creates_a_deduplicated_copy_without_changing_source() -> Result<()> {
+    let root = TestDirectory::new()?;
+    let config = create_dedup_config(root.path())?;
+    let source = root.path().join("source.xlsx");
+    let capability_path = root.path().join("test-delete-capability.json");
+    create_plain_duplicate_source(&source)?;
+    let source_before = fs::read(&source)?;
+
+    let seed_output = root.path().join("delete-plan-seed");
+    let seed = Command::new(env!("CARGO_BIN_EXE_pytools"))
+        .args(["dedup-config-plan", "--config"])
+        .arg(&config)
+        .args(["--output-dir"])
+        .arg(&seed_output)
+        .args(["--action", "delete"])
+        .output()
+        .context("build the synthetic PT-2-4 plan for its capability")?;
+    assert!(
+        seed.status.success(),
+        "seed delete plan failed: {}",
+        String::from_utf8_lossy(&seed.stderr)
+    );
+    let seed_report: Value = serde_json::from_slice(&seed.stdout)?;
+    let plan: ExcelEditPlan = serde_json::from_value(seed_report[0]["report"]["plan"].clone())?;
+    assert_eq!(seed_report[0]["report"]["duplicate_rows"], 1);
+    assert_eq!(
+        plan.operations.len(),
+        1,
+        "one duplicate data row is deleted"
+    );
+    fs::write(
+        &capability_path,
+        serde_json::to_vec_pretty(&capability_for_feature(&plan, "pt-2-4"))?,
+    )?;
+
+    let output = run_v2_menu_with_capability(
+        &config,
+        "2\n2\ny\n0\n",
+        &capability_path,
+        "synthetic-pt-2-4-menu-test",
+        "developer",
+    )?;
+    assert!(
+        output.status.success(),
+        "V2 config duplicate deletion failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("2-2 按配置删除重复数据"));
+    assert!(stdout.contains("去重结果副本 1 个"));
+    assert!(stdout.contains("ExcelModifier 已调用"));
+
+    let report = output_json_after_menu(&output)?;
+    assert_eq!(report[0]["report"]["duplicate_rows"], 1);
+    assert_eq!(report[0]["execution"]["engine"], "umya_spreadsheet");
+    let candidate = PathBuf::from(
+        report[0]["report"]["plan"]["output"]
+            .as_str()
+            .context("deduplicated-copy path missing")?,
+    );
+    assert!(candidate.is_file());
+    assert_eq!(
+        fs::read(&source)?,
+        source_before,
+        "source remains unchanged"
+    );
+
+    let result = excel_reader::read_workbook(&candidate)?;
+    let sheet = result
+        .sheets
+        .iter()
+        .find(|sheet| sheet.name == "Commented")
+        .context("deduplicated sheet missing")?;
+    assert_eq!(sheet.values["A2"]["value"], "First");
+    assert_eq!(sheet.values["A3"]["value"], "Other");
+    assert!(!sheet.values.contains_key("A4"));
+    assert_eq!(sheet.values["B3"]["value"], "B");
+    Ok(())
+}
+#[test]
 fn interactive_dedup_append_requires_confirmation_then_creates_a_new_target() -> Result<()> {
     let root = TestDirectory::new()?;
     let config = create_dedup_config(root.path())?;
@@ -434,6 +660,26 @@ fn create_duplicate_source(path: &Path) -> Result<()> {
     Ok(())
 }
 
+fn create_plain_duplicate_source(path: &Path) -> Result<()> {
+    let mut workbook = rust_xlsxwriter::Workbook::new();
+    let sheet = workbook.add_worksheet();
+    sheet.set_name("Commented")?;
+    for (column, value) in ["Name", "ID", "Value"].iter().enumerate() {
+        sheet.write_string(0, column as u16, *value)?;
+    }
+    for (row, name, id, value) in [
+        (1, "First", "A", 10.0),
+        (2, "Duplicate", "A", 20.0),
+        (3, "Other", "B", 30.0),
+    ] {
+        sheet.write_string(row, 0, name)?;
+        sheet.write_string(row, 1, id)?;
+        sheet.write_number(row, 2, value)?;
+    }
+    workbook.save(path)?;
+    Ok(())
+}
+
 fn create_initial_target(path: &Path) -> Result<()> {
     let mut workbook = rust_xlsxwriter::Workbook::new();
     let sheet = workbook.add_worksheet();
@@ -448,6 +694,11 @@ fn create_initial_target(path: &Path) -> Result<()> {
 }
 
 fn capability_for(plan: &ExcelEditPlan) -> BackendCapability {
+    capability_for_feature(plan, "pt-2-5")
+}
+
+fn capability_for_feature(plan: &ExcelEditPlan, feature_id: &str) -> BackendCapability {
+    let platform = format!("synthetic-{feature_id}-menu-test");
     BackendCapability {
         engine: EngineId::UmyaSpreadsheet,
         status: CapabilityStatus::Passed,
@@ -455,13 +706,13 @@ fn capability_for(plan: &ExcelEditPlan) -> BackendCapability {
         operations: plan.operations.iter().map(EditOperation::kind).collect(),
         supported_features: plan.workbook.features_present.clone(),
         preserved: plan.preserve.clone(),
-        platform: "synthetic-pt-2-5-menu-test".to_owned(),
+        platform: platform.clone(),
         evidence: Some(CapabilityEvidence {
-            sample_id: "synthetic-pt-2-5-existing-target".to_owned(),
+            sample_id: format!("synthetic-{feature_id}-dedup-menu"),
             report_path: "pytools-core/tests/dedup_menu_cli.rs".to_owned(),
             adapter_version: "umya-spreadsheet-3.1.1".to_owned(),
             engine_version: "umya-spreadsheet-3.1.1".to_owned(),
-            platform: "synthetic-pt-2-5-menu-test".to_owned(),
+            platform: platform.clone(),
         }),
     }
 }
@@ -581,15 +832,95 @@ fn run_menu_with_capability(
         .context("wait for interactive pytools menu")
 }
 
+fn run_v2_menu(config: &Path, input: &str, log_view: &str) -> Result<Output> {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_pytools"))
+        .arg("menu-v2")
+        .arg("--config")
+        .arg(config)
+        .arg("--log-view")
+        .arg(log_view)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .context("start PyTools Rust V2 menu")?;
+    child
+        .stdin
+        .take()
+        .context("V2 menu stdin missing")?
+        .write_all(input.as_bytes())
+        .context("send V2 menu selections")?;
+    child.wait_with_output().context("wait for V2 menu")
+}
+fn run_v2_menu_with_capability(
+    config: &Path,
+    input: &str,
+    capability: &Path,
+    platform: &str,
+    log_view: &str,
+) -> Result<Output> {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_pytools"))
+        .arg("menu-v2")
+        .arg("--config")
+        .arg(config)
+        .arg("--capabilities")
+        .arg(capability)
+        .arg("--platform")
+        .arg(platform)
+        .arg("--log-view")
+        .arg(log_view)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .context("start PyTools V2 menu with edit capability")?;
+    child
+        .stdin
+        .take()
+        .context("V2 menu stdin missing")?
+        .write_all(input.as_bytes())
+        .context("send V2 menu selections")?;
+    child.wait_with_output().context("wait for V2 menu")
+}
+
 fn output_json(output: &Output) -> Result<Value> {
-    let start = output
-        .stdout
-        .iter()
-        .enumerate()
-        .filter(|(_, byte)| matches!(byte, b'{' | b'['))
-        .map(|(index, _)| index)
-        .min()
-        .context("CLI JSON output missing")?;
-    let mut deserializer = serde_json::Deserializer::from_slice(&output.stdout[start..]);
-    Value::deserialize(&mut deserializer).context("decode CLI JSON output")
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut offset = 0;
+    for line in stdout.split_inclusive('\n') {
+        let leading_whitespace = line.len() - line.trim_start().len();
+        let candidate = &line[leading_whitespace..];
+        if candidate.starts_with('{') || candidate.starts_with('[') {
+            let mut deserializer =
+                serde_json::Deserializer::from_str(&stdout[offset + leading_whitespace..]);
+            if let Ok(value) = Value::deserialize(&mut deserializer) {
+                return Ok(value);
+            }
+        }
+        offset += line.len();
+    }
+    anyhow::bail!("CLI JSON output missing")
+}
+
+fn output_json_after_menu(output: &Output) -> Result<Value> {
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let start = stdout
+        .find("\n[\n")
+        .map(|index| index + 1)
+        .context("menu action JSON array missing")?;
+    let mut deserializer = serde_json::Deserializer::from_str(&stdout[start..]);
+    Value::deserialize(&mut deserializer).context("decode menu action JSON output")
+}
+
+fn style_fill(
+    book: &excel_editor::Workbook,
+    sheet_name: &str,
+    address: &str,
+) -> Result<Option<String>> {
+    let sheet = book.sheet_by_name(sheet_name)?;
+    Ok(sheet
+        .cell(address)
+        .and_then(|cell| cell.style().fill())
+        .and_then(|fill| fill.pattern_fill())
+        .and_then(|fill| fill.foreground_color())
+        .map(|color| color.argb_str().to_ascii_uppercase()))
 }

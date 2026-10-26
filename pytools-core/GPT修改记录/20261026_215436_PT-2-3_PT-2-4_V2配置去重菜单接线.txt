@@ -1,0 +1,25 @@
+时间：2026-10-26（Windows 本地时间）
+执行者：Codex（pytools-dev）
+修改前 HEAD：35d9de5；分支：pytools-dev；origin/pytools-dev 同步。工作树已有未提交迁移清单修改、交接材料、V2 需求文件及历史工作记录；本次均保留，未纳入提交。
+
+目的：将新版菜单的按配置查重/删除接入已有 Rust 计划与 ExcelModifier 能力门控，并保证无能力时只留计划、能力执行时写入独立结果副本。
+
+修改文件：
+- pytools-core/src/bin/pytools.rs：V2 2→1/2→2 子菜单描述支持能力门控结果副本；匹配 capability/platform 时请求明确确认，执行既有去重计划；无能力时保持 plan-only。用户输出和开发者运行历史报告实际执行引擎、ExcelModifier 是否调用、结果副本与计划数量。
+- pytools-core/tests/dedup_menu_cli.rs：新增 V2 无能力计划保护、PT-2-3 全行着色副本、PT-2-4 去重副本集成回归；健壮化测试 JSON 提取，避免把“仅计划”提示误判为 JSON。
+- pytools-core/MIGRATION_INVENTORY.md：追加 V2 去重入口实现、验证及未验收边界；既有未提交清单修改保持原样。
+- 本工作记录文件：记录本次实现、验证和限制。
+
+验证（Windows 原生，构建输出及临时目录位于 F:\PyTools_Rust_本轮工作文件_20261026）：
+- cargo fmt --manifest-path pytools-core/Cargo.toml -- --check：通过。
+- cargo test --offline --locked --manifest-path pytools-core/Cargo.toml --test dedup_menu_cli -j 1 -q：8/8 通过。
+- cargo build --offline --locked --manifest-path pytools-core/Cargo.toml --bin pytools -j 1 -q：通过。
+- git diff --check：通过。
+- 合成 V2 CLI 入口中，PT-2-3 将重复行所有已用列着红色，首条相同行未着色；PT-2-4 输出仅保留首次记录的副本。两项源簿字节不变。无能力路径不生成结果副本。
+- 本轮没有重新运行 Python/Rust 数据算法对拍；既有报告只覆盖其原有合成语义，不构成本轮真实业务样本验收。
+
+未执行/已知限制：测试使用合成 XLSX 和临时 Passed capability；未注册生产 capability。本地默认菜单对 PT-2-3/2-4 仍为 plan-only，须在真实模板验证 SetCellFillColor/DeleteRows 保留能力后才能执行实际副本。原 Python 源树未访问或修改；无共享 crate、根 Cargo、Audit 变更；未执行 Linux/离线部署验证。
+
+【组件版本】pytools-core 0.1.0；不升级。
+删除清单：无。
+回滚：仅回滚本次功能提交；不清理 F 盘输出、不丢弃已有 WIP。修改后提交 SHA 以 Git 历史为准；推送状态按后续 Git 检查记录。
