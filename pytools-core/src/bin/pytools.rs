@@ -3023,6 +3023,41 @@ where
                     "--output-dir".to_owned(),
                     output_dir.to_string_lossy().into_owned(),
                 ]);
+                let has_complete_capability = capabilities.is_some() && platform.is_some();
+                let execute = if has_complete_capability {
+                    writeln!(
+                        output,
+                        "执行确认：将按配置生成静态打印 XLSX；只使用源工作簿已保存的公式缓存，不触发公式重算，源文件保持不变。"
+                    )?;
+                    read_menu_choice(input, output, "输入 y/yes/是 执行；其他输入仅生成计划> ")?
+                        .is_some_and(|answer| {
+                            matches!(
+                                answer.trim().to_ascii_lowercase().as_str(),
+                                "y" | "yes" | "是"
+                            )
+                        })
+                } else {
+                    let message = if capabilities.is_none() && platform.is_none() {
+                        "未执行：未提供 ExcelModifier 能力证据，仅生成计划，不创建打印工作簿。"
+                    } else {
+                        "未执行：ExcelModifier 能力证据与平台参数必须同时提供；仅生成计划，不创建打印工作簿。"
+                    };
+                    writeln!(output, "{message}")?;
+                    false
+                };
+                if execute {
+                    let (Some(capabilities), Some(platform)) = (capabilities, platform) else {
+                        unreachable!("config print execution requires capability and platform")
+                    };
+                    arguments.extend([
+                        "--capabilities".to_owned(),
+                        capabilities.to_string_lossy().into_owned(),
+                        "--platform".to_owned(),
+                        platform.to_owned(),
+                    ]);
+                } else if has_complete_capability {
+                    writeln!(output, "已取消：未修改或创建打印工作簿；本次仅生成计划。")?;
+                }
                 run_print_menu_action(
                     output,
                     global,
@@ -3238,6 +3273,7 @@ fn print_menu_metrics(action: &str, report: &serde_json::Value) -> serde_json::V
             let mut marked_ranges = 0u64;
             let mut planned_operations = 0u64;
             let mut plan_files = 0u64;
+            let mut executed_groups = 0u64;
             for item in &items {
                 let details = &item["report"];
                 matching_sheets += count(&details["matching_sheets"]);
@@ -3246,9 +3282,12 @@ fn print_menu_metrics(action: &str, report: &serde_json::Value) -> serde_json::V
                     .as_array()
                     .map_or(0, |operations| operations.len() as u64);
                 plan_files += u64::from(item["plan_file"].is_string());
+                executed_groups += u64::from(item["execution"].is_object());
             }
             serde_json::json!({
                 "planned_groups": items.len(),
+                "executed_groups": executed_groups,
+                "execution": if executed_groups == 0 { "plan_only" } else if executed_groups == items.len() as u64 { "executed" } else { "partial" },
                 "matching_sheets": matching_sheets,
                 "marked_ranges": marked_ranges,
                 "planned_operations": planned_operations,
@@ -3275,8 +3314,17 @@ fn print_menu_summary(action: &str, metrics: &serde_json::Value) -> String {
         );
     }
     if action == "config_plan" {
+        let execution_summary = match metrics["execution"].as_str() {
+            Some("executed") => format!("实际生成 {} 组静态打印工作簿", count("executed_groups")),
+            Some("partial") => format!(
+                "实际生成 {} 组静态打印工作簿，其余未执行",
+                count("executed_groups")
+            ),
+            _ => "仅生成计划，未创建静态打印工作簿".to_owned(),
+        };
         return format!(
-            "生成 {} 组计划，命中 {} 张表、{} 个打印区域，计划操作 {} 项",
+            "{}；配置 {} 组，命中 {} 张表、{} 个打印区域，计划操作 {} 项",
+            execution_summary,
             count("planned_groups"),
             count("matching_sheets"),
             count("marked_ranges"),

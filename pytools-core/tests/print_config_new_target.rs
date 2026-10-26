@@ -3,7 +3,7 @@ use excel_editor::{
     BackendCapability, CapabilityEvidence, CapabilityStatus, EditOperation, EngineId, ExcelEditPlan,
 };
 use excel_reader::read_workbook;
-use rust_xlsxwriter::{Color, Format, Note, Workbook};
+use rust_xlsxwriter::{Color, Format, Formula, Note, Workbook};
 use serde_json::Value;
 use std::{
     fs,
@@ -43,18 +43,35 @@ impl Drop for TestDir {
 }
 
 fn make_source(path: &Path) -> Result<()> {
+    make_source_with_formula_cache(path, Some("12.5"))
+}
+
+fn make_source_without_formula_cache(path: &Path) -> Result<()> {
+    make_source_with_formula_cache(path, None)
+}
+
+fn make_source_with_formula_cache(path: &Path, cached_result: Option<&str>) -> Result<()> {
     let mut workbook = Workbook::new();
     let sheet = workbook.add_worksheet();
     sheet.set_name("Source")?;
+    sheet.set_formula_result_default("");
     sheet.write_string_with_format(0, 0, "Report", &Format::new().set_bold())?;
     sheet.merge_range(0, 0, 0, 1, "Report", &Format::new().set_bold())?;
     sheet.write_string(1, 0, "A")?;
-    sheet.write_number_with_format(
+    let formula = cached_result.map_or_else(
+        || Formula::new("6+6.5"),
+        |result| Formula::new("6+6.5").set_result(result),
+    );
+    sheet.write_formula_with_format(
         1,
         1,
-        12.5,
+        formula,
         &Format::new().set_background_color(Color::RGB(0x00_99_CC)),
     )?;
+    sheet.write_formula(1, 2, Formula::new("1-1").set_result("0"))?;
+    sheet.write_formula(1, 3, Formula::new("1/10000").set_result("0.0001"))?;
+    sheet.write_string(1, 4, "0")?;
+    sheet.write_number(1, 5, 0.0)?;
     sheet.insert_note(1, 0, &Note::new("source note"))?;
     sheet.set_row_height(1, 24.0)?;
     sheet.set_column_width(0, 18.0)?;
@@ -90,7 +107,7 @@ fn make_print_config(path: &Path, source: &Path, target: &Path) -> Result<()> {
     sheet.write_number(1, 1, 1)?;
     sheet.write_string(1, 2, source.to_string_lossy())?;
     sheet.write_string(1, 3, "Source")?;
-    sheet.write_string(1, 4, "A1:B2")?;
+    sheet.write_string(1, 4, "A1:F2")?;
     sheet.write_string(1, 5, target.to_string_lossy())?;
     sheet.write_string(1, 6, "Printed")?;
     sheet.write_number(1, 7, 1)?;
@@ -197,6 +214,40 @@ fn pt_3_3_rejects_existing_target_before_output_side_effects() -> Result<()> {
 }
 
 #[test]
+fn pt_3_3_rejects_formula_without_cached_value_before_output() -> Result<()> {
+    let dir = TestDir::new();
+    let source = dir.path("source-uncached.xlsx");
+    let config = dir.path("config-uncached.xlsx");
+    let target = dir.path("nested-output").join("uncached-target.xlsx");
+    let output_dir = dir.path("output");
+    make_source_without_formula_cache(&source)?;
+    make_print_config(&config, &source, &target)?;
+    let source_before = fs::read(&source)?;
+    let config_before = fs::read(&config)?;
+
+    let output = Command::new(env!("CARGO_BIN_EXE_pytools"))
+        .args(["print-config-plan", "--config"])
+        .arg(&config)
+        .args(["--output-dir"])
+        .arg(&output_dir)
+        .output()?;
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("formula cached value is blank or unavailable"),
+        "{stderr}"
+    );
+    assert!(!target.exists(), "uncached formula must not create output");
+    assert!(
+        !output_dir.exists(),
+        "validation failure must not publish a plan directory"
+    );
+    assert_eq!(fs::read(&source)?, source_before);
+    assert_eq!(fs::read(&config)?, config_before);
+    Ok(())
+}
+
+#[test]
 fn pt_3_3_new_target_creates_a_plan_without_touching_source_or_target() -> Result<()> {
     let dir = TestDir::new();
     let source = dir.path("source.xlsx");
@@ -291,11 +342,25 @@ fn pt_3_3_new_target_creates_a_plan_without_touching_source_or_target() -> Resul
     assert_eq!(sheet.values["A1"]["value"], "Report");
     assert_eq!(sheet.values["A2"]["value"], "A");
     assert_eq!(sheet.values["B2"]["value"], 12.5);
+    assert!(
+        !sheet.values.contains_key("C2"),
+        "cached formula zero must be blank"
+    );
+    assert_eq!(sheet.values["D2"]["value"], 0.0001);
+    assert_eq!(sheet.values["E2"]["value"], "0");
+    assert!(
+        !sheet.values.contains_key("F2"),
+        "numeric zero must be blank"
+    );
+    assert!(
+        sheet.formulas.is_empty(),
+        "static print must materialize formula values"
+    );
     assert_eq!(sheet.merges, vec!["A1:B1".to_owned()]);
-    assert!(sheet
-        .comments
-        .get("A2")
-        .is_some_and(|comment| comment.contains("source note")));
+    assert!(
+        sheet.comments.is_empty(),
+        "static print must remove all comments"
+    );
     let output_book = excel_editor::open_xlsx(&candidate)?;
     let output_sheet = output_book
         .sheet_by_name("Printed")

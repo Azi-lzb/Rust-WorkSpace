@@ -506,6 +506,13 @@ pub fn build_config_print_plans(tasks: &[PrintTask]) -> Result<Vec<PrintPlanRepo
                 "print source range is empty on configuration row {}",
                 task.row_no
             );
+            validate_static_print_values(sheet, &ranges).with_context(|| {
+                format!(
+                    "validate static print values for {}!{}",
+                    source.display(),
+                    task.source_ws
+                )
+            })?;
             let target_sheet = if task.target_ws.trim().is_empty() {
                 task.source_ws.clone()
             } else {
@@ -542,7 +549,7 @@ pub fn build_config_print_plans(tasks: &[PrintTask]) -> Result<Vec<PrintPlanRepo
                     copy_values: true,
                     copy_formulas: false,
                     style_mode,
-                    copy_comments: task.mode != 3 && !task.drop_comments,
+                    copy_comments: false,
                     copy_merges: true,
                     copy_row_heights: task.mode == 1,
                     copy_column_widths: task.mode == 1 || task.mode == 2,
@@ -552,7 +559,7 @@ pub fn build_config_print_plans(tasks: &[PrintTask]) -> Result<Vec<PrintPlanRepo
                     copy_all_row_dimensions: false,
                     copy_all_column_dimensions: false,
                     materialize_blank_cells: false,
-                    hide_zero: task.hide_zero,
+                    hide_zero: true,
                 });
                 let rows = r2 - r1 + 1;
                 let columns = c2 - c1 + 1;
@@ -780,6 +787,67 @@ fn parse_ranges(text: &str) -> Result<Vec<(usize, usize, usize, usize)>> {
         })
         .collect()
 }
+fn validate_static_print_values(
+    sheet: &SheetDump,
+    ranges: &[(usize, usize, usize, usize)],
+) -> Result<()> {
+    anyhow::ensure!(
+        sheet.formula_status == "read_by_calamine",
+        "formula metadata is unavailable for static print worksheet {:?}",
+        sheet.name
+    );
+    for address in sheet.formulas.keys() {
+        if address_in_ranges(address, ranges) {
+            let Some(value) = sheet.values.get(address) else {
+                anyhow::bail!(
+                    "formula cached value is missing at {}!{}",
+                    sheet.name,
+                    address
+                );
+            };
+            if value.get("type").and_then(serde_json::Value::as_str) == Some("string")
+                && value
+                    .get("value")
+                    .and_then(serde_json::Value::as_str)
+                    .is_some_and(str::is_empty)
+            {
+                anyhow::bail!(
+                    "formula cached value is blank or unavailable at {}!{}",
+                    sheet.name,
+                    address
+                );
+            }
+        }
+    }
+    for (address, value) in &sheet.values {
+        if address_in_ranges(address, ranges)
+            && value.get("type").and_then(serde_json::Value::as_str) == Some("error")
+        {
+            anyhow::bail!(
+                "Excel error value at {}!{}: {}",
+                sheet.name,
+                address,
+                value
+                    .get("value")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("unknown")
+            );
+        }
+    }
+    Ok(())
+}
+
+fn address_in_ranges(address: &str, ranges: &[(usize, usize, usize, usize)]) -> bool {
+    let Some((row, column)) = parse_a1(address) else {
+        return false;
+    };
+    ranges
+        .iter()
+        .any(|(start_row, start_column, end_row, end_column)| {
+            row >= *start_row && row <= *end_row && column >= *start_column && column <= *end_column
+        })
+}
+
 fn parse_a1(text: &str) -> Option<(usize, usize)> {
     let text = text.trim().trim_start_matches('$');
     let split = text.find(|c: char| c.is_ascii_digit())?;
@@ -844,4 +912,34 @@ fn is_xlsx(path: &Path) -> bool {
     path.extension()
         .and_then(|e| e.to_str())
         .is_some_and(|e| e.eq_ignore_ascii_case("xlsx"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn static_print_rejects_excel_error_cells_in_selected_ranges() {
+        let mut values = BTreeMap::new();
+        values.insert("B2".to_owned(), json!({"type": "error", "value": "Div0"}));
+        let sheet = SheetDump {
+            name: "Source".to_owned(),
+            values,
+            formulas: BTreeMap::new(),
+            formula_status: "read_by_calamine".to_owned(),
+            merges: Vec::new(),
+            merge_status: "read_by_calamine".to_owned(),
+            comments: BTreeMap::new(),
+            comments_status: "read_by_namespace_aware_ooxml_supplement".to_owned(),
+            conditional_formatting: Vec::new(),
+            conditional_formatting_status: "read_by_namespace_aware_ooxml_supplement".to_owned(),
+            data_validations: Vec::new(),
+            data_validations_status: "read_by_namespace_aware_ooxml_supplement".to_owned(),
+        };
+
+        let error = validate_static_print_values(&sheet, &[(1, 2, 3, 4)])
+            .expect_err("Excel error cells must prevent static print output");
+        assert!(error.to_string().contains("Excel error value at Source!B2"));
+    }
 }

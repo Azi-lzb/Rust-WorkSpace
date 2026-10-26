@@ -1,4 +1,8 @@
 use anyhow::{Context, Result};
+use excel_editor::{
+    BackendCapability, CapabilityEvidence, CapabilityStatus, EditOperation, EngineId, ExcelEditPlan,
+};
+use excel_reader::read_workbook;
 use serde::Deserialize;
 use serde_json::Value;
 use std::{
@@ -85,6 +89,82 @@ fn interactive_print_menu_routes_static_report_and_precheck() -> Result<()> {
         source_before,
         "source remains unchanged"
     );
+    Ok(())
+}
+
+#[test]
+fn interactive_static_print_executes_only_after_capability_and_user_confirmation() -> Result<()> {
+    let root = TestDirectory::new()?;
+    let source = root.path().join("source.xlsx");
+    let target = root.path().join("printed.xlsx");
+    let config = create_print_config(root.path(), &source, &target)?;
+    create_print_source(&source)?;
+    let source_before = fs::read(&source)?;
+
+    let plan_run = run_menu(&config, "3\n1\n0\n")?;
+    assert!(plan_run.status.success());
+    assert!(String::from_utf8_lossy(&plan_run.stdout).contains("仅生成计划，不创建打印工作簿"));
+    assert!(
+        !target.exists(),
+        "plan-only menu must not create a workbook"
+    );
+    let plan_response = output_json(&plan_run)?;
+    assert_eq!(plan_response[0]["execution"], "plan_only");
+    let plan: ExcelEditPlan = serde_json::from_value(plan_response[0]["report"]["plan"].clone())?;
+    let capabilities = root.path().join("print-capabilities.json");
+    fs::write(
+        &capabilities,
+        serde_json::to_vec_pretty(&print_capability_for(&plan))?,
+    )?;
+
+    let execution =
+        run_menu_with_capability(&config, &capabilities, "3\n1\ny\n0\n0\n", "developer")?;
+    assert!(
+        execution.status.success(),
+        "confirmed static print failed: {}",
+        String::from_utf8_lossy(&execution.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&execution.stdout);
+    assert!(stdout.contains("只使用源工作簿已保存的公式缓存"));
+    assert!(stdout.contains("实际生成 1 组静态打印工作簿"));
+    let response = output_json(&execution)?;
+    assert_eq!(response[0]["execution"]["engine"], "umya_spreadsheet");
+    assert!(target.is_file(), "confirmed print target was not created");
+    let printed = read_workbook(&target)?;
+    assert_eq!(printed.sheets.len(), 1);
+    assert_eq!(printed.sheets[0].name, "Printed");
+    assert!(
+        !printed.sheets[0].values.contains_key("A1"),
+        "numeric zero must be blank"
+    );
+    assert!(
+        printed.sheets[0].comments.is_empty(),
+        "static print must remove comments"
+    );
+    assert_eq!(fs::read(&source)?, source_before);
+
+    let histories = fs::read_dir(root.path().join("logs"))?
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with("pytools-print-config_plan-"))
+        })
+        .collect::<Vec<_>>();
+    let execution_history = histories
+        .iter()
+        .map(|path| fs::read(path))
+        .collect::<std::io::Result<Vec<_>>>()?
+        .into_iter()
+        .filter_map(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+        .find(|history| history["excel_modifier_invoked"] == true)
+        .context("static print execution history missing")?;
+    assert_eq!(execution_history["feature_id"], "PT-3-3");
+    assert_eq!(execution_history["plan_only"], false);
+    assert!(execution_history["actual_engines"]
+        .as_array()
+        .is_some_and(|engines| engines.iter().any(|engine| engine == "umya_spreadsheet")));
     Ok(())
 }
 
@@ -297,6 +377,57 @@ fn run_menu_with_view(config: &Path, input: &str, log_view: &str) -> Result<Outp
     child
         .wait_with_output()
         .context("wait for interactive menu")
+}
+
+fn run_menu_with_capability(
+    config: &Path,
+    capabilities: &Path,
+    input: &str,
+    log_view: &str,
+) -> Result<Output> {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_pytools"))
+        .arg("menu")
+        .arg("--config")
+        .arg(config)
+        .arg("--log-view")
+        .arg(log_view)
+        .arg("--capabilities")
+        .arg(capabilities)
+        .arg("--platform")
+        .arg("synthetic-pt-3-3-menu-test")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .context("start interactive menu with print test capability")?;
+    child
+        .stdin
+        .take()
+        .context("interactive stdin missing")?
+        .write_all(input.as_bytes())
+        .context("send interactive print selections")?;
+    child
+        .wait_with_output()
+        .context("wait for capability-gated print execution")
+}
+
+fn print_capability_for(plan: &ExcelEditPlan) -> BackendCapability {
+    BackendCapability {
+        engine: EngineId::UmyaSpreadsheet,
+        status: CapabilityStatus::Passed,
+        format: plan.format,
+        operations: plan.operations.iter().map(EditOperation::kind).collect(),
+        supported_features: plan.workbook.features_present.clone(),
+        preserved: plan.preserve.clone(),
+        platform: "synthetic-pt-3-3-menu-test".to_owned(),
+        evidence: Some(CapabilityEvidence {
+            sample_id: "synthetic-pt-3-3-menu".to_owned(),
+            report_path: "pytools-core/tests/print_menu_cli.rs".to_owned(),
+            adapter_version: "umya-spreadsheet-3.1.1".to_owned(),
+            engine_version: "umya-spreadsheet-3.1.1".to_owned(),
+            platform: "synthetic-pt-3-3-menu-test".to_owned(),
+        }),
+    }
 }
 
 fn output_json(output: &Output) -> Result<Value> {

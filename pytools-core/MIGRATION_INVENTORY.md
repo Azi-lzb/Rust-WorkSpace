@@ -556,9 +556,15 @@ Windows 原生 `cargo fmt --manifest-path pytools-core/Cargo.toml -- --check` �
 
 ### 2026-10-25 PT-3 打印交互菜单双视图日志接入
 
-主菜单 `--log-view <user|developer|off>` 现已传入 PT-3-1 至 PT-3-4。user 视图显示开始/完成、命中工作表/打印区域或预校验计数及耗时；developer 视图写入脱敏历史 JSON，记录 PT 编号、状态、统计、阶段耗时、实际 Calamine/ExcelModifier 引擎和 Rust 组件，不保存配置、源簿或输出路径；off 不输出进度且不创建历史。原打印行为保持不变：PT-3-1/3-2 仍仅在用户确认且提供匹配能力时经 ExcelModifier 生成新工作簿，否则只生成计划；PT-3-3 仍为 plan-only；PT-3-4 仍只预校验。未增加打印属性、渲染或 PDF。
+主菜单 `--log-view <user|developer|off>` 现已传入 PT-3-1 至 PT-3-4。user 视图显示开始/完成、命中工作表/打印区域或预校验计数及耗时；developer 视图写入脱敏历史 JSON，记录 PT 编号、状态、统计、阶段耗时、实际 Calamine/ExcelModifier 引擎和 Rust 组件，不保存配置、源簿或输出路径；off 不输出进度且不创建历史。PT-3-1/3-2 仍仅在用户确认且提供匹配能力时经 ExcelModifier 生成新工作簿，否则只生成计划；PT-3-3 默认 plan-only，新版菜单 `3→1` 在同时提供匹配 capability/platform 并经用户确认后可执行（2026-10-26 独立更新见下）；PT-3-4 仍只预校验。未增加打印属性、渲染或 PDF。
 
 Windows 原生 `cargo fmt --manifest-path pytools-core/Cargo.toml -- --check` 通过；`cargo test --offline --locked -p pytools-core --test print_menu_cli --test print_config_new_target --test print_comment_execution -j 1` 通过（4 + 2 + 1 项）。真实 CLI 测试覆盖四项 developer 历史、路径脱敏、业务计数、user/off 行为及 PT-3-1 capability 执行引擎记录。首轮复验暴露 `print_config_new_target` 并行测试可能共享同一时间戳目录；测试夹具增加进程内序号后，重跑全绿。未重跑 Python/Rust 页面设置语义对拍，业务计划/执行路径未改变；此前合成对拍证据仍适用。无真实打印模板或生产 capability；麒麟/UOS 实机、glibc 2.28 实机、deb 与离线交付仍未验收。
+
+### 2026-10-26 PT-3-3 V2 静态打印菜单执行与缓存保护
+
+V2 菜单 `3→1` 现可执行配置静态打印：仅在 CLI 启动参数同时提供 capability 和 platform 后询问用户确认，再经既有 `print-config-plan → ExcelEditPlan → ExcelModifier` 写到配置目标；没有完整能力证据时只生成计划并明确说明未创建打印工作簿。生成计划前拒绝公式元数据不可读、公式缓存缺失/空白以及选区内 Excel 错误值；不计算公式，仅复制已缓存值，静态输出移除批注并将数值零留空（字符串“0”和非零小数保留）。
+
+Windows 原生验证：`cargo fmt -p pytools-core -- --check`、`cargo check --offline --locked -p pytools-core --bin pytools -j 1`、缓存错误单测 1/1、`print_config_new_target` 3/3、`print_menu_cli` 4/4 通过。合成工作簿覆盖缓存公式静态化、公式零/数值零/0.0001/字符串“0”、批注移除、源文件字节不变、缺失缓存和 Excel 错误拦截、真实菜单确认后调用引擎；测试 capability 仅临时使用，不代表生产能力。迁移状态为**已实现，待 Windows 真实验收**；无真实打印模板/用户样本、无本功能 V2 新语义 Python 对拍、无生产 capability，未验证公式缓存新鲜度、其他 OOXML 部件保真及 Linux/麒麟/UOS/deb。
 
 ### 2026-10-24 PT-4 转换与文件操作交互菜单及提交检查对拍补充
 
