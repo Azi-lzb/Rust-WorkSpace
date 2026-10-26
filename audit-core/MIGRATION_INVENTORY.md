@@ -230,4 +230,6 @@ Windows 原生 `s5-audit-run` 与原 Python `AuditEngine.run` 对拍覆盖业务
 
 个人贷款业务也使用该真实配置、另一份 2026-07-31 当前工作簿、真实个人贷款模板及同一外部工作簿，显式验证默认来源：配置校验 valid/complete，356 条启用规则通过，模板地址 475/475、外部表头 5/5；Python/Rust `s5-audit-run` 完整输出差异 0，状态计数均为 PASSED 339、TRIGGERED 12、STRUCTURE_ERROR 5，输入未变且报告不保存原始值。证据见 `probe/reports/s5_vext_personal_loan_real_external_default_parity_windows_native_20261026.json`。
 
-上述真实运行覆盖单位贷款和个人贷款各一本当前工作簿，但共用一个物理外部工作簿；多物理外部来源真实验收、条件格式/数据质量非空路径、结构快照/哈希完整性降级、Linux/deb、glibc 2.28、麒麟 V10/UOS V20 与完整 S5-F01 仍未验收，生产 capability 仍为 unverified。Audit 共享能力请求 #8 仍未解决。
+同一批次将单位贷款、个人贷款两个真实当前工作簿和 `EXT_REAL` 默认外部源合并运行时，首次发现 Rust 总账中的两个布局模板条目按来源绑定顺序排列，与 Python 按规则首次使用顺序不同；业务结果状态计数一致，结果表单元格值差异为 0，差异仅在 12 个模板清单字段。`S5Retrieval` 现在按首次选用布局模板的顺序累积清单，并按路径去重。修复后同一真实组合的 Python/Rust 完整 CLI 输出差异为 0，状态计数均为 PASSED 719、TRIGGERED 8、STRUCTURE_ERROR 6，输入未变且报告不保存原始值；见 `probe/reports/s5_real_dual_business_current_external_default_parity_windows_native_20261026.json`。
+
+上述真实组合覆盖单位贷款和个人贷款各一本当前工作簿，但共用一个物理外部工作簿；多物理外部来源真实验收、条件格式/数据质量非空路径、结构快照/哈希完整性降级、Linux/deb、glibc 2.28、麒麟 V10/UOS V20 与完整 S5-F01 仍未验收，生产 capability 仍为 unverified。Audit 共享能力请求 #8 仍未解决。

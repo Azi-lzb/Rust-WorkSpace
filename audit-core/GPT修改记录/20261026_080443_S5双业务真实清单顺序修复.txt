@@ -1,0 +1,39 @@
+# S5-F01 双业务真实清单顺序修复
+
+- 时间：2026-10-26 08:04（Asia/Shanghai）
+- 执行者：Codex Audit migration agent
+- 分支：`audit-dev`
+- 修改前 commit：`36fe18417ac2422359e4154868c15c608f171ae2`
+- 修改后 commit：本次记录提交；SHA 可由 Git 历史追溯。
+- WIP：开始时保留已有未提交 `audit-core/src/s5_retrieval.rs` 修改和所有未跟踪报告、`.pytest-tmp-v3/`、`HANDOFF_ZCODE_TO_CODEX.md`；不纳入本次提交的路径已隔离。原 Python 项目、真实配置、真实工作簿和模板只读。
+- 【组件版本】：`audit-core` 仍为 0.1.0，不升级。
+
+## 目的与变更
+
+修复 S5 同一真实批次同时运行单位贷款与个人贷款时，Rust 总账布局模板清单顺序与 Python 不一致的问题。根因是 Rust 按来源绑定顺序收集模板，Python 按规则首次选用顺序生成清单。
+
+- `audit-core/src/s5_retrieval.rs`：按首次使用顺序收集数字区域布局模板，并按路径去重；不改变规则计算及结果值。
+- `audit-core/probe/reports/s5_real_dual_business_current_external_default_parity_windows_native_20261026.json`：新增不含业务原始值的真实对拍汇总。
+- `audit-core/MIGRATION_INVENTORY.md`：记录根因、修复及实际结果，并保留 S5 整体未验收状态。
+
+没有修改共享 crate、根 Cargo 配置、源 Python、真实配置或输入文件；未修改 VBA，也未改变生产引擎路由。
+
+## 验证
+
+- Windows 原生 `cargo build --locked -p audit-core --bin open-data-audit`：通过。
+- Windows 原生 `cargo test --locked -p audit-core --lib numeric_template_manifest_preserves_first_use_order_and_deduplicates`：1 项通过。
+- Windows 原生 `cargo test --locked -p audit-core --test s5_previous_source_cli s5_audit_cli_selects_multiple_current_sources_by_rule_binding`：1 项通过。
+- 真实 XLSM 元数据修复回归：`cargo test --locked -p excel-reader ooxml_sheet_name_adapter_accepts_xlsm_metadata` 与 S5 CLI `s5_template_match_cli_accepts_xlsm_source_workbook_metadata` 均通过。公共提交 `3e53e7e` 的补丁已由 `579155f` 等效提交包含；未重复 cherry-pick。
+- Windows Python 3.12.10 `compare_s5_outputs.py` 对拍 Python `AuditEngine.run` 与最新 Rust `s5-audit-run` CLI：真实同目录单位贷款、个人贷款当前工作簿，共用真实 `EXT_REAL` 外部工作簿并设置为默认；完整输出差异 0，值差异 0，状态计数双方均为 PASSED 719、TRIGGERED 8、STRUCTURE_ERROR 6；输入指纹未变，`raw_values_persisted=false`。
+
+## 未执行与已知问题
+
+- 本次只验证 Windows 单批两种业务与一个物理外部工作簿；多物理外部来源真实验收仍缺。
+- S5-F01 整体仍为 unverified；条件格式/数据质量非空输出、结构快照、哈希完整性降级、Linux/deb、glibc 2.28、麒麟 V10/UOS V20 未验证。
+- Audit 共享能力请求 #8（MoveSheet/历史关系快照）仍未解决；此次结果不改变其状态。
+- 现有 Rust 依赖弃用和 Audit 警告仍在，本次未处理。
+
+## 删除与回滚
+
+- 未删除文件或修改任何原始输入。
+- 如需撤回，新增反向修复提交；不重写历史。提交包含 Rust 代码、脱敏报告和迁移记录。

@@ -15,7 +15,7 @@
 use crate::s5_config::{Configuration, SourceContract};
 use crate::s5_eval::{EvalArgument, EvalErrorKind, EvalValue};
 use crate::s5_external_layout::ExternalLayout;
-use crate::s5_numeric_scope::{NumericScopeError, NumericScopeResolver};
+use crate::s5_numeric_scope::{NumericScopeError, NumericScopeResolver, SelectedNumericTemplate};
 use crate::s5_scan::{scan_rule_paths_with_numeric_regions, ScanBook};
 use serde_json::{json, Value as JsonValue};
 use sha2::{Digest, Sha256};
@@ -139,6 +139,24 @@ pub struct S5NumericTemplateSource {
     pub sha256: String,
 }
 
+fn append_selected_numeric_template_sources(
+    selected: &[SelectedNumericTemplate],
+    sources: &mut Vec<S5NumericTemplateSource>,
+) {
+    for template in selected {
+        if sources.iter().any(|source| source.path == template.path) {
+            continue;
+        }
+        let path_text = template.path.to_string_lossy();
+        let source_id_hash = Sha256::digest(path_text.as_bytes());
+        sources.push(S5NumericTemplateSource {
+            path: template.path.clone(),
+            source_id: format!("LAYOUT_{:x}", source_id_hash)[..19].to_owned(),
+            sha256: template.sha256.clone(),
+        });
+    }
+}
+
 struct BoundSource {
     source_path: PathBuf,
     source_id: String,
@@ -248,6 +266,7 @@ pub struct S5Retrieval {
     previous: Option<BoundSource>,
     external_sources: Vec<BoundExternalSource>,
     default_external_source: Option<String>,
+    numeric_template_source_order: Vec<S5NumericTemplateSource>,
     data_quality_warnings: Vec<JsonValue>,
 }
 
@@ -283,6 +302,7 @@ impl S5Retrieval {
             previous: None,
             external_sources: Vec::new(),
             default_external_source: None,
+            numeric_template_source_order: Vec::new(),
             data_quality_warnings: Vec::new(),
         })
     }
@@ -504,6 +524,7 @@ impl S5Retrieval {
             previous,
             external_sources: bound_external_sources,
             default_external_source,
+            numeric_template_source_order: Vec::new(),
             data_quality_warnings: Vec::new(),
         })
     }
@@ -524,28 +545,7 @@ impl S5Retrieval {
     /// Selected numeric-region templates in first-use order, with their
     /// pre-read snapshots, for inclusion in the run's audit-copy manifest.
     pub fn numeric_region_template_sources(&self) -> Vec<S5NumericTemplateSource> {
-        let mut sources = Vec::new();
-        for bound_source in std::iter::once(&self.current)
-            .chain(self.additional_current.iter().map(|source| &source.source))
-            .chain(self.previous.iter())
-        {
-            for template in bound_source.numeric_scope.selected_templates() {
-                if sources
-                    .iter()
-                    .any(|source: &S5NumericTemplateSource| source.path == template.path)
-                {
-                    continue;
-                }
-                let path_text = template.path.to_string_lossy();
-                let source_id_hash = Sha256::digest(path_text.as_bytes());
-                sources.push(S5NumericTemplateSource {
-                    path: template.path.clone(),
-                    source_id: format!("LAYOUT_{:x}", source_id_hash)[..19].to_owned(),
-                    sha256: template.sha256.clone(),
-                });
-            }
-        }
-        sources
+        self.numeric_template_source_order.clone()
     }
 
     /// SHA-256 captured when the current source was opened for this run.
@@ -884,6 +884,7 @@ impl S5Retrieval {
             &metric,
             &resolved_sheet,
             role,
+            &mut self.numeric_template_source_order,
         )?;
 
         Self::value_with_unit(
@@ -1516,6 +1517,7 @@ impl S5Retrieval {
         source: &'a mut BoundSource,
         metric: &crate::s5_config::MetricSpec,
         role: &str,
+        selected_template_sources: &mut Vec<S5NumericTemplateSource>,
     ) -> Result<&'a crate::s5_scan::ScanResult, RetrievalFailure> {
         let cache_key = format!("{}|{}|{}", role, metric.business, metric.sheet);
         if !source.index_cache.contains_key(&cache_key) {
@@ -1529,6 +1531,10 @@ impl S5Retrieval {
                 .numeric_scope
                 .regions_for_sheet(&source.book, &metric.sheet)
                 .map_err(RetrievalFailure::from)?;
+            append_selected_numeric_template_sources(
+                source.numeric_scope.selected_templates(),
+                selected_template_sources,
+            );
             let result = scan_rule_paths_with_numeric_regions(
                 &source.book,
                 &source.source_path,
@@ -1548,10 +1554,17 @@ impl S5Retrieval {
         metric: &crate::s5_config::MetricSpec,
         sheet_name: &str,
         role: &str,
+        selected_template_sources: &mut Vec<S5NumericTemplateSource>,
     ) -> Result<(String, String), RetrievalFailure> {
         let key = (metric.row_path.clone(), metric.column_path.clone());
         let (matches, row_found, column_found) = {
-            let index = Self::template_index(configuration, source, metric, role)?;
+            let index = Self::template_index(
+                configuration,
+                source,
+                metric,
+                role,
+                selected_template_sources,
+            )?;
             let matches = index.locations.get(&key).cloned().unwrap_or_default();
             let row_found = index
                 .row_locations
@@ -1888,5 +1901,47 @@ fn blank_value(unit: &str, metric_type: &str, evidence: JsonValue) -> EvalValue 
         is_literal: false,
         precision: None,
         numeric_mode: "decimal".to_owned(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{append_selected_numeric_template_sources, S5NumericTemplateSource};
+    use crate::s5_numeric_scope::SelectedNumericTemplate;
+    use std::path::{Path, PathBuf};
+
+    #[test]
+    fn numeric_template_manifest_preserves_first_use_order_and_deduplicates() {
+        let personal = SelectedNumericTemplate {
+            path: PathBuf::from("personal-template.xlsx"),
+            sha256: "personal-hash".to_owned(),
+        };
+        let unit = SelectedNumericTemplate {
+            path: PathBuf::from("unit-template.xlsx"),
+            sha256: "unit-hash".to_owned(),
+        };
+        let mut manifest_sources = Vec::<S5NumericTemplateSource>::new();
+
+        append_selected_numeric_template_sources(
+            std::slice::from_ref(&personal),
+            &mut manifest_sources,
+        );
+        append_selected_numeric_template_sources(
+            &[unit.clone(), personal.clone()],
+            &mut manifest_sources,
+        );
+
+        assert_eq!(
+            manifest_sources
+                .iter()
+                .map(|source| source.path.as_path())
+                .collect::<Vec<_>>(),
+            vec![
+                Path::new("personal-template.xlsx"),
+                Path::new("unit-template.xlsx")
+            ]
+        );
+        assert_eq!(manifest_sources[0].sha256, "personal-hash");
+        assert_eq!(manifest_sources[1].sha256, "unit-hash");
     }
 }
