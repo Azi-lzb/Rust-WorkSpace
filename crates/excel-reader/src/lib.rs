@@ -1946,10 +1946,10 @@ mod tests {
             r#"<Relationships xmlns="{PACKAGE_REL_NS}"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/data.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="custom/styles.xml"/></Relationships>"#
         );
         let styles = format!(
-            r#"<s:styleSheet xmlns:s="{SPREADSHEET_MAIN_NS}"><s:numFmts count="1"><s:numFmt numFmtId="164" formatCode="h:mm:ss"/></s:numFmts><s:cellXfs count="3"><s:xf numFmtId="0"/><s:xf numFmtId="14"/><s:xf numFmtId="164"/></s:cellXfs></s:styleSheet>"#
+            r#"<s:styleSheet xmlns:s="{SPREADSHEET_MAIN_NS}"><s:numFmts count="2"><s:numFmt numFmtId="164" formatCode="h:mm:ss"/><s:numFmt numFmtId="165" formatCode="000000"/></s:numFmts><s:cellXfs count="4"><s:xf numFmtId="0"/><s:xf numFmtId="14"/><s:xf numFmtId="164"/><s:xf numFmtId="165"/></s:cellXfs></s:styleSheet>"#
         );
         let worksheet = format!(
-            r#"<s:worksheet xmlns:s="{SPREADSHEET_MAIN_NS}"><s:sheetData><s:row r="1"><s:c r="A1" s="1"><s:v>45000</s:v></s:c><s:c r="B1" s="2"><s:v>0.5</s:v></s:c><s:c r="C1"><s:v>42</s:v></s:c></s:row></s:sheetData></s:worksheet>"#
+            r#"<s:worksheet xmlns:s="{SPREADSHEET_MAIN_NS}"><s:sheetData><s:row r="1"><s:c r="A1" s="1"><s:v>45000</s:v></s:c><s:c r="B1" s="2"><s:v>0.5</s:v></s:c><s:c r="C1"><s:v>42</s:v></s:c><s:c r="D1" s="3"><s:v>123</s:v></s:c></s:row></s:sheetData></s:worksheet>"#
         );
         let entries = [
             ("_rels/.rels", package_relationships),
@@ -1991,6 +1991,10 @@ mod tests {
                         sheet_name: "Data".to_owned(),
                         cell_reference: "D1".to_owned(),
                     },
+                    CellNumberFormatRequest {
+                        sheet_name: "Data".to_owned(),
+                        cell_reference: "E1".to_owned(),
+                    },
                 ],
             )?;
             fs::remove_file(fixture)?;
@@ -2022,6 +2026,13 @@ mod tests {
                     CellNumberFormatInfo {
                         sheet_name: "Data".to_owned(),
                         cell_reference: "D1".to_owned(),
+                        style_index: 3,
+                        number_format_id: 165,
+                        format_code: Some("000000".to_owned()),
+                    },
+                    CellNumberFormatInfo {
+                        sheet_name: "Data".to_owned(),
+                        cell_reference: "E1".to_owned(),
                         style_index: 0,
                         number_format_id: 0,
                         format_code: Some("General".to_owned()),
