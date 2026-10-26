@@ -9,7 +9,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-from openpyxl import Workbook
+from openpyxl import Workbook, load_workbook
 from openpyxl.utils.datetime import MAC_EPOCH
 
 from compare_sheet_extract_area_durations import create_rust_config, project_workbook
@@ -20,6 +20,8 @@ def create_source(path: Path, date_1904: bool) -> bytes:
     if date_1904:
         workbook.epoch = MAC_EPOCH
     worksheet = workbook.active
+    worksheet.column_dimensions["B"].number_format = "h:mm:ss"
+    worksheet["B1"] = 0.5
     cases = [
         (0.0, "h:mm:ss"),
         (0.5 / 86_400_000, "h:mm:ss"),
@@ -69,7 +71,7 @@ def main() -> int:
             "workbook_keywords": "",
             "sheet_keywords": "",
             "exclude_keywords": "",
-            "area_spec": "A1:A7",
+            "area_spec": "A1:B7",
             "stitch_mode": "",
             "output_folder": "时长提取",
             "output_name": "duration-output.xlsx",
@@ -86,6 +88,10 @@ def main() -> int:
                 default_output_name="unused.xlsx",
             )
             create_rust_config(config_path, rust_output, 7)
+            config_workbook = load_workbook(config_path)
+            config_workbook.worksheets[1]["E2"] = "A1:B7"
+            config_workbook.save(config_path)
+            config_workbook.close()
             rust_process = subprocess.run(
                 [
                     str(args.pytools_cli.resolve()),
@@ -130,7 +136,7 @@ def main() -> int:
                 "feature": "PT-7-6 area extraction time-only value classification",
                 "sample_kind": (
                     "synthetic XLSX files in 1900 and 1904 epochs with midnight, rounding, "
-                    "date-only, built-in time, and elapsed-duration formats"
+                    "date-only, built-in time, elapsed-duration formats, and an implicit column default style"
                 ),
                 "source_python": "PyCode/core/feature_1_6_extract_sheets.py::run_extract_sheets",
                 "rust_entry": "pytools extract-sheets-area",
@@ -149,8 +155,8 @@ def main() -> int:
                 "rust_projection": rust_projection,
                 "sources_unchanged": sources_unchanged,
                 "scope_note": (
-                    "Synthetic parity only. Real business time-only cells, row/column default "
-                    "styles, unknown built-in number formats, other formats, and target-platform "
+                    "Synthetic parity only. Real business time-only cells, row default styles, unknown built-in "
+                    "number formats, other formats, and target-platform "
                     "delivery remain unverified. Unsupported or ambiguous metadata must fail closed."
                 ),
             }

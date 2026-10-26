@@ -2,7 +2,7 @@
   "schema_version": 1,
   "status": "passed",
   "feature": "PT-7-6 area extraction time-only value classification",
-  "sample_kind": "synthetic XLSX files in 1900 and 1904 epochs with midnight, rounding, date-only, built-in time, and elapsed-duration formats",
+  "sample_kind": "synthetic XLSX files in 1900 and 1904 epochs with midnight, rounding, date-only, built-in time, elapsed-duration formats, and an implicit column default style",
   "source_python": "PyCode/core/feature_1_6_extract_sheets.py::run_extract_sheets",
   "rust_entry": "pytools extract-sheets-area",
   "python_stats": {
@@ -32,6 +32,12 @@
             "type": "time",
             "value": "00:00:00.000",
             "number_format": "h:mm:ss"
+          },
+          {
+            "cell": "B1",
+            "type": "float",
+            "value": "0.5",
+            "number_format": "General"
           },
           {
             "cell": "A2",
@@ -79,6 +85,12 @@
             "type": "time",
             "value": "00:00:00.000",
             "number_format": "h:mm:ss"
+          },
+          {
+            "cell": "B1",
+            "type": "float",
+            "value": "0.5",
+            "number_format": "General"
           },
           {
             "cell": "A2",
@@ -138,6 +150,12 @@
             "number_format": "h:mm:ss"
           },
           {
+            "cell": "B1",
+            "type": "float",
+            "value": "0.5",
+            "number_format": "General"
+          },
+          {
             "cell": "A2",
             "type": "time",
             "value": "00:00:00.000",
@@ -185,6 +203,12 @@
             "number_format": "h:mm:ss"
           },
           {
+            "cell": "B1",
+            "type": "float",
+            "value": "0.5",
+            "number_format": "General"
+          },
+          {
             "cell": "A2",
             "type": "time",
             "value": "00:00:00.000",
@@ -225,5 +249,5 @@
     ]
   },
   "sources_unchanged": true,
-  "scope_note": "Synthetic parity only. Real business time-only cells, row/column default styles, unknown built-in number formats, other formats, and target-platform delivery remain unverified. Unsupported or ambiguous metadata must fail closed."
+  "scope_note": "Synthetic parity only. Real business time-only cells, row default styles, unknown built-in number formats, other formats, and target-platform delivery remain unverified. Unsupported or ambiguous metadata must fail closed."
 }

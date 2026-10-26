@@ -789,7 +789,7 @@ main 提供的 excel-reader::read_xlsx_cell_number_formats 已由主线提交 ec
 
 Windows 原生验证：cargo fmt --manifest-path pytools-core/Cargo.toml -- --check；cargo test --offline --locked -p pytools-core --lib sheet_extract::duration_tests -j 1（7/7）；cargo build --offline --locked -p pytools-core --bin pytools -j 1；区域提取安全/输出候选回归、time-only 数字菜单 pytools menu → 7 → 6 及原区域菜单回归各 1/1。只读 PyCode run_extract_sheets 与真实 Rust extract-sheets-area CLI 的合成对拍在 1900/1904 两种 epoch 下均通过：午夜、0.5/1.5 毫秒舍入、日末舍入、日期格式、内置样式 h:mm 和 [h]:mm:ss 累计时长的完整输出类型、值、工作表名及 number format 一致；两个源簿字节未变。机器报告：probe/reports/sheet_extract_area_time_only_parity_20261026.json。Rust 菜单回归另确认源簿不变并生成可读输出。
 
-仍未验证真实业务 time-only 工作簿、未知内置格式及行/列默认样式、非 XLSX 输入、Windows 原生文件弹窗、全模板保真和 Linux/目标机交付。time-only 合成子集已实现并完成合成对拍；PT-7-6 整体仍处于迁移中，不视为 Windows 真实验收通过。
+仍未验证真实业务 time-only 工作簿、未知内置格式及行默认样式、非 XLSX 输入、Windows 原生文件弹窗、全模板保真和 Linux/目标机交付。time-only 合成子集已实现并完成合成对拍；PT-7-6 整体仍处于迁移中，不视为 Windows 真实验收通过。
 
 ### 2026-10-25 PT-1-2 时序提取 Rust 主输出、目标追加与入口对拍
 

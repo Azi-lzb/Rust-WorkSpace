@@ -1,0 +1,20 @@
+时间：2026-10-26 17:34:50（本机时间）
+执行者：Codex
+分支：pytools-dev
+修改前 commit：a221f15f1ec9cf37c77a75e0b89b6fb9b3ed80b7
+修改后 commit：本记录与本轮验证证据待提交
+WIP：保留已有 MIGRATION_INVENTORY.md 中 PT-4-2、PT-4-8 等其他未提交记录；未跟踪的交接文件及 PT-4-2/PT-6-2 记录未暂存。
+
+目的：为 PT-7-6 区域提取补充列默认 number format 的 Python/Rust 合成对拍，准确收窄未验证范围。
+修改文件：
+- pytools-core/probe/compare_sheet_extract_area_time_only.py：增加 B 列默认格式 h:mm:ss、B1=0.5，并把测试区域扩展为 A1:B7。
+- pytools-core/probe/reports/sheet_extract_area_time_only_parity_20261026.json：记录本轮对拍结果。
+- pytools-core/MIGRATION_INVENTORY.md：仅将“行/列默认样式未验证”收窄为“行默认样式未验证”；列默认样式仅有本合成样例证据。
+
+结果：只读 PyCode 与当前 Rust extract-sheets-area CLI 在 1900/1904 epoch 下均通过；每种 epoch 处理 2 个输入文件、提取 2 张表并生成 1 个输出，无失败；B1 在 Python/Rust 投影中均为 float 0.5、General。源工作簿字节不变。机器报告 status=passed。
+
+验证范围限制：这是合成 XLSX 对拍，不是实际业务样本验收。行默认样式、未知内置格式、其他输入格式、原生 Windows 文件弹窗、全模板保真及 Linux/目标机交付仍未验证；PT-7-6 整体状态保持迁移中。仅变更对拍脚本、报告及迁移记录，没有改 Rust 业务代码，因此本轮未重复 Rust 编译或全套测试。
+
+删除清单：无。
+回滚：如需撤销本轮证据更新，可回退本轮提交；提交前请保留其他既有工作区修改。无配置或 VBA 迁移影响。
+【组件版本】：不升级（对拍/记录补充，无业务 API 变化）。
