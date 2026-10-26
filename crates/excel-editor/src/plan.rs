@@ -734,11 +734,7 @@ impl ExcelEditPlan {
                     EditOperation::SetCellValue { sheet: target, .. }
                     | EditOperation::SetFormulaText { sheet: target, .. } => target == sheet,
                     EditOperation::CopyRange { target_sheet, .. }
-                    | EditOperation::ImportRange { target_sheet, .. }
-                    | EditOperation::CopyRangeWithFormulaTranslation { target_sheet, .. }
-                    | EditOperation::ImportRangeWithFormulaTranslation { target_sheet, .. } => {
-                        target_sheet == sheet
-                    }
+                    | EditOperation::ImportRange { target_sheet, .. } => target_sheet == sheet,
                     _ => false,
                 });
                 if !rewrites_data {
