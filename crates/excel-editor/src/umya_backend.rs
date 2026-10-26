@@ -50,6 +50,9 @@ impl EditBackend for UmyaXlsxBackend {
         for operation in &plan.operations {
             if let EditOperation::ImportRange {
                 source_workbook, ..
+            }
+            | EditOperation::ImportRangeWithFormulaTranslation {
+                source_workbook, ..
             } = operation
             {
                 if !source_workbook.is_file() {
@@ -125,6 +128,17 @@ impl EditBackend for UmyaXlsxBackend {
             .iter()
             .filter_map(|operation| match operation {
                 EditOperation::ImportRange {
+                    source_workbook,
+                    source_sheet,
+                    source_range,
+                    target_sheet,
+                    target_start,
+                    copy_outline_levels: true,
+                    copy_all_row_dimensions,
+                    copy_all_column_dimensions,
+                    ..
+                }
+                | EditOperation::ImportRangeWithFormulaTranslation {
                     source_workbook,
                     source_sheet,
                     source_range,
@@ -1972,6 +1986,30 @@ fn apply_operation(workbook: &mut crate::Workbook, operation: &EditOperation) ->
                 *copy_formulas,
                 *copy_styles,
                 *copy_comments,
+                false,
+            )?;
+        }
+        EditOperation::CopyRangeWithFormulaTranslation {
+            source_sheet,
+            source_range,
+            target_sheet,
+            target_start,
+            copy_values,
+            copy_formulas,
+            copy_styles,
+            copy_comments,
+        } => {
+            copy_range(
+                workbook,
+                source_sheet,
+                source_range,
+                target_sheet,
+                target_start,
+                *copy_values,
+                *copy_formulas,
+                *copy_styles,
+                *copy_comments,
+                true,
             )?;
         }
         EditOperation::ImportRange {
@@ -2018,6 +2056,54 @@ fn apply_operation(workbook: &mut crate::Workbook, operation: &EditOperation) ->
                 *copy_all_column_dimensions,
                 *materialize_blank_cells,
                 *hide_zero,
+                false,
+            )?;
+        }
+        EditOperation::ImportRangeWithFormulaTranslation {
+            source_workbook,
+            source_sheet,
+            source_range,
+            target_sheet,
+            target_start,
+            copy_values,
+            copy_formulas,
+            style_mode,
+            copy_comments,
+            copy_merges,
+            copy_row_heights,
+            copy_column_widths,
+            copy_row_hidden,
+            copy_column_hidden,
+            copy_all_row_dimensions,
+            copy_all_column_dimensions,
+            materialize_blank_cells,
+            hide_zero,
+            ..
+        } => {
+            let source = crate::open_xlsx(source_workbook).with_context(|| {
+                format!("open range-import source {}", source_workbook.display())
+            })?;
+            import_range(
+                &source,
+                workbook,
+                source_sheet,
+                source_range,
+                target_sheet,
+                target_start,
+                *copy_values,
+                *copy_formulas,
+                *style_mode,
+                *copy_comments,
+                *copy_merges,
+                *copy_row_heights,
+                *copy_column_widths,
+                *copy_row_hidden,
+                *copy_column_hidden,
+                *copy_all_row_dimensions,
+                *copy_all_column_dimensions,
+                *materialize_blank_cells,
+                *hide_zero,
+                true,
             )?;
         }
         EditOperation::SetWorkbookCalculationProperties { .. } => {
@@ -2170,6 +2256,7 @@ fn copy_range(
     copy_formulas: bool,
     copy_styles: bool,
     copy_comments: bool,
+    translate_formula_references: bool,
 ) -> Result<()> {
     let (min_row, min_col, max_row, max_col) = parse_range(source_range)?;
     let (target_row, target_col) = parse_cell(target_start)?;
@@ -2184,8 +2271,15 @@ fn copy_range(
                 let Some(cell) = source.get_cell(address.as_str()) else {
                     continue;
                 };
+                let dest_row = target_row + row - min_row;
+                let dest_col = target_col + col - min_col;
                 let cell_value = if cell.cell_value().is_formula() && copy_formulas {
-                    Some(ImportCellValue::Typed(cell.cell_value().clone()))
+                    let value = if translate_formula_references {
+                        translated_formula_copy_value(cell, dest_col, dest_row)?
+                    } else {
+                        cell.cell_value().clone()
+                    };
+                    Some(ImportCellValue::Typed(value))
                 } else if copy_values && cell.cell_value().is_formula() {
                     Some(ImportCellValue::FormulaResult(cell.value().to_string()))
                 } else if copy_values {
@@ -2254,6 +2348,100 @@ enum ImportCellValue {
     FormulaResult(String),
 }
 
+fn translated_formula_copy_value(
+    source: &umya_spreadsheet::Cell,
+    target_col: u32,
+    target_row: u32,
+) -> Result<umya_spreadsheet::CellValue> {
+    anyhow::ensure!(
+        source.is_formula(),
+        "formula translation requires a formula cell"
+    );
+    let formula = source
+        .formula_obj()
+        .context("formula metadata is missing")?;
+    anyhow::ensure!(
+        formula.formula_type() == &umya_spreadsheet::CellFormulaValues::Normal
+            && !formula.bx()
+            && !formula.data_table_2d()
+            && !formula.data_table_row()
+            && !formula.input_1deleted()
+            && !formula.input_2deleted()
+            && formula.r1().is_empty()
+            && formula.r2().is_empty()
+            && formula.reference().is_empty()
+            && formula.shared_index() == 0,
+        "formula reference translation supports normal formulas only"
+    );
+    ensure_supported_formula_copy_syntax(source.formula())?;
+
+    let mut translated = source.clone();
+    translated.set_coordinate((target_col, target_row));
+    anyhow::ensure!(
+        translated.is_formula(),
+        "formula translation did not preserve formula text"
+    );
+    Ok(translated.cell_value().clone())
+}
+
+fn ensure_supported_formula_copy_syntax(formula: &str) -> Result<()> {
+    let mut in_string = false;
+    let mut in_quoted_sheet = false;
+    let mut term = String::new();
+    let mut chars = formula.chars().peekable();
+
+    while let Some(ch) = chars.next() {
+        if in_string {
+            if ch == '"' {
+                if chars.peek() == Some(&'"') {
+                    chars.next();
+                } else {
+                    in_string = false;
+                }
+            }
+            continue;
+        }
+        if in_quoted_sheet {
+            anyhow::ensure!(
+                !matches!(ch, '[' | ']'),
+                "formula reference translation does not support external workbook references"
+            );
+            if ch == '\'' {
+                if chars.peek() == Some(&'\'') {
+                    chars.next();
+                } else {
+                    in_quoted_sheet = false;
+                }
+            }
+            term.push(ch);
+            continue;
+        }
+        match ch {
+            '"' => in_string = true,
+            '\'' => {
+                in_quoted_sheet = true;
+                term.push(ch);
+            }
+            '[' | ']' | '{' | '}' | '#' | '@' => {
+                anyhow::bail!(
+                    "formula reference translation does not support structured/external, array, spill, or implicit-intersection syntax"
+                );
+            }
+            '!' => {
+                anyhow::ensure!(
+                    !term.contains(':'),
+                    "formula reference translation does not support 3-D sheet references"
+                );
+                term.clear();
+            }
+            '=' | '<' | '>' | '+' | '-' | '*' | '/' | '^' | '&' | '(' | ')' | ',' | ';' | '%'
+            | ' ' | '\t' | '\r' | '\n' => term.clear(),
+            _ => term.push(ch),
+        }
+    }
+    Ok(())
+}
+
 #[allow(clippy::too_many_arguments)]
 fn import_range(
     source_workbook: &crate::Workbook,
@@ -2275,6 +2463,7 @@ fn import_range(
     copy_all_column_dimensions: bool,
     materialize_blank_cells: bool,
     hide_zero: bool,
+    translate_formula_references: bool,
 ) -> Result<()> {
     let (min_row, min_col, max_row, max_col) = parse_range(source_range)?;
     let (target_row, target_col) = parse_cell(target_start)?;
@@ -2305,7 +2494,14 @@ fn import_range(
                     continue;
                 };
                 let value = if cell.cell_value().is_formula() && copy_formulas {
-                    Some(ImportCellValue::Typed(cell.cell_value().clone()))
+                    let dest_row = target_row + row - min_row;
+                    let dest_col = target_col + col - min_col;
+                    let value = if translate_formula_references {
+                        translated_formula_copy_value(cell, dest_col, dest_row)?
+                    } else {
+                        cell.cell_value().clone()
+                    };
+                    Some(ImportCellValue::Typed(value))
                 } else if copy_values && cell.cell_value().is_formula() {
                     let mut cached_value = cell.cell_value().clone();
                     cached_value.remove_formula();

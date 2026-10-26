@@ -115,6 +115,8 @@ pub enum EditOperationKind {
     SetCellFillColor,
     CopyRange,
     ImportRange,
+    CopyRangeWithFormulaTranslation,
+    ImportRangeWithFormulaTranslation,
     SetWorkbookCalculationProperties,
     SetPageSettings,
     ReplaceHeaderText,
@@ -254,6 +256,18 @@ pub enum EditOperation {
         copy_styles: bool,
         copy_comments: bool,
     },
+    /// Opt-in Excel copy semantics for ordinary A1 formulas. The existing
+    /// `CopyRange` variant continues to preserve formula text verbatim.
+    CopyRangeWithFormulaTranslation {
+        source_sheet: String,
+        source_range: String,
+        target_sheet: String,
+        target_start: String,
+        copy_values: bool,
+        copy_formulas: bool,
+        copy_styles: bool,
+        copy_comments: bool,
+    },
     ImportRange {
         source_workbook: PathBuf,
         source_sheet: String,
@@ -283,6 +297,35 @@ pub enum EditOperation {
         copy_all_column_dimensions: bool,
         /// Create destination cells for empty coordinates within the imported
         /// rectangle, matching APIs that materialize every source coordinate.
+        #[serde(default)]
+        materialize_blank_cells: bool,
+        hide_zero: bool,
+    },
+    /// Opt-in Excel copy semantics for ordinary A1 formulas. The existing
+    /// `ImportRange` variant continues to preserve formula text verbatim.
+    ImportRangeWithFormulaTranslation {
+        source_workbook: PathBuf,
+        source_sheet: String,
+        source_range: String,
+        target_sheet: String,
+        target_start: String,
+        copy_values: bool,
+        copy_formulas: bool,
+        style_mode: RangeStyleMode,
+        copy_comments: bool,
+        copy_merges: bool,
+        copy_row_heights: bool,
+        copy_column_widths: bool,
+        #[serde(default)]
+        copy_row_hidden: bool,
+        #[serde(default)]
+        copy_column_hidden: bool,
+        #[serde(default)]
+        copy_outline_levels: bool,
+        #[serde(default)]
+        copy_all_row_dimensions: bool,
+        #[serde(default)]
+        copy_all_column_dimensions: bool,
         #[serde(default)]
         materialize_blank_cells: bool,
         hide_zero: bool,
@@ -324,6 +367,12 @@ impl EditOperation {
             Self::SetCellFillColor { .. } => EditOperationKind::SetCellFillColor,
             Self::CopyRange { .. } => EditOperationKind::CopyRange,
             Self::ImportRange { .. } => EditOperationKind::ImportRange,
+            Self::CopyRangeWithFormulaTranslation { .. } => {
+                EditOperationKind::CopyRangeWithFormulaTranslation
+            }
+            Self::ImportRangeWithFormulaTranslation { .. } => {
+                EditOperationKind::ImportRangeWithFormulaTranslation
+            }
             Self::SetWorkbookCalculationProperties { .. } => {
                 EditOperationKind::SetWorkbookCalculationProperties
             }
@@ -489,6 +538,30 @@ impl EditOperation {
                     bail!("range copy must request at least one property");
                 }
             }
+            Self::CopyRangeWithFormulaTranslation {
+                source_sheet,
+                source_range,
+                target_sheet,
+                target_start,
+                copy_values,
+                copy_formulas,
+                copy_styles,
+                copy_comments,
+            } => {
+                if source_sheet.trim().is_empty()
+                    || target_sheet.trim().is_empty()
+                    || source_range.trim().is_empty()
+                    || target_start.trim().is_empty()
+                {
+                    bail!("range copy requires source/target sheets and ranges");
+                }
+                if !copy_values && !copy_formulas && !copy_styles && !copy_comments {
+                    bail!("range copy must request at least one property");
+                }
+                if !copy_formulas {
+                    bail!("formula-translating range copy requires copy_formulas=true");
+                }
+            }
             Self::ImportRange {
                 source_workbook,
                 source_sheet,
@@ -517,6 +590,69 @@ impl EditOperation {
                     || target_start.trim().is_empty()
                 {
                     bail!("cross-workbook range import requires source and target paths, sheets, and ranges");
+                }
+                if *copy_all_row_dimensions && !copy_row_heights && !copy_row_hidden {
+                    bail!("copy_all_row_dimensions requires copying row heights or hidden flags");
+                }
+                if *copy_all_column_dimensions && !copy_column_widths && !copy_column_hidden {
+                    bail!(
+                        "copy_all_column_dimensions requires copying column widths or hidden flags"
+                    );
+                }
+                if (*copy_all_row_dimensions || *copy_all_column_dimensions)
+                    && (!source_range_starts_at_a1(source_range)
+                        || !target_start.eq_ignore_ascii_case("A1"))
+                {
+                    bail!("copying all worksheet dimensions requires source and target ranges rooted at A1");
+                }
+                if !copy_values
+                    && !copy_formulas
+                    && matches!(style_mode, RangeStyleMode::None)
+                    && !copy_comments
+                    && !copy_merges
+                    && !copy_row_heights
+                    && !copy_column_widths
+                    && !copy_row_hidden
+                    && !copy_column_hidden
+                    && !copy_outline_levels
+                    && !copy_all_row_dimensions
+                    && !copy_all_column_dimensions
+                    && !materialize_blank_cells
+                {
+                    bail!("cross-workbook range import must copy at least one property");
+                }
+            }
+            Self::ImportRangeWithFormulaTranslation {
+                source_workbook,
+                source_sheet,
+                source_range,
+                target_sheet,
+                target_start,
+                copy_values,
+                copy_formulas,
+                style_mode,
+                copy_comments,
+                copy_merges,
+                copy_row_heights,
+                copy_column_widths,
+                copy_row_hidden,
+                copy_column_hidden,
+                copy_outline_levels,
+                copy_all_row_dimensions,
+                copy_all_column_dimensions,
+                materialize_blank_cells,
+                hide_zero: _,
+            } => {
+                if source_workbook.as_os_str().is_empty()
+                    || source_sheet.trim().is_empty()
+                    || source_range.trim().is_empty()
+                    || target_sheet.trim().is_empty()
+                    || target_start.trim().is_empty()
+                {
+                    bail!("cross-workbook range import requires source and target paths, sheets, and ranges");
+                }
+                if !copy_formulas {
+                    bail!("formula-translating range import requires copy_formulas=true");
                 }
                 if *copy_all_row_dimensions && !copy_row_heights && !copy_row_hidden {
                     bail!("copy_all_row_dimensions requires copying row heights or hidden flags");
