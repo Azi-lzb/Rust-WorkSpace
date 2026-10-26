@@ -5,7 +5,8 @@
 //! at the service/CLI boundary so the calculation can be compared independently.
 
 use crate::central_csv::{
-    header_matches, parse_central_csv, parse_central_grid, CentralDataset, CentralValue,
+    header_matches, parse_central_csv, parse_central_grid, CentralDataset, CentralRecord,
+    CentralValue,
 };
 use anyhow::{bail, ensure, Context, Result};
 use chrono::{Local, NaiveDate, NaiveDateTime};
@@ -127,9 +128,42 @@ struct PairedValue {
     previous: Option<f64>,
 }
 
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+struct IndicatorDimensionKey {
+    indicator: String,
+    data_attr: String,
+    currency: String,
+    frequency: String,
+    batch: String,
+}
+
+impl IndicatorDimensionKey {
+    fn new(indicator: &str, data_attr: &str, currency: &str, frequency: &str, batch: &str) -> Self {
+        Self {
+            indicator: indicator.to_owned(),
+            data_attr: data_attr.to_owned(),
+            currency: currency.to_owned(),
+            frequency: frequency.to_owned(),
+            batch: batch.to_owned(),
+        }
+    }
+
+    fn from_record(record: &CentralRecord) -> Self {
+        Self::new(
+            &record.indicator,
+            &record.data_attr,
+            &record.currency,
+            &record.frequency,
+            &record.batch,
+        )
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 struct InstitutionData {
-    values: HashMap<String, PairedValue>,
+    values: HashMap<IndicatorDimensionKey, PairedValue>,
+    // One-segment legacy expressions already contain the old concatenated code.
+    legacy_values: HashMap<String, PairedValue>,
 }
 
 /// Evaluate the configured cross-period rules in input order.
@@ -1081,7 +1115,7 @@ fn build_data_store(
     target_unit: &str,
 ) -> (
     DataStore,
-    HashSet<String>,
+    HashSet<(String, String)>,
     HashMap<String, String>,
     HashMap<String, String>,
 ) {
@@ -1119,13 +1153,13 @@ fn feed_dataset(
     side: &str,
     sentinel: f64,
     store: &mut DataStore,
-    frequencies: &mut HashSet<String>,
+    frequencies: &mut HashSet<(String, String)>,
     institution_names: &mut HashMap<String, String>,
     region_names: &mut HashMap<String, String>,
 ) {
     for record in &dataset.records {
         let institution_region = format!("{}{}", record.org_code, record.region_code);
-        frequencies.insert(format!("{}{}", record.frequency, record.batch));
+        frequencies.insert((record.frequency.clone(), record.batch.clone()));
         institution_names
             .entry(record.org_code.clone())
             .or_insert_with(|| record.org_name.clone());
@@ -1146,14 +1180,21 @@ fn feed_dataset(
         };
         let value = numeric_value(&record.value);
         let value = if value == 0.0 { sentinel } else { value };
-        let entry = store.ordered[position]
-            .1
+        let data = &mut store.ordered[position].1;
+        let entry = data
             .values
-            .entry(record.attr_key())
+            .entry(IndicatorDimensionKey::from_record(record))
             .or_default();
+        let legacy_entry = data.legacy_values.entry(record.attr_key()).or_default();
         match side {
-            "cur" => entry.current = Some(value),
-            "pre" => entry.previous = Some(value),
+            "cur" => {
+                entry.current = Some(value);
+                legacy_entry.current = Some(value);
+            }
+            "pre" => {
+                entry.previous = Some(value);
+                legacy_entry.previous = Some(value);
+            }
             _ => unreachable!("only current and previous datasets are fed"),
         }
     }
@@ -1264,13 +1305,14 @@ fn is_disabled(value: &str) -> bool {
     matches!(value.trim(), "是" | "1" | "true" | "True" | "Y" | "y")
 }
 
-fn rule_frequency_ok(expression: &str, frequencies: &HashSet<String>) -> bool {
+fn rule_frequency_ok(expression: &str, frequencies: &HashSet<(String, String)>) -> bool {
     for token in expression_tokens(expression) {
         let segments = token.split(',').map(str::trim).collect::<Vec<_>>();
         if segments.len() != 1 && segments.len() != 5 {
             return false;
         }
-        if segments.len() == 5 && !frequencies.contains(&format!("{}{}", segments[3], segments[4]))
+        if segments.len() == 5
+            && !frequencies.contains(&(segments[3].to_owned(), segments[4].to_owned()))
         {
             return false;
         }
@@ -1322,21 +1364,20 @@ fn substitute_tokens(expression: &str, data: &InstitutionData) -> String {
         output.push_str(&expression[cursor..start]);
         let body = &expression[start + 1..end];
         let segments = body.split(',').map(str::trim).collect::<Vec<_>>();
-        let unique_code = match segments.as_slice() {
-            [single] => (*single).to_owned(),
+        let value = match segments.as_slice() {
+            [single] => data.legacy_values.get(*single),
             [indicator, data_attr, currency, frequency, batch] => {
-                format!("{indicator}{data_attr}{currency}{frequency}{batch}")
+                let key =
+                    IndicatorDimensionKey::new(indicator, data_attr, currency, frequency, batch);
+                data.values.get(&key)
             }
-            _ => String::new(),
-        };
-        let value = data
-            .values
-            .get(&unique_code)
-            .and_then(|value| match value_side {
-                "cur" => value.current,
-                "pre" => value.previous,
-                _ => None,
-            });
+            _ => None,
+        }
+        .and_then(|value| match value_side {
+            "cur" => value.current,
+            "pre" => value.previous,
+            _ => None,
+        });
         match value {
             Some(value) => output.push_str(&python_float_repr(value)),
             // Python's token substitution uses the literal "0" when no
@@ -2022,6 +2063,31 @@ mod tests {
     }
 
     #[test]
+    fn keeps_frequency_and_batch_dimensions_separate_in_five_segment_tokens() {
+        let current = dataset(
+            vec![
+                record("0001", "1234567", "I1", "月", "12", 1.0),
+                record("0001", "1234567", "I1", "月1", "2", 2.0),
+            ],
+            "2026-08-31",
+        );
+        let rules = [rule(
+            "[I1,余额,人民币,月,12]",
+            "[I1,余额,人民币,月1,2]",
+            "left < right",
+        )];
+
+        let result = run_current_value_check(&current, None, &rules, "亿元", |_, _| true);
+
+        assert_eq!(result.rows.len(), 1);
+        assert_eq!(result.rows[0].left_value, 1.0);
+        assert_eq!(result.rows[0].right_value, 2.0);
+
+        let available = HashSet::from([("月".to_owned(), "12".to_owned())]);
+        assert!(!rule_frequency_ok("[I1,余额,人民币,月1,2]", &available));
+    }
+
+    #[test]
     fn skips_previous_period_rules_when_previous_dataset_is_absent() {
         let current = dataset(
             vec![record("0001", "1234567", "I1", "月", "2", 8.0)],
@@ -2117,13 +2183,14 @@ mod tests {
     #[test]
     fn missing_tokens_use_python_zero_literal() {
         let data = InstitutionData {
-            values: HashMap::from([(
+            legacy_values: HashMap::from([(
                 "present".to_owned(),
                 PairedValue {
                     current: Some(1.0),
                     previous: Some(2.0),
                 },
             )]),
+            ..InstitutionData::default()
         };
 
         assert_eq!(substitute_tokens("[missing]+{missing}", &data), "0+0");

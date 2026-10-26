@@ -1,0 +1,29 @@
+# S3-F04：频度与批次分段键修复
+
+- 时间：2026-10-27（本机时间）
+- 执行者：Codex
+- 分支：audit-dev
+- 修改前 commit：2922900
+- 修改后 commit：本记录随本轮功能提交，SHA 见 Git 历史。
+- WIP：开始前保留已有工作树修改。本轮只修改 `audit-core/src/s3_current_value_check.rs` 并新增本记录；没有改写其它未提交文件。
+
+## 目的与变更
+
+V2 的 S3-F2 要求五段指标引用中的频度和批次保持独立维度。原 Rust `s3_current_value_check` 将五段式指标字段拼接成一个字符串，频度/批次组合（例如 `月`+`12` 与 `月1`+`2`）会发生键碰撞，导致两条记录互相覆盖。本轮新增结构化五字段键，并把频度/批次存在性索引改为二元组。单段旧式指标码继续使用独立兼容索引，未改变单段引用口径、结果表结构或 CLI/Web API。
+
+## 验证
+
+- `rustfmt audit-core/src/s3_current_value_check.rs`：通过。
+- `cargo test --offline --locked -p audit-core s3_current_value_check::tests:: --lib`：15 passed。
+- `cargo check --offline --locked -p audit-core --lib`：通过。
+- `cargo build --offline --locked -p audit-core --bin open-data-audit`：通过。
+- `cargo run --offline --locked -q -p audit-core --bin open-data-audit -- s3-check-current-values --help`：退出码 0，CLI 命令可启动并显示输入参数。
+- `cargo test --offline --locked -p audit-core web_bridge::tests::s3_current_value_check_runs_through_the_web_api --lib`：1 passed。
+
+## 未执行项与限制
+
+本轮只用合成碰撞边界验证 Rust 维度隔离；没有重新运行真实 Python/Rust 业务样本对拍。该极端拼接碰撞修复按 V2 明确的“不合并频度、批次”要求纠正旧 Python 同类拼接行为；若真实配置允许字段内包含逗号或存在其它非标准组合，还需以旧配置和业务样本验证。S3-F2 整体仍为迁移中，Linux/deb 未验证。
+
+## 回滚与版本
+
+回滚本次功能提交即可恢复旧索引实现。本次业务代码修正不升级组件版本。
