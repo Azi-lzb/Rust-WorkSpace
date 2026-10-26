@@ -1044,3 +1044,9 @@ Windows 原生验证：`cargo fmt -p pytools-core -- --check`、`cargo check --o
 新版菜单 `2 → 3` 现先单选用户已检查的 `.xlsx` 时序宽表中间文件，再调用现有去重追加计划与执行逻辑；仅覆盖启用任务的来源工作簿路径，保留配置中的来源 Sheet、复合键、目标工作簿/Sheet 及提交规则。此步骤不自动调用或串联 PT-1-1，也不回写配置。直接 `dedup-append-plan --config` 命令仍遵循配置路径，保持旧 CLI 合同。
 
 Windows 原生验证：`cargo fmt -p pytools-core -- --check`、`cargo check --offline --locked -q -p pytools-core --bin pytools -j 1`、`cargo test --offline --locked -q -p pytools-core --test dedup_menu_cli --test dedup_append_execution -j 1`（14/14）、`git diff --check` 通过。菜单集成测试用与配置旧来源不同的临时工作簿，确认追加的数据来自用户所选输入；新目标照常经确认、安全发布且两份来源均不变。无真实用户中间表可验，Python/Rust 对拍、Excel 手工打开和 Linux/deb 验收未执行；PT-2-5 整体状态仍为**已实现，待 Windows 真实验收**。
+
+### 2026-10-27 PT-4-8 提交检查递归扫描错误处理
+
+修复提交检查直接接收目录时递归扫描会吞掉 `read_dir` 和目录项读取错误、继续生成可能缺文件的报告的问题。现在扫描错误会传播到调用端，运行日志记录 `input_scan` 失败及 `input_scan_failed`，并在生成报告前停止；不存在的顶层路径仍按现有行为忽略。生命周期仍为**已实现，待 Windows 真实验收**。
+
+Windows 原生验证：`cargo fmt -p pytools-core`、`cargo check --offline --locked -q -p pytools-core --bin pytools -j 1`、新增递归扫描错误单测 1/1、`submission_check_parity` 4/4、`git diff --check` 通过。现有合成 Python/Rust 报表对拍回归通过；未模拟真实权限拒绝/瞬时 I/O 故障，未进行用户样本、Windows 真实目录或 Linux/deb 验收，状态不升级。

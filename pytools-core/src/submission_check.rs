@@ -191,7 +191,21 @@ where
         Some("Rust filesystem"),
         None,
     );
-    let files = collect_files(inputs);
+    let files = match collect_files(inputs) {
+        Ok(files) => files,
+        Err(error) => {
+            emitter.emit(
+                "input_scan",
+                "failed",
+                "扫描所选文件夹失败，提交检查已停止。",
+                Some(stage_started),
+                &["std::fs"],
+                Some("Rust filesystem"),
+                Some("input_scan_failed"),
+            );
+            return Err(error);
+        }
+    };
     emitter.progress.total_files = files.len();
     emitter.emit(
         "input_scan",
@@ -573,12 +587,12 @@ fn split_tokens(value: &str) -> Vec<String> {
         .map(str::to_owned)
         .collect()
 }
-fn collect_files(inputs: &[PathBuf]) -> Vec<PathBuf> {
+fn collect_files(inputs: &[PathBuf]) -> Result<Vec<PathBuf>> {
     let mut out = Vec::new();
     let mut seen = std::collections::BTreeSet::new();
     for path in inputs {
         if path.is_dir() {
-            walk(path, &mut out);
+            walk(path, &mut out)?;
         } else if path.is_file() {
             out.push(path.clone());
         }
@@ -591,19 +605,56 @@ fn collect_files(inputs: &[PathBuf]) -> Vec<PathBuf> {
             .starts_with("~$")
     });
     out.retain(|path| seen.insert(path.canonicalize().unwrap_or_else(|_| path.clone())));
-    out
+    Ok(out)
 }
-fn walk(root: &Path, out: &mut Vec<PathBuf>) {
-    let Ok(entries) = fs::read_dir(root) else {
-        return;
-    };
-    for entry in entries.flatten() {
+fn walk(root: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
+    let entries = fs::read_dir(root)
+        .with_context(|| format!("scan submission-check directory {}", root.display()))?;
+    for entry in entries {
+        let entry = entry.with_context(|| {
+            format!(
+                "read submission-check directory entry in {}",
+                root.display()
+            )
+        })?;
         let path = entry.path();
         if path.is_dir() {
-            walk(&path, out);
+            walk(&path, out)?;
         } else if path.is_file() {
             out.push(path);
         }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::walk;
+    use anyhow::Result;
+    use std::{
+        fs,
+        path::PathBuf,
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
+    #[test]
+    fn recursive_scan_reports_read_dir_errors() -> Result<()> {
+        let nonce = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "pytools-submission-scan-file-{}-{nonce}.tmp",
+            std::process::id()
+        ));
+        fs::write(&path, b"not a directory")?;
+        let mut files = Vec::<PathBuf>::new();
+        let result = walk(&path, &mut files);
+        fs::remove_file(&path)?;
+
+        let error = result.expect_err("scanning a file as a directory must fail");
+        assert!(error
+            .to_string()
+            .contains("scan submission-check directory"));
+        assert!(files.is_empty());
+        Ok(())
     }
 }
 fn write_table(
