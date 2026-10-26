@@ -1,0 +1,28 @@
+时间：2026-10-26 22:15（Asia/Shanghai）
+执行者：Codex
+分支：pytools-dev
+修改前 HEAD：16678d63e2fa271abd63aa98adb5143908d8b132
+修改后提交：待本轮提交
+工作区状态：修改前 MIGRATION_INVENTORY.md 已含此前未提交修改；HANDOFF_ZCODE_TO_CODEX.md、docs/PYTOOLS_RUST_V2_BUSINESS_REQUIREMENTS.md 和两份历史修改记录为未跟踪文件。均保留，未纳入本次变更。
+
+目的：把已实现的 PT-3-3 静态打印配置计划/ExcelModifier 执行能力接入 PyTools Rust V2 菜单 3→1，满足用户要求的可操作入口。
+
+变更文件：
+- pytools-core/src/bin/pytools.rs：仅 V2 打印菜单允许带匹配 capability/platform 时确认执行；缺少证据及拒绝确认都明确保持 plan-only。旧版菜单行为不变。
+- pytools-core/tests/print_menu_cli.rs：以合成 XLSX 和测试专用 capability 验证 V2 plan-only、拒绝及执行、新建目标、源与配置不变、PT-3-3 实际引擎运行历史。
+- pytools-core/MIGRATION_INVENTORY.md：增补本次入口与验证范围，未将 PT-3-3 标记为业务验收通过。
+
+逻辑与兼容影响：复用既有配置加载、打印计划和 ExcelModifier，不新增业务算法、不改变配置格式、不调用 Python。Legacy 9 类菜单仍维持原 PT-3-3 plan-only 路径。没有 VBA 变更。
+
+验证（Windows 原生 MSVC，构建及临时目录位于 F:\PyTools_Rust_本轮工作文件_20261026）：
+- cargo fmt --manifest-path pytools-core/Cargo.toml -- --check：通过。
+- cargo test --offline --locked --manifest-path pytools-core/Cargo.toml --test print_menu_cli --test print_config_new_target -j 1 -q：8/8 通过（菜单 6/6，新目标/保真 2/2）。
+- cargo build --offline --locked --manifest-path pytools-core/Cargo.toml --bin pytools -j 1：通过。
+- git diff --check：通过。
+- Python/Rust 业务对拍：本轮未执行；没有真实业务打印模板或生产 Passed capability。
+
+未验证/已知问题：测试 capability 仅验证入口调用路径，不能视为生产 ExcelModifier 能力。真实模板、公式缓存新鲜度、Windows 用户人工验收、Linux/glibc 2.28、麒麟 V10/UOS V20 与离线 deb 均未验收。PT-3-3 保持迁移中。
+
+删除清单：无。
+回滚：如需撤销本项，可在确认无后续提交依赖后 revert 本次功能提交；不删除配置、夹具或既有历史记录。
+【组件版本】pytools-core 0.1.0，不升级。

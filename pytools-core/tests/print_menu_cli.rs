@@ -3,7 +3,10 @@ use excel_editor::{
     BackendCapability, CapabilityEvidence, CapabilityStatus, EditOperation, EngineId, ExcelEditPlan,
 };
 use excel_reader::read_workbook;
-use pytools_core::print_ops::build_comment_print_plan;
+use pytools_core::{
+    config::load_print_tasks,
+    print_ops::{build_comment_print_plan, build_config_print_plans},
+};
 use serde::Deserialize;
 use serde_json::Value;
 use std::{
@@ -17,6 +20,7 @@ use std::{
 
 static NEXT_TEST_DIRECTORY_ID: AtomicU64 = AtomicU64::new(0);
 const COMMENT_PRINT_PLATFORM: &str = "synthetic-pt-3-1-3-2-menu";
+const V2_CONFIG_PRINT_PLATFORM: &str = "synthetic-pt-3-3-v2-menu";
 
 struct TestDirectory(PathBuf);
 
@@ -227,6 +231,112 @@ fn interactive_print_menu_logs_all_actions_and_off_suppresses_progress() -> Resu
 }
 
 #[test]
+fn v2_config_print_requires_capability_and_confirmation_before_writing() -> Result<()> {
+    let root = TestDirectory::new()?;
+    let source = root.path().join("source.xlsx");
+    let target = root.path().join("printed.xlsx");
+    let config = create_print_config(root.path(), &source, &target)?;
+    create_print_source(&source)?;
+    let source_before = fs::read(&source)?;
+    let config_before = fs::read(&config)?;
+
+    let plan_only = run_v2_menu(&config, "3\n1\n0\n", "developer")?;
+    assert!(
+        plan_only.status.success(),
+        "V2 print plan failed: {}",
+        String::from_utf8_lossy(&plan_only.stderr)
+    );
+    assert!(String::from_utf8_lossy(&plan_only.stdout)
+        .contains("未提供配对的 ExcelModifier 能力与平台证据"));
+    let plan_only_report = menu_object_json(&plan_only)?;
+    assert_eq!(plan_only_report["execution"], "plan_only");
+    assert!(
+        !target.exists(),
+        "plan-only must not create the print target"
+    );
+    assert_eq!(fs::read(&source)?, source_before);
+
+    let tasks = load_print_tasks(&config)?;
+    let plan = build_config_print_plans(&tasks)?
+        .into_iter()
+        .next()
+        .and_then(|report| report.plan)
+        .context("synthetic V2 print task should produce an edit plan")?;
+    let capability_path = root.path().join("config-print-capability.json");
+    write_config_print_capability(&plan, &capability_path)?;
+
+    let declined = run_v2_menu_with_capability(&config, &capability_path, "3\n1\nn\n0\n", "user")?;
+    assert!(
+        declined.status.success(),
+        "declined V2 print execution failed: {}",
+        String::from_utf8_lossy(&declined.stderr)
+    );
+    assert!(String::from_utf8_lossy(&declined.stdout).contains("用户未确认"));
+    let declined_report = menu_object_json(&declined)?;
+    assert_eq!(declined_report["execution"], "plan_only");
+    assert!(
+        !target.exists(),
+        "declined execution must not create target"
+    );
+    assert_eq!(fs::read(&source)?, source_before);
+
+    let confirmed =
+        run_v2_menu_with_capability(&config, &capability_path, "3\n1\ny\n0\n", "developer")?;
+    assert!(
+        confirmed.status.success(),
+        "confirmed V2 print execution failed: {}",
+        String::from_utf8_lossy(&confirmed.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&confirmed.stdout);
+    assert!(stdout.contains("按配置生成独立静态打印工作簿"));
+    let report = menu_object_json(&confirmed)?;
+    assert_eq!(report["execution"]["engine"], "umya_spreadsheet");
+    assert_eq!(
+        report["report"]["output"],
+        target.to_string_lossy().as_ref()
+    );
+    assert!(target.is_file());
+    let printed = read_workbook(&target)?;
+    assert_eq!(printed.sheets.len(), 1);
+    assert_eq!(printed.sheets[0].name, "Printed");
+    assert_eq!(printed.sheets[0].values["A1"]["value"].as_f64(), Some(0.0));
+    assert_eq!(fs::read(&source)?, source_before);
+    assert_eq!(fs::read(&config)?, config_before);
+
+    let histories = fs::read_dir(root.path().join("logs"))?
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with("pytools-print-config_plan-"))
+        })
+        .collect::<Vec<_>>();
+    let history_values = histories
+        .into_iter()
+        .map(|path| -> Result<Value> {
+            let text = fs::read_to_string(path)?;
+            assert!(!text.contains(&source.to_string_lossy().to_string()));
+            assert!(!text.contains(&config.to_string_lossy().to_string()));
+            Ok(serde_json::from_str(&text)?)
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let history = history_values
+        .into_iter()
+        .find(|history| {
+            history["status"] == "succeeded" && history["excel_modifier_invoked"] == true
+        })
+        .context("successful V2 print execution history missing")?;
+    assert_eq!(history["feature_id"], "PT-3-3");
+    assert_eq!(history["status"], "succeeded");
+    assert_eq!(history["excel_modifier_invoked"], true);
+    assert!(history["actual_engines"]
+        .as_array()
+        .is_some_and(|engines| engines.iter().any(|engine| engine == "umya_spreadsheet")));
+    Ok(())
+}
+
+#[test]
 fn interactive_print_comment_menu_executes_after_capability_and_confirmation() -> Result<()> {
     let root = TestDirectory::new()?;
     for (choice, drop_comments, hide_zero) in [(1, false, false), (2, true, true)] {
@@ -379,6 +489,27 @@ fn write_comment_print_capability(plan: &ExcelEditPlan, path: &Path) -> Result<(
     Ok(())
 }
 
+fn write_config_print_capability(plan: &ExcelEditPlan, path: &Path) -> Result<()> {
+    let capability = BackendCapability {
+        engine: EngineId::UmyaSpreadsheet,
+        status: CapabilityStatus::Passed,
+        format: plan.format,
+        operations: plan.operations.iter().map(EditOperation::kind).collect(),
+        supported_features: plan.workbook.features_present.clone(),
+        preserved: plan.preserve.clone(),
+        platform: V2_CONFIG_PRINT_PLATFORM.to_owned(),
+        evidence: Some(CapabilityEvidence {
+            sample_id: "synthetic-pt-3-3-v2-menu".to_owned(),
+            report_path: "pytools-core/tests/print_menu_cli.rs".to_owned(),
+            adapter_version: "umya-spreadsheet-3.1.1".to_owned(),
+            engine_version: "umya-spreadsheet-3.1.1".to_owned(),
+            platform: V2_CONFIG_PRINT_PLATFORM.to_owned(),
+        }),
+    };
+    fs::write(path, serde_json::to_vec_pretty(&capability)?)?;
+    Ok(())
+}
+
 fn create_print_source(path: &Path) -> Result<()> {
     let mut workbook = rust_xlsxwriter::Workbook::new();
     let sheet = workbook.add_worksheet();
@@ -482,6 +613,54 @@ fn create_print_config(root: &Path, source: &Path, target: &Path) -> Result<Path
 
 fn run_menu(config: &Path, input: &str) -> Result<Output> {
     run_menu_with_view(config, input, "user")
+}
+
+fn run_v2_menu(config: &Path, input: &str, log_view: &str) -> Result<Output> {
+    run_v2_menu_command(config, None, input, log_view)
+}
+
+fn run_v2_menu_with_capability(
+    config: &Path,
+    capability: &Path,
+    input: &str,
+    log_view: &str,
+) -> Result<Output> {
+    run_v2_menu_command(config, Some(capability), input, log_view)
+}
+
+fn run_v2_menu_command(
+    config: &Path,
+    capability: Option<&Path>,
+    input: &str,
+    log_view: &str,
+) -> Result<Output> {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_pytools"));
+    command
+        .arg("menu-v2")
+        .arg("--config")
+        .arg(config)
+        .arg("--log-view")
+        .arg(log_view);
+    if let Some(capability) = capability {
+        command
+            .arg("--capabilities")
+            .arg(capability)
+            .arg("--platform")
+            .arg(V2_CONFIG_PRINT_PLATFORM);
+    }
+    let mut child = command
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .context("start PyTools Rust V2 menu")?;
+    child
+        .stdin
+        .take()
+        .context("V2 menu stdin missing")?
+        .write_all(input.as_bytes())
+        .context("send V2 menu selections")?;
+    child.wait_with_output().context("wait for PyTools V2 menu")
 }
 
 fn run_menu_with_view(config: &Path, input: &str, log_view: &str) -> Result<Output> {

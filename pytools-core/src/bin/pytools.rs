@@ -360,6 +360,7 @@ where
                 allow_native_dialog,
                 capabilities,
                 platform,
+                false,
             )?,
             "4" => run_interactive_convert_menu(
                 input,
@@ -1019,6 +1020,7 @@ where
             allow_native_dialog,
             capabilities,
             platform,
+            true,
         ),
         V2LegacyMenu::Convert => run_interactive_convert_menu(
             &mut routed_input,
@@ -3619,6 +3621,7 @@ fn run_interactive_print_menu<R, W>(
     allow_native_dialog: bool,
     capabilities: Option<&Path>,
     platform: Option<&str>,
+    allow_config_execution: bool,
 ) -> Result<()>
 where
     R: BufRead,
@@ -3750,6 +3753,54 @@ where
                     "--output-dir".to_owned(),
                     output_dir.to_string_lossy().into_owned(),
                 ]);
+                let confirmed_execution = if allow_config_execution {
+                    match (capabilities, platform) {
+                        (Some(_), Some(_)) => {
+                            writeln!(
+                                output,
+                                "[确认] 将按配置生成独立静态打印工作簿；只写入尚不存在的目标，源工作簿保持不变。"
+                            )?;
+                            read_menu_choice(
+                                input,
+                                output,
+                                "输入 y/yes/是 执行；其他输入仅生成计划> ",
+                            )?
+                            .is_some_and(|answer| {
+                                matches!(
+                                    answer.trim().to_ascii_lowercase().as_str(),
+                                    "y" | "yes" | "是"
+                                )
+                            })
+                        }
+                        _ => {
+                            writeln!(
+                                output,
+                                "[未执行] 未提供配对的 ExcelModifier 能力与平台证据；仅生成计划，不会写入打印工作簿。"
+                            )?;
+                            false
+                        }
+                    }
+                } else {
+                    false
+                };
+                if confirmed_execution {
+                    let (Some(capabilities), Some(platform)) = (capabilities, platform) else {
+                        unreachable!(
+                            "confirmed config print execution requires capability and platform"
+                        )
+                    };
+                    arguments.extend([
+                        "--capabilities".to_owned(),
+                        capabilities.to_string_lossy().into_owned(),
+                        "--platform".to_owned(),
+                        platform.to_owned(),
+                    ]);
+                } else if allow_config_execution && capabilities.is_some() && platform.is_some() {
+                    writeln!(
+                        output,
+                        "[未执行] 用户未确认；仅生成计划，不会写入打印工作簿。"
+                    )?;
+                }
                 run_print_menu_action(
                     output,
                     global,

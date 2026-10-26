@@ -1104,3 +1104,9 @@ V2 菜单 2→1（PT-2-3）与 2→2（PT-2-4）复用现有 Rust 配置去重�
 ### 2026-10-26 PT-2-5 V2 去重追加菜单冒烟
 
 Windows 合成菜单测试使用 V2 2→3 选择 PT-2-5，确认后通过现有 Rust 追加流程为新历史目标生成工作簿；核对目标与候选相同、运行历史记录 PT-2-5/rust_xlsxwriter，源工作簿字节不变。此路径与 PT-6-1 中间表生成分开调用。完整 dedup_menu_cli 测试 9/9、格式检查及 pytools 二进制构建通过。本轮只补 V2 入口回归，没有新增 Python/Rust 数据对拍；真实样本、生产编辑 capability 及 PT-2-5 既有目标修改仍未验证，生命周期状态不升级。
+
+### 2026-10-26 PyTools Rust V2 按配置静态打印执行入口
+
+V2 菜单 3→1 现可通过既有 PT-3-3 配置计划及 ExcelModifier 执行路径生成静态打印工作簿；未提供成对能力/平台证据时只生成计划，提供时仍须用户明确确认。拒绝确认不写工作簿；旧版 9 类菜单的 PT-3-3 行为不变。菜单历史记录按实际执行引擎记录，源工作簿与配置保持不变。
+
+Windows 原生 `cargo fmt --manifest-path pytools-core/Cargo.toml -- --check`、`cargo test --offline --locked --manifest-path pytools-core/Cargo.toml --test print_menu_cli --test print_config_new_target -j 1 -q`（6/6 与 2/2）、`cargo build --offline --locked --manifest-path pytools-core/Cargo.toml --bin pytools -j 1` 通过。合成菜单用例覆盖 plan-only、拒绝和确认执行；相关新目标测试验证写入新目标及既有样式/结构检查。临时 Passed capability 仅用于测试，不是生产路由。本轮未新增 Python/Rust 对拍；真实打印模板、公式缓存语义、生产 capability、Windows 人工验收及 Linux/目标机仍未验收，PT-3-3 不提升验收状态。PT-1-2 继续排除。
