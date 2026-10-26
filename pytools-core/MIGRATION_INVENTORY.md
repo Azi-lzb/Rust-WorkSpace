@@ -935,3 +935,11 @@ Windows 原生验证：`cargo fmt --manifest-path pytools-core/Cargo.toml -- --c
 只读对照 PyCode 真实 config.xlsx：重命名配置表的 M/N 表头存在，数据跨度为 61 行，规则单元格为空。Python _load_file_local_rename_map 返回 61 条 nan→nan 规则，因为 pandas.read_excel(dtype=object) 将缺失单元格读为 NaN，Python _norm 再将其字符串化为 nan；Rust 原加载器则误判为空映射并报错。
 Rust 配置读取现按该行为处理缺失及显式空单元格。对拍期间还发现既有合成 Python 基线将空目标误记为删除；用原 Python 函数重跑后更正为 prefix_nan.doc，统计仍为 ok=5、skip=5、rules=6。新增缺失 M/N 单元格映射回归，原 Python 输出为 ok=2、skip=1、rules=4，Rust API 断言结果及文件字节一致。
 Windows 原生格式检查、PT-4-8 集成测试、CLI 构建通过；原配置 Python/Rust CLI 均为 ok=0、skip=1、rules=61，输入使用不存在的临时路径，未执行真实文件改名。真实业务目录和用户样本仍未验证；未修改 Python 源或共享 crate。
+
+### 2026-10-26 PT-2-5 去重菜单确认后提交接入
+
+生产入口 `pytools menu → 2 → 5` 现生成计划并展示目标与追加计数，只有输入 y/yes/是 才执行提交；取消或输入结束保持计划模式。新目标复用 `dedup-append-execute --commit-target` 与 rust_xlsxwriter，先写候选并重开验证，再以安全的新建提交目标；既有目标只有在启动菜单同时提供 capability/platform 时才进入 ExcelModifier，缺少证据时只保留计划。遵循全局“输出附带计划文件”设置；关闭时执行仅使用并清理临时计划文件。developer 历史记录读取/规划与写入/修改阶段耗时、实际引擎及是否调用 writer/Modifier，不记录输入路径。
+
+Windows 原生回归：`cargo test --offline --locked -p pytools-core --test dedup_menu_cli --test dedup_append_execution -j 1`，11/11 通过；包含确认创建新目标、取消保留计划、既有目标缺 capability 时未改动，以及合成 capability 经菜单提交既有目标。`cargo build --offline --locked -p pytools-core --bin pytools -j 1` 通过。Ubuntu WSL 普通 host 回归同命令 11/11 通过；此为普通 Linux 功能验证，不是 glibc 2.28 构建或目标系统验收。
+
+本轮没有原项目真实样本，未重新运行 Python/Rust 业务对拍；既有 `probe/reports/real_shape_dedup_parity_20261025.json` 仍只证明真实参数形态 × 合成文件对拍。PT-2-5 整项的真实业务样本、生产 capability、Excel 保真目标验收、麒麟/UOS 与离线 deb 仍未验收。

@@ -1,4 +1,8 @@
 use anyhow::{Context, Result};
+use excel_editor::{
+    BackendCapability, CapabilityEvidence, CapabilityStatus, EditOperation, EngineId, ExcelEditPlan,
+};
+use pytools_core::dedup_ops::AppendTargetPlan;
 use serde::Deserialize;
 use serde_json::Value;
 use std::{
@@ -142,7 +146,7 @@ fn interactive_dedup_menu_routes_all_six_actions_without_committing_edits() -> R
     assert!(append_plan.status.success());
     let append_json = output_json(&append_plan)?;
     assert_eq!(append_json[0]["target_existed"], false);
-    assert_eq!(append_json[0]["execution"], "run dedup-append-execute");
+    assert_eq!(append_json[0]["execution"], "plan_only");
     let append_plan_file = PathBuf::from(
         append_json[0]["plan_file"]
             .as_str()
@@ -170,6 +174,174 @@ fn interactive_dedup_menu_routes_all_six_actions_without_committing_edits() -> R
     );
     let log_dir = root.path().join("logs");
     assert!(!log_dir.exists() || fs::read_dir(log_dir)?.next().is_none());
+    Ok(())
+}
+
+#[test]
+fn interactive_dedup_append_requires_confirmation_then_creates_a_new_target() -> Result<()> {
+    let root = TestDirectory::new()?;
+    let config = create_dedup_config(root.path())?;
+    let source = root.path().join("source.xlsx");
+    let target = root.path().join("target.xlsx");
+    create_duplicate_source(&source)?;
+    let source_before = fs::read(&source)?;
+
+    let output = run_menu_with_view(&config, "2\n5\nyes\n0\n", "developer")?;
+    assert!(
+        output.status.success(),
+        "confirmed append failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report = output_json(&output)?;
+    assert_eq!(report[0]["status"], "succeeded");
+    assert_eq!(report[0]["execution"], "committed");
+    assert_eq!(report[0]["target_existed"], false);
+    assert_eq!(
+        report[0]["execution_result"]["target_commit"]["operation"],
+        "created"
+    );
+    assert!(target.is_file());
+    let candidate = PathBuf::from(
+        report[0]["candidate"]
+            .as_str()
+            .context("append candidate path missing")?,
+    );
+    assert!(candidate.is_file());
+    assert_eq!(fs::read(&target)?, fs::read(&candidate)?);
+    assert_eq!(fs::read(&source)?, source_before);
+
+    let log_dir = root.path().join("logs");
+    let histories = fs::read_dir(&log_dir)?
+        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+        .filter(|path| {
+            path.extension()
+                .is_some_and(|extension| extension == "json")
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(histories.len(), 1);
+    let history_text = fs::read_to_string(&histories[0])?;
+    let history: Value = serde_json::from_str(&history_text)?;
+    assert_eq!(history["feature_id"], "PT-2-5");
+    assert_eq!(history["status"], "succeeded");
+    assert_eq!(history["excel_writer_invoked"], true);
+    assert_eq!(history["excel_modifier_invoked"], false);
+    assert_eq!(history["plan_only"], false);
+    assert!(history["actual_engines"]
+        .as_array()
+        .is_some_and(|engines| engines.iter().any(|engine| engine == "rust_xlsxwriter")));
+    assert!(history["stages"].as_array().is_some_and(|stages| stages
+        .iter()
+        .any(|stage| stage["name"] == "new_workbook_write_and_reopen")));
+    assert!(!history_text.contains("source.xlsx"));
+    assert!(!history_text.contains(&root.path().to_string_lossy().to_string()));
+    Ok(())
+}
+
+#[test]
+fn interactive_dedup_append_keeps_existing_target_plan_only_without_capability() -> Result<()> {
+    let root = TestDirectory::new()?;
+    let config = create_dedup_config(root.path())?;
+    let source = root.path().join("source.xlsx");
+    let target = root.path().join("target.xlsx");
+    create_duplicate_source(&source)?;
+    create_initial_target(&target)?;
+    let source_before = fs::read(&source)?;
+    let target_before = fs::read(&target)?;
+
+    let output = run_menu(&config, "2\n5\n0\n")?;
+    assert!(
+        output.status.success(),
+        "plan-only append failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report = output_json(&output)?;
+    assert_eq!(report[0]["target_existed"], true);
+    assert_eq!(report[0]["status"], "planned_only");
+    assert_eq!(
+        report[0]["execution"],
+        "requires ExcelModifier capability and platform"
+    );
+    assert!(PathBuf::from(
+        report[0]["plan_file"]
+            .as_str()
+            .context("existing-target append plan path missing")?
+    )
+    .is_file());
+    assert!(!PathBuf::from(
+        report[0]["candidate"]
+            .as_str()
+            .context("append candidate path missing")?
+    )
+    .exists());
+    assert_eq!(fs::read(&target)?, target_before);
+    assert_eq!(fs::read(&source)?, source_before);
+    Ok(())
+}
+
+#[test]
+fn interactive_dedup_append_commits_existing_target_with_matching_capability() -> Result<()> {
+    let root = TestDirectory::new()?;
+    let config = create_dedup_config(root.path())?;
+    let source = root.path().join("source.xlsx");
+    let target = root.path().join("target.xlsx");
+    let capability_path = root.path().join("test-capability.json");
+    create_duplicate_source(&source)?;
+    create_initial_target(&target)?;
+    let source_before = fs::read(&source)?;
+    let target_before = fs::read(&target)?;
+
+    let planned = Command::new(env!("CARGO_BIN_EXE_pytools"))
+        .args(["dedup-append-plan", "--config"])
+        .arg(&config)
+        .output()
+        .context("plan existing-target append for its synthetic capability")?;
+    assert!(
+        planned.status.success(),
+        "planning failed: {}",
+        String::from_utf8_lossy(&planned.stderr)
+    );
+    let plan_report: Value = serde_json::from_slice(&planned.stdout)?;
+    let plan_path = PathBuf::from(
+        plan_report[0]["plan_file"]
+            .as_str()
+            .context("append plan path missing")?,
+    );
+    let plan: AppendTargetPlan = serde_json::from_slice(&fs::read(plan_path)?)?;
+    let edit_plan = plan.edit_plan.as_ref().context("edit plan missing")?;
+    fs::write(
+        &capability_path,
+        serde_json::to_vec_pretty(&capability_for(edit_plan))?,
+    )?;
+
+    let output = run_menu_with_capability(
+        &config,
+        "2\n5\nyes\n0\n",
+        &capability_path,
+        "synthetic-pt-2-5-menu-test",
+    )?;
+    assert!(
+        output.status.success(),
+        "confirmed existing-target append failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report = output_json(&output)?;
+    assert_eq!(report[0]["target_existed"], true);
+    assert_eq!(report[0]["status"], "succeeded");
+    assert_eq!(report[0]["execution"], "committed");
+    assert_eq!(report[0]["execution_result"]["engine"], "umya_spreadsheet");
+    assert_eq!(
+        report[0]["execution_result"]["target_commit"]["operation"],
+        "replaced"
+    );
+    let candidate = PathBuf::from(
+        report[0]["candidate"]
+            .as_str()
+            .context("append candidate path missing")?,
+    );
+    assert!(candidate.is_file());
+    assert_eq!(fs::read(&target)?, fs::read(candidate)?);
+    assert_ne!(fs::read(&target)?, target_before);
+    assert_eq!(fs::read(&source)?, source_before);
     Ok(())
 }
 
@@ -262,6 +434,38 @@ fn create_duplicate_source(path: &Path) -> Result<()> {
     Ok(())
 }
 
+fn create_initial_target(path: &Path) -> Result<()> {
+    let mut workbook = rust_xlsxwriter::Workbook::new();
+    let sheet = workbook.add_worksheet();
+    sheet.set_name("Append")?;
+    sheet.write_string(0, 0, "源数据")?;
+    sheet.write_string(0, 1, "ID")?;
+    sheet.write_string(0, 2, "Value")?;
+    sheet.write_string(1, 0, "existing")?;
+    sheet.write_string(1, 1, "existing")?;
+    workbook.save(path)?;
+    Ok(())
+}
+
+fn capability_for(plan: &ExcelEditPlan) -> BackendCapability {
+    BackendCapability {
+        engine: EngineId::UmyaSpreadsheet,
+        status: CapabilityStatus::Passed,
+        format: plan.format,
+        operations: plan.operations.iter().map(EditOperation::kind).collect(),
+        supported_features: plan.workbook.features_present.clone(),
+        preserved: plan.preserve.clone(),
+        platform: "synthetic-pt-2-5-menu-test".to_owned(),
+        evidence: Some(CapabilityEvidence {
+            sample_id: "synthetic-pt-2-5-existing-target".to_owned(),
+            report_path: "pytools-core/tests/dedup_menu_cli.rs".to_owned(),
+            adapter_version: "umya-spreadsheet-3.1.1".to_owned(),
+            engine_version: "umya-spreadsheet-3.1.1".to_owned(),
+            platform: "synthetic-pt-2-5-menu-test".to_owned(),
+        }),
+    }
+}
+
 fn create_dedup_config(root: &Path) -> Result<PathBuf> {
     let config = root.join("config.xlsx");
     let mut workbook = rust_xlsxwriter::Workbook::new();
@@ -345,6 +549,36 @@ fn run_menu_with_view(config: &Path, input: &str, log_view: &str) -> Result<Outp
     child
         .wait_with_output()
         .context("wait for interactive menu")
+}
+
+fn run_menu_with_capability(
+    config: &Path,
+    input: &str,
+    capability: &Path,
+    platform: &str,
+) -> Result<Output> {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_pytools"))
+        .arg("menu")
+        .arg("--config")
+        .arg(config)
+        .arg("--capabilities")
+        .arg(capability)
+        .arg("--platform")
+        .arg(platform)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .context("start interactive pytools menu with capability evidence")?;
+    child
+        .stdin
+        .take()
+        .context("interactive stdin missing")?
+        .write_all(input.as_bytes())
+        .context("send interactive menu selections")?;
+    child
+        .wait_with_output()
+        .context("wait for interactive pytools menu")
 }
 
 fn output_json(output: &Output) -> Result<Value> {

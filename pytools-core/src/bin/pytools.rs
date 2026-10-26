@@ -12,8 +12,8 @@ use pytools_core::batch_rename::{
     run_batch_rename_with_progress as run_batch_rename_business, BatchRenameProgressEvent,
 };
 use pytools_core::config::{
-    load_extract_tasks, load_foreign_banks, load_global, load_institution_mapping,
-    load_timeline_rules, GlobalConfig,
+    load_dedup_tasks, load_extract_tasks, load_foreign_banks, load_global,
+    load_institution_mapping, load_timeline_rules, GlobalConfig,
 };
 use pytools_core::config_admin::{build_config_repair_plan, initialize_new_config, view_config};
 use pytools_core::conversion::{
@@ -256,7 +256,7 @@ where
     loop {
         writeln!(output, "======== PyTools 菜单 ========")?;
         writeln!(output, "  1  时序工具（已接入 1-5）")?;
-        writeln!(output, "  2  去重工具（检查与生成计划）")?;
+        writeln!(output, "  2  去重工具（检查、计划与确认提交）")?;
         writeln!(output, "  3  打印工具（生成页面设置计划）")?;
         writeln!(output, "  4  转换与文件命名工具")?;
         writeln!(output, "  5  配置工具")?;
@@ -312,6 +312,8 @@ where
                 global,
                 log_view,
                 allow_native_dialog,
+                capabilities,
+                platform,
             )?,
             "3" => run_interactive_print_menu(
                 input,
@@ -1872,6 +1874,8 @@ fn run_interactive_dedup_menu<R, W>(
     global: &GlobalConfig,
     log_view: &str,
     allow_native_dialog: bool,
+    capabilities: Option<&Path>,
+    platform: Option<&str>,
 ) -> Result<()>
 where
     R: BufRead,
@@ -1883,7 +1887,7 @@ where
         writeln!(output, "  2  按批注删除重复（生成计划）")?;
         writeln!(output, "  3  按配置检查并标记重复（生成计划）")?;
         writeln!(output, "  4  按配置删除重复（生成计划）")?;
-        writeln!(output, "  5  按配置追加到目标（生成计划）")?;
+        writeln!(output, "  5  按配置追加到目标（确认后提交）")?;
         writeln!(output, "  6  按配置预校验")?;
         writeln!(output, "  0  返回")?;
         writeln!(output, "----------------------")?;
@@ -1993,26 +1997,14 @@ where
                 return Ok(());
             }
             "5" => {
-                let action_output_dir = unique_menu_output_dir(&global.output_dir, "config-append");
-                let mut arguments = config_cli_arguments(config_path);
-                arguments.extend([
-                    "--output-dir".to_owned(),
-                    action_output_dir.to_string_lossy().into_owned(),
-                ]);
-                run_dedup_menu_action(
+                run_interactive_dedup_append_menu(
+                    input,
                     output,
+                    config_path,
                     global,
                     log_view,
-                    "PT-2-5",
-                    "config_append",
-                    "按配置追加到目标并生成计划",
-                    &[
-                        "Rust append planning",
-                        "Calamine via excel-reader",
-                        "OOXML workbook profile metadata",
-                    ],
-                    arguments,
-                    dedup_append_plan_result,
+                    capabilities,
+                    platform,
                 )?;
                 return Ok(());
             }
@@ -2034,6 +2026,372 @@ where
             _ => writeln!(output, "仅接受 1、2、3、4、5、6 或 0")?,
         }
     }
+}
+
+fn run_interactive_dedup_append_menu<R, W>(
+    input: &mut R,
+    output: &mut W,
+    config_path: &Path,
+    global: &GlobalConfig,
+    log_view: &str,
+    capabilities: Option<&Path>,
+    platform: Option<&str>,
+) -> Result<()>
+where
+    R: BufRead,
+    W: Write,
+{
+    anyhow::ensure!(
+        capabilities.is_some() == platform.is_some(),
+        "--capabilities and --platform must be provided together"
+    );
+    let started_at = Local::now();
+    let started = Instant::now();
+    match log_view {
+        "user" => writeln!(output, "开始处理：按配置追加到目标并生成计划")?,
+        "developer" => writeln!(output, "PT-2 开始：PT-2-5 config_append")?,
+        _ => {}
+    }
+
+    let planning_started = Instant::now();
+    let action_output_dir = unique_menu_output_dir(&global.output_dir, "config-append");
+    let (mut report, plans) = match dedup_append_plan_bundle(
+        config_path,
+        &action_output_dir,
+        global.emit_plan_files,
+    ) {
+        Ok(result) => result,
+        Err(error) => {
+            let elapsed_ms = started.elapsed().as_millis();
+            let stages = vec![serde_json::json!({
+                "name": "workbook_read_and_plan",
+                "status": "failed",
+                "elapsed_ms": planning_started.elapsed().as_millis()
+            })];
+            if log_view == "developer" {
+                match write_dedup_append_menu_run_history(
+                    global,
+                    &started_at,
+                    elapsed_ms,
+                    "failed",
+                    &serde_json::json!({}),
+                    &stages,
+                    &["Rust append planning".to_owned()],
+                    false,
+                    false,
+                    false,
+                    Some("dedup_operation_failed"),
+                ) {
+                    Ok(path) => writeln!(output, "PT-2 失败：PT-2-5，耗时 {elapsed_ms} ms；运行记录：{}；错误：{error:#}", path.display())?,
+                    Err(log_error) => writeln!(output, "PT-2 失败：PT-2-5，耗时 {elapsed_ms} ms；运行记录写入失败：{log_error:#}；错误：{error:#}")?,
+                }
+            } else if log_view == "user" {
+                writeln!(output, "处理失败：按配置追加到目标。")?;
+            }
+            return Err(error);
+        }
+    };
+    let planning_elapsed_ms = planning_started.elapsed().as_millis();
+
+    let mut executable_indices = Vec::new();
+    for (index, plan) in plans.iter().enumerate() {
+        if plan.appended_rows == 0 {
+            report[index]["execution"] = serde_json::Value::String("no_changes".to_owned());
+            report[index]["status"] = serde_json::Value::String("no_changes".to_owned());
+        } else if plan.target_existed && capabilities.is_none() {
+            report[index]["execution"] = serde_json::Value::String(
+                "requires ExcelModifier capability and platform".to_owned(),
+            );
+            report[index]["status"] = serde_json::Value::String("planned_only".to_owned());
+            writeln!(
+                output,
+                "既有目标需要已验收的 ExcelModifier capability 和 platform；计划已保留：{}",
+                plan.target.display()
+            )?;
+        } else {
+            executable_indices.push(index);
+        }
+    }
+
+    let confirmation_requested = !executable_indices.is_empty();
+    let mut confirmed = false;
+    if confirmation_requested {
+        writeln!(
+            output,
+            "计划已准备 {} 个可提交目标：",
+            executable_indices.len()
+        )?;
+        for index in &executable_indices {
+            let plan = &plans[*index];
+            let operation = if plan.target_existed {
+                "更新既有目标"
+            } else {
+                "新建目标"
+            };
+            writeln!(
+                output,
+                "  {operation}：{}（追加 {} 行，过滤重复 {} 行）",
+                plan.target.display(),
+                plan.appended_rows,
+                plan.duplicate_rows_filtered
+            )?;
+            if let Some(plan_file) = report[*index]["plan_file"].as_str() {
+                writeln!(output, "  计划文件：{plan_file}")?;
+            }
+        }
+        confirmed = read_menu_choice(
+            input,
+            output,
+            "确认提交上述追加？输入 y/yes/是 确认，其他输入取消> ",
+        )?
+        .is_some_and(|choice| {
+            matches!(
+                choice.trim().to_ascii_lowercase().as_str(),
+                "y" | "yes" | "是"
+            )
+        });
+    }
+
+    let mut modifier_invoked = false;
+    let mut writer_invoked = false;
+    if confirmed {
+        for index in executable_indices {
+            let plan = &plans[index];
+            let mut executor_invoked = false;
+            let execution = (|| -> Result<serde_json::Value> {
+                let plan_file = write_temporary_dedup_append_plan(plan)?;
+                let mut arguments = vec![
+                    "--plan".to_owned(),
+                    plan_file.path().to_string_lossy().into_owned(),
+                    "--commit-target".to_owned(),
+                ];
+                if plan.target_existed {
+                    arguments.push("--capabilities".to_owned());
+                    arguments.push(
+                        capabilities
+                            .context("capabilities missing for existing target")?
+                            .to_string_lossy()
+                            .into_owned(),
+                    );
+                    arguments.push("--platform".to_owned());
+                    arguments.push(
+                        platform
+                            .context("platform missing for existing target")?
+                            .to_owned(),
+                    );
+                }
+                executor_invoked = true;
+                run_dedup_append_execute_report(arguments)
+            })();
+            if executor_invoked {
+                if plan.target_existed {
+                    modifier_invoked = true;
+                } else {
+                    writer_invoked = true;
+                }
+            }
+
+            match execution {
+                Ok(execution) => {
+                    report[index]["execution"] = serde_json::Value::String("committed".to_owned());
+                    report[index]["status"] = serde_json::Value::String("succeeded".to_owned());
+                    report[index]["execution_result"] = execution;
+                }
+                Err(error) => {
+                    report[index]["execution"] = serde_json::Value::String("failed".to_owned());
+                    report[index]["status"] = serde_json::Value::String("failed".to_owned());
+                    report[index]["error"] = serde_json::Value::String(format!("{error:#}"));
+                    break;
+                }
+            }
+        }
+    } else {
+        for index in executable_indices {
+            report[index]["execution"] = serde_json::Value::String("plan_only".to_owned());
+            report[index]["status"] = serde_json::Value::String("cancelled".to_owned());
+        }
+        if plans.iter().any(|plan| plan.appended_rows > 0) {
+            writeln!(output, "提交已取消，计划保留，目标未修改。")?;
+        }
+    }
+
+    let elapsed_ms = started.elapsed().as_millis();
+    let metrics = dedup_menu_metrics(&report);
+    let failed = report
+        .as_array()
+        .is_some_and(|items| items.iter().any(|item| item["status"] == "failed"));
+    let committed_targets = report
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|item| item["status"] == "succeeded")
+        .count();
+    let mut actual_engines = vec![
+        "Rust append planning".to_owned(),
+        "Calamine via excel-reader".to_owned(),
+        "OOXML workbook profile metadata".to_owned(),
+    ];
+    let mut stages = vec![serde_json::json!({
+        "name": "workbook_read_and_plan",
+        "status": "succeeded",
+        "elapsed_ms": planning_elapsed_ms
+    })];
+    for (index, item) in report.as_array().into_iter().flatten().enumerate() {
+        if let Some(execution) = item.get("execution_result") {
+            if let Some(engine) = execution["engine"]
+                .as_str()
+                .or_else(|| execution["candidate_engine"].as_str())
+            {
+                if !actual_engines.iter().any(|known| known == engine) {
+                    actual_engines.push(engine.to_owned());
+                }
+            }
+            if let Some(execution_stages) = execution["execution_summary"]["stages"].as_array() {
+                for stage in execution_stages {
+                    stages.push(serde_json::json!({
+                        "target_index": index,
+                        "name": stage["name"],
+                        "status": stage["status"],
+                        "engine": stage.get("engine"),
+                        "elapsed_ms": stage.get("elapsed_ms")
+                    }));
+                }
+            }
+        }
+    }
+    let run_status = if failed {
+        "failed"
+    } else if committed_targets > 0
+        && report.as_array().is_some_and(|items| {
+            items
+                .iter()
+                .any(|item| item["status"] == "planned_only" || item["status"] == "cancelled")
+        })
+    {
+        "partial"
+    } else if !confirmed && confirmation_requested {
+        "cancelled"
+    } else {
+        "succeeded"
+    };
+
+    match log_view {
+        "user" if failed => writeln!(output, "处理失败：按配置追加到目标。")?,
+        "user" if committed_targets > 0 => writeln!(
+            output,
+            "处理完成：提交 {committed_targets} 个目标，追加 {} 行，过滤重复 {} 行，耗时 {elapsed_ms} ms。",
+            metrics["appended_rows"].as_u64().unwrap_or_default(),
+            metrics["duplicate_rows_filtered"].as_u64().unwrap_or_default()
+        )?,
+        "user" => writeln!(output, "计划已生成，目标未修改，耗时 {elapsed_ms} ms。")?,
+        "developer" => {
+            match write_dedup_append_menu_run_history(
+                global,
+                &started_at,
+                elapsed_ms,
+                run_status,
+                &metrics,
+                &stages,
+                &actual_engines,
+                modifier_invoked,
+                writer_invoked,
+                committed_targets == 0,
+                failed.then_some("dedup_append_execution_failed"),
+            ) {
+                Ok(path) => writeln!(output, "PT-2 完成：PT-2-5，提交 {committed_targets} 个目标，实际组件：{}，ExcelModifier {}，Excel writer {}，耗时 {elapsed_ms} ms；运行记录：{}", actual_engines.join(", "), if modifier_invoked { "已调用" } else { "未调用" }, if writer_invoked { "已调用" } else { "未调用" }, path.display())?,
+                Err(error) => writeln!(output, "PT-2 完成：PT-2-5，提交 {committed_targets} 个目标，实际组件：{}，ExcelModifier {}，Excel writer {}，耗时 {elapsed_ms} ms；运行记录写入失败：{error:#}", actual_engines.join(", "), if modifier_invoked { "已调用" } else { "未调用" }, if writer_invoked { "已调用" } else { "未调用" })?,
+            }
+        }
+        _ => {}
+    }
+    writeln!(output, "{}", serde_json::to_string_pretty(&report)?)?;
+    if failed {
+        bail!("dedup append execution failed")
+    }
+    Ok(())
+}
+
+fn write_dedup_append_menu_run_history(
+    global: &GlobalConfig,
+    started_at: &chrono::DateTime<Local>,
+    elapsed_ms: u128,
+    status: &str,
+    metrics: &serde_json::Value,
+    stages: &[serde_json::Value],
+    actual_engines: &[String],
+    excel_modifier_invoked: bool,
+    excel_writer_invoked: bool,
+    plan_only: bool,
+    error_type: Option<&str>,
+) -> Result<PathBuf> {
+    fs::create_dir_all(&global.log_dir)
+        .with_context(|| format!("create dedup log directory {}", global.log_dir.display()))?;
+    let timestamp = Local::now().format("%Y%m%d_%H%M%S_%f");
+    let history = serde_json::json!({
+        "schema_version": 1,
+        "feature_id": "PT-2-5",
+        "action": "config_append",
+        "status": status,
+        "started_at": started_at.to_rfc3339(),
+        "elapsed_ms": elapsed_ms,
+        "stages": stages,
+        "metrics": metrics,
+        "actual_engines": actual_engines,
+        "actual_components": actual_engines,
+        "excel_modifier_invoked": excel_modifier_invoked,
+        "excel_writer_invoked": excel_writer_invoked,
+        "plan_only": plan_only,
+        "error_type": error_type,
+    });
+    for suffix in 1..=1000 {
+        let suffix = if suffix == 1 {
+            String::new()
+        } else {
+            format!("-{suffix}")
+        };
+        let path = global.log_dir.join(format!(
+            "pytools-dedup-config_append-{timestamp}{suffix}.json"
+        ));
+        match OpenOptions::new().write(true).create_new(true).open(&path) {
+            Ok(mut file) => {
+                serde_json::to_writer_pretty(&mut file, &history)?;
+                file.write_all(b"\n")?;
+                file.sync_all()?;
+                return Ok(path);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error).with_context(|| format!("create {}", path.display())),
+        }
+    }
+    bail!("unable to allocate a unique dedup append run history path")
+}
+
+fn write_temporary_dedup_append_plan(plan: &AppendTargetPlan) -> Result<TemporaryFile> {
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .context("system clock before Unix epoch")?
+        .as_nanos();
+    for suffix in 0..1000 {
+        let path = std::env::temp_dir().join(format!(
+            "pytools-dedup-append-{}-{stamp}-{suffix}.json",
+            std::process::id()
+        ));
+        match OpenOptions::new().write(true).create_new(true).open(&path) {
+            Ok(mut file) => {
+                let temporary = TemporaryFile::new(path);
+                serde_json::to_writer_pretty(&mut file, plan)?;
+                file.write_all(b"\n")?;
+                file.sync_all()?;
+                return Ok(temporary);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => {
+                return Err(error)
+                    .with_context(|| format!("create temporary plan {}", path.display()))
+            }
+        }
+    }
+    bail!("unable to allocate a temporary dedup append plan")
 }
 
 fn run_dedup_menu_action<W: Write>(
@@ -2137,6 +2495,9 @@ fn dedup_menu_metrics(report: &serde_json::Value) -> serde_json::Value {
     let mut appended_rows = 0u64;
     let mut duplicate_rows_filtered = 0u64;
     let mut planned_operations = 0u64;
+    let mut committed_targets = 0u64;
+    let mut planned_only_targets = 0u64;
+    let mut failed_targets = 0u64;
     for item in &items {
         let details = item.get("report").unwrap_or(item);
         duplicate_rows += details["duplicate_rows"].as_u64().unwrap_or_default();
@@ -2150,6 +2511,10 @@ fn dedup_menu_metrics(report: &serde_json::Value) -> serde_json::Value {
         planned_operations += details["plan"]["operations"]
             .as_array()
             .map_or(0, |operations| operations.len() as u64);
+        committed_targets += u64::from(item["status"] == "succeeded");
+        planned_only_targets +=
+            u64::from(item["status"] == "planned_only" || item["status"] == "cancelled");
+        failed_targets += u64::from(item["status"] == "failed");
     }
     serde_json::json!({
         "processed_groups": items.len(),
@@ -2159,6 +2524,9 @@ fn dedup_menu_metrics(report: &serde_json::Value) -> serde_json::Value {
         "appended_rows": appended_rows,
         "duplicate_rows_filtered": duplicate_rows_filtered,
         "planned_operations": planned_operations,
+        "committed_targets": committed_targets,
+        "planned_only_targets": planned_only_targets,
+        "failed_targets": failed_targets,
         "passed_tasks": report["ok"].as_u64().unwrap_or_default(),
         "warning_tasks": report["warn"].as_u64().unwrap_or_default(),
         "failed_tasks": report["fail"].as_u64().unwrap_or_default(),
@@ -2176,8 +2544,9 @@ fn dedup_menu_summary(action: &str, metrics: &serde_json::Value) -> String {
     }
     if action == "config_append" {
         return format!(
-            "处理 {} 个目标，追加 {} 行，过滤重复 {} 行，跳过 {} 项",
-            metrics["processed_groups"].as_u64().unwrap_or_default(),
+            "提交 {} 个目标，保留计划 {} 个目标，追加 {} 行，过滤重复 {} 行，跳过 {} 项",
+            metrics["committed_targets"].as_u64().unwrap_or_default(),
+            metrics["planned_only_targets"].as_u64().unwrap_or_default(),
             metrics["appended_rows"].as_u64().unwrap_or_default(),
             metrics["duplicate_rows_filtered"]
                 .as_u64()
@@ -4401,20 +4770,27 @@ fn dedup_append_plan_result(arguments: Vec<String>) -> Result<serde_json::Value>
         .get("output-dir")
         .map(PathBuf::from)
         .unwrap_or(global.output_dir);
-    let tasks = pytools_core::config::load_dedup_tasks(&config)?;
-    let reports = build_append_by_config_plans(&tasks, &output_dir)?;
+    Ok(dedup_append_plan_bundle(&config, &output_dir, global.emit_plan_files)?.0)
+}
+
+fn dedup_append_plan_bundle(
+    config: &Path,
+    output_dir: &Path,
+    emit_plan_files: bool,
+) -> Result<(serde_json::Value, Vec<AppendTargetPlan>)> {
+    let tasks = load_dedup_tasks(config)?;
+    let reports = build_append_by_config_plans(&tasks, output_dir)?;
     fs::create_dir_all(&output_dir)?;
-    let timestamp = Local::now().format("%Y%m%d_%H%M%S");
+    let timestamp = Local::now().format("%Y%m%d_%H%M%S_%f");
     let mut output = Vec::new();
     for (index, report) in reports.iter().enumerate() {
-        let plan_path = global
-            .emit_plan_files
-            .then(|| -> Result<PathBuf> {
-                let path = output_dir.join(format!("dedup-append-{timestamp}-{index}.json"));
-                fs::write(&path, serde_json::to_vec_pretty(report)?)?;
-                Ok(path)
-            })
-            .transpose()?;
+        let plan_path = if emit_plan_files {
+            let path = output_dir.join(format!("dedup-append-{timestamp}-{index}.json"));
+            write_json_report_create_new(&path, report)?;
+            Some(path)
+        } else {
+            None
+        };
         output.push(serde_json::json!({
             "target": report.target,
             "candidate": report.candidate,
@@ -4429,7 +4805,7 @@ fn dedup_append_plan_result(arguments: Vec<String>) -> Result<serde_json::Value>
             "execution": if report.target_existed { "requires apply-edit-plan capability evidence" } else { "run dedup-append-execute" },
         }));
     }
-    Ok(serde_json::Value::Array(output))
+    Ok((serde_json::Value::Array(output), reports))
 }
 
 fn run_dedup_append_execute(arguments: Vec<String>) -> Result<()> {
