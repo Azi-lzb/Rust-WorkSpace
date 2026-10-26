@@ -1,0 +1,19 @@
+修改前：分支 pytools-dev，HEAD 39c71e4。开始前保留已有 inventory、HANDOFF_ZCODE_TO_CODEX.md 和 PT-4-2/PT-6-2 未提交记录。
+
+修改文件：
+- pytools-core/src/sheet_extract.rs：区域提取写入 `DateTimeIso` 日历日期/时间，采用 openpyxl 新建簿默认 `yyyy-mm-dd h:mm:ss`；对 1899-12-31、1904-01-01 epoch 日、缺少日历/累计时长区分的序列、累计时长和错误值继续失败关闭。
+- pytools-core/tests/sheet_extract_area_operation_parity.rs：菜单日期值回归；校验 epoch time-only 与累计时长不产出目标文件。
+- pytools-core/probe/compare_sheet_extract_area_calendar_dates.py：用只读原 Python 业务函数和 Rust CLI 执行合成对拍。
+- pytools-core/probe/reports/sheet_extract_calendar_dates_parity_20261026.json：机器对拍报告。
+- pytools-core/MIGRATION_INVENTORY.md：补充 PT-7-6 日历日期子集证据；PT-7-6 整体仍未验收。
+
+验证：
+- Windows 原生 `cargo fmt --manifest-path pytools-core/Cargo.toml -- --check`：通过。
+- Windows 原生 `cargo test --offline --locked -p pytools-core --test sheet_extract_area_operation_parity`：12/12 通过。
+- `probe/compare_sheet_extract_area_calendar_dates.py`：PyCode `run_extract_sheets` 与 `pytools extract-sheets-area` 的合成 fixture 输出工作表名、datetime 类型/值、number format 精确一致；输入 fixture 内容保持不变。Windows 菜单路径 `pytools menu` → 7→6 及 time-only/累计时长失败关闭也在集成测试验证。
+
+未执行：原项目真实业务日期样本对拍、time-only/累计时长的成功迁移、完整模板对象保真、Linux/glibc 2.28、麒麟/UOS 和 deb 验收。不得将本轮子集支持视为 PT-7-6 完成。
+
+已知问题：Excel reader 未提供通用单元格 number-format/temporal-kind 查询。该共享能力已向 main 请求评估；未修改共享 crates。完整 time-only 与 duration 行为待公共能力到位后继续。
+
+回滚：仅回退本记录所列 `sheet_extract.rs` 与 `sheet_extract_area_operation_parity.rs` 的本轮改动，并移除此探针/报告与本节；保留当前工作树中其他 WIP。

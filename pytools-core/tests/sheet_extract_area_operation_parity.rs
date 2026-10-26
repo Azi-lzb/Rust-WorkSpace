@@ -1592,16 +1592,74 @@ fn append_mode_creates_a_missing_output_and_unsupported_operations_are_rejected_
     date_task.exclude_keywords.clear();
     date_task.area_spec = "E1".to_owned();
     date_task.output_name = "date-output.xlsx".to_owned();
-    let date_error = run_extract_sheets_area_candidate(
+    let date_result = run_extract_sheets_area_candidate(
         std::slice::from_ref(&source),
-        &[date_task],
+        &[date_task.clone()],
         &date_output,
         false,
         Some("unused.xlsx"),
     )
+    .unwrap();
+    assert_eq!(date_result.extracted_sheets, 1);
+    let date_output_path = date_output.join("区域提取/date-output.xlsx");
+    let date_sheets = read_value_columns_with_iso_dates(&date_output_path, 16_384).unwrap();
+    assert_eq!(date_sheets.len(), 1);
+    assert_eq!(
+        date_sheets[0].values.get("A1"),
+        Some(&CellValue::DateTimeIso(
+            "2024-12-31T09:30:00.000".to_owned()
+        ))
+    );
+
+    let time_source = root.join("time-only.xlsx");
+    let mut time_workbook = rust_xlsxwriter::Workbook::new();
+    let time_format = rust_xlsxwriter::Format::new().set_num_format("h:mm:ss");
+    let time = rust_xlsxwriter::ExcelDateTime::parse_from_str("12:30:00").unwrap();
+    time_workbook
+        .add_worksheet()
+        .write_datetime_with_format(0, 0, &time, &time_format)
+        .unwrap();
+    time_workbook.save(&time_source).unwrap();
+    let mut time_task = date_task.clone();
+    time_task.area_spec = "A1".to_owned();
+    time_task.output_name = "time-output.xlsx".to_owned();
+    let time_output = root.join("time-output");
+    let time_error = run_extract_sheets_area_candidate(
+        std::slice::from_ref(&time_source),
+        &[time_task],
+        &time_output,
+        false,
+        Some("unused.xlsx"),
+    )
     .unwrap_err();
-    assert!(format!("{date_error:#}").contains("unsupported cell type"));
-    assert!(!date_output.join("区域提取/date-output.xlsx").exists());
+    assert!(format!("{time_error:#}").contains("ambiguous with a time-only value"));
+    assert!(!time_output.join("区域提取/time-output.xlsx").exists());
+
+    let duration_source = root.join("duration.xlsx");
+    let mut duration_workbook = rust_xlsxwriter::Workbook::new();
+    let duration_format = rust_xlsxwriter::Format::new().set_num_format("[h]:mm:ss");
+    let duration = rust_xlsxwriter::ExcelDateTime::from_serial_datetime(1.5).unwrap();
+    duration_workbook
+        .add_worksheet()
+        .write_datetime_with_format(0, 0, &duration, &duration_format)
+        .unwrap();
+    duration_workbook.save(&duration_source).unwrap();
+    let mut duration_task = date_task;
+    duration_task.area_spec = "A1".to_owned();
+    duration_task.output_name = "duration-output.xlsx".to_owned();
+    let duration_output = root.join("duration-output");
+    let duration_error = run_extract_sheets_area_candidate(
+        std::slice::from_ref(&duration_source),
+        &[duration_task],
+        &duration_output,
+        false,
+        Some("unused.xlsx"),
+    )
+    .unwrap_err();
+    assert!(format!("{duration_error:#}").contains("calendar-versus-duration metadata"));
+    assert!(!duration_output
+        .join("区域提取/duration-output.xlsx")
+        .exists());
 
     let collision_dir = root.join("collision");
     let collision_path = collision_dir.join("区域提取/area-result.xlsx");
@@ -1621,5 +1679,39 @@ fn append_mode_creates_a_missing_output_and_unsupported_operations_are_rejected_
         b"existing output must survive"
     );
 
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn interactive_menu_extracts_calendar_datetime_values() {
+    let cases = cases();
+    let root = temporary_directory("sheet-extract-date-menu");
+    let mut task = load_tasks(&cases)[0].clone();
+    task.workbook_keywords.clear();
+    task.sheet_keywords.clear();
+    task.exclude_keywords.clear();
+    task.area_spec = "E1".to_owned();
+    task.output_folder = "日期提取".to_owned();
+    task.output_name = "date-output.xlsx".to_owned();
+    let config = create_menu_config(&root, &[task]);
+    let source = fixture_path("省级月度报表_A.xlsx");
+    let original_source = fs::read(&source).unwrap();
+    let output = run_menu(&config, &format!("7\n6\nn\n{}\n", source.display()));
+    assert!(
+        output.status.success(),
+        "date extraction menu failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let output_path = root.join("app/output/日期提取/date-output.xlsx");
+    assert!(output_path.is_file());
+    let sheets = read_value_columns_with_iso_dates(&output_path, 16_384).unwrap();
+    assert_eq!(sheets.len(), 1);
+    assert_eq!(
+        sheets[0].values.get("A1"),
+        Some(&CellValue::DateTimeIso(
+            "2024-12-31T09:30:00.000".to_owned()
+        ))
+    );
+    assert_eq!(fs::read(source).unwrap(), original_source);
     fs::remove_dir_all(root).unwrap();
 }

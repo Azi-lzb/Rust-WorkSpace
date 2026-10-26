@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "status": "passed",
+  "feature": "PT-7-6 area extraction calendar datetime subset",
+  "fixture": "tests/fixtures/sheet_extract_area/省级月度报表_A.xlsx",
+  "source_python": "PyCode/core/feature_1_6_extract_sheets.py::run_extract_sheets",
+  "rust_entry": "pytools extract-sheets-area",
+  "python_stats": {
+    "files": 1,
+    "extracted_sheets": 1,
+    "output_files": 1,
+    "failed_files": 0
+  },
+  "rust_stats": {
+    "files": 1,
+    "extracted_sheets": 1,
+    "output_files": 1,
+    "failed_files": 0
+  },
+  "output_projection": {
+    "sheet_names": [
+      "月度资金报表"
+    ],
+    "sheets": [
+      {
+        "name": "月度资金报表",
+        "cells": [
+          {
+            "cell": "A1",
+            "type": "datetime",
+            "value": "2024-12-31T09:30:00.000",
+            "number_format": "yyyy-mm-dd h:mm:ss"
+          }
+        ]
+      }
+    ]
+  },
+  "source_unchanged": true,
+  "scope_note": "Synthetic fixture only. Time-only values on Excel epoch days, elapsed durations, and real business samples remain unverified and fail closed."
+}

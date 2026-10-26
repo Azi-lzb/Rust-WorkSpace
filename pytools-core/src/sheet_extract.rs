@@ -18,7 +18,7 @@ use excel_reader::{
     read_value_columns_with_iso_dates, read_workbook, read_xlsx_worksheet_extents, CellValue,
     SheetValues,
 };
-use excel_writer::Workbook;
+use excel_writer::{ExcelDateTime, Format, Workbook};
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
@@ -970,6 +970,7 @@ where
                     let mut non_empty_cells = 0;
                     let mut max_row = 0;
                     let mut max_column = 0;
+                    let datetime_format = Format::new().set_num_format("yyyy-mm-dd h:mm:ss");
                     for (row_index, row) in values.iter().enumerate() {
                         for (column_index, value) in row.iter().enumerate() {
                             let Some(value) = value.as_ref() else {
@@ -982,16 +983,15 @@ where
                                 .context("extracted worksheet exceeds Excel row index range")?;
                             let column = u16::try_from(column_index)
                                 .context("extracted worksheet exceeds Excel column index range")?;
-                            write_extracted_value(worksheet, row, column, value).with_context(
-                                || {
+                            write_extracted_value(worksheet, row, column, value, &datetime_format)
+                                .with_context(|| {
                                     format!(
                                         "write extracted value at {}{} from worksheet {:?}",
                                         column_name(column_index + 1),
                                         row_index + 1,
                                         source_sheet.name
                                     )
-                                },
-                            )?;
+                                })?;
                             non_empty_cells += 1;
                             max_row = max_row.max(row_index + 1);
                             max_column = max_column.max(column_index + 1);
@@ -1596,6 +1596,7 @@ fn write_extracted_value(
     row: u32,
     column: u16,
     value: &Value,
+    datetime_format: &Format,
 ) -> Result<()> {
     let cell_value = CellValue::from_probe_json(value)?;
     match cell_value {
@@ -1618,16 +1619,48 @@ fn write_extracted_value(
             worksheet.write_boolean(row, column, value)?;
         }
         CellValue::Empty => {}
-        CellValue::DateTimeSerial(_)
-        | CellValue::DateTimeIso(_)
-        | CellValue::DurationIso(_)
-        | CellValue::Error(_) => {
+        CellValue::DateTimeIso(value) => {
+            let datetime = parse_extracted_calendar_datetime(&value)?;
+            worksheet.write_datetime_with_format(row, column, &datetime, datetime_format)?;
+        }
+        CellValue::DateTimeSerial(_) | CellValue::DurationIso(_) => {
+            bail!("date/time serial lacks calendar-versus-duration metadata; output was not committed")
+        }
+        CellValue::Error(_) => {
             bail!("unsupported cell type for the area-only writer; output was not committed")
         }
     }
     Ok(())
 }
 
+fn parse_extracted_calendar_datetime(value: &str) -> Result<ExcelDateTime> {
+    ensure!(
+        value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || matches!(byte, b'-' | b':' | b'.' | b'T' | b' ')),
+        "unsupported date/time text; output was not committed"
+    );
+    let date = value
+        .split_once('T')
+        .or_else(|| value.split_once(' '))
+        .map_or(value, |(date, _)| date);
+    ensure!(
+        date.len() == 10
+            && date.bytes().enumerate().all(|(index, byte)| {
+                if matches!(index, 4 | 7) {
+                    byte == b'-'
+                } else {
+                    byte.is_ascii_digit()
+                }
+            }),
+        "unsupported date/time text; output was not committed"
+    );
+    ensure!(
+        date != "1899-12-31" && date != "1904-01-01",
+        "date/time uses an Excel epoch day that is ambiguous with a time-only value; output was not committed"
+    );
+    ExcelDateTime::parse_from_str(value).context("parse extracted Excel calendar date/time")
+}
 fn validate_staged_workbook_with_prefix(
     path: &Path,
     existing_sheet_names: &[String],

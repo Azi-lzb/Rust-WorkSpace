@@ -638,6 +638,12 @@ Rust 输出与 Python helper 可读部分对拍：8×5 矩形的 40 个值/类�
 
 Windows 原生 Rust（rustc/cargo 1.99.1）验证：`cargo fmt --manifest-path pytools-core/Cargo.toml -- --check` 通过；`sheet_extract_area_operation_parity` 8/8、`batch_tools_menu_cli` 10/10、`excel-editor` 的 `detects_stored_content_in_merged_non_anchor_cells` 1/1、`import_range` 1/1 通过；`git diff --check` 无空白错误。仍未操作 Windows 原生文件弹窗，未使用真实业务模板或真实生产 capability，未验证其他格式、麒麟/UOS glibc 2.28 和 deb；整表生产能力与 PT-7-6 完整验收继续标记未验证。
 
+### 2026-10-26 PT-7-6 区域提取日历日期子集支持
+
+区域提取现在可写入共享 reader 投影为 `DateTimeIso` 的普通日历日期/时间值，输出使用与 openpyxl 新建簿相同的 `yyyy-mm-dd h:mm:ss` 格式。Excel epoch 日（1899-12-31/1904-01-01）可能是 time-only，Rust 会失败关闭；`DateTimeSerial`/`DurationIso` 累计时长和错误单元格仍不支持，避免把时刻或时长误写成日历日期。共享 reader 暂无单元格 number-format API，相关最小需求已交 main；本轮未修改 shared crates。
+
+Windows 原生 `cargo fmt --manifest-path pytools-core/Cargo.toml -- --check` 通过，`cargo test --offline --locked -p pytools-core --test sheet_extract_area_operation_parity` 12/12 通过，覆盖 `pytools menu` → 7→6 日历日期输出、输入保持不变、epoch time-only 与累计时长拒绝且不提交文件。`probe/compare_sheet_extract_area_calendar_dates.py` 调用原只读 PyCode `run_extract_sheets` 与 Rust `extract-sheets-area` CLI；合成 fixture 的工作簿名、datetime 类型和值、默认 number format 精确一致，机器报告 `probe/reports/sheet_extract_calendar_dates_parity_20261026.json`。此为合成样本证据，不提升 PT-7-6 整体状态；真实业务样本、time-only/时长完整迁移、完整 Excel 保真及 Linux/deb 仍未验收。
+
 ### 2026-10-25 PT-7-7/PT-7-8 涉农贷款交互菜单接入
 
 在既有 `rural-loan-plan`、`quarterly-rural-loan-plan` 及计划构建逻辑上接入真实 `pytools menu` → 7→7/8 入口。各步骤分别选择本期和上期 `.xlsx`；默认只生成 ExcelEditPlan，不改本期工作簿。只有明确提供 capability 与 platform 时才经 ExcelModifier 生成并校验候选，随后按规划快照安全替换本期工作簿。user/developer/off 视图及配置日志目录中的运行历史记录处理状态、机构/地区计数、阶段时间和实际引擎；历史不含路径、文件名或单元格内容。
