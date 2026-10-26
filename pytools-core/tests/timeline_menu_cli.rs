@@ -261,6 +261,56 @@ fn wide_summary_cli_projects_elapsed_duration_as_numeric_for_both_row_modes() ->
 }
 
 #[test]
+fn wide_summary_cli_preserves_excel_1900_leap_boundary_dates_in_both_row_modes() -> Result<()> {
+    for command in ["wide-summary", "wide-summary-row-suffix"] {
+        for serial in [59.0, 60.0] {
+            let root = TestDirectory::new()?;
+            let config = create_timeline_config(root.path())?;
+            let source = root
+                .path()
+                .join(format!("sample_1900_boundary_{serial}.xlsx"));
+            create_wide_source_with_date_serial(&source, "1900序列边界", serial)?;
+            let source_before = fs::read(&source)?;
+
+            let output = Command::new(env!("CARGO_BIN_EXE_pytools"))
+                .arg(command)
+                .arg("--config")
+                .arg(&config)
+                .arg("--log-view")
+                .arg("developer")
+                .arg(&source)
+                .output()
+                .context("run wide-summary CLI with an Excel 1900 boundary date")?;
+            assert!(
+                output.status.success(),
+                "{command} did not process Excel serial {serial}: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+
+            let report: Value = serde_json::from_slice(&output.stdout)?;
+            let summary_path = report["output"]
+                .as_str()
+                .map(PathBuf::from)
+                .context("1900-boundary summary output path missing")?;
+            let dump = read_workbook(&summary_path)?;
+            let summary = dump
+                .sheets
+                .iter()
+                .find(|sheet| sheet.name == "WideRule")
+                .context("1900-boundary summary sheet missing")?;
+            assert_eq!(summary.values["G2"]["type"], "datetime_serial");
+            assert_eq!(
+                summary.values["G2"]["value"].as_f64(),
+                Some(serial),
+                "Excel 1900 serial {serial} changed in {command}"
+            );
+            assert_eq!(fs::read(&source)?, source_before);
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn wide_summary_cli_processes_legacy_xls_without_ooxml_metadata() -> Result<()> {
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests")
@@ -1567,6 +1617,29 @@ fn create_wide_source_with_elapsed_duration(
     workbook
         .save(path)
         .context("save elapsed-duration timeline source workbook")
+}
+
+fn create_wide_source_with_date_serial(path: &Path, organization: &str, serial: f64) -> Result<()> {
+    let mut workbook = rust_xlsxwriter::Workbook::new();
+    let sheet = workbook.add_worksheet();
+    sheet.set_name("Report")?;
+    sheet.write_string(0, 0, "报表")?;
+    sheet.merge_range(1, 0, 1, 1, "集团A", &rust_xlsxwriter::Format::new())?;
+    sheet.write_string(2, 0, "地区")?;
+    sheet.merge_range(2, 1, 2, 2, "存款", &rust_xlsxwriter::Format::new())?;
+    sheet.write_string(2, 3, "贷款")?;
+    sheet.write_string(3, 0, "名称")?;
+    sheet.write_string(3, 1, "余额")?;
+    sheet.write_string(3, 2, "余额")?;
+    sheet.write_string(3, 3, "本息")?;
+    sheet.write_string(4, 0, organization)?;
+    let date_format = rust_xlsxwriter::Format::new().set_num_format("yyyy/m/d");
+    sheet.write_number_with_format(4, 1, serial, &date_format)?;
+    sheet.write_number(4, 2, 12.0)?;
+    sheet.write_number(4, 3, 23.0)?;
+    workbook
+        .save(path)
+        .context("save Excel 1900-boundary timeline source workbook")
 }
 
 fn create_wide_source_with_negative_date(path: &Path, organization: &str) -> Result<()> {
