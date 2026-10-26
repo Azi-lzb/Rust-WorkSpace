@@ -172,7 +172,8 @@ main 落地请求 #3/#4 后，S1 公式复制业务计划（`s1_formula_copy`）
 ## Rust 前端接入状态
 
 - 源项目 `core/frontend/web/index.html` 和 `core/frontend/assets/app-icon.{png,ico}` 已原样复制到 `frontend/`；HTML 与源文件 SHA-256 一致。源项目只读，没有修改。
-- `open-data-audit serve` 仅监听 `127.0.0.1`，并通过响应时注入 bridge 保持 HTML 文件本身不变。页面启动后导航至已接入的 S2。
+- Windows 可直接启动新增的 `open-data-audit-gui.exe`（无参数默认端口 8750，可用 `--port`/`--config` 覆盖）；它复用原 GUI 页面和同一 HTTP bridge，仅监听 `127.0.0.1`，启动后尝试打开系统默认浏览器。原 `open-data-audit serve` 也复用该自动打开行为；打开失败时打印手动访问地址。此入口已通过 Windows HTTP 冒烟，状态仍为“已实现，待 Windows 真实验收”。
+- bridge 在响应时注入运行时接口，保持 HTML 文件本身不变。当前页面启动后导航至已接入的 S2。
 - 当前连接 `get_state`、浏览器路径浏览、S2 配置检查、S2 路径选择/清除、输出目录固定/跟随、审核启动、进度和结果回传，以及有限的 UI 设置更新。选择或清除本期/上期目录会刷新两期文件配对预览，并支持 `.xls`/`.xlsx` 文件名列举。
 - S1-F01 的 `choose_file("template")` 与 `inspect_template_formulas` 提供只读模板公式检查 API；Windows 原生真实 HTTP 调用记录见 `probe/reports/s1_template_inspection_web_api_windows_real_20261024.json`，不代表 S1 完整审核 GUI 已迁移。
 - 未迁移接口返回 HTTP 501。取消和设置持久化尚未接入；S1/S3/S4/S5 的前端入口不表示其功能已经迁移。

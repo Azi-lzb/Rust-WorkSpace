@@ -29,6 +29,8 @@ use std::{
     thread,
     time::Instant,
 };
+#[cfg(any(windows, target_os = "macos", target_os = "linux"))]
+use std::process::Command;
 use tokio::{net::TcpListener, runtime::Builder};
 
 const ORIGINAL_HTML: &str = include_str!("../frontend/web/index.html");
@@ -222,12 +224,53 @@ pub fn serve_web_ui(port: u16, config_path: PathBuf) -> Result<()> {
         let listener = TcpListener::bind(address)
             .await
             .with_context(|| format!("listen on http://{address}"))?;
+        let address = listener
+            .local_addr()
+            .context("read the bound Audit UI address")?;
         let app = router(AppState::new(config_path));
-        println!("Open-Data-Audit Rust web UI: http://{address}");
+        let url = format!("http://{address}");
+        println!("Open-Data-Audit Rust web UI: {url}");
+        if let Err(error) = open_default_browser(&url) {
+            eprintln!("无法自动打开浏览器，请手动访问 {url}：{error}");
+        }
         axum::serve(listener, app)
             .await
             .context("serve Audit web UI")
     })
+}
+
+fn open_default_browser(url: &str) -> std::io::Result<()> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        Command::new("cmd")
+            .args(["/C", "start", "", url])
+            .creation_flags(CREATE_NO_WINDOW)
+            .spawn()?;
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        Command::new("open").arg(url).spawn()?;
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        Command::new("xdg-open").arg(url).spawn()?;
+    }
+
+    #[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
+    {
+        let _ = url;
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "automatic browser launch is unsupported on this platform",
+        ));
+    }
+
+    Ok(())
 }
 
 fn router(state: AppState) -> Router {
