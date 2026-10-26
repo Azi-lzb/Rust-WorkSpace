@@ -311,6 +311,48 @@ fn wide_summary_cli_preserves_excel_1900_leap_boundary_dates_in_both_row_modes()
 }
 
 #[test]
+fn wide_summary_cli_projects_1900_zero_serial_as_midnight_time() -> Result<()> {
+    for command in ["wide-summary", "wide-summary-row-suffix"] {
+        let root = TestDirectory::new()?;
+        let config = create_timeline_config(root.path())?;
+        let source = root.path().join("sample_1900_zero_serial.xlsx");
+        create_wide_source_with_date_serial(&source, "1900零序列", 0.0)?;
+        let source_before = fs::read(&source)?;
+
+        let output = Command::new(env!("CARGO_BIN_EXE_pytools"))
+            .arg(command)
+            .arg("--config")
+            .arg(&config)
+            .arg("--log-view")
+            .arg("developer")
+            .arg(&source)
+            .output()
+            .context("run wide-summary CLI with Excel 1900 serial zero")?;
+        assert!(
+            output.status.success(),
+            "{command} did not process Excel serial zero: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let report: Value = serde_json::from_slice(&output.stdout)?;
+        let summary_path = report["output"]
+            .as_str()
+            .map(PathBuf::from)
+            .context("1900-zero summary output path missing")?;
+        let dump = read_workbook(&summary_path)?;
+        let summary = dump
+            .sheets
+            .iter()
+            .find(|sheet| sheet.name == "WideRule")
+            .context("1900-zero summary sheet missing")?;
+        assert_eq!(summary.values["G2"]["type"], "string");
+        assert_eq!(summary.values["G2"]["value"], "00:00:00");
+        assert_eq!(fs::read(&source)?, source_before);
+    }
+    Ok(())
+}
+
+#[test]
 fn wide_summary_cli_processes_legacy_xls_without_ooxml_metadata() -> Result<()> {
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests")
