@@ -98,6 +98,79 @@ fn main_menu_routes_all_three_quick_actions_without_starting_a_desktop_app() -> 
 }
 
 #[test]
+fn launching_without_arguments_opens_the_legacy_numbered_main_menu() -> Result<()> {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_pytools"))
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+    child
+        .stdin
+        .take()
+        .context("menu stdin was not piped")?
+        .write_all(b"0\n")?;
+    let result = child.wait_with_output()?;
+    assert!(
+        result.status.success(),
+        "direct menu launch failed: {}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&result.stdout);
+    for legacy_entry in [
+        "======== PyTools 菜单 ========",
+        "  1  时序工具",
+        "  2  去重工具",
+        "  3  打印工具",
+        "  4  转换",
+        "  5  配置工具",
+        "  6  汇总工具",
+        "  7  一二批处理工具",
+        "  8  归档工具",
+        "  9  快捷工具",
+        "  0  退出",
+        "再见。",
+    ] {
+        assert!(
+            stdout.contains(legacy_entry),
+            "direct launch is missing {legacy_entry:?}: {stdout}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn launching_without_arguments_honors_the_legacy_config_path_override() -> Result<()> {
+    let root = TestDirectory::new()?;
+    let config = root.path().join("selected config.xlsx");
+    let mut child = Command::new(env!("CARGO_BIN_EXE_pytools"))
+        .env("PYTOOLS_CONFIG_PATH", &config)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+    child
+        .stdin
+        .take()
+        .context("menu stdin was not piped")?
+        .write_all(b"0\n")?;
+    let result = child.wait_with_output()?;
+    assert!(
+        result.status.success(),
+        "direct menu launch failed: {}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&result.stdout);
+    assert!(
+        stdout.contains(&config.to_string_lossy().to_string()),
+        "menu did not use PYTOOLS_CONFIG_PATH: {stdout}"
+    );
+    assert!(stdout.contains("再见。"));
+    Ok(())
+}
+
+#[test]
 fn cli_help_lists_quick_tools_menu_category() -> Result<()> {
     let result = Command::new(env!("CARGO_BIN_EXE_pytools"))
         .arg("--help")

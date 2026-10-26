@@ -82,6 +82,7 @@
 ## Rust 前端接入状态
 
 - 源项目 `core/frontend/web/index.html` 和 `core/frontend/assets/app-icon.{png,ico}` 已原样复制到 `frontend/`；HTML 与源文件 SHA-256 一致。源项目只读，没有修改。
+- Windows 下无参数启动 `open-data-audit.exe` 默认进入现有 Rust Web UI，优先绑定 `127.0.0.1:8750`；默认端口占用时选择空闲本机端口，显式 `serve --port` 仍严格使用指定端口。启动会尝试打开系统默认浏览器，失败时打印可手动访问的地址。S2 配置保留 `OPEN_DATA_AUDIT_S2_CONFIG` 覆盖，并可从工作目录/可执行文件目录向上发现随包配置。该入口复用现有 HTML 和 Rust bridge，不代表尚未接入的功能已迁移，也不提升 S2 真实样本验收状态。
 - `open-data-audit serve` 仅监听 `127.0.0.1`，并通过响应时注入 bridge 保持 HTML 文件本身不变。页面启动后导航至已接入的 S2。
 - 当前连接 `get_state`、浏览器路径浏览、S2 配置检查、S2 路径选择/清除、输出目录固定/跟随、审核启动、进度和结果回传，以及有限的 UI 设置更新。选择或清除本期/上期目录会刷新两期文件配对预览，并支持 `.xls`/`.xlsx` 文件名列举。
 - 未迁移接口返回 HTTP 501。取消和设置持久化尚未接入；S1/S3/S4/S5 的前端入口不表示其功能已经迁移。

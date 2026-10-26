@@ -1,0 +1,20 @@
+时间：2026-10-26（Windows 11，UTC+8）
+执行者：Codex
+修改前 HEAD：33ea688d303ae294b795f2212530239d423be8e5
+修改后 HEAD：本记录随本次功能提交纳入，提交 SHA 见当前分支 Git 历史。
+WIP：开始时 Audit 入口、bridge、迁移清单已有未提交变化，均检查后延续；迁移清单发现为零字节，内容从 HEAD 恢复后仅追加入口状态。没有修改其他工作树或共享 Excel-Core。
+
+目的：让 Windows 无参数启动直接打开已有 Rust Web UI；保留旧版界面 HTML 和已有 S2 bridge。默认端口 8750 被占用时，仅无参数入口改用空闲 localhost 端口；显式 `serve --port` 保持严格。S2 配置按工作目录/可执行文件目录向上发现，并保留 `OPEN_DATA_AUDIT_S2_CONFIG` 覆盖。未重做 UI 或业务算法。
+
+修改文件：
+- `audit-core/src/bin/open-data-audit.rs`：无参数选择既有 `serve`；默认配置搜索可执行文件祖先；只为默认入口启用端口回退。
+- `audit-core/src/web_bridge.rs`：绑定成功后打开系统浏览器；端口冲突时由默认入口切换 localhost 临时端口并打印地址。
+- `audit-core/MIGRATION_INVENTORY.md`：登记 Windows 启动方式与未验收边界。
+
+验证：指定文件 `rustfmt --check --edition 2021` 通过；`cargo test --offline --locked -p audit-core --bin open-data-audit -j 1` 3/3 通过；Windows `cargo build --offline --locked -p pytools-core --bin pytools -p audit-core --bin open-data-audit -j 1` 通过。直接无参数启动时 8750 已由 PID 11064 占用，Rust GUI 成功绑定 `127.0.0.1:64000`；首页 HTTP 200，`POST /api/get_state` 返回 `busy=false` 与进度字段。PID 11064 未终止或修改。GUI 使用系统浏览器承载既有 Rust Web UI。
+
+未执行/已知边界：未用真实 S2 业务工作簿执行审核；S2 真实样本验收、Linux/glibc 2.28/deb 与目标机验收状态不变。全 workspace `cargo fmt --all -- --check` 仍会报告未修改的 `audit-core/src/conditional_format.rs` 和 `audit-core/tests/s1_conditional_eval.rs` 格式差异，本轮没有格式化这些无关文件。构建产物输出在 F 盘；因 C 盘空间不足，原工作树 `target/` 已整体移至 `F:\rust-workspace-targets\codex-pytools-menu-entry\c-drive-target-archive` 保留。
+
+删除清单：无。
+回滚：仅回滚本记录所列三项 Audit 文件的本次差异；不要恢复或停止由用户/其他进程占用的端口服务。
+【组件版本】不升级；本次仅调整启动入口与配置定位，不修改 Audit 业务逻辑。

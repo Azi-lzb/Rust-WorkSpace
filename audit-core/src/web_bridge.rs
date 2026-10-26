@@ -19,9 +19,10 @@ use axum::{
 };
 use serde_json::{json, Value};
 use std::{
-    fs,
+    fs, io,
     net::{IpAddr, Ipv4Addr, SocketAddr},
     path::{Path, PathBuf},
+    process::Command,
     sync::{Arc, Mutex, MutexGuard},
     thread,
     time::Instant,
@@ -174,21 +175,72 @@ impl AppState {
 
 /// Run the local-only frontend/API service. It never binds to a LAN address.
 pub fn serve_web_ui(port: u16, config_path: PathBuf) -> Result<()> {
+    serve_web_ui_with_fallback(port, config_path, false)
+}
+
+/// Run the local UI, optionally selecting an ephemeral localhost port if the requested one is busy.
+pub fn serve_web_ui_with_fallback(
+    port: u16,
+    config_path: PathBuf,
+    fallback_if_port_busy: bool,
+) -> Result<()> {
     let runtime = Builder::new_multi_thread()
         .enable_all()
         .build()
         .context("create Rust web runtime")?;
     runtime.block_on(async move {
-        let address = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port);
-        let listener = TcpListener::bind(address)
-            .await
-            .with_context(|| format!("listen on http://{address}"))?;
+        let requested_address = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port);
+        let listener = match TcpListener::bind(requested_address).await {
+            Ok(listener) => listener,
+            Err(error) if fallback_if_port_busy && error.kind() == io::ErrorKind::AddrInUse => {
+                let fallback = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0);
+                let listener = TcpListener::bind(fallback)
+                    .await
+                    .context("listen on an available localhost port")?;
+                let selected_address = listener
+                    .local_addr()
+                    .context("read selected localhost address")?;
+                eprintln!(
+                    "默认端口 {requested_address} 已占用，改用本机空闲端口 {selected_address}。"
+                );
+                listener
+            }
+            Err(error) => {
+                return Err(error).with_context(|| format!("listen on http://{requested_address}"));
+            }
+        };
+        let address = listener.local_addr().context("read local web UI address")?;
         let app = router(AppState::new(config_path));
-        println!("Open-Data-Audit Rust web UI: http://{address}");
+        let url = format!("http://{address}/");
+        println!("Open-Data-Audit Rust GUI: {url}");
+        if let Err(error) = open_default_browser(&url) {
+            eprintln!("无法自动打开浏览器：{error}；请手动访问 {url}");
+        }
         axum::serve(listener, app)
             .await
             .context("serve Audit web UI")
     })
+}
+
+fn open_default_browser(url: &str) -> std::io::Result<()> {
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+
+        Command::new("cmd")
+            .args(["/C", "start", "", url])
+            .creation_flags(0x08000000)
+            .spawn()
+            .map(|_| ())
+    }
+    #[cfg(target_os = "macos")]
+    {
+        Command::new("open").arg(url).spawn().map(|_| ())
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        Command::new("xdg-open").arg(url).spawn().map(|_| ())
+    }
 }
 
 fn router(state: AppState) -> Router {

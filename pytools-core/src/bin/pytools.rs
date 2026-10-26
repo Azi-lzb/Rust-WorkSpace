@@ -230,6 +230,10 @@ fn fallback_menu_global(config_path: &Path) -> Result<GlobalConfig> {
 }
 
 fn default_app_config_path() -> PathBuf {
+    if let Some(config_path) = std::env::var_os("PYTOOLS_CONFIG_PATH") {
+        return PathBuf::from(config_path);
+    }
+
     std::env::current_exe()
         .ok()
         .and_then(|executable| executable.parent().map(Path::to_path_buf))
