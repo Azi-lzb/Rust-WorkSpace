@@ -1,0 +1,20 @@
+目的：补齐 Audit #8 的共享关系校验契约，使“保留工作表身份、显式删行并重写其管理数据”的编辑计划可以声明该工作表本地关系变化，同时继续保护工作簿级关系和未触碰工作表。
+
+修改文件：
+- crates/excel-editor/src/plan.rs
+- crates/excel-editor/src/openpyxl_backend.rs
+- 本记录
+
+修改内容：复用现有 `drop_allowed[worksheet]`，不增加计划字段或操作类型。保留工作表的关系例外要求计划同时声明 `Relationships` 保留、对同一工作表执行 `DeleteRows`，并写入单元格值/公式或复制区域。校验器仅排除该工作表自己的 `.rels` 部件；工作簿级指向工作表的关系、其他工作表关系仍严格比较。输出包继续校验关系 ID 唯一、目标存在、XML 关系引用可解析、comments/VML 根部件可解析，以及 sharedStrings 内容和索引。删除工作表既有 drop allowance 行为保持不变。
+
+验证：
+- `cargo fmt -p excel-editor -- --check`：通过。
+- `git diff --check -- crates/excel-editor/src/plan.rs crates/excel-editor/src/openpyxl_backend.rs`：通过。
+- `cargo test -p excel-editor --locked --offline`：40 个单元测试、对应集成测试和 doc tests 全部通过；4 个需隔离 openpyxl runtime 的测试按定义忽略。
+- 构建产物写入 `F:\rust-workspace-targets\main-relationship-validation`。
+
+未验证：未在 main 使用 Audit 真实工作簿执行完整 S1-F01。Audit 业务计划仍需在其分支对保留身份的数据替换 sheet 显式声明 `drop_allowed[HISTORY_AUDIT_SHEET]` 包含 `PreservationRequirement::Relationships`，再运行真实样本；在此之前生产 capability 仍为未验证。未执行 Linux/glibc 2.28 验证。
+
+已知限制：合成测试只验证关系边界与包内引用完整性，不替代真实 Audit 模板的超链接、批注/VML、页面设置、公式及非目标区域保真验收。
+
+回滚：回滚本次共享校验提交及本记录；保留工作区中的其他未提交修改。
