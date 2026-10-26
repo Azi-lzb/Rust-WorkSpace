@@ -1,0 +1,33 @@
+# S3-F02 Web 入口接入 Rust
+
+- 时间：2026-10-26 08:26（Asia/Shanghai）；执行者：Codex。
+- 修改前提交：`ea462ad313d8fdb4edb9ad931bee90c11c10eb31`；修改后提交：待本次验证后创建。
+- WIP：开始时 `audit-core/src/web_bridge.rs` 已有未提交的本轮 S3-F02 接线工作；本次沿用并完成该文件。现有未跟踪的 HANDOFF、S5 报告和临时目录均未修改或纳入版本控制。
+
+## 修改目的与范围
+
+- `audit-core/src/web_bridge.rs`：将原样 bundled UI 的 `choose_central`、`start_central_explanation_export` 和 `toggle_central_output_pin` 接入 Rust；支持比较工作簿、3.0 大集中通用配置、说明工作簿及输出目录的选择/清除。导出由 Rust 异步运行并记录用户状态、reader/writer 与阶段耗时。
+- S3-F02 使用 Python 原路径契约 `centralCommonConfig` 读取“机构地区参照”，不误用 3.1 比较规则配置。配置文件缺失时在写入前明确失败；`serve` 配置同目录存在 `3.0大集中通用配置.xlsx` 时作为默认，否则可从现有 UI 选择。
+- 新增合成 Web API 成功/缺配置测试；成功测试验证机构映射实际进入输出单元格。
+- `audit-core/MIGRATION_INVENTORY.md`：登记 Web bridge 合成测试及真实 HTTP 烟测证据，保留 S3-F02 整体“未验证”状态。
+- 源 Python 项目、真实输入和配置只读；未修改共享 crate、根 Cargo 文件、Cargo.lock、PyTools 或 #8 状态。没有删除文件。
+
+## 实际验证
+
+- `cargo test --locked -p audit-core --lib web_bridge::tests`：12/12 通过。
+- `cargo test --locked -p audit-core --test s3_explanation_export_cli`：1/1 通过。
+- `cargo build --locked -p audit-core --bin open-data-audit`：通过（Windows 原生 MSVC）。
+- `rustfmt --check --edition 2021 audit-core/src/web_bridge.rs`、`git diff --check`：通过。
+- Windows loopback HTTP `/api/start_central_explanation_export` 真实样本烟测：真实比较工作簿选中 2610 条，导出状态成功，开发者日志记录 `calamine` 与 `rust_xlsxwriter`；输出位于系统临时目录并已删除。原比较工作簿和通用配置只读。
+- 完整 Python/Rust 输出契约对拍未在本次 Web 烟测中重跑；已有 CLI 全工作簿对拍报告为 `audit-core/probe/reports/s3_f02_real_comparison_parity_windows_native_20261026.json`，2610 行、输出差异 0。
+
+## 未执行项与已知限制
+
+- Web 真实烟测没有再次与 Python 输出逐单元格对拍；XLSM 输入、峰值内存预算、S3 其余功能、目标 Linux 与 deb 未验证。
+- Audit #8 共享能力仍未解决。
+
+## 回滚与版本
+
+- 回滚：本提交只含 Audit Web bridge、迁移清单及本记录；可用 `git revert <本次提交 SHA>` 撤销。
+- 临时输出工作簿已删除；本次没有其他需清理的生成文件。
+- 【组件版本】0.1.0（不升级）。
