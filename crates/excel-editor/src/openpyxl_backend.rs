@@ -550,6 +550,12 @@ struct CanonicalXmlElement {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 struct WorkbookPreservationSnapshot {
     sheet_order: Vec<String>,
+    /// `(worksheet name, worksheet part, workbook relationship ID)` in the
+    /// current package. Used to scope relationship exemptions to explicitly
+    /// deleted-and-recreated worksheets.
+    worksheet_parts: Vec<(String, String, String)>,
+    workbook_relationship_part: String,
+    package_parts: BTreeSet<String>,
     defined_names: Vec<CanonicalDefinedName>,
     dimensions: Vec<(
         String,
@@ -1008,10 +1014,8 @@ fn validate_preserved_ooxml_metadata(
         .preserve
         .contains(&PreservationRequirement::Relationships)
     {
-        anyhow::ensure!(
-            source.relationships == output.relationships,
-            "openpyxl changed OOXML relationships"
-        );
+        validate_relationship_package_integrity(output_path, &output)?;
+        validate_preserved_relationships(&source, &output, plan)?;
     }
     if plan
         .preserve
@@ -1218,14 +1222,26 @@ fn workbook_preservation_snapshot(path: &Path) -> Result<WorkbookPreservationSna
             target_mode.is_empty(),
             "worksheet relationship {relationship_id:?} is external"
         );
-        sheet_parts.push((name.to_owned(), resolve_opc_target("xl", target)?));
+        sheet_parts.push((
+            name.to_owned(),
+            resolve_opc_target("xl", target)?,
+            relationship_id.to_owned(),
+        ));
     }
 
     let mut snapshot = WorkbookPreservationSnapshot::default();
     snapshot.sheet_order = sheet_parts
         .iter()
-        .map(|(sheet_name, _)| sheet_name.clone())
+        .map(|(sheet_name, _, _)| sheet_name.clone())
         .collect();
+    snapshot.worksheet_parts = sheet_parts.clone();
+    snapshot.workbook_relationship_part = "xl/_rels/workbook.xml.rels".to_owned();
+    for index in 0..archive.len() {
+        let entry = archive.by_index(index)?;
+        if !entry.is_dir() {
+            snapshot.package_parts.insert(entry.name().to_owned());
+        }
+    }
     if let Some(defined_names) = workbook_document.descendants().find(|node| {
         node.is_element()
             && node.tag_name().namespace() == Some(MAIN_NS)
@@ -1234,7 +1250,7 @@ fn workbook_preservation_snapshot(path: &Path) -> Result<WorkbookPreservationSna
         snapshot.defined_names = canonical_defined_names(defined_names, &snapshot.sheet_order)?;
     }
 
-    for (sheet_name, part_name) in sheet_parts {
+    for (sheet_name, part_name, _) in sheet_parts {
         let xml = read_zip_part(&mut archive, &part_name)
             .with_context(|| format!("read worksheet part {part_name}"))?;
         let document = roxmltree::Document::parse(&xml)
@@ -1372,6 +1388,368 @@ fn workbook_preservation_snapshot(path: &Path) -> Result<WorkbookPreservationSna
         .relationships
         .sort_by(|left, right| left.0.cmp(&right.0));
     Ok(snapshot)
+}
+
+fn validate_preserved_relationships(
+    source: &WorkbookPreservationSnapshot,
+    output: &WorkbookPreservationSnapshot,
+    plan: &ExcelEditPlan,
+) -> Result<()> {
+    let (_, deleted_sheets) = planned_sheet_provenance(&source.sheet_order, &plan.operations)?;
+    let created_sheet_names: BTreeSet<&str> = plan
+        .operations
+        .iter()
+        .filter_map(|operation| match operation {
+            EditOperation::CreateSheet { name } | EditOperation::CreateSheetAt { name, .. } => {
+                Some(name.as_str())
+            }
+            _ => None,
+        })
+        .collect();
+    // Relationship differences are permitted only for a source sheet that
+    // the plan explicitly deletes and recreates under that final worksheet
+    // identity. A plain DeleteSheet, a newly-created unrelated sheet, or a
+    // change to any other worksheet keeps the existing strict comparison.
+    let replacements: Vec<(String, String)> = deleted_sheets
+        .into_iter()
+        .filter(|(_, deleted_as)| created_sheet_names.contains(deleted_as.as_str()))
+        .collect();
+
+    let source_relationships = relationships_outside_recreated_sheets(source, &replacements);
+    let output_relationships = relationships_outside_recreated_sheets(
+        output,
+        &replacements
+            .iter()
+            .map(|(_, output_name)| (output_name.clone(), output_name.clone()))
+            .collect::<Vec<_>>(),
+    );
+    anyhow::ensure!(
+        source_relationships == output_relationships,
+        "openpyxl changed OOXML relationships outside explicitly recreated worksheet relationships"
+    );
+    Ok(())
+}
+
+fn relationships_outside_recreated_sheets(
+    snapshot: &WorkbookPreservationSnapshot,
+    replacements: &[(String, String)],
+) -> Vec<(String, Vec<CanonicalXmlElement>)> {
+    let source_names: BTreeSet<&str> = replacements
+        .iter()
+        .map(|(source_name, _)| source_name.as_str())
+        .collect();
+    let relationship_ids: BTreeSet<&str> = snapshot
+        .worksheet_parts
+        .iter()
+        .filter(|(name, _, _)| source_names.contains(name.as_str()))
+        .map(|(_, _, relationship_id)| relationship_id.as_str())
+        .collect();
+    let worksheet_relationship_parts: BTreeSet<String> = snapshot
+        .worksheet_parts
+        .iter()
+        .filter(|(name, _, _)| source_names.contains(name.as_str()))
+        .map(|(_, worksheet_part, _)| relationships_part_for_source(worksheet_part))
+        .collect();
+
+    snapshot
+        .relationships
+        .iter()
+        .filter_map(|(part_name, elements)| {
+            if worksheet_relationship_parts.contains(part_name) {
+                return None;
+            }
+            let is_workbook_relationship_part = part_name == &snapshot.workbook_relationship_part;
+            let elements = elements
+                .iter()
+                .filter(|element| {
+                    if !is_workbook_relationship_part {
+                        return true;
+                    }
+                    let id = canonical_xml_attribute(element, "Id");
+                    let kind = canonical_xml_attribute(element, "Type");
+                    !id.is_some_and(|id| relationship_ids.contains(id))
+                        && !kind.is_some_and(|kind| kind.ends_with("/sharedStrings"))
+                })
+                .cloned()
+                .collect();
+            Some((part_name.clone(), elements))
+        })
+        .collect()
+}
+
+fn canonical_xml_attribute<'a>(element: &'a CanonicalXmlElement, name: &str) -> Option<&'a str> {
+    element
+        .attributes
+        .iter()
+        .find(|(namespace, attribute_name, _)| namespace.is_empty() && attribute_name == name)
+        .map(|(_, _, value)| value.as_str())
+}
+
+#[derive(Clone, Debug)]
+struct PackageRelationship {
+    id: String,
+    kind: String,
+    target: String,
+    target_mode: String,
+}
+
+fn validate_relationship_package_integrity(
+    path: &Path,
+    snapshot: &WorkbookPreservationSnapshot,
+) -> Result<()> {
+    const PACKAGE_REL_NS: &str = "http://schemas.openxmlformats.org/package/2006/relationships";
+    const DOCUMENT_REL_NS: &str =
+        "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+
+    let mut archive = zip::ZipArchive::new(File::open(path)?)?;
+    let mut package_parts = BTreeSet::new();
+    for index in 0..archive.len() {
+        let entry = archive.by_index(index)?;
+        if !entry.is_dir() {
+            package_parts.insert(entry.name().to_owned());
+        }
+    }
+    anyhow::ensure!(
+        package_parts == snapshot.package_parts,
+        "OOXML package parts changed between preservation snapshot and relationship validation"
+    );
+
+    let mut relationships_by_source: BTreeMap<String, Vec<PackageRelationship>> = BTreeMap::new();
+    for relationship_part in package_parts.iter().filter(|part| part.ends_with(".rels")) {
+        let source_part = relationship_source_part(relationship_part)?;
+        let xml = read_zip_part(&mut archive, relationship_part)?;
+        let document = roxmltree::Document::parse(&xml)
+            .with_context(|| format!("parse relationship part {relationship_part}"))?;
+        anyhow::ensure!(
+            document.root_element().tag_name().namespace() == Some(PACKAGE_REL_NS)
+                && document.root_element().tag_name().name() == "Relationships",
+            "relationship part {relationship_part} has an unexpected root element"
+        );
+        let mut ids = BTreeSet::new();
+        let mut relationships = Vec::new();
+        for node in document.root_element().children().filter(|node| {
+            node.is_element()
+                && node.tag_name().namespace() == Some(PACKAGE_REL_NS)
+                && node.tag_name().name() == "Relationship"
+        }) {
+            let id = node
+                .attribute("Id")
+                .with_context(|| format!("relationship in {relationship_part} has no Id"))?
+                .to_owned();
+            anyhow::ensure!(
+                ids.insert(id.clone()),
+                "relationship part {relationship_part} contains duplicate Id {id:?}"
+            );
+            let relationship = PackageRelationship {
+                id,
+                kind: node
+                    .attribute("Type")
+                    .with_context(|| format!("relationship in {relationship_part} has no Type"))?
+                    .to_owned(),
+                target: node
+                    .attribute("Target")
+                    .with_context(|| format!("relationship in {relationship_part} has no Target"))?
+                    .to_owned(),
+                target_mode: node.attribute("TargetMode").unwrap_or_default().to_owned(),
+            };
+            if !relationship.target_mode.eq_ignore_ascii_case("External") {
+                let base = source_part
+                    .rsplit_once('/')
+                    .map(|(parent, _)| parent)
+                    .unwrap_or("");
+                let target_part =
+                    resolve_opc_target(base, &relationship.target).with_context(|| {
+                        format!("resolve relationship target in {relationship_part}")
+                    })?;
+                anyhow::ensure!(
+                    package_parts.contains(&target_part),
+                    "relationship {}/{} targets missing part {target_part}",
+                    relationship_part,
+                    relationship.id
+                );
+            }
+            relationships.push(relationship);
+        }
+        anyhow::ensure!(
+            relationships_by_source
+                .insert(source_part.clone(), relationships)
+                .is_none(),
+            "multiple relationship parts resolve to source part {source_part:?}"
+        );
+    }
+
+    // Every r:id/r:embed/r:link reference in an XML part must resolve through
+    // that part's relationship file. This checks the re-numbered comments and
+    // VML IDs without requiring their original numeric IDs to survive.
+    for part_name in package_parts
+        .iter()
+        .filter(|part| part.ends_with(".xml") && !part.ends_with(".rels"))
+    {
+        let xml = read_zip_part(&mut archive, part_name)?;
+        let document = roxmltree::Document::parse(&xml)
+            .with_context(|| format!("parse XML part {part_name} for relationship references"))?;
+        for node in document.descendants() {
+            for attribute in node
+                .attributes()
+                .filter(|attribute| attribute.namespace() == Some(DOCUMENT_REL_NS))
+            {
+                let valid_ids: BTreeSet<&str> = relationships_by_source
+                    .get(part_name)
+                    .into_iter()
+                    .flatten()
+                    .map(|relationship| relationship.id.as_str())
+                    .collect();
+                anyhow::ensure!(
+                    valid_ids.contains(attribute.value()),
+                    "relationship reference {}={:?} in {part_name} has no matching relationship",
+                    attribute.name(),
+                    attribute.value()
+                );
+            }
+        }
+    }
+
+    validate_shared_string_indexes(
+        &mut archive,
+        &package_parts,
+        &relationships_by_source,
+        snapshot,
+    )?;
+    Ok(())
+}
+
+fn relationship_source_part(relationship_part: &str) -> Result<String> {
+    if relationship_part == "_rels/.rels" {
+        return Ok(String::new());
+    }
+    let (parent, file_name) = relationship_part
+        .rsplit_once("/_rels/")
+        .with_context(|| format!("invalid relationship part path {relationship_part:?}"))?;
+    let source_file = file_name
+        .strip_suffix(".rels")
+        .with_context(|| format!("invalid relationship part path {relationship_part:?}"))?;
+    anyhow::ensure!(
+        !source_file.is_empty(),
+        "relationship part {relationship_part:?} has no source filename"
+    );
+    Ok(format!("{parent}/{source_file}"))
+}
+
+fn relationships_part_for_source(source_part: &str) -> String {
+    let (parent, file_name) = source_part.rsplit_once('/').unwrap_or(("", source_part));
+    if parent.is_empty() {
+        format!("_rels/{file_name}.rels")
+    } else {
+        format!("{parent}/_rels/{file_name}.rels")
+    }
+}
+
+fn validate_shared_string_indexes(
+    archive: &mut zip::ZipArchive<File>,
+    package_parts: &BTreeSet<String>,
+    relationships_by_source: &BTreeMap<String, Vec<PackageRelationship>>,
+    snapshot: &WorkbookPreservationSnapshot,
+) -> Result<()> {
+    const SPREADSHEET_MAIN_NS: &str = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
+    let root_relationships = relationships_by_source
+        .get("")
+        .context("package root relationships are missing")?;
+    let workbook_relationship = root_relationships
+        .iter()
+        .find(|relationship| relationship.kind.ends_with("/officeDocument"))
+        .context("package relationships do not identify a workbook part")?;
+    anyhow::ensure!(
+        !workbook_relationship
+            .target_mode
+            .eq_ignore_ascii_case("External"),
+        "workbook relationship is external"
+    );
+    let workbook_part = resolve_opc_target("", &workbook_relationship.target)?;
+    let workbook_relationships = relationships_by_source
+        .get(&workbook_part)
+        .context("workbook relationships are missing")?;
+    let shared_string_relationships: Vec<_> = workbook_relationships
+        .iter()
+        .filter(|relationship| relationship.kind.ends_with("/sharedStrings"))
+        .collect();
+    anyhow::ensure!(
+        shared_string_relationships.len() <= 1,
+        "workbook has multiple sharedStrings relationships"
+    );
+    let shared_strings_part = shared_string_relationships
+        .first()
+        .map(|relationship| {
+            anyhow::ensure!(
+                !relationship.target_mode.eq_ignore_ascii_case("External"),
+                "sharedStrings relationship is external"
+            );
+            let base = workbook_part
+                .rsplit_once('/')
+                .map(|(parent, _)| parent)
+                .unwrap_or("");
+            let part = resolve_opc_target(base, &relationship.target)?;
+            anyhow::ensure!(
+                package_parts.contains(&part),
+                "sharedStrings relationship targets missing part {part}"
+            );
+            Ok(part)
+        })
+        .transpose()?;
+
+    let shared_string_count = if let Some(part) = &shared_strings_part {
+        let xml = read_zip_part(archive, part)?;
+        let document = roxmltree::Document::parse(&xml)
+            .with_context(|| format!("parse sharedStrings part {part}"))?;
+        let root = document.root_element();
+        anyhow::ensure!(
+            root.tag_name().namespace() == Some(SPREADSHEET_MAIN_NS)
+                && root.tag_name().name() == "sst",
+            "sharedStrings part {part} has an unexpected root element"
+        );
+        Some(
+            root.children()
+                .filter(|node| {
+                    node.is_element()
+                        && node.tag_name().namespace() == Some(SPREADSHEET_MAIN_NS)
+                        && node.tag_name().name() == "si"
+                })
+                .count(),
+        )
+    } else {
+        None
+    };
+
+    for (_, worksheet_part, _) in &snapshot.worksheet_parts {
+        let xml = read_zip_part(archive, worksheet_part)?;
+        let document = roxmltree::Document::parse(&xml)
+            .with_context(|| format!("parse worksheet part {worksheet_part}"))?;
+        for cell in document.descendants().filter(|node| {
+            node.is_element()
+                && node.tag_name().namespace() == Some(SPREADSHEET_MAIN_NS)
+                && node.tag_name().name() == "c"
+                && node.attribute("t") == Some("s")
+        }) {
+            let value = cell
+                .children()
+                .find(|node| {
+                    node.is_element()
+                        && node.tag_name().namespace() == Some(SPREADSHEET_MAIN_NS)
+                        && node.tag_name().name() == "v"
+                })
+                .and_then(|node| node.text())
+                .context("shared-string cell has no value index")?
+                .parse::<usize>()
+                .context("parse shared-string cell index")?;
+            let string_count = shared_string_count.context(
+                "worksheet references shared strings but the workbook has no sharedStrings relationship",
+            )?;
+            anyhow::ensure!(
+                value < string_count,
+                "worksheet shared-string index {value} exceeds sharedStrings item count {string_count}"
+            );
+        }
+    }
+    Ok(())
 }
 
 fn read_zip_part(archive: &mut zip::ZipArchive<File>, part_name: &str) -> Result<String> {
@@ -1757,9 +2135,9 @@ fn planned_sheet_provenance(
 fn resolve_opc_target(base: &str, target: &str) -> Result<String> {
     anyhow::ensure!(
         !target.contains(':') && !target.contains('?') && !target.contains('#'),
-        "unsupported worksheet relationship target {target:?}"
+        "unsupported relationship target {target:?}"
     );
-    let mut segments = if target.starts_with('/') {
+    let mut segments = if target.starts_with('/') || base.is_empty() {
         Vec::new()
     } else {
         base.split('/').map(str::to_owned).collect()
@@ -1776,7 +2154,7 @@ fn resolve_opc_target(base: &str, target: &str) -> Result<String> {
             value => segments.push(value.to_owned()),
         }
     }
-    anyhow::ensure!(!segments.is_empty(), "empty worksheet relationship target");
+    anyhow::ensure!(!segments.is_empty(), "empty relationship target");
     Ok(segments.join("/"))
 }
 
@@ -4018,6 +4396,315 @@ mod tests {
             .into_iter()
             .collect();
         plan
+    }
+
+    fn relationship_element(id: &str, kind: &str, target: &str) -> CanonicalXmlElement {
+        CanonicalXmlElement {
+            name: format!(
+                "http://schemas.openxmlformats.org/package/2006/relationships:Relationship"
+            ),
+            attributes: vec![
+                (String::new(), "Id".to_owned(), id.to_owned()),
+                (String::new(), "Type".to_owned(), kind.to_owned()),
+                (String::new(), "Target".to_owned(), target.to_owned()),
+            ],
+            text: None,
+            children: Vec::new(),
+        }
+    }
+
+    fn relationship_snapshot(output: bool) -> WorkbookPreservationSnapshot {
+        let worksheet_type =
+            "http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet";
+        let styles_type =
+            "http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles";
+        let shared_strings_type =
+            "http://schemas.openxmlformats.org/officeDocument/2006/relationships/sharedStrings";
+        let hyperlink_type =
+            "http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink";
+        let comments_type =
+            "http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments";
+        let vml_type =
+            "http://schemas.openxmlformats.org/officeDocument/2006/relationships/vmlDrawing";
+        let history_part = if output {
+            "xl/worksheets/history-recreated.xml"
+        } else {
+            "xl/worksheets/history.xml"
+        };
+        let history_relationship_id = if output { "rId4" } else { "rId1" };
+        let history_relationship_part = relationships_part_for_source(history_part);
+        let history_links = if output {
+            vec![
+                relationship_element("rId1", comments_type, "../commentsHistory.xml"),
+                relationship_element("rId2", vml_type, "../drawings/commentsHistory.vml"),
+            ]
+        } else {
+            vec![
+                relationship_element("h1", hyperlink_type, "https://example.invalid/old-1"),
+                relationship_element("h2", hyperlink_type, "https://example.invalid/old-2"),
+                relationship_element("c1", comments_type, "../commentsHistory.xml"),
+                relationship_element("v1", vml_type, "../drawings/commentsHistory.vml"),
+            ]
+        };
+        let mut workbook_relationships = vec![
+            relationship_element(
+                history_relationship_id,
+                worksheet_type,
+                if output {
+                    "worksheets/history-recreated.xml"
+                } else {
+                    "worksheets/history.xml"
+                },
+            ),
+            relationship_element("rId2", worksheet_type, "worksheets/other.xml"),
+            relationship_element("rId3", styles_type, "styles.xml"),
+        ];
+        if output {
+            workbook_relationships.push(relationship_element(
+                "rId5",
+                shared_strings_type,
+                "sharedStrings.xml",
+            ));
+        }
+        let mut snapshot = WorkbookPreservationSnapshot {
+            sheet_order: vec!["History".to_owned(), "Other".to_owned()],
+            worksheet_parts: vec![
+                (
+                    "History".to_owned(),
+                    history_part.to_owned(),
+                    history_relationship_id.to_owned(),
+                ),
+                (
+                    "Other".to_owned(),
+                    "xl/worksheets/other.xml".to_owned(),
+                    "rId2".to_owned(),
+                ),
+            ],
+            workbook_relationship_part: "xl/_rels/workbook.xml.rels".to_owned(),
+            package_parts: BTreeSet::new(),
+            relationships: vec![
+                (
+                    "_rels/.rels".to_owned(),
+                    vec![relationship_element(
+                        "rId0",
+                        "http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument",
+                        "xl/workbook.xml",
+                    )],
+                ),
+                (
+                    "xl/_rels/workbook.xml.rels".to_owned(),
+                    workbook_relationships,
+                ),
+                (history_relationship_part, history_links),
+                (
+                    "xl/worksheets/_rels/other.xml.rels".to_owned(),
+                    vec![relationship_element(
+                        "hOther",
+                        hyperlink_type,
+                        "https://example.invalid/unchanged",
+                    )],
+                ),
+            ],
+            ..WorkbookPreservationSnapshot::default()
+        };
+        for (_, relationships) in &mut snapshot.relationships {
+            relationships.sort();
+        }
+        snapshot
+            .relationships
+            .sort_by(|left, right| left.0.cmp(&right.0));
+        snapshot
+    }
+
+    fn relationship_plan(operations: Vec<EditOperation>) -> ExcelEditPlan {
+        ExcelEditPlan {
+            request_id: "relationship-preservation".to_owned(),
+            input: PathBuf::from("input.xlsx"),
+            output: PathBuf::from("output.xlsx"),
+            format: WorkbookFormat::Xlsx,
+            workbook: crate::WorkbookProfile {
+                format: WorkbookFormat::Xlsx,
+                inventory_complete: true,
+                features_present: BTreeSet::new(),
+            },
+            operations,
+            preserve: [PreservationRequirement::Relationships]
+                .into_iter()
+                .collect(),
+            drop_allowed: BTreeMap::new(),
+        }
+    }
+
+    #[test]
+    fn relationships_allow_only_deleted_and_recreated_sheet_and_shared_string_normalization(
+    ) -> Result<()> {
+        let operations = vec![
+            EditOperation::DeleteSheet {
+                name: "History".to_owned(),
+            },
+            EditOperation::CreateSheetAt {
+                name: "History".to_owned(),
+                index: 0,
+            },
+        ];
+        let source = relationship_snapshot(false);
+        let output = relationship_snapshot(true);
+        validate_preserved_relationships(&source, &output, &relationship_plan(operations))?;
+        Ok(())
+    }
+
+    #[test]
+    fn relationships_still_reject_changes_on_untouched_sheets_and_without_recreation() {
+        let operations = vec![
+            EditOperation::DeleteSheet {
+                name: "History".to_owned(),
+            },
+            EditOperation::CreateSheetAt {
+                name: "History".to_owned(),
+                index: 0,
+            },
+        ];
+        let source = relationship_snapshot(false);
+        let mut changed_other_sheet = relationship_snapshot(true);
+        let other_rels = changed_other_sheet
+            .relationships
+            .iter_mut()
+            .find(|(part, _)| part == "xl/worksheets/_rels/other.xml.rels")
+            .expect("other worksheet relationship part exists");
+        other_rels.1 = vec![relationship_element(
+            "hOther",
+            "http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink",
+            "https://example.invalid/changed",
+        )];
+        assert!(validate_preserved_relationships(
+            &source,
+            &changed_other_sheet,
+            &relationship_plan(operations.clone())
+        )
+        .is_err());
+
+        let no_recreation = relationship_plan(vec![EditOperation::DeleteSheet {
+            name: "History".to_owned(),
+        }]);
+        assert!(validate_preserved_relationships(
+            &source,
+            &relationship_snapshot(true),
+            &no_recreation
+        )
+        .is_err());
+    }
+
+    fn relationship_integrity_fixture(
+        shared_string_index: usize,
+        include_vml_target: bool,
+        reference_missing_relation: bool,
+    ) -> Result<PathBuf> {
+        use std::{fs, io::Write};
+        use zip::{write::SimpleFileOptions, ZipWriter};
+
+        const PACKAGE_REL_NS: &str = "http://schemas.openxmlformats.org/package/2006/relationships";
+        const MAIN_NS: &str = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
+        const DOCUMENT_REL_NS: &str =
+            "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "excel-editor-relationship-integrity-{}-{nonce}.xlsx",
+            std::process::id()
+        ));
+        let workbook = format!(
+            r#"<s:workbook xmlns:s="{MAIN_NS}" xmlns:r="{DOCUMENT_REL_NS}"><s:sheets><s:sheet name="History" sheetId="1" r:id="rId1"/></s:sheets></s:workbook>"#
+        );
+        let worksheet = format!(
+            r#"<s:worksheet xmlns:s="{MAIN_NS}" xmlns:r="{DOCUMENT_REL_NS}"><s:sheetData><s:row r="1"><s:c r="A1" t="s"><s:v>{shared_string_index}</s:v></s:c></s:row></s:sheetData><s:legacyDrawing r:id="{}"/></s:worksheet>"#,
+            if reference_missing_relation {
+                "missing"
+            } else {
+                "rId2"
+            }
+        );
+        let workbook_relationships = format!(
+            r#"<Relationships xmlns="{PACKAGE_REL_NS}"><Relationship Id="rId1" Type="{DOCUMENT_REL_NS}/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="{DOCUMENT_REL_NS}/sharedStrings" Target="sharedStrings.xml"/></Relationships>"#
+        );
+        let worksheet_relationships = format!(
+            r#"<Relationships xmlns="{PACKAGE_REL_NS}"><Relationship Id="rId1" Type="{DOCUMENT_REL_NS}/comments" Target="../comments1.xml"/><Relationship Id="rId2" Type="{DOCUMENT_REL_NS}/vmlDrawing" Target="../drawings/comments.vml"/></Relationships>"#
+        );
+        let entries = [
+            (
+                "_rels/.rels",
+                format!(
+                    r#"<Relationships xmlns="{PACKAGE_REL_NS}"><Relationship Id="rId0" Type="{DOCUMENT_REL_NS}/officeDocument" Target="xl/workbook.xml"/></Relationships>"#
+                ),
+            ),
+            ("xl/workbook.xml", workbook),
+            ("xl/_rels/workbook.xml.rels", workbook_relationships),
+            ("xl/worksheets/sheet1.xml", worksheet),
+            (
+                "xl/worksheets/_rels/sheet1.xml.rels",
+                worksheet_relationships,
+            ),
+            (
+                "xl/sharedStrings.xml",
+                format!(r#"<s:sst xmlns:s="{MAIN_NS}"><s:si><s:t>one</s:t></s:si></s:sst>"#),
+            ),
+            (
+                "xl/comments1.xml",
+                format!(r#"<s:comments xmlns:s="{MAIN_NS}"/>"#),
+            ),
+            (
+                "[Content_Types].xml",
+                "<Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\"/>"
+                    .to_owned(),
+            ),
+        ];
+        let mut archive = ZipWriter::new(fs::File::create(&path)?);
+        for (name, data) in entries {
+            archive.start_file(name, SimpleFileOptions::default())?;
+            archive.write_all(data.as_bytes())?;
+        }
+        if include_vml_target {
+            archive.start_file("xl/drawings/comments.vml", SimpleFileOptions::default())?;
+            archive.write_all(b"<xml/>")?;
+        }
+        archive.finish()?;
+        Ok(path)
+    }
+
+    #[test]
+    fn relationship_integrity_checks_targets_ids_and_shared_string_indexes() -> Result<()> {
+        let valid = relationship_integrity_fixture(0, true, false)?;
+        let valid_snapshot = workbook_preservation_snapshot(&valid)?;
+        validate_relationship_package_integrity(&valid, &valid_snapshot)?;
+        fs::remove_file(valid)?;
+
+        let missing_target = relationship_integrity_fixture(0, false, false)?;
+        let missing_target_snapshot = workbook_preservation_snapshot(&missing_target)?;
+        let error =
+            validate_relationship_package_integrity(&missing_target, &missing_target_snapshot)
+                .expect_err("missing VML target must be rejected");
+        assert!(error.to_string().contains("targets missing part"));
+        fs::remove_file(missing_target)?;
+
+        let missing_id = relationship_integrity_fixture(0, true, true)?;
+        let missing_id_snapshot = workbook_preservation_snapshot(&missing_id)?;
+        let error = validate_relationship_package_integrity(&missing_id, &missing_id_snapshot)
+            .expect_err("unresolved relationship ID must be rejected");
+        assert!(error.to_string().contains("no matching relationship"));
+        fs::remove_file(missing_id)?;
+
+        let invalid_shared_index = relationship_integrity_fixture(1, true, false)?;
+        let invalid_shared_index_snapshot = workbook_preservation_snapshot(&invalid_shared_index)?;
+        let error = validate_relationship_package_integrity(
+            &invalid_shared_index,
+            &invalid_shared_index_snapshot,
+        )
+        .expect_err("out-of-range shared string index must be rejected");
+        assert!(error
+            .to_string()
+            .contains("exceeds sharedStrings item count"));
+        fs::remove_file(invalid_shared_index)?;
+        Ok(())
     }
 
     fn column_dimension(min: u32, max: u32, attributes: &[(&str, &str)]) -> CanonicalXmlElement {

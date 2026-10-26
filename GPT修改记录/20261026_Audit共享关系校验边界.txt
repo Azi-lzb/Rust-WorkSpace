@@ -1,0 +1,20 @@
+目的：为 Audit 共享能力请求 #8 收窄 openpyxl 输出关系校验边界，允许仅对编辑计划明确删除并同名重建的工作表更新其局部关系，同时校验输出 OOXML 关系目标和引用完整性。
+
+修改文件：
+- crates/excel-editor/src/openpyxl_backend.rs
+- 本记录
+
+修改内容：关系比较继续严格覆盖未触碰工作表及其他工作簿关系；只豁免被明确删除并重建的工作表关系，以及 openpyxl 的 sharedStrings 关系规范化。输出验证检查关系 ID 唯一、内部目标存在、XML 中 r:id/r:embed/r:link 均可解析，并检查 sharedStrings 项目和单元格索引。修正包根关系目标的解析，使 `_rels/.rels` 中的 `xl/workbook.xml` 正确解析为包根相对路径。
+
+验证：
+- `cargo test -p excel-editor relationship_integrity_checks_targets_ids_and_shared_string_indexes --lib --locked --offline -- --nocapture`：通过。
+- `cargo test -p excel-editor relationships --lib --locked --offline -- --nocapture`：2 项通过，覆盖重建工作表的局部放宽、未修改工作表仍严格拒绝及无重建时仍严格拒绝。
+- `cargo test -p excel-editor --lib --locked --offline`：37 项通过。
+- `cargo test -p excel-editor --locked --offline`：全部适用单元/集成/doc 测试通过；4 项需隔离 openpyxl runtime 的测试按测试定义忽略。
+- 上述 Cargo 构建产物写入 `F:\rust-workspace-targets\main-relationship-validation`。
+
+未验证：没有在 main 使用 Audit 真实工作簿执行完整 S1-F01；该能力仍须由 Audit 同步本提交后使用真实样本验证，不得登记为生产 Passed。未执行 Linux/glibc 2.28 验证。
+
+已知限制：synthetic ZIP/XML 边界测试不替代真实模板的批注、VML、公式、样式、打印设置及非目标部件保真对拍。
+
+回滚：回滚本次公共校验提交及本记录；不得回滚或覆盖同一工作区中的其他未提交修改。
