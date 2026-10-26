@@ -1,0 +1,28 @@
+时间：2026-10-26 11:13（Asia/Shanghai）
+执行者：Codex（Audit）
+修改前 commit：c949a77a93a8dab6aa32187416c6481fcd1bfa4f
+修改后 commit：本次文档提交；SHA 由 Git 历史记录
+WIP：保留已有 S3-F04 业务代码、Python/Rust 对拍器、真实对拍报告及其他未跟踪报告；本记录不纳入这些业务文件。
+
+目的：使 Audit 子树执行规则和迁移清单采用用户确认的“先迁移、再集中 Windows 验收、再集中 Linux 验收、最后交付优化”阶段顺序与统一状态口径。
+
+修改文件：
+- `audit-core/AGENTS.md`
+- `audit-core/MIGRATION_INVENTORY.md`
+- 本记录
+
+变更：Audit/PyTools 在独立 worktree 并行迁移；为每功能保留定向编译、单测、入口 smoke、输入/输出安全检查与清单更新；集中验收阶段区分 Windows 真实业务人工复查、Linux 目标机/deb 验收和交付优化；允许逐步适配 workspace 前端，但禁止占位成功响应。将已有 Excel 引擎证据作为逐功能路由依据，公共能力阻塞只限制受影响操作。
+
+状态：新增统一的六级功能状态说明；仅将 S3-F04 的当前记录更新为“迁移中”，并写入当前未提交实现、9 项定向单测通过、真实对拍差异及未接通输入/前端边界。没有修改其他功能的历史证据或状态。Audit #8 仍未解决。
+
+配置及 VBA 迁移影响：无。
+
+验证：`git diff --check`；文档内容与现存 Rust WIP/真实对拍报告核对。未运行测试，本次提交仅调整文档口径。已有业务验证证据为 `cargo test -p audit-core --lib s3_current_value_check::tests`（9 passed），真实 Windows Python/Rust 对拍未通过（214 行/3 条日志一致，63 个计算文本及 17 个列宽断言不一致，输入未变）。
+
+未执行：根 `DEVELOPMENT_GOAL.md` 与 workspace `AGENTS.md` 的更新由 main 处理；PyTools 子树同步由 pytools Agent 处理。未运行全仓测试、Linux 构建或 deb 验收。
+
+已知问题：S3-F04 继续保持迁移中；当前真实对拍差异未修复。Audit #8 共享能力未解决。
+
+删除清单：无。
+回滚：仅需回滚本次 Audit 文档提交；不得覆盖或清理保留的 S3-F04 WIP 和交接文件。
+【组件版本】：不升级（仅文档治理）。
