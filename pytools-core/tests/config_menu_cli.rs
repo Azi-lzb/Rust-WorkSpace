@@ -1,11 +1,12 @@
 use anyhow::{Context, Result};
 use excel_editor::{EditOperation, ExcelEditPlan};
 use excel_reader::read_workbook;
+use pytools_core::config::load_global;
 use rust_xlsxwriter::Workbook;
 use serde_json::Value;
 use std::{
     fs,
-    io::Write,
+    io::{BufReader, Read, Write},
     path::{Path, PathBuf},
     process::{Command, Output, Stdio},
     sync::atomic::{AtomicU64, Ordering},
@@ -66,6 +67,156 @@ fn missing_configuration_bootstraps_through_menu_and_can_be_viewed() -> Result<(
     assert_eq!(workbook.sheets.len(), 11);
     assert_eq!(workbook.sheets[0].name, "全局配置");
     assert!(stdout.contains("源文件扩展名"));
+    Ok(())
+}
+
+#[test]
+fn reloading_configuration_updates_output_directory_for_the_running_menu() -> Result<()> {
+    let root = TestDirectory::new()?;
+    let config = root.path().join("app/config/config.xlsx");
+    let initial_output = root.path().join("initial-output");
+    let reloaded_output = root.path().join("reloaded-output");
+    write_global_config(&config, &initial_output)?;
+    assert_eq!(load_global(&config)?.output_dir, initial_output);
+
+    let source = root.path().join("summary-source.xlsx");
+    let mut source_workbook = Workbook::new();
+    let source_sheet = source_workbook.add_worksheet();
+    source_sheet.set_name("Data")?;
+    source_sheet.write_string(0, 0, "名称")?;
+    source_sheet.write_string(0, 1, "金额")?;
+    source_sheet.write_string(1, 0, "样本")?;
+    source_sheet.write_number(1, 1, 12.5)?;
+    source_workbook.save(&source)?;
+    let source_before = fs::read(&source)?;
+
+    let mut child = Command::new(env!("CARGO_BIN_EXE_pytools"))
+        .arg("menu")
+        .arg("--config")
+        .arg(&config)
+        .arg("--log-view")
+        .arg("off")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .context("start PyTools menu for configuration reload test")?;
+    let mut stdout = BufReader::new(child.stdout.take().context("menu stdout missing")?);
+    let mut transcript = Vec::new();
+    let mut transcript_cursor = 0;
+    read_menu_until(
+        &mut stdout,
+        &mut transcript,
+        &mut transcript_cursor,
+        "主菜单选择> ",
+    )?;
+    send_menu_input(&mut child, "7\n")?;
+    read_menu_until(
+        &mut stdout,
+        &mut transcript,
+        &mut transcript_cursor,
+        "子菜单选择> ",
+    )?;
+
+    // The process has already loaded the initial config before the main prompt.
+    // Replace the workbook while it is running, then exercise the real reload menu.
+    write_global_config(&config, &reloaded_output)?;
+    assert_eq!(load_global(&config)?.output_dir, reloaded_output);
+    send_menu_input(&mut child, "2\n")?;
+    read_menu_until(
+        &mut stdout,
+        &mut transcript,
+        &mut transcript_cursor,
+        "子菜单选择> ",
+    )?;
+    send_menu_input(&mut child, "0\n")?;
+    read_menu_until(
+        &mut stdout,
+        &mut transcript,
+        &mut transcript_cursor,
+        "主菜单选择> ",
+    )?;
+    fs::write(&config, b"not an xlsx workbook")?;
+    send_menu_input(&mut child, "7\n")?;
+    read_menu_until(
+        &mut stdout,
+        &mut transcript,
+        &mut transcript_cursor,
+        "子菜单选择> ",
+    )?;
+    send_menu_input(&mut child, "2\n")?;
+    read_menu_until(
+        &mut stdout,
+        &mut transcript,
+        &mut transcript_cursor,
+        "子菜单选择> ",
+    )?;
+    send_menu_input(&mut child, "0\n")?;
+    read_menu_until(
+        &mut stdout,
+        &mut transcript,
+        &mut transcript_cursor,
+        "主菜单选择> ",
+    )?;
+    send_menu_input(&mut child, "1\n")?;
+    read_menu_until(
+        &mut stdout,
+        &mut transcript,
+        &mut transcript_cursor,
+        "子菜单选择> ",
+    )?;
+    send_menu_input(&mut child, "2\n")?;
+    read_menu_until(
+        &mut stdout,
+        &mut transcript,
+        &mut transcript_cursor,
+        "文件路径> ",
+    )?;
+    send_menu_input(&mut child, &format!("{}\n", source.display()))?;
+    read_menu_until(
+        &mut stdout,
+        &mut transcript,
+        &mut transcript_cursor,
+        "主菜单选择> ",
+    )?;
+    send_menu_input(&mut child, "0\n")?;
+    drop(child.stdin.take());
+    stdout.read_to_end(&mut transcript)?;
+    let status = child.wait().context("wait for reloaded PyTools menu")?;
+
+    anyhow::ensure!(
+        status.success(),
+        "reloaded menu failed: {}\n{}",
+        status,
+        String::from_utf8_lossy(&transcript)
+    );
+    let workbook_count = |directory: &Path| -> Result<usize> {
+        if !directory.exists() {
+            return Ok(0);
+        }
+        Ok(fs::read_dir(directory)?
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| {
+                entry
+                    .path()
+                    .extension()
+                    .is_some_and(|extension| extension.eq_ignore_ascii_case("xlsx"))
+            })
+            .count())
+    };
+    assert_eq!(workbook_count(&initial_output)?, 0);
+    assert_eq!(
+        workbook_count(&reloaded_output)?,
+        1,
+        "menu output: {}",
+        String::from_utf8_lossy(&transcript)
+    );
+    assert_eq!(fs::read(&source)?, source_before);
+    assert!(
+        String::from_utf8_lossy(&transcript).contains(reloaded_output.to_string_lossy().as_ref())
+    );
+    assert!(String::from_utf8_lossy(&transcript).contains("[读取失败]"));
+    assert!(String::from_utf8_lossy(&transcript).contains("[配置不可用]"));
     Ok(())
 }
 
@@ -370,6 +521,62 @@ fn write_incomplete_config(path: &Path) -> Result<()> {
     }
     workbook.save(path)?;
     Ok(())
+}
+
+fn write_global_config(path: &Path, output_dir: &Path) -> Result<()> {
+    fs::create_dir_all(path.parent().context("configuration parent missing")?)?;
+    let mut workbook = Workbook::new();
+    let global = workbook.add_worksheet();
+    global.set_name("全局配置")?;
+    global.write_string(0, 0, "键")?;
+    global.write_string(0, 1, "值")?;
+    global.write_string(0, 2, "备注")?;
+    global.write_string(1, 0, "输出目录")?;
+    global.write_string(1, 1, output_dir.to_string_lossy())?;
+    global.write_string(2, 0, "日志目录")?;
+    global.write_string(
+        2,
+        1,
+        path.parent()
+            .context("configuration parent missing")?
+            .join("logs")
+            .to_string_lossy(),
+    )?;
+    workbook.save(path)?;
+    Ok(())
+}
+
+fn send_menu_input(child: &mut std::process::Child, input: &str) -> Result<()> {
+    let stdin = child.stdin.as_mut().context("interactive stdin missing")?;
+    stdin.write_all(input.as_bytes())?;
+    stdin.flush()?;
+    Ok(())
+}
+
+fn read_menu_until<R: Read>(
+    reader: &mut R,
+    transcript: &mut Vec<u8>,
+    cursor: &mut usize,
+    marker: &str,
+) -> Result<()> {
+    let marker = marker.as_bytes();
+    loop {
+        if transcript[*cursor..]
+            .windows(marker.len())
+            .any(|window| window == marker)
+        {
+            *cursor = transcript.len();
+            return Ok(());
+        }
+        let mut byte = [0_u8; 1];
+        anyhow::ensure!(
+            reader.read(&mut byte)? != 0,
+            "interactive menu exited before `{}`; output: {}",
+            String::from_utf8_lossy(marker),
+            String::from_utf8_lossy(transcript)
+        );
+        transcript.push(byte[0]);
+    }
 }
 
 fn write_ambiguous_config(path: &Path) -> Result<()> {

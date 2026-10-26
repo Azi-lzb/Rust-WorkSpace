@@ -409,13 +409,13 @@ fn create_app_config(root: &Path) -> Result<PathBuf> {
     let mut workbook = rust_xlsxwriter::Workbook::new();
     let worksheet = workbook.add_worksheet();
     worksheet.set_name("全局配置")?;
-    worksheet.write_string(0, 0, "序号")?;
-    worksheet.write_string(0, 1, "配置项")?;
-    worksheet.write_string(0, 2, "配置值")?;
-    worksheet.write_string(1, 1, "输出目录")?;
-    worksheet.write_string(1, 2, "output")?;
-    worksheet.write_string(2, 1, "日志目录")?;
-    worksheet.write_string(2, 2, "logs")?;
+    worksheet.write_string(0, 0, "键")?;
+    worksheet.write_string(0, 1, "值")?;
+    worksheet.write_string(0, 2, "备注")?;
+    worksheet.write_string(1, 0, "输出目录")?;
+    worksheet.write_string(1, 1, "output")?;
+    worksheet.write_string(2, 0, "日志目录")?;
+    worksheet.write_string(2, 1, "logs")?;
     workbook
         .save(&config)
         .context("save interactive global configuration")?;
