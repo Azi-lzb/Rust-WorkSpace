@@ -1,0 +1,25 @@
+时间：2026-10-26 20:24:15（Asia/Shanghai）
+执行者：Codex
+修改前 commit：a8c0617d6d04ccbb6e09cd2000959641ffdcee8b
+修改后 commit：待本次记录提交
+WIP 情况：修改前 `git status --short` 干净；当前分支 `codex/windows-operable-entries` 与同名远程同步。源 Python 项目只读。本次仅更新两个迁移清单和本记录，没有改 Rust 业务代码或共享 Excel-Core。
+
+目的：按 Windows 可操作入口要求复核 PyTools 数字菜单和 Audit 旧 GUI 页面/Rust bridge，并更新迁移清单中的最新入口证据。
+
+修改文件：
+- `pytools-core/MIGRATION_INVENTORY.md`：补记当前 Windows Release 菜单启动检查。
+- `audit-core/MIGRATION_INVENTORY.md`：补记当前 Windows GUI/bridge 启动检查和未验收范围。
+- 本记录。
+
+验证：
+- Windows：`cargo test --locked --offline -p pytools-core --test interactive_menu -j 1`，5/5 通过。
+- Windows：`cargo test --locked --offline -p audit-core --lib web_bridge::tests -j 1`，9/9 通过，包含合成 S2 API 业务链和未接通接口错误测试。
+- 默认 `target/release` 的 GUI exe 被现有进程占用，构建返回 Windows access denied；未终止该进程。改用独立输出目录后 `cargo build --locked --offline --release --target-dir target/windows-entry-smoke -p pytools-core --bin pytools -p audit-core --bin open-data-audit-gui` 成功。
+- 直接运行 `target/windows-entry-smoke/release/pytools.exe` 无参数并输入 `0`，显示旧版 1–9 数字主菜单后正常退出。
+- 启动 `target/windows-entry-smoke/release/open-data-audit-gui.exe --no-browser --port <临时端口> --config audit-core/tests/fixtures/s2_config/check_valid.xlsx`：原 GUI 页面 `GET /` 为 200，`POST /api/get_state` 为 200，未接通的 `POST /api/start_dag_flow` 为 501 并返回“尚未实现接口”。测试进程已退出。
+
+未执行项与已知问题：未逐项人工执行 PyTools 全部菜单；没有执行真实 S2 工作簿审核或完整 GUI 人工验收；Audit GUI 使用系统浏览器承载复用的旧页面，不是嵌入式 pywebview 窗口；S1/S3/S4/S5 其他 GUI 工作流仍未接通或未验收；Linux、目标 glibc 与 deb 验收留待集中阶段。入口测试不改变任何功能真实样本验收状态。
+
+删除清单：无。
+回滚提示：仅回退上述迁移清单的新增验证项和本记录；无需修改或回滚入口代码。
+【组件版本】：不升级。

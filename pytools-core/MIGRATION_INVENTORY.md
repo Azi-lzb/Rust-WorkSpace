@@ -37,6 +37,7 @@
 - 2026-10-26 Windows 原生复核（HEAD `1682d14`）：联合 Release 构建通过；`interactive_menu` 5/5 通过；独立 `pytools.exe` 无参数启动显示 1–9 菜单并通过 `0` 正常退出。配置查看/初始化、6-1 汇总输出及未实现提示由定向测试覆盖。入口与菜单状态不提升业务真实样本验收；整张菜单逐项、真实业务样本和 Linux/deb 未验证。
 - 2026-10-26 当前 Windows 原生 Release 复测（HEAD `4945ace`）：`cargo test --offline --locked -p pytools-core --test interactive_menu -j 1` 5/5 通过，联合 Release 构建成功；直接运行 `F:\CodexBuilds\windows-operable-entries-20261026-codex-current\release\pytools.exe` 无参数显示 1–9 菜单并输入 `0` 正常退出。未逐项执行菜单，入口验证不提升业务真实样本验收状态。
 - 2026-10-26 当前工作树（基于 HEAD `ba6631f`）修正 5-1 菜单状态：配置修复计划虽有 capability-gated CLI 候选，旧数字菜单仍只接通新配置创建；菜单现明确提示既有配置修复尚未实现于菜单。`interactive_menu` 5/5 通过，Release `pytools.exe` 输入 `5 → 0 → 0` 显示提示并正常退出；未运行真实配置修复或业务样本。
+- 2026-10-26 Codex 当前 Windows 工作树复核（HEAD `a8c0617`）：`cargo test --locked --offline -p pytools-core --test interactive_menu -j 1` 5/5 通过；联合 Windows Release 构建通过，`target/windows-entry-smoke/release/pytools.exe` 无参数实际显示 1–9 菜单并输入 `0` 正常退出。菜单项接线范围和未实现提示维持上文；未逐项人工执行全部菜单，也未提升真实样本验收状态。
 
 ## 输入与转换矩阵
 
