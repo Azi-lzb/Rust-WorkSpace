@@ -35,6 +35,7 @@ use audit_core::{
     },
     s2_service::{run_s2_audit, s2_engine_for_stage, S2ProgressEvent, S2RunRequest},
     s2_summary::S2AuditSummary,
+    s3_current_value_check::{python_regex_scope_matcher, run_current_value_check_csv},
     s3_explanation_export::export_selected_explanations,
     s3_explanation_feedback::plan_explanation_feedback_import,
     s5_config::load_configuration,
@@ -88,6 +89,9 @@ enum Command {
     /// Match S3-F03 institution feedback and write a read-only ExcelEditPlan.
     #[command(name = "s3-plan-explanation-feedback-import")]
     S3PlanExplanationFeedbackImport(S3PlanExplanationFeedbackImportArgs),
+    /// Run S3-F04 current/previous period checks from CSV files.
+    #[command(name = "s3-check-current-values")]
+    S3CheckCurrentValues(S3CurrentValueCheckArgs),
     /// Recommend an S1 template from source and template workbook sheet names.
     TemplateSuggest(TemplateSuggestArgs),
     /// Evaluate the Rust-supported static conditional-format rules in an XLSX workbook.
@@ -779,6 +783,33 @@ struct S3PlanExplanationFeedbackImportArgs {
     developer_view: bool,
 }
 
+#[derive(Debug, Args)]
+struct S3CurrentValueCheckArgs {
+    /// Current-period CSV data; repeat for multiple institution files.
+    #[arg(long = "current-csv", required = true)]
+    current_csvs: Vec<PathBuf>,
+
+    /// Previous-period CSV data; repeat for multiple institution files.
+    #[arg(long = "previous-csv")]
+    previous_csvs: Vec<PathBuf>,
+
+    /// Shared or feature-specific configuration workbook; repeat to combine them.
+    #[arg(long = "config-workbook", required = true)]
+    config_workbooks: Vec<PathBuf>,
+
+    /// New XLSX path for the check result. Existing files are never overwritten.
+    #[arg(long)]
+    output_workbook: PathBuf,
+
+    /// Optional new XLSX path for the separate run log.
+    #[arg(long)]
+    log_workbook: Option<PathBuf>,
+
+    /// Emit developer-view JSON progress with engines and stage timings.
+    #[arg(long, default_value_t = false)]
+    developer_view: bool,
+}
+
 #[derive(Debug, Serialize)]
 struct S2CliOutput {
     status: &'static str,
@@ -857,6 +888,9 @@ fn run() -> Result<()> {
         }
         Command::S3PlanExplanationFeedbackImport(arguments) => {
             run_s3_plan_explanation_feedback_import(arguments)?;
+        }
+        Command::S3CheckCurrentValues(arguments) => {
+            run_s3_current_value_check(arguments)?;
         }
         Command::TemplateSuggest(arguments) => {
             let depth = if arguments.recursive {
@@ -1343,6 +1377,115 @@ fn run_s5_detect_period(arguments: S5DetectPeriodArgs) -> Result<()> {
         });
         println!("{}", serde_json::to_string_pretty(&user_output)?);
     }
+    Ok(())
+}
+
+fn run_s3_current_value_check(arguments: S3CurrentValueCheckArgs) -> Result<()> {
+    let started = Instant::now();
+    let started_at = chrono::Local::now().to_rfc3339();
+    if arguments.developer_view {
+        eprintln!(
+            "{}",
+            serde_json::to_string(&json!({
+                "type": "progress",
+                "product": "open-data-audit",
+                "feature": "S3-F04",
+                "step": "current_value_check",
+                "status": "started",
+                "started_at": started_at
+            }))?
+        );
+    } else {
+        eprintln!("正在运行本期数值核对并生成结果工作簿…");
+    }
+
+    let report = match run_current_value_check_csv(
+        &arguments.current_csvs,
+        &arguments.previous_csvs,
+        &arguments.config_workbooks,
+        &arguments.output_workbook,
+        arguments.log_workbook.as_deref(),
+        python_regex_scope_matcher(),
+    ) {
+        Ok(report) => report,
+        Err(error) => {
+            if arguments.developer_view {
+                eprintln!(
+                    "{}",
+                    serde_json::to_string(&json!({
+                        "type": "progress",
+                        "product": "open-data-audit",
+                        "feature": "S3-F04",
+                        "step": "current_value_check",
+                        "status": "failed",
+                        "finished_at": chrono::Local::now().to_rfc3339(),
+                        "elapsed_ms": started.elapsed().as_millis(),
+                        "reader": "calamine/csv",
+                        "writer": "rust_xlsxwriter",
+                        "error": format!("{error:#}")
+                    }))?
+                );
+            } else {
+                eprintln!("本期数值核对失败，未报告成功结果。");
+            }
+            return Err(error);
+        }
+    };
+
+    if arguments.developer_view {
+        eprintln!(
+            "{}",
+            serde_json::to_string(&json!({
+                "type": "progress",
+                "product": "open-data-audit",
+                "feature": "S3-F04",
+                "step": "current_value_check",
+                "status": "completed",
+                "started_at": started_at,
+                "finished_at": chrono::Local::now().to_rfc3339(),
+                "config_reader": report.config_reader,
+                "input_reader": report.input_reader,
+                "writer": report.writer,
+                "rows": report.rows,
+                "total_rules": report.total_rules,
+                "enabled_rules": report.enabled_rules,
+                "disabled_rules": report.disabled_rules,
+                "current_records": report.current_records,
+                "previous_records": report.previous_records,
+                "config_read_time_ms": report.config_read_time_ms,
+                "input_read_time_ms": report.input_read_time_ms,
+                "calculation_time_ms": report.calculation_time_ms,
+                "workbook_write_time_ms": report.workbook_write_time_ms,
+                "elapsed_ms": started.elapsed().as_millis()
+            }))?
+        );
+    } else {
+        eprintln!(
+            "本期数值核对完成：{} 行；耗时 {} ms；输出：{}",
+            report.rows,
+            started.elapsed().as_millis(),
+            report.output_workbook.display()
+        );
+    }
+
+    let mut output = serde_json::to_value(&report)?;
+    if !arguments.developer_view {
+        if let Some(object) = output.as_object_mut() {
+            for key in [
+                "config_reader",
+                "input_reader",
+                "writer",
+                "config_read_time_ms",
+                "input_read_time_ms",
+                "calculation_time_ms",
+                "workbook_write_time_ms",
+                "total_time_ms",
+            ] {
+                object.remove(key);
+            }
+        }
+    }
+    println!("{}", serde_json::to_string_pretty(&output)?);
     Ok(())
 }
 

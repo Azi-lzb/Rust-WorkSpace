@@ -1,0 +1,37 @@
+# S3-F04 真实对拍差异修复
+
+- 时间：2026-10-26 11:34:41（本地）
+- 执行者：Codex
+- 修改前 commit：e2f1400d66775f0e1e788994a180282081603c88
+- 修改后 commit：待本轮提交
+- 修改前工作树：保留既有 S3-F04 未提交实现与报告、S1/S5 报告及 HANDOFF_ZCODE_TO_CODEX.md；未清理或覆盖。
+- 【组件版本】不升级；未另行采用旧版 Sx-Fxx 组件版本制度。
+
+## 目的与变更
+
+修复 S3-F04 Rust 与原 Python 对拍中的计算说明差异，并使新建结果表列宽遵守 Python/openpyxl 的 XLSX 宽度契约。
+
+- `audit-core/src/s3_current_value_check.rs`：对缺失当前/上期指标输出 Python 使用的字面量 `0`；已存在数值仍按 Python float repr 输出。列宽写入改用像素接口，使 XLSX OOXML 宽度属性与 Python 配置一致；结果和日志输出均在计算前完成路径规范化、同路径及已有文件检查，避免输出相互覆盖或部分落盘。
+- `audit-core/tests/compare/compare_s3_f04_service.py`：对拍时按 OOXML `min`/`max` 列范围读取每一列的有效宽度，避免将合并列区间的内部列错误视为默认列宽。
+- `audit-core/MIGRATION_INVENTORY.md`：将 S3-F04 更新为最新真实批次结果，整体状态仍为“迁移中”。
+- `audit-core/GPT修改记录/20261026_113441_S3F04真实对拍差异修复.txt`：本次修改记录。
+- 最新机器报告：`audit-core/probe/reports/s3_f04_python_rust_real_parity_windows_native_20261026_after_safety_v3.json`。
+- Cargo 配置：使用 main 已注册的 `regex.workspace`；`Cargo.lock` 仅新增 audit-core 的 regex 解析依赖记录。未改根 `Cargo.toml`、共享 crate 或 PyTools。
+
+## 验证
+
+- `cargo test -p audit-core --lib s3_current_value_check::tests`：11 passed。
+- `cargo build -p audit-core --bin open-data-audit`：通过。
+- Windows 原生 Python/Rust 真实批次对拍：本期 2 个 CSV、上期 1 个 CSV、2 个只读配置工作簿；4,212/2,586 条输入记录、183 条规则（163 条启用），两侧均生成 214 行和 3 条运行日志。结构、表头、值、计算说明、列宽、样式、数字格式及日志差异均为 0；输入哈希前后相同。
+- Rust 引擎：Calamine 配置读取、Rust CSV 输入、rust_xlsxwriter 新建 XLSX。真实运行总耗时观测 550 ms，仅适用于报告中的批次。
+
+## 未完成与已知限制
+
+- S3-F04 仍只有 CSV CLI；前端/Web API、XLS/XLSX 输入与完整失败矩阵尚未接通或验证。
+- Windows 用户操作验收、其他真实批次和 Linux/deb 未验证；不得将本次单批次对拍宣称为功能或平台验收通过。
+- Audit S1-F01 既有公式复制和非空历史工作簿写回仍受未解决的共享 Excel-Core #8 阻塞。本次没有修改该能力，也未改写其状态。
+
+## 删除与回滚
+
+- 删除清单：无。
+- 回滚：回退本次提交即可恢复本次修正与清单描述；不要删除或回滚其余既有工作树内容。

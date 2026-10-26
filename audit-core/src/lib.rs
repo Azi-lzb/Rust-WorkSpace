@@ -37,6 +37,7 @@ pub mod s2_rule_engine;
 pub mod s2_service;
 pub mod s2_summary;
 pub mod s2_validation;
+pub mod s3_current_value_check;
 pub mod s3_explanation_export;
 pub mod s3_explanation_feedback;
 pub mod s5_business;
