@@ -46,6 +46,15 @@
     "output_published": false,
     "source_unchanged": true
   },
+  "error_value_guard": {
+    "input": "synthetic .xlsm containing a typed #N/A error cell at 错误!A1",
+    "rust_result": "conversion refused before publishing because the writer cannot preserve a typed Excel error",
+    "converted": 0,
+    "failed": 1,
+    "error_location_reported": true,
+    "output_published": false,
+    "source_unchanged": true
+  },
   "numeric_serial_values": {
     "date_system": "1900",
     "cells": {
@@ -124,7 +133,7 @@
   },
   "unverified": [
     "Real business XLS workbooks and configurations.",
-    "Formula text/cache parity against legacy XLS conversion, 1904 epoch detection for legacy .xls/.xlsb inputs, error cells and empty-string cells.",
+    "Formula cache parity against legacy XLS conversion, 1904 epoch detection for legacy .xls/.xlsb inputs, and empty-string cells.",
     "Styles, comments, merged regions, dimensions, names, print settings, validations, conditional formatting, drawings and macros are intentionally not preserved by this value-only route.",
     "Windows desktop file dialog, glibc 2.28, Kylin V10/UOS V20 and offline deb delivery."
   ]

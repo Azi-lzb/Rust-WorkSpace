@@ -970,4 +970,10 @@ Windows 原生 `cargo fmt --manifest-path pytools-core/Cargo.toml -- --check` �
 
 扩展正向 1900 日期系统 XLSM 探针，经 Windows 原生 `convert-excel --engine native` 转换日期/时间/累计时长序列、true/false 布尔值和 `=SUM(A1,A2)` 普通公式。Python/openpyxl 源类型与 Rust 输出逐项对照：序列值数值相等、布尔值保留为布尔类型、公式文本与类型一致；源文件未变。公式缓存不属于本次断言，按 native value-only 契约明确未验证；格式仍按菜单告知不保留。
 
-该验证只补充合成正向 CLI 类型覆盖，不是 PyCode 旧保真转换对拍或用户真实业务样本验收；错误值/空文本、legacy `.xls/.xlsb` 的 1904 日期系统、真实输入、Windows 文件选择器、glibc 2.28、麒麟/UOS 与离线 deb 仍未验收，PT-4-2 整体继续未验收。
+该验证只补充合成正向 CLI 类型覆盖，不是 PyCode 旧保真转换对拍或用户真实业务样本验收；错误值拒绝路径后续由合成 CLI 复验，空文本、legacy `.xls/.xlsb` 的 1904 日期系统、真实输入、Windows 文件选择器、glibc 2.28、麒麟/UOS 与离线 deb 仍未验收，PT-4-2 整体继续未验收。
+
+### 2026-10-26 PT-4-2 错误单元格 CLI 失败关闭复验
+
+使用隔离合成 XLSM，在 `错误!A1` 写入 typed `#N/A`，经 Windows 原生 `convert-excel --engine native` 验证转换失败码为 2、失败计数为 1、错误摘要指出工作表和坐标、未发布 XLSX 且源字节不变。该结果确认原生按值转换不会把 typed error 静默写成普通文本或错误地报告成功。
+
+此项仅闭合合成 XLSM 的错误值拒绝路径；不证明 legacy `.xls` 保真转换可以保留 error token，不覆盖空字符串、用户真实样本、公式缓存、其他 OOXML 对象、目标 Linux 实机或离线 deb。PT-4-2 整体仍未验收。

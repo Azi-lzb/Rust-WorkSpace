@@ -234,6 +234,55 @@ def main() -> int:
         if "ISO-typed date/time" not in iso_failure_detail or "cell type" not in iso_failure_detail:
             raise AssertionError(f"ISO date refusal detail is incomplete: {iso_failure_detail!r}")
 
+        error_source = output_dir / "error-cell.xlsm"
+        error_workbook = Workbook()
+        error_sheet = error_workbook.active
+        error_sheet.title = "错误"
+        error_sheet["A1"] = "#N/A"
+        error_sheet["A1"].data_type = "e"
+        error_workbook.save(error_source)
+        error_source_before = error_source.read_bytes()
+        error_result = subprocess.run(
+            [
+                str(RUST_CLI),
+                "convert-excel",
+                "--config",
+                str(config),
+                "--to",
+                "xlsx",
+                "--engine",
+                "native",
+                "--output-dir",
+                str(output_dir),
+                "--log-dir",
+                str(output_dir / "logs"),
+                "--log-view",
+                "developer",
+                str(error_source),
+            ],
+            check=False,
+            capture_output=True,
+        )
+        error_stdout = error_result.stdout.decode("utf-8-sig", errors="replace").replace(
+            "\x00", ""
+        )
+        if error_result.returncode != 2:
+            raise AssertionError(
+                f"typed error cell must fail closed; exit={error_result.returncode}, "
+                f"stdout={error_stdout[-1000:]!r}"
+            )
+        error_report = json.loads(error_stdout)
+        if error_report.get("converted") != 0 or error_report.get("failed") != 1:
+            raise AssertionError(f"unexpected typed error refusal result: {error_report}")
+        error_output = output_dir / "error-cell.xlsx"
+        if error_output.exists():
+            raise AssertionError("typed error refusal published an output workbook")
+        if error_source.read_bytes() != error_source_before:
+            raise AssertionError("the typed error source workbook was modified")
+        error_failure_detail = str(error_report["items"][0].get("detail", ""))
+        if "error cell" not in error_failure_detail or "错误!A1" not in error_failure_detail:
+            raise AssertionError(f"typed error refusal detail is incomplete: {error_failure_detail!r}")
+
         serial_source = output_dir / "serial-date-time.xlsm"
         serial_workbook = Workbook()
         serial_sheet = serial_workbook.active
@@ -549,6 +598,15 @@ def main() -> int:
             "output_published": False,
             "source_unchanged": True,
         },
+        "error_value_guard": {
+            "input": "synthetic .xlsm containing a typed #N/A error cell at 错误!A1",
+            "rust_result": "conversion refused before publishing because the writer cannot preserve a typed Excel error",
+            "converted": error_report["converted"],
+            "failed": error_report["failed"],
+            "error_location_reported": "错误!A1" in error_failure_detail,
+            "output_published": False,
+            "source_unchanged": True,
+        },
         "numeric_serial_values": {
             "date_system": "1900",
             "cells": {
@@ -595,7 +653,7 @@ def main() -> int:
         },
         "unverified": [
             "Real business XLS workbooks and configurations.",
-            "Formula text/cache parity against legacy XLS conversion, 1904 epoch detection for legacy .xls/.xlsb inputs, error cells and empty-string cells.",
+            "Formula cache parity against legacy XLS conversion, 1904 epoch detection for legacy .xls/.xlsb inputs, and empty-string cells.",
             "Styles, comments, merged regions, dimensions, names, print settings, validations, conditional formatting, drawings and macros are intentionally not preserved by this value-only route.",
             "Windows desktop file dialog, glibc 2.28, Kylin V10/UOS V20 and offline deb delivery.",
         ],
