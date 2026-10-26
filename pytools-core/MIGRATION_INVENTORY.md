@@ -1010,10 +1010,10 @@ Windows 原生验证：`cargo fmt --manifest-path pytools-core/Cargo.toml -- --c
 本节更新此前“1–9 主菜单”入口记录：新版现为 7 个一级分类；此前 PT-1-2 排除和逐项业务验收证据仍有效。
 
 - `pytools-core/src/bin/pytools.rs`：主菜单数字先映射到分类 ID；时序/汇总、去重追加、打印、文件处理、配置快捷操作及专用报表子菜单均经稳定功能 ID 分发。归档继续沿用 PT-8-* 功能 ID。现有业务 API、配置合同、Excel 引擎未改。
-- 数据提取与汇总：1-1 接入无后缀宽表汇总（PT-1-4）；1-2 调用 PT-6-1 使用区域汇总；1-3 对 PT-6-2 明确提示尚未实现且不读写工作簿；1-4 接入表头路径比对；1-5 接入时序配置预校验。PT-1-2 保持排除；已取消的行头加后缀宽表模式不出现在菜单。
+- 数据提取与汇总：1-1 接入无后缀宽表汇总（PT-1-4）；1-2 调用 PT-6-1 使用区域汇总；1-3 调用 PT-6-2 命名区域汇总；1-4 接入表头路径比对；1-5 接入时序配置预校验。PT-1-2 保持排除；已取消的行头加后缀宽表模式不出现在菜单。
 - 去重追加：按配置检查/删除、独立去重追加、配置预校验接入已有 PT-2-3/4/5/6；批注去重不出现在菜单。打印菜单接入 PT-3-3 静态报表与 PT-3-4 预校验；批注打印和 PDF 不出现在菜单。
 - 文件处理：既有批量重命名、排序前缀添加/清理、单元格内容命名、Excel/Word 转换、Sheet 改名、提交检查接入各自现有 handler；不含取消内容前缀、局部重命名和原生值转换菜单入口。专用报表、归档与配置快捷操作保留已有入口。
-- 生命周期：七分类菜单/入口接线为“已实现，待 Windows 真实验收”；PT-6-2 命名区域业务仍未实现。菜单可运行不代表所有具体业务或真实样本验收完成。
+- 生命周期：七分类菜单/入口接线及 PT-6-2 命名区域业务均为“已实现，待 Windows 真实验收”。菜单可运行不代表所有具体业务或真实样本验收完成。
 
 Windows 原生验证：`cargo fmt --manifest-path pytools-core/Cargo.toml -- --check`；12 个受影响集成测试目标合计 93 项通过。工作表区域提取测试中有 1 项按名称过滤：该未修改的候选路径测试断言单日期单元格必须报“不支持类型”，当前实现实际写出结果；本轮未据此改动业务逻辑，后续需独立确认该断言的 Python 业务语义。其余工作表提取菜单/对拍测试 10/10 通过。独立 `pytools.exe` 无参数启动、显示 7 个菜单并输入 0 正常退出。测试主要使用合成工作簿/临时配置；本轮未进行用户真实样本对拍、Windows 原生文件对话框人工验证或 Linux 阶段验收。既有真实样本对拍证据不变。
 
@@ -1098,3 +1098,11 @@ Windows 合成 CLI 集成测试从真实 `pytools menu` 入口启动并读取 A 
 ### 2026-10-27 PT-1-1 新版宽表菜单接入目录与递归选择
 
 新版 `pytools menu` 的 `1→1` 宽表汇总现复用既有文件/文件夹选择器，支持多选文件、当前层文件夹及递归子目录；格式过滤与旧 Python `main.py` 宽表入口一致（`.xls/.xlsx/.xlsm`）。多目录收集现按规范化绝对路径排序并去重，与旧版目录收集合同一致。Windows 合成真实菜单回归覆盖当前层排除嵌套文件、反向传入两个目录（含嵌套目录）后按路径排序收集 3 个工作簿；结果值包含所选源数据且源文件字节不变；`timeline_menu_cli` 与 `batch_tools_menu_cli` 共 55/55 通过。此项未完成旧 Python/Rust 工作簿输出对拍、真实业务样本及平台交付验收；PT-1-1 生命周期仍为**已实现，待 Windows 真实验收**。
+
+### 2026-10-27 PT-4-4 WPS ET 转换共享阻塞与源文件保护
+
+使用本机 WPS Office 2019 安装目录中的原生 `newfile.et`（CFB 签名，6,656 bytes，只读来源）副本验证新版 `convert-file --to xlsx --engine com`。共享 sidecar 的 COM 转换候选运行后，`validate_conversion` 将 `.et` 复制改名为 `.xlsx` 并交 Calamine 读取，因输入不是 OOXML ZIP 而以 `invalid Zip archive` 失败；未发布输出。复现还观察到 WPS COM 在失败路径改变了传入的 ET 副本字节，即使 `Workbooks.Open` 使用只读参数。原安装目录文件未变化；本轮生成的两个 ET 副本已从原件恢复并复核 SHA-256 相同。
+
+PyTools 现仅对 `.et` 在输出目录内建立临时输入副本后调用 sidecar，sidecar 失败或写入时不会接触用户源文件；临时目录在返回时清理。该安全隔离不实现 ET reader，也不绕过共享 sidecar 的数据验证。完整 ET→XLSX 仍**受阻**，已向 main 提交 `sidecar/lo-convert` 修复请求，需支持原生 ET 的转换前后 sheet/数据/公式比较并保护输入；未确认输出保真前不发布候选。此前 XLS→XLSX 和 DOC→DOCX 冒烟证据仍只覆盖各自格式，不能代表 ET。
+
+Windows 原生验证：`cargo build --offline --locked -p lo-convert -j 1`、`cargo build --offline --locked -p pytools-core --bin pytools -j 1`、`cargo test --offline --locked -p pytools-core --lib conversion::tests::et_sidecar_input_is_staged_so_engine_cannot_modify_source -j 1`（1/1）、`cargo test --offline --locked -p pytools-core --test conversion_menu_cli -j 1`（10/10）、`cargo fmt --manifest-path pytools-core/Cargo.toml -- --check`、`git diff --check` 通过。真实 WPS ET 模板的实际产品 CLI 仍以 exit 2 拒绝；源副本 SHA-256 前后相同、输出不存在、临时 staging 目录数为 0。未验证用户业务 ET、成功转换后的对象保留、Python 对拍、Linux/麒麟/UOS/glibc 2.28 或 deb。PT-4-4 整体仍待 Windows 真实验收，ET 子路线受共享 sidecar 阻塞。

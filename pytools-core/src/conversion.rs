@@ -197,7 +197,43 @@ pub fn convert_one(input: &Path, output: &Path, target: &str, engine: &str) -> R
         return convert_native_excel_values(input, output, &source_ext);
     }
     let sidecar = find_sidecar()?;
-    invoke_sidecar(&sidecar, input, output, &target, engine)
+    let (sidecar_input, _staging_guard) = stage_sidecar_input(input, output, &source_ext)?;
+    invoke_sidecar(&sidecar, &sidecar_input, output, &target, engine)
+}
+
+fn stage_sidecar_input(
+    input: &Path,
+    output: &Path,
+    source_ext: &str,
+) -> Result<(PathBuf, Option<TempDirGuard>)> {
+    if source_ext != "et" {
+        return Ok((input.to_path_buf(), None));
+    }
+
+    let output_parent = output
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    fs::create_dir_all(output_parent).with_context(|| {
+        format!(
+            "create ET conversion staging parent {}",
+            output_parent.display()
+        )
+    })?;
+    let staging_dir = unique_sidecar_input_temp_dir(output_parent)?;
+    let guard = TempDirGuard(staging_dir.clone());
+    let file_name = input
+        .file_name()
+        .context("ET conversion input has no file name")?;
+    let staged_input = staging_dir.join(file_name);
+    fs::copy(input, &staged_input).with_context(|| {
+        format!(
+            "stage ET source {} for external conversion",
+            input.display()
+        )
+    })?;
+
+    Ok((staged_input, Some(guard)))
 }
 
 fn invoke_sidecar(
@@ -1216,6 +1252,23 @@ fn unique_native_temp_dir(parent: &Path) -> Result<PathBuf> {
     bail!("cannot allocate native conversion temporary directory")
 }
 
+fn unique_sidecar_input_temp_dir(parent: &Path) -> Result<PathBuf> {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let nanos = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
+    for index in 0..100 {
+        let path = parent.join(format!(
+            ".pytools-et-convert-input-{}-{nanos}-{index}",
+            std::process::id()
+        ));
+        match fs::create_dir(&path) {
+            Ok(()) => return Ok(path),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error.into()),
+        }
+    }
+    bail!("cannot allocate ET sidecar input staging directory")
+}
+
 struct TempDirGuard(PathBuf);
 
 impl Drop for TempDirGuard {
@@ -1254,7 +1307,7 @@ fn find_sidecar() -> Result<PathBuf> {
 mod tests {
     use super::{
         convert_excel_files_in_source_folders, convert_one, invoke_sidecar, native_values_equal,
-        validate_native_source_values,
+        stage_sidecar_input, validate_native_source_values,
     };
     use excel_reader::{read_workbook, SheetDump, WorkbookDump};
     use excel_writer::Workbook;
@@ -1296,6 +1349,25 @@ mod tests {
         )
         .expect_err("missing converter executable must be reported");
         assert!(error.to_string().contains("该功能需要外部引擎"));
+    }
+
+    #[test]
+    fn et_sidecar_input_is_staged_so_engine_cannot_modify_source() {
+        let root = TempDir::new("et-sidecar-stage");
+        let input = root.0.join("source.et");
+        let output = root.0.join("out/converted.xlsx");
+        let original = b"WPS ET source bytes";
+        fs::write(&input, original).unwrap();
+
+        let (staged, guard) = stage_sidecar_input(&input, &output, "et").unwrap();
+        assert_ne!(staged, input);
+        assert!(staged.starts_with(root.0.join("out")));
+        assert_eq!(fs::read(&staged).unwrap(), original);
+
+        fs::write(&staged, b"external engine modified its input").unwrap();
+        assert_eq!(fs::read(&input).unwrap(), original);
+        drop(guard);
+        assert!(!staged.exists());
     }
 
     #[test]
