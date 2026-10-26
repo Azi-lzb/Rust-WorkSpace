@@ -1,0 +1,23 @@
+执行者：Codex（pytools-dev）
+修改前 HEAD：d793f75；分支：pytools-dev；origin/pytools-dev 同步。
+工作树保护：修改前 MIGRATION_INVENTORY.md 已有未提交内容，另有未跟踪交接文件及两份既有 GPT 记录；均保留。原 PyTools 代码和真实报表只读。
+
+目的：继续 PT-7-6 原业务样本验证，并修复无效区域配置在 Rust 交互入口中被静默跳过的问题。
+
+修改文件：
+- pytools-core/src/sheet_extract.rs：区域语法无效时发出 user/developer 可见 warning 事件，运行历史标记 invalid_area_spec。
+- pytools-core/tests/sheet_extract_area_operation_parity.rs：增加真实菜单无效区域告警和不发布空白文件的安全回归。
+- pytools-core/probe/reports/sheet_extract_area_original_pytools_reversed_range_parity_20261026.json
+- pytools-core/probe/reports/sheet_extract_area_original_pytools_whole_column_parity_20261026.json
+- pytools-core/probe/reports/sheet_extract_area_original_pytools_whole_row_parity_20261026.json
+- pytools-core/MIGRATION_INVENTORY.md
+
+真实只读报表对拍：旧 PyCode run_extract_sheets 与真实 Rust 菜单 7→6 对同一原报表的反向区间 U8:S1、整列多区域 S:S；T:T（横向拼接）、整行 5:8 输出投影精确一致，分别 2/159/21 个非空单元格；错误单元格分别 1/125/1 个均保留。三次源文件均未改变。机器报告存于上述三个 JSON 文件，派生工作簿、临时文件和构建缓存都在 F:\PyTools_Rust_本轮工作文件_20261026。
+
+无效配置观察：旧 PyCode 对 NOT_A_RANGE 发 warning，同时因先创建默认工作簿，最终生成仅含空白 Sheet 的文件；Rust 现发出明确 warning 并不发布误导性的空白工作簿，输入不变。此项记录为错误配置下的安全行为差异，不宣称逐项一致；有效区域提取语义未受影响。
+
+Windows 原生验证：cargo fmt --manifest-path pytools-core/Cargo.toml --check 通过；cargo test --offline --locked -q -p pytools-core --test sheet_extract_area_operation_parity -j 1（18/18）通过；cargo build --offline --locked -q -p pytools-core --bin pytools -j 1 通过。集成测试覆盖真实菜单 warning、运行历史和不写输出的断言。构建目标、TEMP/TMP 位于 F 盘工作文件夹。输出仍为新 XLSX；原始业务文件保持只读。
+
+未执行：其他原业务模板、Windows 人工文件弹窗验收、Linux/glibc 2.28、麒麟/UOS、deb 与离线交付。PT-7-6 仍为迁移中，PT-1-2 继续排除。未改共享 crate、根 Cargo 文件、Cargo.lock、Audit 或 DEVELOPMENT_GOAL。
+
+组件版本 pytools-core 0.1.0 不变。回滚可 revert 本功能提交，不清理 F 盘工作文件夹。

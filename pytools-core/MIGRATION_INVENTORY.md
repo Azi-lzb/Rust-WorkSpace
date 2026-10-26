@@ -1068,3 +1068,11 @@ PT-7-6 整体仍为迁移中：此证据闭合一份原业务报表和一个全�
 复验还发现合并兼容阶段原先遍历全部工作表，会把未命中页的 1 个合并子格计入区域任务日志，并对未命中页执行不必要的合并状态检查；现仅对实际命中区域任务的工作表执行合并状态验证和非锚点值过滤。共享 reader 仍按工作簿读取，工作簿级读取错误仍按原路径失败关闭。区域筛选复验的抑制计数为 0；全区域复验仍为 1。全区域输出继续与 Python 精确一致：24 张表、25,788 个非空格、1,212 个错误值。探针通过 --expected-merged-child-values-suppressed 固定断言选择页计数。机器报告：probe/reports/sheet_extract_area_original_pytools_horizontal_stitch_parity_20261026.json、probe/reports/sheet_extract_area_original_pytools_vertical_stitch_parity_20261026.json，全区域报告仍为 probe/reports/sheet_extract_area_original_pytools_business_parity_20261026.json。
 
 PT-7-6 仍为迁移中：这仍是一个原业务工作簿的三种配置对拍，不代表其他模板、Windows 人工文件选择流程或 Linux/deb 验收。原 Python 项目与源工作簿保持只读；未改共享 crate。PT-1-2 继续排除。
+
+### 2026-10-26 PT-7-6 区域语法真实对拍与无效配置告警
+
+使用原 PyTools 只读报表 `xlsx/1.报表分口径.xlsx` 和旧 PyCode `run_extract_sheets`，经真实 Rust 菜单 `7→6` 复核区域解析边界。反向区间 `U8:S1` 输出 2 个非空格/1 个错误值；整列多区域 `S:S；T:T` 横向拼接输出 159 个非空格/125 个错误值；整行 `5:8` 输出 21 个非空格/1 个错误值。三组 Python/Rust 工作簿投影精确一致，源文件未改变。机器报告：`probe/reports/sheet_extract_area_original_pytools_reversed_range_parity_20261026.json`、`...whole_column...json`、`...whole_row...json`。派生输出和临时文件在 `F:\PyTools_Rust_本轮工作文件_20261026\PT-7-6_区域语法复验_20261026`。
+
+无效区域 `NOT_A_RANGE` 曾在 Rust 中静默跳过。现菜单 user/developer 日志发出 `area_parse` warning，运行历史记录 `invalid_area_spec`，源不变且不发布输出。只读验证旧 PyCode 会在 warning 后因默认工作簿残留，额外生成一个仅含空白 `Sheet` 的 XLSX；Rust 不复刻该空白输出副作用，作为输入保护差异明确记录，不算完全对拍。
+
+Windows 原生 `cargo fmt --manifest-path pytools-core/Cargo.toml --check`、`cargo test --offline --locked -q -p pytools-core --test sheet_extract_area_operation_parity -j 1`（18/18）、`cargo build --offline --locked -q -p pytools-core --bin pytools -j 1` 通过。PT-7-6 仍为迁移中；其他原业务模板、人工文件弹窗及 Linux/目标机未验收；PT-1-2 继续排除。未改共享 crate 或 Python 源树。

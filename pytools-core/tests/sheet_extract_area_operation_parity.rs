@@ -609,6 +609,65 @@ fn area_extraction_matches_python_baseline_and_preserves_inputs() {
     fs::remove_dir_all(root).unwrap();
 }
 
+#[test]
+fn interactive_menu_warns_and_does_not_publish_for_invalid_area_configuration() {
+    let cases = cases();
+    let root = temporary_directory("sheet-extract-invalid-area-menu");
+    let mut tasks = load_tasks(&cases);
+    tasks.truncate(1);
+    tasks[0].sheet_keywords.clear();
+    tasks[0].area_spec = "NOT_A_RANGE".to_owned();
+    let config = create_menu_config(&root, &tasks);
+    let source = fixture_path("省级月度报表_A.xlsx");
+    let source_before = fs::read(&source).unwrap();
+
+    let input = format!("7\n6\nn\n{}\n", source.display());
+    let output = run_menu_with_view(&config, &input, "user");
+    assert!(
+        output.status.success(),
+        "menu failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("提取区域") && stderr.contains("NOT_A_RANGE"),
+        "invalid area warning not shown; stdout={}; stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        stderr
+    );
+
+    let output_path = root.join("app/output/区域提取/area-result.xlsx");
+    assert!(
+        !output_path.exists(),
+        "invalid area configuration must not publish a blank workbook"
+    );
+    assert_eq!(fs::read(&source).unwrap(), source_before);
+
+    let log_dir = root.join("app/logs");
+    let history_path = fs::read_dir(&log_dir)
+        .unwrap()
+        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+        .find(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with("PT-7-6_"))
+        })
+        .unwrap();
+    let history_bytes = fs::read(history_path).unwrap();
+    let history: Value = serde_json::from_slice(&history_bytes).unwrap();
+    assert_eq!(history["result"]["output_files"], 0);
+    assert!(history["events"].as_array().unwrap().iter().any(|event| {
+        event["phase"] == "area_parse"
+            && event["status"] == "warning"
+            && event["error_type"] == "invalid_area_spec"
+            && event["user_message"]
+                .as_str()
+                .unwrap()
+                .contains("NOT_A_RANGE")
+    }));
+    fs::remove_dir_all(root).unwrap();
+}
+
 fn result_value(result: &pytools_core::sheet_extract::ExtractSheetsAreaResult, key: &str) -> usize {
     match key {
         "files" => result.files,

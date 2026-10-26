@@ -1,0 +1,60 @@
+{
+  "schema_version": 1,
+  "status": "passed",
+  "feature": "PT-7-6 original PyTools business workbook area extraction",
+  "case_label": "whole-column range with fullwidth separator",
+  "stitch_mode": "横向拼接",
+  "sample_kind": "original PyTools business workbook; read-only source",
+  "source_basename": "1.报表分口径.xlsx",
+  "source_bytes": 816501,
+  "area_spec": "S:S；T:T",
+  "entry": "Rust PyTools CLI menu → 7 → 6",
+  "python_baseline": "PyCode/core/feature_1_6_extract_sheets.py::run_extract_sheets",
+  "python_stats": {
+    "files": 1,
+    "extracted_sheets": 1,
+    "output_files": 1,
+    "failed_files": 0
+  },
+  "rust_run_status": "succeeded",
+  "rust_engines": [
+    "Calamine + namespace-aware OOXML",
+    "OOXML Patch",
+    "calamine",
+    "hard_link create-only publication",
+    "rust_xlsxwriter"
+  ],
+  "rust_merge_value_compatibility": {
+    "actual_engine": "Calamine + namespace-aware OOXML",
+    "stored_merged_child_values_suppressed": 0,
+    "expected_stored_merged_child_values_suppressed": 0
+  },
+  "rust_error_patch_required": true,
+  "rust_error_patch_succeeded": true,
+  "rust_error_cells_preserved": true,
+  "python_projection": {
+    "worksheet_count": 1,
+    "non_empty_cells": 159,
+    "cell_type_counts": {
+      "error": 125,
+      "int": 17,
+      "str": 17
+    },
+    "error_cells": 125
+  },
+  "rust_projection": {
+    "worksheet_count": 1,
+    "non_empty_cells": 159,
+    "cell_type_counts": {
+      "error": 125,
+      "int": 17,
+      "str": 17
+    },
+    "error_cells": 125
+  },
+  "exact_output_projection_match": true,
+  "difference_locations": [],
+  "source_unchanged": true,
+  "output_location": "local F: drive test folder; excluded from Git",
+  "scope_note": "This records one original PyTools workbook comparison for the configured whole-column range with fullwidth separator value-extraction task. It does not complete all PT-7-6 templates, Windows manual acceptance, or Linux/deb validation."
+}

@@ -880,6 +880,19 @@ where
                         &task.area_spec,
                         &task.stitch_mode,
                     ) else {
+                        emitter.emit(
+                            "area_parse",
+                            "warning",
+                            format!(
+                                "工作表提取配置行 {} 的提取区域 {:?} 无效，已跳过该工作表",
+                                task.row_no, task.area_spec
+                            ),
+                            Some(source_path),
+                            Some(source_started.elapsed()),
+                            &["pytools-core"],
+                            None,
+                            Some("invalid_area_spec"),
+                        );
                         continue;
                     };
                     let values = compact(&values);
