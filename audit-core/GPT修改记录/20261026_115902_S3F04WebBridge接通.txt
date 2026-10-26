@@ -3,7 +3,7 @@
 - 时间：2026-10-26 11:59:02（本地）
 - 执行者：Codex
 - 修改前 commit：a7745583a31634315eed2a3d916195ff17ae4eca
-- 修改后 commit：本次功能提交后补录
+- 修改后 commit：ae677a6（功能实现；记录同步见后续提交）
 - 修改前工作树：保留未提交的 audit-core/src/central_csv.rs、.pytest-tmp-v3/、HANDOFF_ZCODE_TO_CODEX.md 及此前 S1/S5 和 S3 中间报告；均未覆盖或清理。
 - 【组件版本】不升级；未另行采用旧版 Sx-Fxx 组件版本制度。
 
