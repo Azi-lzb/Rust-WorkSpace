@@ -4931,6 +4931,10 @@ fn run_s5_audit_run(arguments: S5AuditRunArgs) -> Result<()> {
         &arguments.output_dir,
     )
     .map_err(|error| anyhow::anyhow!("{error}"))?;
+    let run_status = output_summary.run_status.as_str();
+    let cli_status = run_status.to_ascii_lowercase();
+    let input_integrity = output_summary.input_integrity.as_str();
+    let configuration_integrity = output_summary.configuration_integrity.as_str();
 
     let elapsed_ms = started.elapsed().as_millis();
     let numeric_region_template_selections = retrieval.numeric_region_template_selections();
@@ -4968,7 +4972,10 @@ fn run_s5_audit_run(arguments: S5AuditRunArgs) -> Result<()> {
         }
     }
     let output = serde_json::json!({
-        "status": "completed",
+        "status": cli_status,
+        "run_status": run_status,
+        "input_integrity": input_integrity,
+        "configuration_integrity": configuration_integrity,
         "run_id": run_id,
         "period": arguments.period,
         "previous_period": arguments.previous_period,
@@ -4978,13 +4985,8 @@ fn run_s5_audit_run(arguments: S5AuditRunArgs) -> Result<()> {
         "businesses": arguments.businesses,
         "source_roles": source_roles,
         "rule_results": outcomes.len(),
-        "status_counts": status_counts,
-        "output_files": {
-            "result_workbook": output_summary.output_files.result_workbook,
-            "run_ledger": output_summary.output_files.run_ledger,
-            "audit_copies": output_summary.output_files.audit_copies,
-            "configuration_copy": output_summary.output_files.configuration_copy,
-        },
+        "status_counts": output_summary.status_counts,
+        "output_files": output_summary.output_files,
         "triggered_rows": output_summary.triggered_rows,
         "failure_rows": output_summary.failure_rows,
         "data_quality_warning_count": output_summary.data_quality_warning_count,
@@ -4999,7 +5001,10 @@ fn run_s5_audit_run(arguments: S5AuditRunArgs) -> Result<()> {
                 "product": "open-data-audit",
                 "feature": "S5-F01",
                 "step": "audit_run",
-                "status": "completed",
+                "status": cli_status,
+                "run_status": run_status,
+                "input_integrity": input_integrity,
+                "configuration_integrity": configuration_integrity,
                 "run_id": run_id,
                 "elapsed_ms": elapsed_ms,
                 "source_roles": source_roles,

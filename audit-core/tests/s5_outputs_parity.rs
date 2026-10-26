@@ -111,12 +111,7 @@ fn runs_s5_outputs_parity_item() {
         "manifest_entry_count": summary.manifest.len(),
         "manifest_roles": summary.manifest.iter().map(|entry| entry.role.clone()).collect::<Vec<_>>(),
         "manifest_snapshots": summary.manifest.iter().map(|entry| entry.matches_snapshot).collect::<Vec<_>>(),
-        "output_files": {
-            "result_workbook": summary.output_files.result_workbook.display().to_string(),
-            "run_ledger": summary.output_files.run_ledger.display().to_string(),
-            "audit_copies": summary.output_files.audit_copies.display().to_string(),
-            "configuration_copy": summary.output_files.configuration_copy.display().to_string(),
-        },
+        "output_files": summary.output_files,
     });
     fs::write(
         &report_path,

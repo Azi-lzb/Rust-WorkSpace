@@ -1,0 +1,41 @@
+# 2026-10-26 S5 输入哈希变化时降级审核结论
+
+## 目的
+
+将原 Python `outputs._refresh_integrity` 的输入/配置变更安全降级语义接入 Rust S5 输出层。Python 在生成审核副本期间复核输入哈希；变化时仍写出结果与总账，但将已通过或已触发结论标为不可用。Rust 原先在写副本前直接返回错误，缺少这项业务结果记录。
+
+## 提交与 WIP
+
+- 修改前 HEAD：`829ec73`（`audit-dev`，已推送至 `origin/audit-dev`）。
+- 本次仅新增 Audit 自有改动。保留 `.pytest-tmp-v3/`、`HANDOFF_ZCODE_TO_CODEX.md` 和所有既有未跟踪 S5 报告，不纳入本功能提交。
+- 组件版本：`audit-core 0.1.0`，未升级；不改共享 crate、根 Cargo 配置或 Cargo.lock。
+
+## 涉及文件
+
+- `audit-core/src/s5_outputs.rs`：在复制工作簿时记录副本与快照哈希；最终复核本期、上期、外部、布局模板和配置哈希。任一来源不匹配时写出 `INPUT_CHANGED_DURING_RUN`，将 `PASSED`/`TRIGGERED` 改为 `CALCULATION_FAILED`，清除触发值并重算状态计数；总账增加输入/配置完整性和前后哈希。
+- `audit-core/src/bin/open-data-audit.rs`：普通 CLI 与开发者日志返回降级后的运行状态、完整性状态和状态计数；未变化的运行仍返回 `completed`。
+- `audit-core/tests/s5_outputs_parity.rs`：输出文件清单通过可选配置副本字段序列化；配置文件缺失时与 Python 一样省略 `configuration_copy`。
+- `audit-core/src/s5_service.rs`：更正运行编排与哈希降级责任的注释。
+- `audit-core/MIGRATION_INVENTORY.md`：记录该子切片，S5-F01 整体仍标未验证。
+- `audit-core/probe/reports/s5_input_integrity_downgrade_synthetic_parity_windows_native_20261026.json`：脱敏对拍摘要。
+- `audit-core/GPT修改记录/20261026_090700_S5输入哈希变化结论降级.txt`：本记录。
+
+## 验证
+
+- Windows 原生 Python 3.12.10 直接调用只读原 Python `s1audit_configured.outputs._refresh_integrity`，在系统临时目录跑当前源、上期源、配置变化及未变化基线 4 种情况；未写入源 Python 树或真实样本。
+- 额外调用原 Python `_refresh_integrity` 验证当前源和配置都已消失的情况：前后哈希均记为 `MISSING`，成功结果降级、既有失败保留；只创建了一个保证不存在的临时路径，没有创建或修改文件。
+- Rust `cargo test --locked -p audit-core --lib s5_outputs::tests`：6 项通过，覆盖结果状态变更字段、当前/上期/配置哈希变化、未变化路径，以及本期/上期/布局模板/配置在输出复制前缺失时的总账、降级结果和副本省略行为。
+- Rust 合成输出状态/错误码/错误消息与 Python `_refresh_integrity` 对拍一致；现有失败仍保持原状态，已通过/触发结果才降级。
+- 缺失文件路径与配置副本省略行为按 Python `write_run_outputs` 的跳过复制/省略键源码契约核对；本用例没有单独运行 Python 完整输出流程或做产物级 Python/Rust diff。
+- `cargo test --locked -p audit-core --test s5_previous_source_cli s5_audit_cli_reads_and_copies_independent_previous_source`：1 项通过，确认正常 S5 CLI 输出路径仍工作。
+- `cargo build --locked -p audit-core --bin open-data-audit`、三个 Rust 文件 `rustfmt --check` 与 `git diff --check`：通过。构建保留既有 unused/dead-code 警告。
+- 未执行自动 Python/Rust 产物 diff，也未在真实 S5 批次中注入运行期间文件变化；对应边界明确记录在机器报告中。
+
+## 未执行项和限制
+
+- 结构快照、V_PRE/V_EXT 完整范围、全量 S5 输入错误矩阵和目标 Linux/deb 尚未验收。S5-F01 整体仍未通过。
+- Audit #8 共享能力问题仍未解决；本次不涉及该能力。
+
+## 回滚
+
+仅撤回本次 `s5_outputs.rs`、S5 CLI 状态字段、`s5_service.rs` 注释、迁移清单补记、对应机器报告和本记录；保留之前提交、其他 Agent 的成果、交接文件和所有既有未跟踪报告。

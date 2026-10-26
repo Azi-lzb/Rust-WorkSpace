@@ -1,0 +1,93 @@
+{
+  "status": "passed_for_synthetic_integrity_downgrade_contract",
+  "feature": "S5-F01",
+  "operation": "downgrade_successful_rule_results_when_source_or_configuration_hash_changes",
+  "platform": "Windows native x64",
+  "baseline": {
+    "python_function": "s1audit_configured.outputs._refresh_integrity",
+    "python_version": "3.12.10",
+    "original_project_modified": false,
+    "inputs": "temporary synthetic byte sources and configuration; no real workbook was modified"
+  },
+  "contract": {
+    "changed_input_or_configuration_run_status": "INPUT_CHANGED_DURING_RUN",
+    "input_integrity": "UNCHANGED or CHANGED_DURING_RUN",
+    "configuration_integrity": "UNCHANGED or CHANGED_DURING_RUN",
+    "success_statuses_downgraded": ["PASSED", "TRIGGERED"],
+    "downgraded_status": "CALCULATION_FAILED",
+    "triggered_value_cleared": true,
+    "error_code": "INPUT_CHANGED_DURING_RUN",
+    "error_message": "审核结果文件生成期间输入或配置哈希发生变化，结论不可用",
+    "existing_failures_preserved": true,
+    "result_workbook_and_hash_manifest_written": true
+  },
+  "cases": [
+    {
+      "case": "current_source_changed",
+      "run_status": "INPUT_CHANGED_DURING_RUN",
+      "input_integrity": "CHANGED_DURING_RUN",
+      "configuration_integrity": "UNCHANGED",
+      "status_counts": {"CALCULATION_FAILED": 2, "RETRIEVAL_FAILED": 1},
+      "manifest_matches_snapshot": false
+    },
+    {
+      "case": "previous_source_changed",
+      "run_status": "INPUT_CHANGED_DURING_RUN",
+      "input_integrity": "CHANGED_DURING_RUN",
+      "configuration_integrity": "UNCHANGED",
+      "status_counts": {"CALCULATION_FAILED": 1},
+      "manifest_matches_snapshot": false
+    },
+    {
+      "case": "configuration_changed",
+      "run_status": "INPUT_CHANGED_DURING_RUN",
+      "input_integrity": "UNCHANGED",
+      "configuration_integrity": "CHANGED_DURING_RUN",
+      "status_counts": {"CALCULATION_FAILED": 1},
+      "manifest_matches_snapshot": false
+    },
+    {
+      "case": "unchanged_snapshot",
+      "run_status": "COMPLETED",
+      "input_integrity": "UNCHANGED",
+      "configuration_integrity": "UNCHANGED"
+    },
+    {
+      "case": "current_previous_template_and_configuration_missing_before_output_copy",
+      "run_status": "INPUT_CHANGED_DURING_RUN",
+      "input_integrity": "CHANGED_DURING_RUN",
+      "configuration_integrity": "CHANGED_DURING_RUN",
+      "missing_paths_copied": false,
+      "configuration_copy_key_omitted": true,
+      "successful_results_downgraded": true
+    }
+  ],
+  "python_baseline_observation": {
+    "cases_executed": 5,
+    "changed_cases_downgraded": 4,
+    "unchanged_case_preserved_successes": true,
+    "missing_current_and_configuration_paths_reported_missing": true,
+    "missing_path_successes_downgraded_and_existing_failures_preserved": true,
+    "source_python_runtime_write": false
+  },
+  "rust_verification": {
+    "unit_tests": "cargo test --locked -p audit-core --lib s5_outputs::tests: 6 passed, including missing current/previous/template/config inputs",
+    "normal_cli_regression": "cargo test --locked -p audit-core --test s5_previous_source_cli s5_audit_cli_reads_and_copies_independent_previous_source: 1 passed",
+    "build": "cargo build --locked -p audit-core --bin open-data-audit: passed",
+    "format_and_diff_checks": "rustfmt --edition 2021 --check on three changed Rust files; git diff --check passed"
+  },
+  "comparison_scope": {
+    "python_function_invoked_on_temporary_inputs": true,
+    "rust_tests_assert_same_status_transition_and_error_contract": true,
+    "missing_input_integrity_behavior_python_runtime_case": "passed; current/configuration paths were missing, both hashes reported MISSING, and only successful outcomes were downgraded",
+    "missing_copy_skip_and_configuration_key_omission_checked_against_python_source_contract": true,
+    "automated_python_rust_artifact_diff": false,
+    "real_in_flight_mutation_injection": false,
+    "real_s5_workbook_rerun": false
+  },
+  "limitations": [
+    "Synthetic stale snapshots exercise output-finalization behavior; an input modified concurrently during a full real S5 run was not injected.",
+    "This slice does not implement or verify schema snapshots, and does not make S5-F01 complete.",
+    "Audit shared capability issue #8 remains unresolved."
+  ]
+}

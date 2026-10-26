@@ -946,7 +946,7 @@ fn status_outcome(
 /// Mirror of `AuditEngine.run` for the single-binding current-source path:
 /// rule selection with revision/effective-date gating, applicability-scope
 /// expansion (including the `@当前行` substitution), and the status ledger.
-/// Hash-integrity downgrade and output writing belong to later slices.
+/// The output layer applies the source project's hash-integrity downgrade.
 pub fn run_rules(
     configuration: &crate::s5_config::Configuration,
     retrieval: &mut S5Retrieval,

@@ -61,7 +61,8 @@ pub struct S5OutputFiles {
     pub result_workbook: PathBuf,
     pub run_ledger: PathBuf,
     pub audit_copies: PathBuf,
-    pub configuration_copy: PathBuf,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub configuration_copy: Option<PathBuf>,
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
@@ -69,6 +70,10 @@ pub struct S5WriteOutputsSummary {
     pub run_dir: PathBuf,
     pub manifest: Vec<S5OutputManifestEntry>,
     pub output_files: S5OutputFiles,
+    pub run_status: String,
+    pub input_integrity: String,
+    pub configuration_integrity: String,
+    pub status_counts: BTreeMap<String, usize>,
     pub triggered_rows: usize,
     pub failure_rows: usize,
     pub data_quality_warning_count: usize,
@@ -128,42 +133,48 @@ fn copy_identity(path: &Path) -> PathBuf {
     fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
-fn verify_input_snapshot(path: &Path, expected: &str, label: &str) -> Result<(), String> {
-    let actual = file_sha256(path)?;
-    if actual != expected {
-        return Err(format!("{label}在审核期间发生变化，已停止生成结果"));
-    }
-    Ok(())
+fn capture_copied_snapshot(
+    path: &Path,
+    expected: &str,
+    copy_path: &Path,
+) -> Result<(String, String, bool), String> {
+    let actual = file_sha256(path).unwrap_or_else(|_| "MISSING".to_owned());
+    let copy = file_sha256(copy_path)?;
+    let matches_snapshot = actual == expected && copy == actual;
+    Ok((actual, copy, matches_snapshot))
 }
 
-fn verify_copied_snapshot(
-    run_dir: &Path,
-    label: &str,
+fn record_input_hash(
+    role: &str,
+    source_id: &str,
+    path: &Path,
     expected: &str,
-    actual: Result<String, String>,
-    copy: Result<String, String>,
-) -> Result<(String, String), String> {
-    let result = (|| {
-        let actual = actual?;
-        let copy = copy?;
-        if actual != expected || copy != actual {
-            return Err(format!(
-                "{label}在审核期间发生变化或审核副本校验失败，已停止生成结果"
-            ));
-        }
-        Ok((actual, copy))
-    })();
-    match result {
-        Ok(hashes) => Ok(hashes),
-        Err(message) => {
-            let cleanup = fs::remove_dir_all(run_dir);
-            match cleanup {
-                Ok(()) => Err(message),
-                Err(error) => Err(format!(
-                    "{message}；未验证输出目录清理失败 {}：{error}",
-                    run_dir.display()
-                )),
-            }
+    hashes: &mut BTreeMap<String, JsonValue>,
+) -> bool {
+    let actual = file_sha256(path).unwrap_or_else(|_| "MISSING".to_owned());
+    hashes.insert(
+        format!("{role}:{source_id}"),
+        json!({"sha256_before": expected, "sha256_after": actual}),
+    );
+    actual == expected
+}
+
+fn count_outcome_statuses(outcomes: &[S5RuleOutcome]) -> BTreeMap<String, usize> {
+    let mut counts = BTreeMap::new();
+    for outcome in outcomes {
+        *counts.entry(outcome.status.clone()).or_insert(0) += 1;
+    }
+    counts
+}
+
+fn downgrade_successful_outcomes(outcomes: &mut [S5RuleOutcome]) {
+    for outcome in outcomes {
+        if matches!(outcome.status.as_str(), "PASSED" | "TRIGGERED") {
+            outcome.status = "CALCULATION_FAILED".to_owned();
+            outcome.triggered = None;
+            outcome.error_code = Some("INPUT_CHANGED_DURING_RUN".to_owned());
+            outcome.error_message =
+                "审核结果文件生成期间输入或配置哈希发生变化，结论不可用".to_owned();
         }
     }
 }
@@ -360,35 +371,20 @@ fn numeric_text(value: &JsonValue) -> Option<f64> {
 }
 
 /// Write the run outputs; mirrors `write_run_outputs` for the single-binding
-/// current-source shape without conditional-format or data-quality tables.
+/// current-source shape. Conditional-format results remain a separate slice.
 pub fn write_run_outputs(
     request: &S5OutputRequest<'_>,
     output_root: &Path,
 ) -> Result<S5WriteOutputsSummary, String> {
-    verify_input_snapshot(
-        request.source_path,
-        request.source_sha256_before,
-        "本期数据源",
-    )?;
-    verify_input_snapshot(
-        request.config_path,
-        request.config_sha256_before,
-        "审核配置",
-    )?;
     for source in request.additional_sources {
-        let label = match source.role {
-            "current" => "本期数据源",
-            "previous" => "上期数据源",
-            "external" => "外部数据源",
-            _ => return Err(format!("不支持的附加来源角色：{}", source.role)),
-        };
-        verify_input_snapshot(source.path, source.sha256_before, label)?;
+        if !matches!(source.role, "current" | "previous" | "external") {
+            return Err(format!("不支持的附加来源角色：{}", source.role));
+        }
     }
     for template in request.selected_templates {
         if template.role != "layout" {
             return Err(format!("不支持的布局模板角色：{}", template.role));
         }
-        verify_input_snapshot(template.path, template.sha256_before, "数字区域布局模板")?;
     }
     let output_root = output_root.to_path_buf();
     fs::create_dir_all(&output_root).map_err(|error| format!("创建输出根目录失败：{error}"))?;
@@ -407,42 +403,45 @@ pub fn write_run_outputs(
     let mut copy_by_source: BTreeMap<String, PathBuf> = BTreeMap::new();
     let mut copied_source_paths = BTreeSet::new();
 
-    let source_copy = copies_dir.join(format!(
-        "current_{}_{}{}",
-        safe_name(request.source_id),
-        safe_name(&path_stem(request.source_path)),
-        request
-            .source_path
-            .extension()
-            .map(|extension| format!(".{}", extension.to_string_lossy().to_lowercase()))
-            .unwrap_or_default()
-    ));
-    fs::copy(request.source_path, &source_copy)
-        .map_err(|error| format!("复制数据源失败：{error}"))?;
-    let (sha_after, sha_copy) = verify_copied_snapshot(
-        &run_dir,
-        "本期数据源",
-        request.source_sha256_before,
-        file_sha256(request.source_path),
-        file_sha256(&source_copy),
-    )?;
-    manifest.push(S5OutputManifestEntry {
-        role: "current".to_owned(),
-        source_id: request.source_id.to_owned(),
-        source_path: request.source_path.display().to_string(),
-        copy_path: source_copy.display().to_string(),
-        sha256_before: request.source_sha256_before.to_owned(),
-        sha256_after: sha_after,
-        sha256_copy: sha_copy,
-        matches_snapshot: true,
-    });
-    copy_by_source.insert(
-        request.source_path.display().to_string(),
-        source_copy.clone(),
-    );
-    copied_source_paths.insert(copy_identity(request.source_path));
+    if request.source_path.is_file() {
+        let source_copy = copies_dir.join(format!(
+            "current_{}_{}{}",
+            safe_name(request.source_id),
+            safe_name(&path_stem(request.source_path)),
+            request
+                .source_path
+                .extension()
+                .map(|extension| format!(".{}", extension.to_string_lossy().to_lowercase()))
+                .unwrap_or_default()
+        ));
+        fs::copy(request.source_path, &source_copy)
+            .map_err(|error| format!("复制数据源失败：{error}"))?;
+        let (sha_after, sha_copy, matches_snapshot) = capture_copied_snapshot(
+            request.source_path,
+            request.source_sha256_before,
+            &source_copy,
+        )?;
+        manifest.push(S5OutputManifestEntry {
+            role: "current".to_owned(),
+            source_id: request.source_id.to_owned(),
+            source_path: request.source_path.display().to_string(),
+            copy_path: source_copy.display().to_string(),
+            sha256_before: request.source_sha256_before.to_owned(),
+            sha256_after: sha_after,
+            sha256_copy: sha_copy,
+            matches_snapshot,
+        });
+        copy_by_source.insert(
+            request.source_path.display().to_string(),
+            source_copy.clone(),
+        );
+        copied_source_paths.insert(copy_identity(request.source_path));
+    }
 
     for source in request.additional_sources {
+        if !source.path.is_file() {
+            continue;
+        }
         let extension = source
             .path
             .extension()
@@ -457,19 +456,8 @@ pub fn write_run_outputs(
         ));
         fs::copy(source.path, &source_copy)
             .map_err(|error| format!("复制附加数据源失败：{error}"))?;
-        let label = match source.role {
-            "current" => "本期数据源",
-            "previous" => "上期数据源",
-            "external" => "外部数据源",
-            _ => return Err(format!("不支持的附加来源角色：{}", source.role)),
-        };
-        let (sha_after, sha_copy) = verify_copied_snapshot(
-            &run_dir,
-            label,
-            source.sha256_before,
-            file_sha256(source.path),
-            file_sha256(&source_copy),
-        )?;
+        let (sha_after, sha_copy, matches_snapshot) =
+            capture_copied_snapshot(source.path, source.sha256_before, &source_copy)?;
         manifest.push(S5OutputManifestEntry {
             role: source.role.to_owned(),
             source_id: source.source_id.to_owned(),
@@ -478,13 +466,16 @@ pub fn write_run_outputs(
             sha256_before: source.sha256_before.to_owned(),
             sha256_after: sha_after,
             sha256_copy: sha_copy,
-            matches_snapshot: true,
+            matches_snapshot,
         });
         copy_by_source.insert(source.path.display().to_string(), source_copy);
         copied_source_paths.insert(copy_identity(source.path));
     }
 
     for template in request.selected_templates {
+        if !template.path.is_file() {
+            continue;
+        }
         if !copied_source_paths.insert(copy_identity(template.path)) {
             continue;
         }
@@ -501,13 +492,8 @@ pub fn write_run_outputs(
         ));
         fs::copy(template.path, &template_copy)
             .map_err(|error| format!("复制数字区域布局模板失败：{error}"))?;
-        let (sha_after, sha_copy) = verify_copied_snapshot(
-            &run_dir,
-            "数字区域布局模板",
-            template.sha256_before,
-            file_sha256(template.path),
-            file_sha256(&template_copy),
-        )?;
+        let (sha_after, sha_copy, matches_snapshot) =
+            capture_copied_snapshot(template.path, template.sha256_before, &template_copy)?;
         manifest.push(S5OutputManifestEntry {
             role: template.role.to_owned(),
             source_id: template.source_id.to_owned(),
@@ -516,38 +502,96 @@ pub fn write_run_outputs(
             sha256_before: template.sha256_before.to_owned(),
             sha256_after: sha_after,
             sha256_copy: sha_copy,
-            matches_snapshot: true,
+            matches_snapshot,
         });
     }
 
-    let config_copy = copies_dir.join(format!(
-        "配置_{}{}",
-        safe_name(&path_stem(request.config_path)),
-        request
-            .config_path
-            .extension()
-            .map(|extension| format!(".{}", extension.to_string_lossy().to_lowercase()))
-            .unwrap_or_default()
-    ));
-    fs::copy(request.config_path, &config_copy)
-        .map_err(|error| format!("复制配置失败：{error}"))?;
-    let (sha_after, sha_copy) = verify_copied_snapshot(
-        &run_dir,
-        "审核配置",
-        request.config_sha256_before,
-        file_sha256(request.config_path),
-        file_sha256(&config_copy),
-    )?;
-    manifest.push(S5OutputManifestEntry {
-        role: "configuration".to_owned(),
-        source_id: "configuration".to_owned(),
-        source_path: request.config_path.display().to_string(),
-        copy_path: config_copy.display().to_string(),
-        sha256_before: request.config_sha256_before.to_owned(),
-        sha256_after: sha_after,
-        sha256_copy: sha_copy,
-        matches_snapshot: true,
-    });
+    let config_copy = if request.config_path.is_file() {
+        let path = copies_dir.join(format!(
+            "配置_{}{}",
+            safe_name(&path_stem(request.config_path)),
+            request
+                .config_path
+                .extension()
+                .map(|extension| format!(".{}", extension.to_string_lossy().to_lowercase()))
+                .unwrap_or_default()
+        ));
+        fs::copy(request.config_path, &path).map_err(|error| format!("复制配置失败：{error}"))?;
+        let (sha_after, sha_copy, matches_snapshot) =
+            capture_copied_snapshot(request.config_path, request.config_sha256_before, &path)?;
+        manifest.push(S5OutputManifestEntry {
+            role: "configuration".to_owned(),
+            source_id: "configuration".to_owned(),
+            source_path: request.config_path.display().to_string(),
+            copy_path: path.display().to_string(),
+            sha256_before: request.config_sha256_before.to_owned(),
+            sha256_after: sha_after,
+            sha256_copy: sha_copy,
+            matches_snapshot,
+        });
+        Some(path)
+    } else {
+        None
+    };
+
+    let mut input_hashes = BTreeMap::new();
+    let mut inputs_unchanged = record_input_hash(
+        "current",
+        request.source_id,
+        request.source_path,
+        request.source_sha256_before,
+        &mut input_hashes,
+    );
+    for source in request.additional_sources {
+        inputs_unchanged &= record_input_hash(
+            source.role,
+            source.source_id,
+            source.path,
+            source.sha256_before,
+            &mut input_hashes,
+        );
+    }
+    for template in request.selected_templates {
+        inputs_unchanged &= record_input_hash(
+            template.role,
+            template.source_id,
+            template.path,
+            template.sha256_before,
+            &mut input_hashes,
+        );
+    }
+    let configuration_after =
+        file_sha256(request.config_path).unwrap_or_else(|_| "MISSING".to_owned());
+    let configuration_unchanged = configuration_after == request.config_sha256_before;
+    input_hashes.insert(
+        "configuration".to_owned(),
+        json!({
+            "sha256_before": request.config_sha256_before,
+            "sha256_after": configuration_after,
+        }),
+    );
+    let integrity_changed = !inputs_unchanged || !configuration_unchanged;
+    let input_integrity = if inputs_unchanged {
+        "UNCHANGED"
+    } else {
+        "CHANGED_DURING_RUN"
+    };
+    let configuration_integrity = if configuration_unchanged {
+        "UNCHANGED"
+    } else {
+        "CHANGED_DURING_RUN"
+    };
+    let run_status = if integrity_changed {
+        "INPUT_CHANGED_DURING_RUN"
+    } else {
+        "COMPLETED"
+    };
+    let mut outcomes = request.outcomes.to_vec();
+    let mut status_counts = request.status_counts.clone();
+    if integrity_changed {
+        downgrade_successful_outcomes(&mut outcomes);
+        status_counts = count_outcome_statuses(&outcomes);
+    }
 
     let result_path = run_dir.join("审核结果.xlsx");
     let mut triggered_rows = 0usize;
@@ -600,7 +644,7 @@ pub fn write_run_outputs(
             .map_err(|error| error.to_string())?;
 
         let mut row_number: u32 = 1;
-        for item in request.outcomes {
+        for item in &outcomes {
             let is_failure = failure_type(&item.status).is_some();
             if item.status != "TRIGGERED" && !is_failure {
                 continue;
@@ -908,6 +952,8 @@ pub fn write_run_outputs(
         audit_copies: copies_dir.clone(),
         configuration_copy: config_copy.clone(),
     };
+    let output_files_json = serde_json::to_value(&output_files)
+        .map_err(|error| format!("序列化输出文件清单失败：{error}"))?;
     let ledger = json!({
         "run_id": request.run_id,
         "period": request.period,
@@ -915,16 +961,14 @@ pub fn write_run_outputs(
         "institution_name": request.institution_name,
         "configuration_version": request.config_version,
         "configuration_sha256": request.config_sha256_before,
-        "run_status": "COMPLETED",
-        "status_counts": request.status_counts,
+        "run_status": run_status,
+        "input_integrity": input_integrity,
+        "configuration_integrity": configuration_integrity,
+        "input_hashes": input_hashes,
+        "status_counts": status_counts,
         "data_quality_warnings": request.data_quality_warnings,
         "audit_copy_manifest": manifest,
-        "output_files": {
-            "result_workbook": output_files.result_workbook.display().to_string(),
-            "run_ledger": output_files.run_ledger.display().to_string(),
-            "audit_copies": output_files.audit_copies.display().to_string(),
-            "configuration_copy": output_files.configuration_copy.display().to_string(),
-        },
+        "output_files": output_files_json,
     });
     fs::write(
         &ledger_path,
@@ -936,6 +980,10 @@ pub fn write_run_outputs(
         run_dir,
         manifest,
         output_files,
+        run_status: run_status.to_owned(),
+        input_integrity: input_integrity.to_owned(),
+        configuration_integrity: configuration_integrity.to_owned(),
+        status_counts,
         triggered_rows,
         failure_rows,
         data_quality_warning_count: request.data_quality_warnings.len(),
@@ -944,7 +992,11 @@ pub fn write_run_outputs(
 
 #[cfg(test)]
 mod tests {
-    use super::{file_sha256, write_run_outputs, S5OutputRequest, S5OutputSource};
+    use super::{
+        count_outcome_statuses, downgrade_successful_outcomes, file_sha256, write_run_outputs,
+        S5OutputRequest, S5OutputSource,
+    };
+    use crate::s5_service::S5RuleOutcome;
     use std::{
         collections::BTreeMap,
         fs,
@@ -952,8 +1004,57 @@ mod tests {
         time::{SystemTime, UNIX_EPOCH},
     };
 
+    fn test_outcome(status: &str) -> S5RuleOutcome {
+        S5RuleOutcome {
+            status: status.to_owned(),
+            triggered: match status {
+                "TRIGGERED" => Some(true),
+                "PASSED" => Some(false),
+                _ => None,
+            },
+            error_code: (status == "RETRIEVAL_FAILED").then(|| "SOURCE_READ_FAILED".to_owned()),
+            ..S5RuleOutcome::default()
+        }
+    }
+
     #[test]
-    fn output_writer_rejects_changed_inputs_before_creating_run_outputs() {
+    fn hash_integrity_downgrade_matches_python_result_mutation() {
+        let mut outcomes = vec![
+            test_outcome("TRIGGERED"),
+            test_outcome("PASSED"),
+            test_outcome("RETRIEVAL_FAILED"),
+        ];
+        downgrade_successful_outcomes(&mut outcomes);
+        assert_eq!(
+            outcomes
+                .iter()
+                .map(|item| item.status.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                "CALCULATION_FAILED",
+                "CALCULATION_FAILED",
+                "RETRIEVAL_FAILED"
+            ]
+        );
+        for outcome in &outcomes[..2] {
+            assert_eq!(outcome.triggered, None);
+            assert_eq!(
+                outcome.error_code.as_deref(),
+                Some("INPUT_CHANGED_DURING_RUN")
+            );
+            assert_eq!(
+                outcome.error_message,
+                "审核结果文件生成期间输入或配置哈希发生变化，结论不可用"
+            );
+        }
+        assert_eq!(
+            outcomes[2].error_code.as_deref(),
+            Some("SOURCE_READ_FAILED")
+        );
+    }
+
+    #[test]
+    fn output_writer_downgrades_successes_when_current_input_changed() {
         let nonce = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("clock")
@@ -971,13 +1072,18 @@ mod tests {
         fs::write(&config, b"config snapshot").expect("write config");
         let config_sha = file_sha256(&config).expect("hash config");
         let source_sha = "0".repeat(64);
-        let counts = BTreeMap::new();
+        let outcomes = vec![
+            test_outcome("TRIGGERED"),
+            test_outcome("PASSED"),
+            test_outcome("RETRIEVAL_FAILED"),
+        ];
+        let counts = count_outcome_statuses(&outcomes);
         let request = S5OutputRequest {
             run_id: "changed-input",
             period: "2026-07-31",
             institution_code: "123",
             institution_name: "sample",
-            outcomes: &[],
+            outcomes: &outcomes,
             status_counts: &counts,
             data_quality_warnings: &[],
             source_path: &source,
@@ -990,17 +1096,124 @@ mod tests {
             config_version: "test",
         };
 
-        let error = write_run_outputs(&request, &output)
-            .expect_err("changed source must not produce a completed output run");
-        assert!(error.contains("本期数据源在审核期间发生变化"));
-        assert!(
-            !output.exists(),
-            "rejected input must not create a run directory"
+        let summary = write_run_outputs(&request, &output).expect("write downgraded result");
+        assert_eq!(summary.run_status, "INPUT_CHANGED_DURING_RUN");
+        assert_eq!(summary.input_integrity, "CHANGED_DURING_RUN");
+        assert_eq!(summary.configuration_integrity, "UNCHANGED");
+        assert_eq!(summary.status_counts["CALCULATION_FAILED"], 2);
+        assert_eq!(summary.status_counts["RETRIEVAL_FAILED"], 1);
+        assert_eq!(summary.triggered_rows, 0);
+        assert_eq!(summary.failure_rows, 3);
+        assert!(summary.output_files.result_workbook.is_file());
+        let ledger: serde_json::Value = serde_json::from_slice(
+            &fs::read(&summary.output_files.run_ledger).expect("read run ledger"),
+        )
+        .expect("parse run ledger");
+        assert_eq!(ledger["run_status"], "INPUT_CHANGED_DURING_RUN");
+        assert_eq!(ledger["input_integrity"], "CHANGED_DURING_RUN");
+        assert_eq!(ledger["configuration_integrity"], "UNCHANGED");
+        assert_eq!(ledger["status_counts"]["CALCULATION_FAILED"], 2);
+        assert_eq!(
+            ledger["input_hashes"]["current:CURRENT"]["sha256_before"],
+            source_sha
         );
+        assert_eq!(
+            ledger["input_hashes"]["current:CURRENT"]["sha256_after"],
+            file_sha256(&source).expect("hash changed source")
+        );
+        assert_eq!(ledger["audit_copy_manifest"][0]["matches_snapshot"], false);
         fs::remove_dir_all(root).expect("remove test root");
     }
+
     #[test]
-    fn output_writer_rejects_changed_previous_input_before_creating_run_outputs() {
+    fn output_writer_records_missing_inputs_without_copying_them() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "audit_s5_missing_inputs_downgrade_{}_{}",
+            std::process::id(),
+            nonce
+        ));
+        fs::create_dir_all(&root).expect("create test root");
+        let current = root.join("current.xlsx");
+        let previous = root.join("previous.xlsx");
+        let template = root.join("layout.xlsx");
+        let config = root.join("config.xlsx");
+        let output = root.join("output");
+        fs::write(&current, b"current snapshot").expect("write current source");
+        fs::write(&previous, b"previous snapshot").expect("write previous source");
+        fs::write(&template, b"layout snapshot").expect("write layout template");
+        fs::write(&config, b"configuration snapshot").expect("write config");
+        let current_sha = file_sha256(&current).expect("hash current");
+        let previous_sha = file_sha256(&previous).expect("hash previous");
+        let template_sha = file_sha256(&template).expect("hash layout");
+        let config_sha = file_sha256(&config).expect("hash config");
+        let outcomes = vec![test_outcome("TRIGGERED")];
+        let counts = count_outcome_statuses(&outcomes);
+        let additional_sources = [S5OutputSource {
+            role: "previous",
+            path: &previous,
+            source_id: "PREVIOUS",
+            sha256_before: &previous_sha,
+        }];
+        let selected_templates = [S5OutputSource {
+            role: "layout",
+            path: &template,
+            source_id: "LAYOUT",
+            sha256_before: &template_sha,
+        }];
+        let request = S5OutputRequest {
+            run_id: "missing-inputs",
+            period: "2026-07-31",
+            institution_code: "123",
+            institution_name: "sample",
+            outcomes: &outcomes,
+            status_counts: &counts,
+            data_quality_warnings: &[],
+            source_path: &current,
+            source_id: "CURRENT",
+            source_sha256_before: &current_sha,
+            additional_sources: &additional_sources,
+            selected_templates: &selected_templates,
+            config_path: &config,
+            config_sha256_before: &config_sha,
+            config_version: "test",
+        };
+        fs::remove_file(&current).expect("remove current source");
+        fs::remove_file(&previous).expect("remove previous source");
+        fs::remove_file(&template).expect("remove layout template");
+        fs::remove_file(&config).expect("remove config");
+
+        let summary = write_run_outputs(&request, &output).expect("write downgraded result");
+        assert_eq!(summary.run_status, "INPUT_CHANGED_DURING_RUN");
+        assert_eq!(summary.input_integrity, "CHANGED_DURING_RUN");
+        assert_eq!(summary.configuration_integrity, "CHANGED_DURING_RUN");
+        assert_eq!(summary.status_counts["CALCULATION_FAILED"], 1);
+        assert_eq!(summary.triggered_rows, 0);
+        assert_eq!(summary.failure_rows, 1);
+        assert!(summary.output_files.configuration_copy.is_none());
+        assert!(summary.output_files.result_workbook.is_file());
+        assert!(summary.manifest.is_empty());
+
+        let ledger: serde_json::Value = serde_json::from_slice(
+            &fs::read(&summary.output_files.run_ledger).expect("read run ledger"),
+        )
+        .expect("parse run ledger");
+        for key in ["current:CURRENT", "previous:PREVIOUS", "layout:LAYOUT"] {
+            assert_eq!(ledger["input_hashes"][key]["sha256_after"], "MISSING");
+        }
+        assert_eq!(
+            ledger["input_hashes"]["configuration"]["sha256_after"],
+            "MISSING"
+        );
+        assert!(ledger["output_files"].get("configuration_copy").is_none());
+        fs::remove_dir_all(root).expect("remove test root");
+    }
+
+    #[test]
+    fn output_writer_downgrades_successes_when_previous_input_changed() {
         let nonce = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("clock")
@@ -1021,7 +1234,8 @@ mod tests {
         let config_sha = file_sha256(&config).expect("hash config");
         let current_sha = file_sha256(&current).expect("hash current");
         let stale_previous_sha = "0".repeat(64);
-        let counts = BTreeMap::new();
+        let outcomes = vec![test_outcome("TRIGGERED")];
+        let counts = count_outcome_statuses(&outcomes);
         let additional_sources = [S5OutputSource {
             role: "previous",
             path: &previous,
@@ -1033,7 +1247,7 @@ mod tests {
             period: "2026-07-31",
             institution_code: "123",
             institution_name: "sample",
-            outcomes: &[],
+            outcomes: &outcomes,
             status_counts: &counts,
             data_quality_warnings: &[],
             source_path: &current,
@@ -1046,13 +1260,90 @@ mod tests {
             config_version: "test",
         };
 
-        let error = write_run_outputs(&request, &output)
-            .expect_err("changed previous source must not produce a completed output run");
-        assert!(error.contains("上期数据源在审核期间发生变化"));
-        assert!(
-            !output.exists(),
-            "rejected previous input must not create a run directory"
+        let summary = write_run_outputs(&request, &output).expect("write downgraded result");
+        assert_eq!(summary.run_status, "INPUT_CHANGED_DURING_RUN");
+        assert_eq!(summary.input_integrity, "CHANGED_DURING_RUN");
+        assert_eq!(summary.configuration_integrity, "UNCHANGED");
+        assert_eq!(summary.status_counts["CALCULATION_FAILED"], 1);
+        assert_eq!(summary.triggered_rows, 0);
+        assert_eq!(summary.failure_rows, 1);
+        let ledger: serde_json::Value = serde_json::from_slice(
+            &fs::read(&summary.output_files.run_ledger).expect("read run ledger"),
+        )
+        .expect("parse run ledger");
+        assert_eq!(
+            ledger["input_hashes"]["previous:PREVIOUS"]["sha256_before"],
+            stale_previous_sha
         );
+        assert_eq!(
+            ledger["input_hashes"]["previous:PREVIOUS"]["sha256_after"],
+            file_sha256(&previous).expect("hash changed previous source")
+        );
+        assert_eq!(ledger["audit_copy_manifest"][1]["matches_snapshot"], false);
+        fs::remove_dir_all(root).expect("remove test root");
+    }
+
+    #[test]
+    fn output_writer_downgrades_successes_when_configuration_changed() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "audit_s5_config_snapshot_downgrade_{}_{}",
+            std::process::id(),
+            nonce
+        ));
+        fs::create_dir_all(&root).expect("create test root");
+        let source = root.join("source.xlsx");
+        let config = root.join("config.xlsx");
+        let output = root.join("output");
+        fs::write(&source, b"source snapshot").expect("write source");
+        fs::write(&config, b"configuration changed").expect("write changed config");
+        let source_sha = file_sha256(&source).expect("hash source");
+        let stale_config_sha = "0".repeat(64);
+        let outcomes = vec![test_outcome("TRIGGERED")];
+        let counts = count_outcome_statuses(&outcomes);
+        let request = S5OutputRequest {
+            run_id: "changed-configuration",
+            period: "2026-07-31",
+            institution_code: "123",
+            institution_name: "sample",
+            outcomes: &outcomes,
+            status_counts: &counts,
+            data_quality_warnings: &[],
+            source_path: &source,
+            source_id: "CURRENT",
+            source_sha256_before: &source_sha,
+            additional_sources: &[],
+            selected_templates: &[],
+            config_path: &config,
+            config_sha256_before: &stale_config_sha,
+            config_version: "test",
+        };
+
+        let summary = write_run_outputs(&request, &output).expect("write downgraded result");
+        assert_eq!(summary.run_status, "INPUT_CHANGED_DURING_RUN");
+        assert_eq!(summary.input_integrity, "UNCHANGED");
+        assert_eq!(summary.configuration_integrity, "CHANGED_DURING_RUN");
+        assert_eq!(summary.status_counts["CALCULATION_FAILED"], 1);
+        assert_eq!(summary.triggered_rows, 0);
+        assert_eq!(summary.failure_rows, 1);
+        let ledger: serde_json::Value = serde_json::from_slice(
+            &fs::read(&summary.output_files.run_ledger).expect("read run ledger"),
+        )
+        .expect("parse run ledger");
+        assert_eq!(ledger["input_integrity"], "UNCHANGED");
+        assert_eq!(ledger["configuration_integrity"], "CHANGED_DURING_RUN");
+        assert_eq!(
+            ledger["input_hashes"]["configuration"]["sha256_before"],
+            stale_config_sha
+        );
+        assert_eq!(
+            ledger["input_hashes"]["configuration"]["sha256_after"],
+            file_sha256(&config).expect("hash changed configuration")
+        );
+        assert_eq!(ledger["audit_copy_manifest"][1]["matches_snapshot"], false);
         fs::remove_dir_all(root).expect("remove test root");
     }
 
@@ -1104,6 +1395,9 @@ mod tests {
         };
 
         let summary = write_run_outputs(&request, &output).expect("write run outputs");
+        assert_eq!(summary.run_status, "COMPLETED");
+        assert_eq!(summary.input_integrity, "UNCHANGED");
+        assert_eq!(summary.configuration_integrity, "UNCHANGED");
         assert_eq!(
             summary
                 .manifest
@@ -1127,6 +1421,25 @@ mod tests {
             b"selected layout snapshot"
         );
         assert!(layout_entry.matches_snapshot);
+        let ledger: serde_json::Value = serde_json::from_slice(
+            &fs::read(&summary.output_files.run_ledger).expect("read run ledger"),
+        )
+        .expect("parse run ledger");
+        assert_eq!(ledger["run_status"], "COMPLETED");
+        assert_eq!(ledger["input_integrity"], "UNCHANGED");
+        assert_eq!(ledger["configuration_integrity"], "UNCHANGED");
+        assert_eq!(
+            ledger["input_hashes"]["current:CURRENT"]["sha256_before"],
+            current_sha
+        );
+        assert_eq!(
+            ledger["input_hashes"]["layout:LAYOUT_0123456789ab"]["sha256_before"],
+            template_sha
+        );
+        assert_eq!(
+            ledger["input_hashes"]["configuration"]["sha256_before"],
+            config_sha
+        );
         fs::remove_dir_all(root).expect("remove test root");
     }
 }
