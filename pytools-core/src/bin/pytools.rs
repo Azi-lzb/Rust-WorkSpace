@@ -445,9 +445,9 @@ where
                     writeln!(output, "当前配置不可用；请先进入 7-1 初始化/修复配置。")?;
                     return Ok(());
                 }
-                let Some(sources) = choose_workbooks(
-                    "选择时序宽表汇总源文件（可多选）",
-                    true,
+                let Some(sources) = choose_source_files_or_folders(
+                    "选择时序宽表汇总源文件或文件夹",
+                    NativeFileFilter::ExcelWorkbooks,
                     input,
                     output,
                     allow_native_dialog,

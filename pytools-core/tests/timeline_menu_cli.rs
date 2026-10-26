@@ -50,10 +50,17 @@ fn interactive_v2_data_menu_routes_compare_wide_summary_and_precheck() -> Result
     let config = create_timeline_config(root.path())?;
     let template = root.path().join("template.xlsx");
     let compare_source = root.path().join("sample compare source.xlsx");
-    let wide_source = root.path().join("sample wide source.xlsx");
+    let wide_source_dir = root.path().join("sample wide sources");
+    let wide_source = wide_source_dir.join("sample wide source.xlsx");
+    let nested_source_dir = wide_source_dir.join("nested");
+    fs::create_dir_all(&nested_source_dir)?;
+    let nested_wide_source = nested_source_dir.join("sample nested wide source.xlsx");
     create_wide_source(&template, "模板甲", 10.0)?;
     create_wide_source(&compare_source, "来源甲", 12.0)?;
     create_wide_source(&wide_source, "宽表甲", 17.5)?;
+    create_wide_source(&nested_wide_source, "宽表乙", 27.5)?;
+    let wide_source_before = fs::read(&wide_source)?;
+    let nested_wide_source_before = fs::read(&nested_wide_source)?;
 
     let compare = run_menu(
         &config,
@@ -86,10 +93,11 @@ fn interactive_v2_data_menu_routes_compare_wide_summary_and_precheck() -> Result
         &format!(
             "1
 1
+3
 {}
 0
 ",
-            wide_source.display()
+            wide_source_dir.display()
         ),
     )?;
     assert!(
@@ -98,12 +106,26 @@ fn interactive_v2_data_menu_routes_compare_wide_summary_and_precheck() -> Result
         String::from_utf8_lossy(&no_suffix.stderr)
     );
     assert!(String::from_utf8_lossy(&no_suffix.stdout).contains("1  时序宽表汇总"));
+    let no_suffix_stdout = String::from_utf8_lossy(&no_suffix.stdout);
+    assert!(no_suffix_stdout.contains("递归共识别文件 2 个"));
+    assert!(no_suffix_stdout.contains("sample wide source.xlsx"));
+    assert!(no_suffix_stdout.contains("sample nested wide source.xlsx"));
     let no_suffix_output = find_output(&output_dir, "行头不加后缀")?;
     let no_suffix_dump = read_workbook(&no_suffix_output)?;
-    assert!(no_suffix_dump
+    let wide_sheet = no_suffix_dump
         .sheets
         .iter()
-        .any(|sheet| sheet.name == "WideRule" && !sheet.values.is_empty()));
+        .find(|sheet| sheet.name == "WideRule")
+        .context("wide summary sheet missing")?;
+    let wide_values = wide_sheet
+        .values
+        .values()
+        .filter_map(|cell| cell.get("value").and_then(Value::as_str))
+        .collect::<Vec<_>>();
+    assert!(wide_values.contains(&"宽表甲"));
+    assert!(wide_values.contains(&"宽表乙"));
+    assert_eq!(fs::read(&wide_source)?, wide_source_before);
+    assert_eq!(fs::read(&nested_wide_source)?, nested_wide_source_before);
 
     let precheck = run_menu(
         &config, "1
@@ -1033,7 +1055,7 @@ fn interactive_wide_summary_menu_commits_new_target_after_confirmation() -> Resu
     let source = root.path().join("sample wide source.xlsx");
     create_wide_source(&source, "交互汇总甲", 23.5)?;
 
-    let completed = run_menu(&config, &format!("1\n1\n{}\ny\n0\n", source.display()))?;
+    let completed = run_menu(&config, &format!("1\n1\n1\n{}\ny\n0\n", source.display()))?;
     assert!(
         completed.status.success(),
         "confirmed target append failed: {}",
@@ -1109,7 +1131,7 @@ fn assert_negative_date_serial_menu_target() -> Result<()> {
     create_wide_source_with_negative_date(&source, "负序列分行")?;
     let source_before = fs::read(&source)?;
 
-    let completed = run_menu(&config, &format!("1\n1\n{}\ny\n0\n", source.display()))?;
+    let completed = run_menu(&config, &format!("1\n1\n1\n{}\ny\n0\n", source.display()))?;
     assert!(
         completed.status.success(),
         "wide-summary negative serial target write failed: {}",
@@ -1153,7 +1175,7 @@ fn interactive_wide_summary_menu_does_not_commit_without_confirmation() -> Resul
     let source = root.path().join("sample wide source.xlsx");
     create_wide_source(&source, "交互汇总乙", 24.5)?;
 
-    let declined = run_menu(&config, &format!("1\n1\n{}\nn\n0\n", source.display()))?;
+    let declined = run_menu(&config, &format!("1\n1\n1\n{}\nn\n0\n", source.display()))?;
     assert!(
         declined.status.success(),
         "declining target append failed: {}",
@@ -1178,12 +1200,15 @@ fn interactive_wide_summary_existing_target_requires_capability_and_commits_safe
 
     let created = run_menu(
         &config,
-        &format!("1\n1\n{}\ny\n0\n", first_source.display()),
+        &format!("1\n1\n1\n{}\ny\n0\n", first_source.display()),
     )?;
     assert!(created.status.success());
     let original_target = fs::read(&target)?;
 
-    let without_capability = run_menu(&config, &format!("1\n1\n{}\n0\n", second_source.display()))?;
+    let without_capability = run_menu(
+        &config,
+        &format!("1\n1\n1\n{}\n0\n", second_source.display()),
+    )?;
     assert!(
         without_capability.status.success(),
         "plan-only existing target route failed: {}",
@@ -1218,7 +1243,7 @@ fn interactive_wide_summary_existing_target_requires_capability_and_commits_safe
         "user",
         &capability_path,
         "synthetic-pt-1-wide-menu-umya",
-        &format!("1\n1\n{}\ny\n0\n", second_source.display()),
+        &format!("1\n1\n1\n{}\ny\n0\n", second_source.display()),
     )?;
     assert!(
         committed.status.success(),
@@ -1271,7 +1296,11 @@ fn wide_summary_menu_logging_views_record_progress_and_respect_off() -> Result<(
     let source = root.path().join("sample wide source.xlsx");
     create_wide_source(&source, "宽表甲", 17.5)?;
 
-    let user = run_menu_with_view(&config, "user", &format!("1\n1\n{}\n0\n", source.display()))?;
+    let user = run_menu_with_view(
+        &config,
+        "user",
+        &format!("1\n1\n1\n{}\n0\n", source.display()),
+    )?;
     assert!(
         user.status.success(),
         "user-view wide summary failed: {}",
@@ -1316,7 +1345,7 @@ fn wide_summary_menu_logging_views_record_progress_and_respect_off() -> Result<(
     let developer = run_menu_with_view(
         &developer_config,
         "developer",
-        &format!("1\n1\n{}\n0\n", developer_source.display()),
+        &format!("1\n1\n1\n{}\n0\n", developer_source.display()),
     )?;
     assert!(
         developer.status.success(),
@@ -1351,7 +1380,11 @@ fn wide_summary_menu_logging_views_record_progress_and_respect_off() -> Result<(
     assert_history_has_phase(&developer_history, "source_read", "completed", "calamine")?;
 
     let history_count_before_off = run_history_paths(&log_dir)?.len();
-    let off = run_menu_with_view(&config, "off", &format!("1\n1\n{}\n0\n", source.display()))?;
+    let off = run_menu_with_view(
+        &config,
+        "off",
+        &format!("1\n1\n1\n{}\n0\n", source.display()),
+    )?;
     assert!(
         off.status.success(),
         "off-view wide summary failed: {}",
@@ -1373,7 +1406,11 @@ fn wide_summary_menu_failure_history_identifies_read_stage_without_source_data()
     let source = root.path().join("broken source.xlsx");
     fs::write(&source, b"not an xlsx workbook")?;
 
-    let failure = run_menu_with_view(&config, "user", &format!("1\n1\n{}\n0\n", source.display()))?;
+    let failure = run_menu_with_view(
+        &config,
+        "user",
+        &format!("1\n1\n1\n{}\n0\n", source.display()),
+    )?;
     assert!(!failure.status.success());
     let user_stderr = String::from_utf8_lossy(&failure.stderr);
     assert!(user_stderr.contains("读取失败"));
