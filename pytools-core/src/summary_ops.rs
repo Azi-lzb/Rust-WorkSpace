@@ -3,9 +3,9 @@
 use anyhow::{Context, Result};
 use chrono::Local;
 use excel_reader::{
-    read_value_columns_with_iso_dates, read_workbook,
+    read_defined_names, read_value_columns_with_iso_dates, read_workbook,
     read_workbook_with_unknown_error_tokens_as_text, read_xlsx_worksheet_extents, CellValue,
-    SheetDump, WorksheetExtent,
+    DefinedNameParseStatus, DefinedNameRecord, SheetDump, WorksheetExtent,
 };
 use excel_writer::{Format, Workbook, Worksheet};
 use serde::Serialize;
@@ -751,6 +751,120 @@ struct TemplateSpec {
     set_names: Vec<String>,
     set_addresses: Vec<String>,
     headers: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct NamedRangeSourceSkip {
+    pub file_name: String,
+    pub reason: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct NamedRangeSummaryResult {
+    pub saved: bool,
+    pub rows: usize,
+    pub files: usize,
+    pub skipped_sources: Vec<NamedRangeSourceSkip>,
+    pub path: Option<PathBuf>,
+    pub execution: Option<SummaryExecution>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum NamedRegionKind {
+    Header,
+    FixedRows,
+    AnyRows,
+    Structure,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct NamedRegionBounds {
+    start_row: usize,
+    start_column: usize,
+    end_row: usize,
+    end_column: usize,
+}
+
+impl NamedRegionBounds {
+    fn from_reference(reference: &str) -> Result<Self> {
+        let normalized = reference.replace('$', "");
+        let (start, end) = normalized
+            .split_once(':')
+            .unwrap_or((normalized.as_str(), normalized.as_str()));
+        let (start_row, start_column) =
+            parse_a1(start).with_context(|| format!("invalid named-range start {start:?}"))?;
+        let (end_row, end_column) =
+            parse_a1(end).with_context(|| format!("invalid named-range end {end:?}"))?;
+        anyhow::ensure!(
+            start_row <= end_row && start_column <= end_column,
+            "named range has reversed bounds: {reference:?}"
+        );
+        Ok(Self {
+            start_row,
+            start_column,
+            end_row,
+            end_column,
+        })
+    }
+
+    fn as_header_range(self) -> (usize, usize, usize, usize) {
+        (
+            self.start_row,
+            self.end_row,
+            self.start_column,
+            self.end_column,
+        )
+    }
+
+    fn contains_columns(self, other: Self) -> bool {
+        other.start_column >= self.start_column && other.end_column <= self.end_column
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+struct NamedRegionGroupBuilder {
+    header: Option<NamedRegionBounds>,
+    fixed_rows: Option<NamedRegionBounds>,
+    any_rows: Option<NamedRegionBounds>,
+    structure: Option<NamedRegionBounds>,
+}
+
+#[derive(Clone, Debug)]
+struct NamedRegionGroup {
+    id: usize,
+    headers_by_column: BTreeMap<usize, String>,
+    fixed_rows: Option<NamedRegionBounds>,
+    any_rows: Option<NamedRegionBounds>,
+    structure: Option<NamedRegionBounds>,
+}
+
+#[derive(Clone, Debug)]
+struct NamedSheetSpec {
+    template_sheet: String,
+    groups: Vec<NamedRegionGroup>,
+    field_positions: BTreeMap<(usize, usize), usize>,
+    output_headers: Vec<String>,
+    rows: Vec<Vec<serde_json::Value>>,
+}
+
+pub fn summarize_by_named_ranges(
+    template_path: &Path,
+    sources: &[PathBuf],
+    output_dir: &Path,
+) -> Result<NamedRangeSummaryResult> {
+    summarize_by_named_ranges_inner(template_path, sources, output_dir, None)
+}
+
+pub fn summarize_by_named_ranges_with_progress<F>(
+    template_path: &Path,
+    sources: &[PathBuf],
+    output_dir: &Path,
+    mut on_event: F,
+) -> Result<NamedRangeSummaryResult>
+where
+    F: FnMut(SummaryRunEvent),
+{
+    summarize_by_named_ranges_inner(template_path, sources, output_dir, Some(&mut on_event))
 }
 
 pub fn summarize_by_comments(
@@ -1543,6 +1657,856 @@ fn summarize_by_comments_inner(
         None,
     );
     Ok(result)
+}
+
+fn summarize_by_named_ranges_inner(
+    template_path: &Path,
+    sources: &[PathBuf],
+    output_dir: &Path,
+    callback: Option<&mut dyn FnMut(SummaryRunEvent)>,
+) -> Result<NamedRangeSummaryResult> {
+    let started = Instant::now();
+    let mut emitter = SummaryProgressEmitter {
+        started,
+        sequence: 0,
+        callback,
+    };
+    let mut progress = SummaryProgress {
+        total_inputs: sources.len(),
+        total_files: sources
+            .iter()
+            .filter(|path| supported(path) && path.is_file())
+            .count(),
+        ..SummaryProgress::default()
+    };
+    emitter.emit(
+        "run",
+        "started",
+        format!("开始按模板命名区域汇总：{} 个输入", sources.len()),
+        &progress,
+        None,
+        None,
+        &["pytools-core"],
+        None,
+        None,
+    );
+
+    let template_started = Instant::now();
+    emitter.emit(
+        "template_read",
+        "started",
+        "正在读取命名区域模板和定义名称",
+        &progress,
+        Some(template_path),
+        None,
+        &[
+            "pytools-core",
+            "excel-reader",
+            "calamine",
+            "namespace-aware OOXML supplement",
+        ],
+        Some("calamine + namespace-aware OOXML supplement"),
+        None,
+    );
+    if !is_xlsx_or_xlsm(template_path) {
+        emitter.emit(
+            "template_read",
+            "failed",
+            "命名区域模板只支持 XLSX/XLSM",
+            &progress,
+            Some(template_path),
+            Some(template_started.elapsed()),
+            &["pytools-core"],
+            None,
+            Some("template_format_error"),
+        );
+        anyhow::bail!("named-range summary template must be .xlsx or .xlsm");
+    }
+    anyhow::ensure!(
+        template_path.is_file(),
+        "named-range summary template does not exist: {}",
+        template_path.display()
+    );
+    let mut template = read_workbook(template_path)
+        .with_context(|| format!("read named-range template {}", template_path.display()))?;
+    overlay_template_iso_dates(template_path, &mut template.sheets)
+        .context("read ISO date values from named-range template")?;
+    let template_elapsed_cells = read_elapsed_time_cells(template_path, &template.sheets)
+        .context("read elapsed-time formats from named-range template")?;
+    let definitions = read_defined_names(template_path)
+        .with_context(|| format!("read defined names from {}", template_path.display()))?;
+    let mut sheet_specs =
+        build_named_sheet_specs(&template.sheets, &definitions, &template_elapsed_cells)
+            .context("parse named-range summary template")?;
+    anyhow::ensure!(
+        !sheet_specs.is_empty(),
+        "模板中没有可用命名区域；名称需符合 表头区域_N、固定行汇总区域_N、任意行汇总区域_N、表结构区域_N"
+    );
+    let spec_names = sheet_specs
+        .iter()
+        .map(|spec| spec.template_sheet.clone())
+        .collect::<BTreeSet<_>>();
+    let template_sheets = spec_names
+        .iter()
+        .filter_map(|name| template.sheets.iter().find(|sheet| &sheet.name == name))
+        .map(|sheet| (sheet.name.clone(), sheet))
+        .collect::<BTreeMap<_, _>>();
+    let template_fallback = spec_names.contains("模板");
+    emitter.emit(
+        "template_read",
+        "succeeded",
+        format!(
+            "命名区域模板读取完成：{} 个工作表、{} 个定义名称",
+            sheet_specs.len(),
+            definitions.len()
+        ),
+        &progress,
+        Some(template_path),
+        Some(template_started.elapsed()),
+        &[
+            "pytools-core",
+            "excel-reader",
+            "calamine",
+            "namespace-aware OOXML supplement",
+        ],
+        Some("calamine + namespace-aware OOXML supplement"),
+        None,
+    );
+
+    let mut skipped_sources = Vec::new();
+    let mut files_hit = 0usize;
+    let mut total_rows = 0usize;
+    let mut read_elapsed = template_started.elapsed();
+    let mut unknown_error_token_cells_normalized = 0usize;
+    for (input_index, source) in sources.iter().enumerate() {
+        if !supported(source) || !source.is_file() {
+            let reason = if supported(source) {
+                "输入文件不存在"
+            } else {
+                "输入格式不受支持"
+            };
+            skipped_sources.push(NamedRangeSourceSkip {
+                file_name: source
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .into_owned(),
+                reason: reason.to_owned(),
+            });
+            emitter.emit(
+                "input_filter",
+                "skipped",
+                format!("跳过{reason} [{}/{}]", input_index + 1, sources.len()),
+                &progress,
+                Some(source),
+                None,
+                &["pytools-core"],
+                None,
+                None,
+            );
+            continue;
+        }
+
+        let current_file = files_hit + progress.failed_files + 1;
+        progress.current_file = Some(current_file);
+        let source_started = Instant::now();
+        emitter.emit(
+            "source_read",
+            "started",
+            format!("正在读取源工作簿 [{current_file}/{}]", progress.total_files),
+            &progress,
+            Some(source),
+            None,
+            &[
+                "pytools-core",
+                "excel-reader",
+                "calamine",
+                "namespace-aware OOXML supplement",
+            ],
+            Some("calamine + namespace-aware OOXML supplement"),
+            None,
+        );
+        let read_result = match read_workbook_with_unknown_error_tokens_as_text(source) {
+            Ok(result) => result,
+            Err(error) => {
+                progress.failed_files += 1;
+                emitter.emit(
+                    "source_read",
+                    "failed",
+                    "命名区域汇总源工作簿读取失败",
+                    &progress,
+                    Some(source),
+                    Some(source_started.elapsed()),
+                    &["pytools-core", "excel-reader", "calamine"],
+                    Some("calamine"),
+                    Some("source_read_error"),
+                );
+                return Err(error)
+                    .with_context(|| format!("read named-range source {}", source.display()));
+            }
+        };
+        let mut dump = read_result.workbook;
+        if excel_reader::uses_1904_date_system(source)? {
+            shift_datetime_serials_to_1900_epoch(&mut dump);
+        }
+        if read_result.compatibility_normalization_used {
+            unknown_error_token_cells_normalized += read_result.normalized_cell_count;
+        }
+        read_elapsed += source_started.elapsed();
+        files_hit += 1;
+        progress.processed_files = files_hit;
+        emitter.emit(
+            "source_read",
+            "succeeded",
+            "源工作簿读取完成",
+            &progress,
+            Some(source),
+            Some(source_started.elapsed()),
+            &[
+                "pytools-core",
+                "excel-reader",
+                "calamine",
+                "namespace-aware OOXML supplement",
+            ],
+            Some(if read_result.compatibility_normalization_used {
+                "calamine + OOXML error-token normalization"
+            } else {
+                "calamine + namespace-aware OOXML supplement"
+            }),
+            None,
+        );
+
+        let extract_started = Instant::now();
+        let mut rows_for_file: BTreeMap<String, Vec<Vec<serde_json::Value>>> = BTreeMap::new();
+        let mut structure_failure = None;
+        for source_sheet in &dump.sheets {
+            let spec_name = if spec_names.contains(&source_sheet.name) {
+                Some(source_sheet.name.as_str())
+            } else if template_fallback {
+                Some("模板")
+            } else {
+                None
+            };
+            let Some(spec_name) = spec_name else {
+                continue;
+            };
+            let spec = sheet_specs
+                .iter()
+                .find(|spec| spec.template_sheet == spec_name)
+                .expect("resolved template sheet spec");
+            let template_sheet = template_sheets
+                .get(spec_name)
+                .expect("template sheet spec has source worksheet");
+            for group in &spec.groups {
+                if let Some(structure) = group.structure {
+                    if let Some(mismatch) =
+                        named_structure_mismatch(template_sheet, source_sheet, structure)?
+                    {
+                        structure_failure = Some(format!(
+                            "工作表 {:?} 的表结构区域_{} 不匹配：{mismatch}",
+                            source_sheet.name, group.id
+                        ));
+                        break;
+                    }
+                }
+            }
+            if structure_failure.is_some() {
+                break;
+            }
+            let workbook_name = source
+                .file_stem()
+                .map(|stem| stem.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            let rows = extract_named_sheet_rows(spec, source_sheet, &workbook_name)?;
+            progress.total_rows += rows.len();
+            progress.processed_rows += rows.len();
+            total_rows += rows.len();
+            rows_for_file
+                .entry(spec_name.to_owned())
+                .or_default()
+                .extend(rows);
+        }
+        if let Some(reason) = structure_failure {
+            let file_name = source
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .into_owned();
+            skipped_sources.push(NamedRangeSourceSkip {
+                file_name: file_name.clone(),
+                reason: reason.clone(),
+            });
+            emitter.emit(
+                "source_structure",
+                "skipped",
+                format!("因表结构校验失败跳过源文件 {file_name}：{reason}"),
+                &progress,
+                Some(source),
+                Some(extract_started.elapsed()),
+                &["pytools-core", "excel-reader", "calamine"],
+                Some("calamine"),
+                Some("source_structure_mismatch"),
+            );
+            // No rows from a rejected source are published to the result.
+            for rows in rows_for_file.values() {
+                let count = rows.len();
+                progress.total_rows = progress.total_rows.saturating_sub(count);
+                progress.processed_rows = progress.processed_rows.saturating_sub(count);
+                total_rows = total_rows.saturating_sub(count);
+            }
+            continue;
+        }
+        let file_row_count = rows_for_file.values().map(Vec::len).sum::<usize>();
+        for spec in &mut sheet_specs {
+            if let Some(rows) = rows_for_file.remove(&spec.template_sheet) {
+                spec.rows.extend(rows);
+            }
+        }
+        progress.completed_files += 1;
+        emitter.emit(
+            "row_extract",
+            "succeeded",
+            format!("源工作簿命名区域提取完成：{file_row_count} 行"),
+            &progress,
+            Some(source),
+            Some(extract_started.elapsed()),
+            &["pytools-core"],
+            None,
+            None,
+        );
+    }
+
+    if total_rows == 0 {
+        let result = NamedRangeSummaryResult {
+            saved: false,
+            rows: 0,
+            files: files_hit,
+            skipped_sources,
+            path: None,
+            execution: Some(SummaryExecution {
+                reader_engine: Some(if unknown_error_token_cells_normalized > 0 {
+                    "calamine + OOXML error-token normalization"
+                } else {
+                    "calamine"
+                }),
+                writer_engine: None,
+                read_elapsed_ms: read_elapsed.as_millis(),
+                write_elapsed_ms: 0,
+                total_elapsed_ms: started.elapsed().as_millis(),
+                ooxml_error_cells_patched: 0,
+                unknown_error_token_cells_normalized,
+            }),
+        };
+        emitter.emit(
+            "run",
+            "skipped",
+            "没有可汇总的命名区域数据",
+            &progress,
+            None,
+            Some(started.elapsed()),
+            &["pytools-core"],
+            None,
+            None,
+        );
+        return Ok(result);
+    }
+
+    let output_started = Instant::now();
+    if let Err(error) = fs::create_dir_all(output_dir) {
+        emitter.emit(
+            "output_prepare",
+            "failed",
+            "无法准备命名区域汇总输出目录",
+            &progress,
+            None,
+            Some(output_started.elapsed()),
+            &["pytools-core"],
+            None,
+            Some("output_directory_error"),
+        );
+        return Err(error)
+            .with_context(|| format!("create summary output directory {}", output_dir.display()));
+    }
+    let path = unique_output(
+        output_dir,
+        &format!(
+            "{}_按模板命名区域汇总",
+            Local::now().format("%Y%m%d_%H%M%S")
+        ),
+    )?;
+    emitter.emit(
+        "output_prepare",
+        "succeeded",
+        "命名区域汇总输出位置已准备",
+        &progress,
+        Some(&path),
+        Some(output_started.elapsed()),
+        &["pytools-core"],
+        None,
+        None,
+    );
+
+    let write_started = Instant::now();
+    emitter.emit(
+        "output_workbook",
+        "started",
+        "正在生成命名区域汇总工作簿",
+        &progress,
+        Some(&path),
+        None,
+        &["pytools-core", "excel-writer"],
+        Some("rust_xlsxwriter"),
+        None,
+    );
+    let header_format = Format::new().set_bold();
+    let mut error_cells = Vec::new();
+    let mut workbook = Workbook::new();
+    for spec in &sheet_specs {
+        let ws = workbook.add_worksheet();
+        ws.set_name(&spec.template_sheet)?;
+        ws.set_margins(0.75, 0.75, 1.0, 1.0, 0.5, 0.5);
+        ws.set_formula_result_default("");
+        let mut headers = vec!["工作簿".to_owned(), "工作表".to_owned()];
+        headers.extend(spec.output_headers.clone());
+        headers.push("行号".to_owned());
+        for (column, header) in headers.iter().enumerate() {
+            ws.write_string_with_format(0, column as u16, header, &header_format)?;
+        }
+        for (row_index, values) in spec.rows.iter().enumerate() {
+            for (column, value) in values.iter().enumerate() {
+                if value.get("type").and_then(serde_json::Value::as_str) == Some("error") {
+                    let reader_value = value
+                        .get("value")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or_default()
+                        .to_owned();
+                    error_cells.push(PendingErrorCell {
+                        sheet_name: spec.template_sheet.clone(),
+                        address: format!("{}{}", column_letters(column + 1), row_index + 2),
+                        excel_value: excel_error_value(&reader_value)?,
+                        reader_value,
+                    });
+                    continue;
+                }
+                write_json(ws, (row_index + 1) as u32, column as u16, value)?;
+            }
+        }
+        if !spec.rows.is_empty() {
+            ws.set_freeze_panes(1, 0)?;
+        }
+    }
+    emitter.emit(
+        "output_workbook",
+        "succeeded",
+        "命名区域汇总工作簿已生成",
+        &progress,
+        Some(&path),
+        Some(write_started.elapsed()),
+        &["pytools-core", "excel-writer"],
+        Some("rust_xlsxwriter"),
+        None,
+    );
+    let save_started = Instant::now();
+    let staging_path = if error_cells.is_empty() {
+        None
+    } else {
+        Some(staging_path_for(&path)?)
+    };
+    let save_path = staging_path.as_deref().unwrap_or(&path);
+    if let Err(error) = workbook.save(save_path) {
+        if let Some(staging_path) = &staging_path {
+            let _ = fs::remove_file(staging_path);
+        }
+        emitter.emit(
+            "output_save",
+            "failed",
+            "命名区域汇总工作簿保存失败",
+            &progress,
+            Some(save_path),
+            Some(save_started.elapsed()),
+            &["rust_xlsxwriter"],
+            Some("rust_xlsxwriter"),
+            Some("output_save_error"),
+        );
+        return Err(error)
+            .with_context(|| format!("save named-range summary {}", save_path.display()));
+    }
+    if let Some(staging_path) = staging_path {
+        let patch_started = Instant::now();
+        if let Err(error) = patch_error_cells(&staging_path, &path, &error_cells) {
+            let _ = fs::remove_file(&staging_path);
+            emitter.emit(
+                "ooxml_error_patch",
+                "failed",
+                "命名区域汇总的 Excel 错误值保留失败",
+                &progress,
+                Some(&path),
+                Some(patch_started.elapsed()),
+                &["ooxml-patch"],
+                Some("OOXML Patch"),
+                Some("ooxml_patch_error"),
+            );
+            return Err(error).with_context(|| {
+                format!(
+                    "preserve Excel errors in named-range summary {}",
+                    path.display()
+                )
+            });
+        }
+        let _ = fs::remove_file(&staging_path);
+        validate_error_cells(&path, &error_cells)?;
+        emitter.emit(
+            "ooxml_error_patch",
+            "succeeded",
+            format!("已保留 {} 个 Excel 错误值", error_cells.len()),
+            &progress,
+            Some(&path),
+            Some(patch_started.elapsed()),
+            &["ooxml-patch"],
+            Some("OOXML Patch"),
+            None,
+        );
+    }
+    emitter.emit(
+        "output_save",
+        "succeeded",
+        "命名区域汇总工作簿已保存",
+        &progress,
+        Some(&path),
+        Some(save_started.elapsed()),
+        &["rust_xlsxwriter"],
+        Some("rust_xlsxwriter"),
+        None,
+    );
+    let result = NamedRangeSummaryResult {
+        saved: true,
+        rows: total_rows,
+        files: files_hit,
+        skipped_sources,
+        path: Some(path),
+        execution: Some(SummaryExecution {
+            reader_engine: Some(if unknown_error_token_cells_normalized > 0 {
+                "calamine + OOXML error-token normalization"
+            } else {
+                "calamine"
+            }),
+            writer_engine: Some(if error_cells.is_empty() {
+                "rust_xlsxwriter"
+            } else {
+                "rust_xlsxwriter + OOXML Patch"
+            }),
+            read_elapsed_ms: read_elapsed.as_millis(),
+            write_elapsed_ms: write_started.elapsed().as_millis(),
+            total_elapsed_ms: started.elapsed().as_millis(),
+            ooxml_error_cells_patched: error_cells.len(),
+            unknown_error_token_cells_normalized,
+        }),
+    };
+    emitter.emit(
+        "run",
+        "succeeded",
+        format!(
+            "按模板命名区域汇总完成：{} 个工作簿，{} 行，跳过 {} 个源文件",
+            result.files,
+            result.rows,
+            result.skipped_sources.len()
+        ),
+        &progress,
+        None,
+        Some(started.elapsed()),
+        &["pytools-core"],
+        None,
+        None,
+    );
+    Ok(result)
+}
+
+fn parse_named_region_name(name: &str) -> Result<Option<(NamedRegionKind, usize)>> {
+    let prefixes = [
+        ("表头区域", NamedRegionKind::Header),
+        ("固定行汇总区域", NamedRegionKind::FixedRows),
+        ("任意行汇总区域", NamedRegionKind::AnyRows),
+        ("表结构区域", NamedRegionKind::Structure),
+    ];
+    for (prefix, kind) in prefixes {
+        if name == prefix {
+            anyhow::bail!("named region {name:?} needs a numeric suffix, for example {prefix}_1");
+        }
+        let Some(suffix) = name.strip_prefix(&format!("{prefix}_")) else {
+            continue;
+        };
+        anyhow::ensure!(
+            !suffix.is_empty() && suffix.chars().all(|character| character.is_ascii_digit()),
+            "named region {name:?} must use {prefix}_<positive number>"
+        );
+        let id = suffix
+            .parse::<usize>()
+            .with_context(|| format!("named region number is out of range: {name:?}"))?;
+        anyhow::ensure!(id > 0, "named region number must be positive: {name:?}");
+        return Ok(Some((kind, id)));
+    }
+    Ok(None)
+}
+
+fn build_named_sheet_specs(
+    template_sheets: &[SheetDump],
+    definitions: &[DefinedNameRecord],
+    elapsed_time_cells: &BTreeMap<String, BTreeSet<String>>,
+) -> Result<Vec<NamedSheetSpec>> {
+    let mut builders: BTreeMap<String, BTreeMap<usize, NamedRegionGroupBuilder>> = BTreeMap::new();
+    for definition in definitions {
+        let Some((kind, group_id)) = parse_named_region_name(&definition.name)? else {
+            continue;
+        };
+        anyhow::ensure!(
+            matches!(
+                &definition.parse_status,
+                DefinedNameParseStatus::Areas
+            )
+                && definition.areas.len() == 1,
+            "named region {:?} must refer to one continuous A1 area; current expression {:?} is unsupported",
+            definition.name,
+            definition.raw_reference
+        );
+        let area = &definition.areas[0];
+        anyhow::ensure!(
+            area.sheet_kind == "worksheet",
+            "named region {:?} must refer to a worksheet, got {:?}",
+            definition.name,
+            area.sheet_kind
+        );
+        let bounds = NamedRegionBounds::from_reference(&area.reference)
+            .with_context(|| format!("parse named region {:?}", definition.name))?;
+        let group = builders
+            .entry(area.sheet_name.clone())
+            .or_default()
+            .entry(group_id)
+            .or_default();
+        let slot = match kind {
+            NamedRegionKind::Header => &mut group.header,
+            NamedRegionKind::FixedRows => &mut group.fixed_rows,
+            NamedRegionKind::AnyRows => &mut group.any_rows,
+            NamedRegionKind::Structure => &mut group.structure,
+        };
+        anyhow::ensure!(
+            slot.replace(bounds).is_none(),
+            "duplicate named region for worksheet {:?}, group {}, kind {:?}",
+            area.sheet_name,
+            group_id,
+            kind
+        );
+    }
+
+    let mut result = Vec::new();
+    for template_sheet in template_sheets {
+        let Some(groups) = builders.remove(&template_sheet.name) else {
+            continue;
+        };
+        let mut parsed_groups = Vec::new();
+        for (id, builder) in groups {
+            let header = builder.header.with_context(|| {
+                format!(
+                    "worksheet {:?}, group {id} has no 表头区域_{id}",
+                    template_sheet.name
+                )
+            })?;
+            anyhow::ensure!(
+                builder.fixed_rows.is_some() || builder.any_rows.is_some(),
+                "worksheet {:?}, group {id} needs 固定行汇总区域_{id} or 任意行汇总区域_{id}",
+                template_sheet.name
+            );
+            let labels = build_column_headers(
+                template_sheet,
+                &[header.as_header_range()],
+                elapsed_time_cells.get(&template_sheet.name),
+            );
+            let headers_by_column = labels
+                .into_iter()
+                .enumerate()
+                .map(|(offset, label)| (header.start_column + offset, label))
+                .collect::<BTreeMap<_, _>>();
+            for data_bounds in [builder.fixed_rows, builder.any_rows].into_iter().flatten() {
+                anyhow::ensure!(
+                    header.contains_columns(data_bounds),
+                    "worksheet {:?}, group {id} data columns {}:{} are outside header columns {}:{}",
+                    template_sheet.name,
+                    column_letters(data_bounds.start_column),
+                    column_letters(data_bounds.end_column),
+                    column_letters(header.start_column),
+                    column_letters(header.end_column)
+                );
+            }
+            parsed_groups.push(NamedRegionGroup {
+                id,
+                headers_by_column,
+                fixed_rows: builder.fixed_rows,
+                any_rows: builder.any_rows,
+                structure: builder.structure,
+            });
+        }
+
+        let mut keys = Vec::new();
+        let mut labels = Vec::new();
+        for group in &parsed_groups {
+            let columns = [group.fixed_rows, group.any_rows]
+                .into_iter()
+                .flatten()
+                .flat_map(|bounds| bounds.start_column..=bounds.end_column)
+                .collect::<BTreeSet<_>>();
+            for column in columns {
+                keys.push((group.id, column));
+                labels.push(group.headers_by_column[&column].clone());
+            }
+        }
+        let output_headers = disambiguate(&labels);
+        let field_positions = keys
+            .into_iter()
+            .enumerate()
+            .map(|(position, key)| (key, position))
+            .collect();
+        result.push(NamedSheetSpec {
+            template_sheet: template_sheet.name.clone(),
+            groups: parsed_groups,
+            field_positions,
+            output_headers,
+            rows: Vec::new(),
+        });
+    }
+    anyhow::ensure!(
+        builders.is_empty(),
+        "named region refers to a non-worksheet in the template: {}",
+        builders.keys().cloned().collect::<Vec<_>>().join(", ")
+    );
+    Ok(result)
+}
+
+fn extract_named_sheet_rows(
+    spec: &NamedSheetSpec,
+    source_sheet: &SheetDump,
+    workbook_name: &str,
+) -> Result<Vec<Vec<serde_json::Value>>> {
+    let mut result = Vec::new();
+    for group in &spec.groups {
+        for (bounds, dynamic) in [(group.fixed_rows, false), (group.any_rows, true)] {
+            let Some(bounds) = bounds else {
+                continue;
+            };
+            let end_row = if dynamic {
+                last_named_region_value_row(source_sheet, bounds)
+                    .unwrap_or(bounds.start_row.saturating_sub(1))
+            } else {
+                bounds.end_row
+            };
+            if end_row < bounds.start_row {
+                continue;
+            }
+            for row in bounds.start_row..=end_row {
+                let mut values = vec![serde_json::Value::Null; spec.output_headers.len() + 3];
+                values[0] = serde_json::Value::String(workbook_name.to_owned());
+                values[1] = serde_json::Value::String(source_sheet.name.clone());
+                let mut has_data = false;
+                for column in bounds.start_column..=bounds.end_column {
+                    let address = format!("{}{}", column_letters(column), row);
+                    let value = cell_at_or_merged(source_sheet, &address);
+                    has_data |= named_region_cell_has_data(&value);
+                    let position = spec.field_positions[&(group.id, column)];
+                    values[position + 2] = value;
+                }
+                if dynamic && !has_data {
+                    continue;
+                }
+                let row_number_index = values.len() - 1;
+                values[row_number_index] = serde_json::Value::from(row as u64);
+                result.push(values);
+            }
+        }
+    }
+    Ok(result)
+}
+
+fn last_named_region_value_row(sheet: &SheetDump, bounds: NamedRegionBounds) -> Option<usize> {
+    sheet
+        .values
+        .iter()
+        .filter_map(|(address, value)| {
+            let (row, column) = parse_a1(address)?;
+            (column >= bounds.start_column
+                && column <= bounds.end_column
+                && row >= bounds.start_row
+                && named_region_cell_has_data(value))
+            .then_some(row)
+        })
+        .max()
+}
+
+fn named_region_cell_has_data(value: &serde_json::Value) -> bool {
+    if value.is_null() {
+        return false;
+    }
+    match value.get("type").and_then(serde_json::Value::as_str) {
+        Some("string") => value
+            .get("value")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|text| !text.is_empty()),
+        Some("empty") | Some("blank") => false,
+        _ => true,
+    }
+}
+
+fn named_structure_mismatch(
+    template: &SheetDump,
+    source: &SheetDump,
+    bounds: NamedRegionBounds,
+) -> Result<Option<String>> {
+    let mut addresses = BTreeSet::new();
+    for address in template
+        .values
+        .keys()
+        .chain(source.values.keys())
+        .chain(template.formulas.keys())
+        .chain(source.formulas.keys())
+    {
+        let Some((row, column)) = parse_a1(address) else {
+            continue;
+        };
+        if row >= bounds.start_row
+            && row <= bounds.end_row
+            && column >= bounds.start_column
+            && column <= bounds.end_column
+        {
+            addresses.insert(address.clone());
+        }
+    }
+    for address in addresses {
+        let template_formula = template.formulas.get(&address);
+        let source_formula = source.formulas.get(&address);
+        if template_formula.is_some() || source_formula.is_some() {
+            if template_formula != source_formula {
+                return Ok(Some(format!("公式位置或文本在 {address} 不一致")));
+            }
+        } else if cell_at_or_merged(template, &address) != cell_at_or_merged(source, &address) {
+            return Ok(Some(format!("单元格结构在 {address} 不一致")));
+        }
+    }
+    if named_region_merges(template, bounds)? != named_region_merges(source, bounds)? {
+        return Ok(Some("合并区域不一致".to_owned()));
+    }
+    Ok(None)
+}
+
+fn named_region_merges(
+    sheet: &SheetDump,
+    bounds: NamedRegionBounds,
+) -> Result<BTreeSet<(usize, usize, usize, usize)>> {
+    Ok(parse_merged_ranges(&sheet.merges)?
+        .into_iter()
+        .filter(|(start_row, start_column, end_row, end_column)| {
+            *start_row <= bounds.end_row
+                && *end_row >= bounds.start_row
+                && *start_column <= bounds.end_column
+                && *end_column >= bounds.start_column
+        })
+        .collect())
 }
 
 fn supported(path: &Path) -> bool {
@@ -3132,5 +4096,65 @@ mod merged_cell_tests {
         assert!(is_merged_non_anchor(&merges, 4, 3));
         assert!(is_merged_non_anchor(&merges, 4, 4));
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod named_range_spec_tests {
+    use super::*;
+
+    #[test]
+    fn canonical_region_names_use_numeric_group_ids() -> Result<()> {
+        assert_eq!(
+            parse_named_region_name("表头区域_1")?,
+            Some((NamedRegionKind::Header, 1))
+        );
+        assert_eq!(
+            parse_named_region_name("固定行汇总区域_12")?,
+            Some((NamedRegionKind::FixedRows, 12))
+        );
+        assert_eq!(
+            parse_named_region_name("任意行汇总区域_2")?,
+            Some((NamedRegionKind::AnyRows, 2))
+        );
+        assert_eq!(
+            parse_named_region_name("表结构区域_4")?,
+            Some((NamedRegionKind::Structure, 4))
+        );
+        assert_eq!(parse_named_region_name("Print_Area")?, None);
+        assert!(parse_named_region_name("表头区域_0").is_err());
+        assert!(parse_named_region_name("表头区域_first").is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn region_bounds_normalize_absolute_a1_references() -> Result<()> {
+        assert_eq!(
+            NamedRegionBounds::from_reference("$AA$12:$AC$30")?,
+            NamedRegionBounds {
+                start_row: 12,
+                start_column: 27,
+                end_row: 30,
+                end_column: 29,
+            }
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn dynamic_rows_keep_zero_and_skip_empty_values() {
+        assert!(named_region_cell_has_data(&serde_json::json!({
+            "type": "number",
+            "value": 0
+        })));
+        assert!(!named_region_cell_has_data(&serde_json::Value::Null));
+        assert!(!named_region_cell_has_data(&serde_json::json!({
+            "type": "string",
+            "value": ""
+        })));
+        assert!(named_region_cell_has_data(&serde_json::json!({
+            "type": "string",
+            "value": " "
+        })));
     }
 }

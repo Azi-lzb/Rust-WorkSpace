@@ -58,7 +58,8 @@ use pytools_core::submission_check::{
     SubmissionCheckReport,
 };
 use pytools_core::summary_ops::{
-    summarize_by_comments, summarize_by_comments_with_progress, summarize_used_ranges,
+    summarize_by_comments, summarize_by_comments_with_progress, summarize_by_named_ranges,
+    summarize_by_named_ranges_with_progress, summarize_used_ranges,
     summarize_used_ranges_with_progress, SummaryProgress, SummaryRunEvent,
 };
 use pytools_core::timeline_extract::{
@@ -109,6 +110,7 @@ fn run() -> Result<()> {
         "wide-summary-row-suffix" => run_wide_summary_cli(arguments, true),
         "summary-used-range" => run_summary_used_range_cli(arguments),
         "summary-comments" => run_summary_comments_cli(arguments),
+        "summary-named-ranges" => run_summary_named_ranges_cli(arguments),
         "archive-date-preview" => run_archive_cli(arguments, "date-preview"),
         "archive-type-preview" => run_archive_cli(arguments, "type-preview"),
         "archive-date-copy" => run_archive_cli(arguments, "date-copy"),
@@ -492,10 +494,40 @@ where
                 return Ok(());
             }
             "data.named_range_summary" => {
-                writeln!(
+                let Some(template) = choose_workbooks(
+                    "选择按模板命名区域汇总的模板工作簿",
+                    false,
+                    input,
                     output,
-                    "[尚未实现] PT-6-2 按模板命名区域汇总；当前不会读取或修改任何工作簿。"
-                )?;
+                    allow_native_dialog,
+                )?
+                .and_then(|paths| paths.into_iter().next()) else {
+                    writeln!(output, "[已取消]")?;
+                    return Ok(());
+                };
+                let Some(sources) = choose_workbooks(
+                    "选择按模板命名区域汇总的源工作簿（可多选）",
+                    true,
+                    input,
+                    output,
+                    allow_native_dialog,
+                )?
+                else {
+                    writeln!(output, "[已取消]")?;
+                    return Ok(());
+                };
+                let mut arguments = vec![
+                    "--template".to_owned(),
+                    template.to_string_lossy().into_owned(),
+                ];
+                arguments.extend(summary_cli_arguments(global, log_view));
+                arguments.extend(
+                    sources
+                        .into_iter()
+                        .map(|path| path.to_string_lossy().into_owned()),
+                );
+                run_summary_named_ranges_cli(arguments)?;
+                return Ok(());
             }
             "data.header_path_compare" => {
                 if config_error.is_some() {
@@ -10200,6 +10232,163 @@ fn run_summary_used_range_cli(arguments: Vec<String>) -> Result<()> {
     }
 }
 
+fn run_summary_named_ranges_cli(arguments: Vec<String>) -> Result<()> {
+    let options = parse_cli_arguments(arguments)?;
+    let template = required_path(&options, "template")?;
+    let output_dir = options
+        .values
+        .get("output-dir")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("output"));
+    let log_view = options
+        .values
+        .get("log-view")
+        .map(String::as_str)
+        .unwrap_or("user");
+    anyhow::ensure!(
+        matches!(log_view, "user" | "developer" | "off"),
+        "--log-view must be user, developer, or off"
+    );
+    let log_dir = options
+        .values
+        .get("log-dir")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("logs"));
+    anyhow::ensure!(
+        !options.positional.is_empty(),
+        "provide at least one source workbook path"
+    );
+
+    let run_started = Instant::now();
+    let started_at = Local::now().to_rfc3339();
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or_default();
+    let run_id = format!("pytools-pt-6-2-named-{}-{nonce}", std::process::id());
+    let mut events = Vec::<SummaryRunEvent>::new();
+    let result = if log_view == "off" {
+        summarize_by_named_ranges(&template, &options.positional, &output_dir)
+    } else {
+        summarize_by_named_ranges_with_progress(
+            &template,
+            &options.positional,
+            &output_dir,
+            |event| {
+                if log_view == "developer" {
+                    match serde_json::to_string(&event) {
+                        Ok(encoded) => eprintln!("{encoded}"),
+                        Err(_) => eprintln!(
+                            "{{\"phase\":\"progress_event\",\"status\":\"serialization_failed\"}}"
+                        ),
+                    }
+                } else {
+                    eprintln!("{}", event.user_message);
+                }
+                events.push(event);
+            },
+        )
+    };
+
+    if result.is_err()
+        && log_view != "off"
+        && !events.last().is_some_and(|event| event.status == "failed")
+    {
+        let prior = events.last();
+        events.push(SummaryRunEvent {
+            sequence: events.len() + 1,
+            timestamp: Local::now().to_rfc3339(),
+            phase: "summary".to_owned(),
+            status: "failed".to_owned(),
+            user_message: "按模板命名区域汇总失败".to_owned(),
+            progress: prior
+                .map(|event| event.progress.clone())
+                .unwrap_or_else(|| SummaryProgress {
+                    total_inputs: options.positional.len(),
+                    ..SummaryProgress::default()
+                }),
+            file_name: prior.and_then(|event| event.file_name.clone()),
+            stage_elapsed_ms: None,
+            total_elapsed_ms: run_started.elapsed().as_millis(),
+            components: vec!["pytools-core".to_owned()],
+            actual_engine: None,
+            error_type: Some("summary_error".to_owned()),
+        });
+        let event = events.last().expect("failure event was just appended");
+        if log_view == "developer" {
+            eprintln!("{}", serde_json::to_string(event)?);
+        } else {
+            eprintln!("{}", event.user_message);
+        }
+    }
+
+    let run_log_path = if log_view == "off" {
+        None
+    } else {
+        let path = log_dir.join(format!("PT-6-2_{run_id}.json"));
+        let status = match &result {
+            Ok(summary) if summary.saved => "succeeded",
+            Ok(_) => "skipped",
+            Err(_) => "failed",
+        };
+        let failure = result.as_ref().err().map(|_| {
+            let event = events.last();
+            serde_json::json!({
+                "stage": event.map(|event| event.phase.as_str()).unwrap_or("summary"),
+                "error_type": event.and_then(|event| event.error_type.as_deref()).unwrap_or("summary_error")
+            })
+        });
+        let report = serde_json::json!({
+            "schema_version": 1,
+            "product": "pytools",
+            "feature_id": "PT-6-2",
+            "function": "summary-named-ranges",
+            "run_id": &run_id,
+            "started_at": &started_at,
+            "status": status,
+            "total_inputs": options.positional.len(),
+            "completed_files": events.last().map(|event| event.progress.completed_files).unwrap_or(0),
+            "failed_files": events.last().map(|event| event.progress.failed_files).unwrap_or(0),
+            "summary": result.as_ref().ok(),
+            "failure": failure,
+            "elapsed_ms": run_started.elapsed().as_millis(),
+            "events": events,
+        });
+        match write_json_report_create_new(&path, &report) {
+            Ok(()) => Some(path),
+            Err(error) => {
+                eprintln!("pytools: warning: could not save PT-6-2 run history: {error:#}");
+                None
+            }
+        }
+    };
+
+    match result {
+        Ok(result) => {
+            let mut output = serde_json::to_value(result)?;
+            if log_view != "off" {
+                output["run_id"] = serde_json::Value::String(run_id);
+                if let Some(path) = run_log_path {
+                    output["run_log_path"] = serde_json::Value::String(path.display().to_string());
+                    if log_view == "user" {
+                        eprintln!("运行记录已保存：{}", path.display());
+                    }
+                }
+            }
+            println!("{}", serde_json::to_string_pretty(&output)?);
+            Ok(())
+        }
+        Err(error) => {
+            if log_view == "user" {
+                if let Some(path) = run_log_path {
+                    eprintln!("运行记录已保存：{}", path.display());
+                }
+            }
+            Err(error)
+        }
+    }
+}
+
 fn run_summary_comments_cli(arguments: Vec<String>) -> Result<()> {
     let options = parse_cli_arguments(arguments)?;
     let template = required_path(&options, "template")?;
@@ -12142,6 +12331,7 @@ fn print_usage() {
          wide-summary-row-suffix --config <workbook.xlsx> [<source.xlsx>...]\n\
          wide-summary target writes produce append-plan JSON; execute with dedup-append-execute and matching capability evidence\n\
          summary-used-range [--output-dir <dir>] [--log-dir <dir>] [--log-view user|developer|off] <workbook>...\n\
+         summary-named-ranges --template <workbook.xlsx|xlsm> [--output-dir <dir>] [--log-dir <dir>] [--log-view user|developer|off] <source.xlsx|xlsm>...\n\
          summary-comments --template <workbook.xlsx> [--output-dir <dir>] [--log-dir <dir>] [--log-view user|developer|off] <source.xlsx>...\n\
          dedup-comment-plan --input <workbook.xlsx> --output <candidate.xlsx> [--action check|mark|delete] [--plan-output <plan.json>] [--capabilities <json> --platform <id>]\n\
          dedup-config-plan --config <workbook.xlsx> [--output-dir <dir>] [--action check|mark|delete] [--capabilities <json> --platform <id>]\n\
