@@ -1,0 +1,24 @@
+时间：2026-10-26（Windows 原生）
+执行者：Codex Audit migration agent
+分支：audit-dev
+修改前 HEAD：83064f2
+修改后提交：随本记录纳入，SHA 以 Git 日志为准
+WIP：保留并未暂存既有未跟踪交接文件、报告及临时测试目录。
+
+目的：真实 S1 历史写回候选当前受共享关系校验请求 #8 阻塞。旧测试在验证器报错时提前 panic，未继续执行页面设置、读回值、MoveSheet 检查，也未清理真实工作簿临时副本。修正诊断路径与临时目录生命周期；不改变业务实现、校验规则或生产路由。
+
+变更文件：
+- audit-core/src/s1_history.rs：识别并明确记录已知关系校验阻塞，继续执行安全的候选读回与 MoveSheet 检查；为真实样本副本目录增加 Drop 清理；更新过时测试注释。全计划生产 capability 仍为 Unverified。
+- 本修改记录。
+
+验证：
+- cargo test --offline --locked -p excel-editor --test freeze_panes_auto_filter：3 passed。
+- AUDIT_S1_HISTORY_REAL_WORKBOOK 指向 config-real 授权只读样本；真实候选测试通过 1 项，输出 strict validator blocked_shared_relationship_validation；表值/页面设置/输入不变断言与 focused_move_validation=passed 均执行，能力未登记。
+- cargo test --offline --locked -p audit-core --lib s1_history::tests -j 1：10 passed、4 ignored。
+- git diff --check：通过。
+
+未执行/已知问题：完整 S1 历史输出仍因共享请求 #8 的 relationships 读回校验阻塞；本次没有通过 Python 写后样本对拍，也没有变更生产路由。首轮修补前的测试运行曾在系统 Temp 留下候选副本；本次新增的临时目录 guard 已验证后续运行结束即清理。该首轮副本不在仓库内，未纳入提交。
+
+配置/VBA/源 Python/真实样本影响：无修改；原 config-real 工作簿只读。
+组件版本：不升级。
+删除与回滚：无仓库文件删除；如需回滚，仅 revert 本次测试安全修补提交及本记录。
