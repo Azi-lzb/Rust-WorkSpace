@@ -1016,7 +1016,8 @@ mod tests {
     use std::{
         fs,
         path::{Path, PathBuf},
-        time::{SystemTime, UNIX_EPOCH},
+        thread,
+        time::{Duration, Instant, SystemTime, UNIX_EPOCH},
     };
 
     fn test_state() -> AppState {
@@ -1168,5 +1169,82 @@ mod tests {
             .iter()
             .all(|pair| pair["side"] == "cur"));
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn s2_api_route_runs_rust_service_and_publishes_report() {
+        let suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("audit-web-s2-run-{suffix}"));
+        let current = root.join("current");
+        let previous = root.join("previous");
+        let output = root.join("output");
+        fs::create_dir_all(&current).expect("create current directory");
+        fs::create_dir_all(&previous).expect("create previous directory");
+        fs::create_dir_all(&output).expect("create output directory");
+
+        let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+        let source_report = fixtures.join("s2_import/9144#2026-06-30#x#20202#甲银行.xlsx");
+        let current_report = current.join("9144#2026-06-30#x#20202#甲银行.xlsx");
+        let previous_report = previous.join("9144#2026-03-31#x#20202#甲银行.xlsx");
+        fs::copy(&source_report, &current_report).expect("copy current report fixture");
+        fs::copy(&source_report, &previous_report).expect("copy previous report fixture");
+        let current_before = fs::read(&current_report).expect("read current input before run");
+        let previous_before = fs::read(&previous_report).expect("read previous input before run");
+        let config = fixtures.join("s2_config/check_valid.xlsx");
+
+        let state = AppState::new(config.clone());
+        for (kind, path) in [
+            ("pcCurDir", current.as_path()),
+            ("pcPreDir", previous.as_path()),
+            ("pcOutput", output.as_path()),
+            ("pcConfig", config.as_path()),
+        ] {
+            dispatch_api(
+                &state,
+                "choose_period_compare",
+                &[json!(kind), json!(path.to_string_lossy())],
+            )
+            .expect("select S2 input or output path through GUI API");
+        }
+
+        assert_eq!(
+            dispatch_api(&state, "start_period_compare_v2", &[])
+                .expect("start Rust S2 service through GUI API"),
+            json!(true)
+        );
+
+        let deadline = Instant::now() + Duration::from_secs(20);
+        loop {
+            if state.get_state()["busy"] == false {
+                break;
+            }
+            assert!(Instant::now() < deadline, "S2 GUI API call did not finish");
+            thread::sleep(Duration::from_millis(10));
+        }
+
+        let finished = state.get_state();
+        assert_eq!(finished["periodProgress"]["status"], "completed");
+        let report_path = PathBuf::from(
+            finished["periodSummary"]["result"]
+                .as_str()
+                .expect("GUI state contains result report path"),
+        );
+        assert!(
+            report_path.is_file(),
+            "S2 report should exist at {report_path:?}"
+        );
+        assert_eq!(
+            fs::read(&current_report).expect("read current input after run"),
+            current_before
+        );
+        assert_eq!(
+            fs::read(&previous_report).expect("read previous input after run"),
+            previous_before
+        );
+
+        fs::remove_dir_all(&root).expect("remove temporary S2 GUI fixture");
     }
 }

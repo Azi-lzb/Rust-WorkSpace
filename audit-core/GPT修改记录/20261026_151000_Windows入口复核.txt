@@ -1,0 +1,30 @@
+时间：2026-10-26 15:10（Asia/Shanghai）
+执行者：Codex
+修改前 commit：2a620c4
+修改后 commit：本记录随本轮提交；SHA 见 Git log。
+WIP：修改前工作树干净；未覆盖或清理其他文件。
+
+目的：复核 Windows 下现有 PyTools 数字菜单与 Audit 本地 GUI 入口；为 Audit GUI API 到已迁移 S2 Rust 服务补充持久化冒烟覆盖。入口可运行不代表业务功能已完成真实验收。
+
+修改/新增文件：
+- `audit-core/src/web_bridge.rs`：新增测试，通过 GUI API 设置合成 S2 输入/输出并启动 Rust S2 服务，检查报告生成和输入文件字节保持不变；不改变生产行为。
+- `audit-core/MIGRATION_INVENTORY.md`：记录 Debug 构建、GUI API 到 S2 服务冒烟及未验收边界。
+- `pytools-core/MIGRATION_INVENTORY.md`：记录既有数字菜单的本机 Debug 入口复核；未改 PyTools 业务代码。
+- 本修改记录。
+
+逻辑/文档变化：PyTools 无参数启动进入与只读旧版 `PyCode/main.py` 对齐的数字菜单；菜单既有 Rust 命令可用，未接通项明确不执行。Audit 复用旧 Flask 页面和本地 HTTP bridge，当前仅 S2 接入 Rust，其他流程仍返回明确错误。未改配置、VBA、共享 crate 或源 Python 项目。
+
+测试与验证：
+- `cargo test -p pytools-core --test interactive_menu --locked --offline`：5/5 通过。
+- `cargo test -p audit-core --lib web_bridge::tests --locked --offline`：9/9 通过；新增 API 到 S2 服务测试生成合成报告且未改变输入工作簿。
+- `cargo build -p pytools-core --bin pytools -p audit-core --bin open-data-audit-gui --locked --offline`：通过。
+- 直接运行 `target/debug/pytools.exe`，输入 `0`：打印旧版 1–9 菜单并正常退出。
+- `target/debug/open-data-audit-gui.exe --no-browser --port 0`：HTTP `GET /`、`POST /api/get_state` 返回 200；未接通的 `POST /api/start_dag_flow` 返回 501。
+- `rustfmt --edition 2021 --check audit-core/src/web_bridge.rs` 与 `git diff --check`：通过。
+- `cargo fmt --all -- --check` 未通过，原因是当前工作树已有三个未修改文件的格式差异：`audit-core/src/bin/open-data-audit.rs`、`audit-core/src/conditional_format.rs`、`audit-core/tests/s1_conditional_eval.rs`；本轮未触碰这些文件。
+
+未执行项/已知问题：未打开默认浏览器进行人工操作；未运行真实业务工作簿或执行完整菜单逐项验收；PyTools 菜单列出的未接通/能力门控功能仍未接通；Audit S1/S3/S4/S5 等工作流仍未接入，本次 S2 冒烟仅使用合成夹具，不提升 S2 真实业务验收状态。Windows Release 重建、Linux/deb 与目标系统验收未执行。
+
+删除清单：无。测试输出位于系统临时目录并由测试清理；无测试产物进入仓库。
+回滚提示：回滚本轮提交可移除新增测试和两处迁移清单记录；不影响已有生产业务代码。
+【组件版本】：不升级（入口验证与测试覆盖，无业务逻辑/配置变化）。
