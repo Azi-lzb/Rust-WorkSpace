@@ -43,27 +43,27 @@ const DEDUP: &[MenuEntry] = &[
     MenuEntry {
         number: "1",
         label: "按批注检查重复",
-        status: "计划接口，未接通执行",
+        status: "尚未实现（计划接口，未接通执行）",
     },
     MenuEntry {
         number: "2",
         label: "按批注删除重复",
-        status: "计划接口，未接通执行",
+        status: "尚未实现（计划接口，未接通执行）",
     },
     MenuEntry {
         number: "3",
         label: "按配置检查重复（去重追加数据配置）",
-        status: "计划接口，未接通执行",
+        status: "尚未实现（计划接口，未接通执行）",
     },
     MenuEntry {
         number: "4",
         label: "按配置删除重复（去重追加数据配置）",
-        status: "计划接口，未接通执行",
+        status: "尚未实现（计划接口，未接通执行）",
     },
     MenuEntry {
         number: "5",
         label: "按配置去重追加到目标（去重追加数据配置）",
-        status: "受 Excel capability 门控",
+        status: "尚未实现（等待 Excel 修改能力验收）",
     },
     MenuEntry {
         number: "6",
@@ -75,17 +75,17 @@ const PRINT: &[MenuEntry] = &[
     MenuEntry {
         number: "1",
         label: "按批注打印（保留源格式，自动路由）",
-        status: "计划接口，未接通执行",
+        status: "尚未实现（计划接口，未接通执行）",
     },
     MenuEntry {
         number: "2",
         label: "按批注打印（快速复制，自动路由）",
-        status: "计划接口，未接通执行",
+        status: "尚未实现（计划接口，未接通执行）",
     },
     MenuEntry {
         number: "3",
         label: "按配置打印（打印配置）",
-        status: "受 Excel capability 门控",
+        status: "尚未实现（等待 Excel 修改能力验收）",
     },
     MenuEntry {
         number: "4",
@@ -107,17 +107,17 @@ const CONVERT: &[MenuEntry] = &[
     MenuEntry {
         number: "2",
         label: "批量 Excel 格式转换（全局配置）",
-        status: "尚未验收，未接通",
+        status: "尚未实现（尚未验收并接通）",
     },
     MenuEntry {
         number: "3",
         label: "批量 Word 格式转换（全局配置）",
-        status: "尚未验收，未接通",
+        status: "尚未实现（尚未验收并接通）",
     },
     MenuEntry {
         number: "4",
         label: "批量修改 Sheet 名（重命名配置）",
-        status: "受 Excel capability 门控",
+        status: "尚未实现（等待 Excel 修改能力验收）",
     },
     MenuEntry {
         number: "5",
@@ -178,22 +178,22 @@ const PENDING: &[MenuEntry] = &[
     MenuEntry {
         number: "1",
         label: "拆分村镇银行数据",
-        status: "计划接口，未接通执行",
+        status: "尚未实现（计划接口，未接通执行）",
     },
     MenuEntry {
         number: "2",
         label: "机构名称标准化（机构映射表）",
-        status: "受 Excel capability 门控",
+        status: "尚未实现（等待 Excel 修改能力验收）",
     },
     MenuEntry {
         number: "3",
         label: "删除分机构表的外资行（机构映射表）",
-        status: "计划接口，未接通执行",
+        status: "尚未实现（计划接口，未接通执行）",
     },
     MenuEntry {
         number: "4",
         label: "外汇页眉修改",
-        status: "计划接口，未接通执行",
+        status: "尚未实现（计划接口，未接通执行）",
     },
     MenuEntry {
         number: "5",
@@ -203,17 +203,17 @@ const PENDING: &[MenuEntry] = &[
     MenuEntry {
         number: "6",
         label: "提取工作表数据（工作表提取）",
-        status: "有限候选，尚未接通完整功能",
+        status: "尚未实现完整功能（仅有有限候选）",
     },
     MenuEntry {
         number: "7",
         label: "涉农贷款比上月修正",
-        status: "计划接口，未接通执行",
+        status: "尚未实现（计划接口，未接通执行）",
     },
     MenuEntry {
         number: "8",
         label: "季度涉农贷款比上月修正及分地区核对",
-        status: "计划接口，未接通执行",
+        status: "尚未实现（计划接口，未接通执行）",
     },
 ];
 const ARCHIVE: &[MenuEntry] = &[

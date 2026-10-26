@@ -1,0 +1,23 @@
+时间：2026-10-26 15:43（Asia/Shanghai）
+执行者：Codex
+分支：codex/windows-operable-entries
+修改前 commit：31b647e8642945083eb07f5b52d8b640795a998a；工作树干净
+修改后 commit：本次入口复核记录提交，SHA 见 Git 历史与本轮最终报告
+
+目的：复用原 Audit GUI 页面验证现有 Rust Windows 启动器与 S2 调用入口；不创建新前端、不修改源 Python 项目或原 HTML。
+
+文件：
+- 修改 `audit-core/MIGRATION_INVENTORY.md`：记录本轮 Windows Release 构建、直接启动、原页面响应和 GUI 状态读取结果。
+- 新增本记录。
+
+配置/VBA影响：无。Rust 业务实现、Excel 路由及共享 crates：无变化。
+【组件版本】不升级（仅入口验证记录）。
+
+验证：
+- Windows 原生 `cargo build --locked --offline --release -p pytools-core --bin pytools -p audit-core --bin open-data-audit-gui` 通过。
+- `cargo test -p audit-core web_bridge --locked --offline`：9/9 通过；包括合成 S2 API 执行和未迁移接口显式拒绝。
+- Release `open-data-audit-gui.exe --port 18763 --config audit-core/tests/fixtures/s2_config/check_valid.xlsx` 启动后，`GET /` 返回 200，`POST /api/get_state` 返回 200；浏览器显示原 HTML 标题、S1–S5 原导航及已接通的 S2 页面。
+
+未执行/已知问题：S1/S3/S4/S5 页面工作流仍未接线，其他未迁移 API 返回 501；本次未运行真实 S2 样本审核、未修改工作簿、未做 Linux/deb 验证。S2 真实业务验收状态不变。
+删除清单：无。
+回滚：回滚本记录及 Audit 清单新增验证行；不回滚既有 GUI/S2 Rust 实现。

@@ -186,7 +186,7 @@ fn unavailable_menu_item_reports_that_it_did_not_run() {
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     assert!(output.status.success());
-    assert!(stdout.contains("尚未验收，未接通"));
+    assert!(stdout.contains("尚未实现"));
     assert!(stdout.contains("[尚未接通]"));
     assert!(!stdout.contains("[Rust 命令已返回]"));
 }

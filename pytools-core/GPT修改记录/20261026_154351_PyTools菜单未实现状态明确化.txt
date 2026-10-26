@@ -1,0 +1,26 @@
+时间：2026-10-26 15:43（Asia/Shanghai）
+执行者：Codex
+分支：codex/windows-operable-entries
+修改前 commit：31b647e8642945083eb07f5b52d8b640795a998a；工作树干净
+修改后 commit：本次入口状态提示提交，SHA 见 Git 历史与本轮最终报告
+
+目的：保留旧版 PyTools 1–9 数字菜单及既有 Rust 命令路由；让尚未实现或等待 Excel 修改能力验收的菜单项明确显示“尚未实现”，避免用户误以为已执行。
+
+文件：
+- 修改 `pytools-core/src/bin/pytools_menu/mod.rs`：明确未实现、未接通、能力未验收菜单项的提示文案；未改变菜单编号、路径输入或业务调用。
+- 修改 `pytools-core/tests/interactive_menu.rs`：断言未实现菜单项明确包含“尚未实现”。
+- 修改 `pytools-core/MIGRATION_INVENTORY.md`：记录入口状态与本轮验证。
+- 新增本记录。
+
+配置/VBA影响：无。业务算法和 Excel 引擎路由：无变化。
+【组件版本】不升级（入口状态提示修正）。
+
+验证：
+- Windows 原生 `cargo build --locked --offline --release -p pytools-core --bin pytools -p audit-core --bin open-data-audit-gui` 通过。
+- `cargo test -p pytools-core --test interactive_menu --locked --offline`：5/5 通过。
+- Release `pytools.exe` 不带参数并输入 `0`：显示 1–9 菜单且正常退出。
+- Release `pytools.exe` 输入 `7`、`1`：显示“尚未实现”，不调用命令、不输出成功状态。
+
+未执行/已知问题：未逐项执行所有已接通业务菜单；PyTools 真实样本、Windows 人工业务验收和 Linux/deb 未验证。GUI 与真实 Audit 审核另记于 Audit 清单。
+删除清单：无。
+回滚：单独回滚本记录、迁移清单与上述菜单文案/断言即可；不回滚此前入口实现。
