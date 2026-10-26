@@ -1056,3 +1056,9 @@ Windows 原生验证：`cargo fmt -p pytools-core -- --check`、`cargo check --o
 文件名标准化此前先用 `exists()` 选择目标，再用可能替换现有目标的普通 `rename`。现改为 Windows `MoveFileW` 与 Linux `renameat2(RENAME_NOREPLACE)` 原子提交；若目标在检查与执行间被创建，会继续尝试兼容的 `_1`、`_2` 后缀，不覆盖竞争者的文件或目录。若 Linux 文件系统/内核不支持 no-replace 操作，则返回该操作错误，不降级到可覆盖的移动方式。
 
 Windows 原生验证：格式检查和 PyTools CLI `cargo check` 通过；`batch_rename::tests` 4/4、`batch_rename_parity` 4/4 通过。测试验证目标已存在时源和目标内容均不变，既有配置/映射/重名场景与 Python 基线输出仍一致。未安装 Linux Rust target，本轮未编译 Linux FFI 分支；真实业务目录、竞争条件并发压力、Linux 文件系统和离线 deb 均未验收。PT-4-1 整体仍为“未验证”。
+
+### 2026-10-27 PT-4-8 新版提交检查 AND/OR 关键词入口回归
+
+补充新版业务要求 A07 的真实 `submission-check` CLI 合成回归：日期字段留空时不构成条件；县区“惠城区”、备用词“单家机构”必须命中；机构关键词中的全称/简称按 OR 匹配，而各非空字段组之间按 AND 匹配。两种别名文件命中，缺机构、缺备用词或缺县区的三份文件均列为未识别，配置与输入文件字节保持不变。该测试不改变既有规则实现或状态。
+
+Windows 原生验证：`cargo fmt -p pytools-core -- --check`、`cargo check --offline --locked -q -p pytools-core --bin pytools -j 1`、`cargo test --offline --locked -q -p pytools-core --test submission_check_parity -j 1`（5/5）、`git diff --check` 通过。只读核对的旧 Python `_load_submission_check_rules` / `_file_matches_submission_rule` 分别按非空组 AND、组内 token OR；本次未重新启动 Python，未执行真实业务样本或 Linux/deb 验收。

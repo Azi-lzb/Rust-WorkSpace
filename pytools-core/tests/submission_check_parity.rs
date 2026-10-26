@@ -233,6 +233,84 @@ fn submission_check_cli_matches_python_workbook_and_statistics() -> Result<()> {
 }
 
 #[test]
+fn submission_check_uses_and_between_columns_and_or_for_institution_aliases() -> Result<()> {
+    let test_directory = TestDirectory::new()?;
+    let root = &test_directory.0;
+    let config = create_and_or_submission_config(root)?;
+    let sources = root.join("sources");
+    fs::create_dir_all(&sources)?;
+    let names = [
+        "惠城区_中国工商银行股份有限公司_单家机构.xlsx",
+        "惠城区_工行_单家机构.xlsx",
+        "惠城区_未知机构_单家机构.xlsx",
+        "惠城区_工行_贷款报表.xlsx",
+        "龙门县_工行_单家机构.xlsx",
+    ];
+    let files = names
+        .iter()
+        .enumerate()
+        .map(|(index, name)| {
+            let path = sources.join(name);
+            fs::write(&path, format!("synthetic payload {index}"))?;
+            Ok(path)
+        })
+        .collect::<std::io::Result<Vec<_>>>()?;
+    let original_config = fs::read(&config)?;
+    let original_files = files
+        .iter()
+        .map(|path| fs::read(path).map(|bytes| (path.clone(), bytes)))
+        .collect::<std::io::Result<Vec<_>>>()?;
+
+    let output = Command::new(env!("CARGO_BIN_EXE_pytools"))
+        .arg("submission-check")
+        .arg("--config")
+        .arg(&config)
+        .arg("--output-dir")
+        .arg(root.join("output"))
+        .arg("--log-dir")
+        .arg(root.join("logs"))
+        .args(&files)
+        .output()
+        .context("run submission-check CLI for Chinese AND/OR keywords")?;
+    assert!(
+        output.status.success(),
+        "submission-check failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: Value = serde_json::from_slice(&output.stdout)?;
+    assert_eq!(report["rules"], 1);
+    assert_eq!(report["files"], 5);
+    assert_eq!(report["submitted"], 1);
+    assert_eq!(report["missing"], 0);
+    assert_eq!(report["unmatched"], 3);
+
+    let report_path = PathBuf::from(report["output"].as_str().context("report path missing")?);
+    let workbook = excel_reader::read_workbook(&report_path)?;
+    let result_sheet = &workbook.sheets[0];
+    assert_eq!(result_sheet.name, "检查结果");
+    assert_eq!(
+        result_sheet.values["F2"]["value"].as_f64(),
+        Some(2.0),
+        "both a full name and its short alias satisfy the institution group"
+    );
+    assert_eq!(
+        result_sheet.values["G2"]["value"].as_str(),
+        Some("惠城区_中国工商银行股份有限公司_单家机构.xlsx；惠城区_工行_单家机构.xlsx")
+    );
+    let unmatched_sheet = &workbook.sheets[2];
+    assert_eq!(unmatched_sheet.name, "未识别文件");
+    assert_eq!(unmatched_sheet.values["A2"]["value"], json!(names[2]));
+    assert_eq!(unmatched_sheet.values["A3"]["value"], json!(names[3]));
+    assert_eq!(unmatched_sheet.values["A4"]["value"], json!(names[4]));
+
+    assert_eq!(fs::read(&config)?, original_config);
+    for (path, bytes) in original_files {
+        assert_eq!(fs::read(&path)?, bytes, "input changed: {}", path.display());
+    }
+    Ok(())
+}
+
+#[test]
 fn submission_check_menu_matches_python_date_keyword_semantics() -> Result<()> {
     let test_directory = TestDirectory::new()?;
     let root = &test_directory.0;
@@ -567,6 +645,37 @@ fn create_config(root: &Path) -> Result<PathBuf> {
     sheet.write_string(5, 2, "Area")?;
     sheet.write_string(5, 3, "Bank")?;
     sheet.write_string(5, 5, "date keyword")?;
+    workbook.save(&config)?;
+    Ok(config)
+}
+
+fn create_and_or_submission_config(root: &Path) -> Result<PathBuf> {
+    let config = root.join("submission-and-or-config.xlsx");
+    let mut workbook = rust_xlsxwriter::Workbook::new();
+    let sheet = workbook.add_worksheet();
+    sheet.set_name("提交检查配置")?;
+    for (column, header) in [
+        "是否启用",
+        "日期关键词",
+        "县区关键词",
+        "机构关键词",
+        "备用关键词",
+        "备注",
+    ]
+    .iter()
+    .enumerate()
+    {
+        sheet.write_string(0, column as u16, *header)?;
+    }
+    sheet.write_string(1, 0, "是")?;
+    sheet.write_string(1, 2, "惠城区")?;
+    sheet.write_string(
+        1,
+        3,
+        "中国工商银行股份有限公司;中国工商银行;中国工商银行;工行",
+    )?;
+    sheet.write_string(1, 4, "单家机构")?;
+    sheet.write_string(1, 5, "A07 institution alias contract")?;
     workbook.save(&config)?;
     Ok(config)
 }
