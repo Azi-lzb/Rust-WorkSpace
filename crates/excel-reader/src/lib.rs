@@ -156,6 +156,32 @@ pub struct WorksheetExtent {
     pub max_column: usize,
 }
 
+/// One worksheet cell whose serialized number format is requested from OOXML.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CellNumberFormatRequest {
+    pub sheet_name: String,
+    /// A1 cell reference such as `B7` or `$B$7` (without a sheet prefix).
+    pub cell_reference: String,
+}
+
+/// Number-format metadata assigned to a cell by its OOXML cell style.
+///
+/// `format_code` contains the exact custom code from `styles.xml`, or a
+/// canonical code for a recognized built-in number format. It is `None` for
+/// reserved/unknown built-in IDs; `number_format_id` remains available so the
+/// caller can handle those explicitly. This reports the cell's own `s` style
+/// reference; when the cell has no `s` attribute, the default style (index 0)
+/// is used. Row and column default styles are not expanded onto cells.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CellNumberFormatInfo {
+    pub sheet_name: String,
+    /// Normalized A1 reference (uppercase column letters, no `$` markers).
+    pub cell_reference: String,
+    pub style_index: u32,
+    pub number_format_id: u32,
+    pub format_code: Option<String>,
+}
+
 #[derive(Default)]
 struct OoxmlSheetMetadata {
     comments: BTreeMap<String, String>,
@@ -1182,6 +1208,297 @@ pub fn read_xlsx_worksheet_extents(path: impl AsRef<Path>) -> Result<Vec<Workshe
     Ok(extents)
 }
 
+/// Read number-format metadata for a batch of worksheet cells from XLSX/XLSM.
+///
+/// The workbook is opened once for the whole request. Cell values and formulas
+/// are not read or changed. This is an OOXML metadata adapter, not a second
+/// value-reading engine. The returned format code preserves custom codes and
+/// normalizes recognized built-in IDs. A cell without an explicit `s`
+/// attribute uses style index 0; row/column default styles are not expanded.
+pub fn read_xlsx_cell_number_formats(
+    path: impl AsRef<Path>,
+    requests: &[CellNumberFormatRequest],
+) -> Result<Vec<CellNumberFormatInfo>> {
+    let path = path.as_ref();
+    ensure!(
+        path.extension()
+            .and_then(|extension| extension.to_str())
+            .is_some_and(|extension| {
+                extension.eq_ignore_ascii_case("xlsx") || extension.eq_ignore_ascii_case("xlsm")
+            }),
+        "cell number-format reader only supports .xlsx and .xlsm"
+    );
+
+    let mut parsed_requests = Vec::with_capacity(requests.len());
+    let mut requested_by_sheet: BTreeMap<String, std::collections::BTreeSet<(usize, usize)>> =
+        BTreeMap::new();
+    for request in requests {
+        ensure!(
+            !request.cell_reference.contains('!'),
+            "cell number-format request must use a separate sheet name and A1 reference"
+        );
+        let coordinate = parse_ooxml_cell_reference(&request.cell_reference)
+            .with_context(|| format!("invalid cell reference {:?}", request.cell_reference))?;
+        requested_by_sheet
+            .entry(request.sheet_name.clone())
+            .or_default()
+            .insert(coordinate);
+        parsed_requests.push((request, coordinate));
+    }
+
+    let mut zip = ZipArchive::new(fs::File::open(path).context("open workbook package")?)
+        .context("open workbook ZIP package")?;
+    let worksheet_parts = ooxml_worksheet_parts(&mut zip)?;
+    let worksheet_parts: BTreeMap<_, _> = worksheet_parts.into_iter().collect();
+    for sheet_name in requested_by_sheet.keys() {
+        ensure!(
+            worksheet_parts.contains_key(sheet_name),
+            "worksheet {sheet_name:?} was not found"
+        );
+    }
+    let (style_number_formats, custom_number_formats) = read_ooxml_number_format_styles(&mut zip)?;
+    let mut styles_by_cell = BTreeMap::new();
+    for (sheet_name, requested_coordinates) in requested_by_sheet {
+        let part = worksheet_parts
+            .get(&sheet_name)
+            .expect("requested worksheet was validated above");
+        let xml =
+            zip_read(&mut zip, part).with_context(|| format!("read worksheet part {part}"))?;
+        let document =
+            Document::parse(&xml).with_context(|| format!("parse worksheet part {part}"))?;
+        let root = document.root_element();
+        ensure!(
+            root.tag_name().namespace() == Some(SPREADSHEET_MAIN_NS)
+                && root.tag_name().name() == "worksheet",
+            "worksheet part {part} has an unexpected root element"
+        );
+        let mut cell_styles = BTreeMap::new();
+        for cell in root.descendants().filter(|node| {
+            node.is_element()
+                && node.tag_name().namespace() == Some(SPREADSHEET_MAIN_NS)
+                && node.tag_name().name() == "c"
+        }) {
+            let Some(reference) = cell.attribute("r") else {
+                continue;
+            };
+            let coordinate = parse_ooxml_cell_reference(reference)
+                .with_context(|| format!("invalid cell reference {reference:?} in {part}"))?;
+            if !requested_coordinates.contains(&coordinate) {
+                continue;
+            }
+            let style_index = cell
+                .attribute("s")
+                .map(str::parse::<u32>)
+                .transpose()
+                .with_context(|| format!("invalid style index for {reference} in {part}"))?
+                .unwrap_or(0);
+            ensure!(
+                (style_index as usize) < style_number_formats.len(),
+                "cell {reference} in {part} references missing cell style {style_index}"
+            );
+            cell_styles.insert(coordinate, style_index);
+        }
+        styles_by_cell.insert(sheet_name, cell_styles);
+    }
+
+    parsed_requests
+        .into_iter()
+        .map(|(request, coordinate)| {
+            let style_index = styles_by_cell
+                .get(&request.sheet_name)
+                .and_then(|styles| styles.get(&coordinate))
+                .copied()
+                .unwrap_or(0);
+            let number_format_id = style_number_formats[style_index as usize];
+            let format_code = custom_number_formats
+                .get(&number_format_id)
+                .cloned()
+                .or_else(|| builtin_number_format_code(number_format_id).map(str::to_owned));
+            Ok(CellNumberFormatInfo {
+                sheet_name: request.sheet_name.clone(),
+                cell_reference: format_ooxml_cell_reference(coordinate.0, coordinate.1),
+                style_index,
+                number_format_id,
+                format_code,
+            })
+        })
+        .collect()
+}
+
+fn read_ooxml_number_format_styles(
+    zip: &mut ZipArchive<fs::File>,
+) -> Result<(Vec<u32>, BTreeMap<u32, String>)> {
+    let Some(styles_part) = ooxml_styles_part(zip)? else {
+        return Ok((vec![0], BTreeMap::new()));
+    };
+    let xml = zip_read(zip, &styles_part).context("read workbook styles part")?;
+    let document = Document::parse(&xml).context("parse workbook styles part")?;
+    let root = document.root_element();
+    ensure!(
+        root.tag_name().namespace() == Some(SPREADSHEET_MAIN_NS)
+            && root.tag_name().name() == "styleSheet",
+        "styles part {styles_part} has an unexpected root element"
+    );
+
+    let mut custom_number_formats = BTreeMap::new();
+    for node in root.descendants().filter(|node| {
+        node.is_element()
+            && node.tag_name().namespace() == Some(SPREADSHEET_MAIN_NS)
+            && node.tag_name().name() == "numFmt"
+    }) {
+        let id = node
+            .attribute("numFmtId")
+            .context("numFmt has no numFmtId")?
+            .parse::<u32>()
+            .context("parse numFmtId")?;
+        let code = node
+            .attribute("formatCode")
+            .context("numFmt has no formatCode")?
+            .to_owned();
+        ensure!(
+            custom_number_formats.insert(id, code).is_none(),
+            "styles part {styles_part} contains duplicate custom numFmtId {id}"
+        );
+    }
+
+    let cell_xfs = root.children().find(|node| {
+        node.is_element()
+            && node.tag_name().namespace() == Some(SPREADSHEET_MAIN_NS)
+            && node.tag_name().name() == "cellXfs"
+    });
+    let mut style_number_formats = cell_xfs
+        .into_iter()
+        .flat_map(|container| container.children())
+        .filter(|node| {
+            node.is_element()
+                && node.tag_name().namespace() == Some(SPREADSHEET_MAIN_NS)
+                && node.tag_name().name() == "xf"
+        })
+        .map(|node| {
+            node.attribute("numFmtId")
+                .unwrap_or("0")
+                .parse::<u32>()
+                .context("parse cell style numFmtId")
+        })
+        .collect::<Result<Vec<_>>>()?;
+    if style_number_formats.is_empty() {
+        style_number_formats.push(0);
+    }
+    Ok((style_number_formats, custom_number_formats))
+}
+
+fn ooxml_styles_part(zip: &mut ZipArchive<fs::File>) -> Result<Option<String>> {
+    let root_rels_xml = zip_read(zip, "_rels/.rels")?;
+    let root_rels_doc = Document::parse(&root_rels_xml)?;
+    let workbook_target = root_rels_doc
+        .descendants()
+        .filter(|node| {
+            node.is_element()
+                && node.tag_name().namespace() == Some(PACKAGE_REL_NS)
+                && node.tag_name().name() == "Relationship"
+        })
+        .find_map(|relationship| {
+            let is_workbook = relationship
+                .attribute("Type")
+                .is_some_and(|kind| kind.ends_with("/officeDocument"));
+            let is_external = relationship
+                .attribute("TargetMode")
+                .is_some_and(|mode| mode.eq_ignore_ascii_case("External"));
+            (is_workbook && !is_external)
+                .then(|| relationship.attribute("Target"))
+                .flatten()
+        })
+        .context("package relationships do not identify an internal officeDocument part")?;
+    let workbook_part = norm_part("", workbook_target);
+    let workbook_rels_xml = zip_read(zip, &relationships_part(&workbook_part))?;
+    let workbook_rels_doc = Document::parse(&workbook_rels_xml)?;
+    let workbook_parent = workbook_part
+        .rsplit_once('/')
+        .map(|(parent, _)| parent)
+        .unwrap_or("");
+    let styles = workbook_rels_doc
+        .descendants()
+        .filter(|node| {
+            node.is_element()
+                && node.tag_name().namespace() == Some(PACKAGE_REL_NS)
+                && node.tag_name().name() == "Relationship"
+                && node
+                    .attribute("Type")
+                    .is_some_and(|kind| kind.ends_with("/styles"))
+        })
+        .map(|relationship| {
+            ensure!(
+                !relationship
+                    .attribute("TargetMode")
+                    .is_some_and(|mode| mode.eq_ignore_ascii_case("External")),
+                "workbook styles relationship is external"
+            );
+            let target = relationship
+                .attribute("Target")
+                .context("workbook styles relationship has no target")?;
+            Ok(norm_part(workbook_parent, target))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    ensure!(
+        styles.len() <= 1,
+        "workbook has multiple styles relationships"
+    );
+    Ok(styles.into_iter().next())
+}
+
+fn builtin_number_format_code(id: u32) -> Option<&'static str> {
+    Some(match id {
+        0 => "General",
+        1 => "0",
+        2 => "0.00",
+        3 => "#,##0",
+        4 => "#,##0.00",
+        5 => "\"$\"#,##0_);(\"$\"#,##0)",
+        6 => "\"$\"#,##0_);[Red](\"$\"#,##0)",
+        7 => "\"$\"#,##0.00_);(\"$\"#,##0.00)",
+        8 => "\"$\"#,##0.00_);[Red](\"$\"#,##0.00)",
+        9 => "0%",
+        10 => "0.00%",
+        11 => "0.00E+00",
+        12 => "# ?/?",
+        13 => "# ??/??",
+        14 => "mm-dd-yy",
+        15 => "d-mmm-yy",
+        16 => "d-mmm",
+        17 => "mmm-yy",
+        18 => "h:mm AM/PM",
+        19 => "h:mm:ss AM/PM",
+        20 => "h:mm",
+        21 => "h:mm:ss",
+        22 => "m/d/yy h:mm",
+        37 => "#,##0 ;(#,##0)",
+        38 => "#,##0 ;[Red](#,##0)",
+        39 => "#,##0.00;(#,##0.00)",
+        40 => "#,##0.00;[Red](#,##0.00)",
+        41 => "_(* #,##0_);_(* (#,##0);_(* \"-\"_);_(@_)",
+        42 => "_(\"$\"* #,##0_);_(\"$\"* (#,##0);_(\"$\"* \"-\"_);_(@_)",
+        43 => "_(* #,##0.00_);_(* (#,##0.00);_(* \"-\"??_);_(@_)",
+        44 => "_(\"$\"* #,##0.00_);_(\"$\"* (#,##0.00);_(\"$\"* \"-\"??_);_(@_)",
+        45 => "mm:ss",
+        46 => "[h]:mm:ss",
+        47 => "mmss.0",
+        48 => "##0.0E+0",
+        49 => "@",
+        _ => return None,
+    })
+}
+
+fn format_ooxml_cell_reference(row: usize, column: usize) -> String {
+    let mut column = column;
+    let mut letters = Vec::new();
+    while column > 0 {
+        column -= 1;
+        letters.push((b'A' + (column % 26) as u8) as char);
+        column /= 26;
+    }
+    letters.iter().rev().copied().collect::<String>() + &row.to_string()
+}
+
 fn include_extent_coordinate(extent: &mut WorksheetExtent, row: usize, column: usize) {
     extent.min_row = if extent.min_row == 0 {
         row
@@ -1609,6 +1926,141 @@ mod tests {
     use std::io::Write;
     use std::path::PathBuf;
     use zip::{write::SimpleFileOptions, ZipWriter};
+
+    fn cell_number_format_fixture(extension: &str) -> Result<PathBuf> {
+        let path = std::env::temp_dir().join(format!(
+            "excel-reader-number-formats-{}-{}.{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_nanos(),
+            extension
+        ));
+        let package_relationships = format!(
+            r#"<Relationships xmlns="{PACKAGE_REL_NS}"><Relationship Id="rId0" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>"#
+        );
+        let workbook = format!(
+            r#"<s:workbook xmlns:s="{SPREADSHEET_MAIN_NS}" xmlns:r="{OFFICE_REL_NS}"><s:sheets><s:sheet name="Data" sheetId="1" r:id="rId1"/></s:sheets></s:workbook>"#
+        );
+        let workbook_relationships = format!(
+            r#"<Relationships xmlns="{PACKAGE_REL_NS}"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/data.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="custom/styles.xml"/></Relationships>"#
+        );
+        let styles = format!(
+            r#"<s:styleSheet xmlns:s="{SPREADSHEET_MAIN_NS}"><s:numFmts count="1"><s:numFmt numFmtId="164" formatCode="h:mm:ss"/></s:numFmts><s:cellXfs count="3"><s:xf numFmtId="0"/><s:xf numFmtId="14"/><s:xf numFmtId="164"/></s:cellXfs></s:styleSheet>"#
+        );
+        let worksheet = format!(
+            r#"<s:worksheet xmlns:s="{SPREADSHEET_MAIN_NS}"><s:sheetData><s:row r="1"><s:c r="A1" s="1"><s:v>45000</s:v></s:c><s:c r="B1" s="2"><s:v>0.5</s:v></s:c><s:c r="C1"><s:v>42</s:v></s:c></s:row></s:sheetData></s:worksheet>"#
+        );
+        let entries = [
+            ("_rels/.rels", package_relationships),
+            ("xl/workbook.xml", workbook),
+            ("xl/_rels/workbook.xml.rels", workbook_relationships),
+            ("xl/custom/styles.xml", styles),
+            ("xl/worksheets/data.xml", worksheet),
+        ];
+        let mut archive = ZipWriter::new(fs::File::create(&path)?);
+        for (name, data) in entries {
+            archive.start_file(name, SimpleFileOptions::default())?;
+            archive.write_all(data.as_bytes())?;
+        }
+        archive.finish()?;
+        Ok(path)
+    }
+
+    #[test]
+    fn cell_number_formats_read_custom_builtin_and_default_styles_for_xlsx_and_xlsm() -> Result<()>
+    {
+        for extension in ["xlsx", "xlsm"] {
+            let fixture = cell_number_format_fixture(extension)?;
+            let formats = read_xlsx_cell_number_formats(
+                &fixture,
+                &[
+                    CellNumberFormatRequest {
+                        sheet_name: "Data".to_owned(),
+                        cell_reference: "B1".to_owned(),
+                    },
+                    CellNumberFormatRequest {
+                        sheet_name: "Data".to_owned(),
+                        cell_reference: "$A$1".to_owned(),
+                    },
+                    CellNumberFormatRequest {
+                        sheet_name: "Data".to_owned(),
+                        cell_reference: "C1".to_owned(),
+                    },
+                    CellNumberFormatRequest {
+                        sheet_name: "Data".to_owned(),
+                        cell_reference: "D1".to_owned(),
+                    },
+                ],
+            )?;
+            fs::remove_file(fixture)?;
+
+            assert_eq!(
+                formats,
+                vec![
+                    CellNumberFormatInfo {
+                        sheet_name: "Data".to_owned(),
+                        cell_reference: "B1".to_owned(),
+                        style_index: 2,
+                        number_format_id: 164,
+                        format_code: Some("h:mm:ss".to_owned()),
+                    },
+                    CellNumberFormatInfo {
+                        sheet_name: "Data".to_owned(),
+                        cell_reference: "A1".to_owned(),
+                        style_index: 1,
+                        number_format_id: 14,
+                        format_code: Some("mm-dd-yy".to_owned()),
+                    },
+                    CellNumberFormatInfo {
+                        sheet_name: "Data".to_owned(),
+                        cell_reference: "C1".to_owned(),
+                        style_index: 0,
+                        number_format_id: 0,
+                        format_code: Some("General".to_owned()),
+                    },
+                    CellNumberFormatInfo {
+                        sheet_name: "Data".to_owned(),
+                        cell_reference: "D1".to_owned(),
+                        style_index: 0,
+                        number_format_id: 0,
+                        format_code: Some("General".to_owned()),
+                    },
+                ]
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn cell_number_format_reader_rejects_unknown_sheets_and_non_ooxml_inputs() -> Result<()> {
+        let fixture = cell_number_format_fixture("xlsx")?;
+        let error = read_xlsx_cell_number_formats(
+            &fixture,
+            &[CellNumberFormatRequest {
+                sheet_name: "Missing".to_owned(),
+                cell_reference: "A1".to_owned(),
+            }],
+        )
+        .expect_err("unknown worksheets must be rejected");
+        assert!(error
+            .to_string()
+            .contains("worksheet \"Missing\" was not found"));
+        fs::remove_file(&fixture)?;
+
+        let non_ooxml = std::env::temp_dir().join(format!(
+            "excel-reader-number-formats-{}.xls",
+            std::process::id()
+        ));
+        fs::write(&non_ooxml, b"not an OOXML package")?;
+        let error = read_xlsx_cell_number_formats(&non_ooxml, &[])
+            .expect_err("BIFF input must be rejected by the OOXML metadata adapter");
+        fs::remove_file(non_ooxml)?;
+        assert!(error
+            .to_string()
+            .contains("cell number-format reader only supports .xlsx and .xlsm"));
+        Ok(())
+    }
 
     fn nonstandard_header_fixture() -> Result<PathBuf> {
         let path = std::env::temp_dir().join(format!(
