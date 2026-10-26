@@ -1478,7 +1478,7 @@ where
                 return Ok(());
             }
             "5" => {
-                run_timeline_precheck_cli(config_cli_arguments(config_path))?;
+                run_interactive_timeline_precheck(output, config_path)?;
                 return Ok(());
             }
             "0" => return Ok(()),
@@ -9016,6 +9016,38 @@ fn run_timeline_precheck_cli(arguments: Vec<String>) -> Result<()> {
     println!("{}", serde_json::to_string_pretty(&report)?);
     if report.errors > 0 {
         bail!("timeline precheck found {} error(s)", report.errors);
+    }
+    Ok(())
+}
+
+fn run_interactive_timeline_precheck<W>(output: &mut W, config_path: &Path) -> Result<()>
+where
+    W: Write,
+{
+    writeln!(output, "\n=== 预校验报告 ===")?;
+    writeln!(output, "配置文件: {}", config_path.display())?;
+    let report = run_timeline_precheck(config_path)?;
+    for issue in &report.issues {
+        let level = if issue.level == "error" {
+            "错误"
+        } else {
+            "警告"
+        };
+        writeln!(output, "  [{level}] {}: {}", issue.location, issue.message)?;
+    }
+    writeln!(
+        output,
+        "=== 预校验完成: 错误 {} 项，警告 {} 项 ===",
+        report.errors, report.warnings
+    )?;
+    if report.errors == 0 {
+        writeln!(output, "[完成] 时序配置预校验通过。")?;
+    } else {
+        writeln!(
+            output,
+            "[失败] 发现 {} 项错误，请按上方位置修正后重试。",
+            report.errors
+        )?;
     }
     Ok(())
 }

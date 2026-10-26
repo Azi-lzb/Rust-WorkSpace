@@ -984,3 +984,9 @@ Windows 原生 `cargo fmt --manifest-path pytools-core/Cargo.toml -- --check` �
 使用隔离合成 XLSM，在 `错误!A1` 写入 typed `#N/A`，经 Windows 原生 `convert-excel --engine native` 验证转换失败码为 2、失败计数为 1、错误摘要指出工作表和坐标、未发布 XLSX 且源字节不变。该结果确认原生按值转换不会把 typed error 静默写成普通文本或错误地报告成功。
 
 此项仅闭合合成 XLSM 的错误值拒绝路径；不证明 legacy `.xls` 保真转换可以保留 error token，不覆盖空字符串、用户真实样本、公式缓存、其他 OOXML 对象、目标 Linux 实机或离线 deb。PT-4-2 整体仍未验收。
+
+### 2026-10-26 PT-1-5 菜单预校验结果反馈
+
+旧版 `PyCode/main.py` 的时序菜单 1→5 直接显示预校验摘要并回到菜单；Rust 菜单此前复用 JSON CLI 输出且将配置问题作为进程错误。现菜单路由直接调用既有 `run_timeline_precheck` 业务 API，逐项展示错误/警告、计数与成功或失败提示后继续主循环；独立 `timeline-precheck` JSON CLI 不变。未修改预校验规则或迁移验收状态。
+
+Windows 原生 `timeline_menu_cli` 27/27、`cargo fmt --check`、`cargo build --offline --locked -p pytools-core --bin pytools -j 1` 通过。新增成功及配置错误菜单路由测试均使用临时合成配置；无参数直接运行构建产物并输入 0，显示 1–9/0 主菜单且正常退出。此轮未重新执行 Python/Rust 业务对拍；既有 1-5 预校验配置对拍证据仍适用。无工作簿输出或源文件修改，PT-1-5 真实业务样本验收状态不变。

@@ -145,8 +145,10 @@ fn interactive_timeline_menu_routes_compare_wide_modes_and_precheck() -> Result<
     );
     let precheck_stdout = String::from_utf8_lossy(&precheck.stdout);
     assert!(precheck_stdout.contains("5  预校验"));
-    assert!(precheck_stdout.contains(r#""errors": 0"#));
-    assert!(precheck_stdout.contains(r#""warnings": 0"#));
+    assert!(precheck_stdout.contains("=== 预校验完成: 错误 0 项，警告 0 项 ==="));
+    assert!(precheck_stdout.contains("[完成] 时序配置预校验通过。"));
+    assert!(precheck_stdout.contains("再见。"));
+    assert!(!precheck_stdout.contains(r#""errors""#));
     Ok(())
 }
 
@@ -1946,6 +1948,49 @@ fn excluded_pt_1_2_menu_item_does_not_start_the_legacy_candidate() -> Result<()>
     assert!(!stdout.contains("选择时序提取源文件"));
     assert!(!stdout.contains("PT-1-2 开始"));
     assert!(stdout.contains("0  退出"));
+    Ok(())
+}
+
+#[test]
+fn timeline_precheck_menu_prints_readable_success_and_returns_to_main() -> Result<()> {
+    let directory = TestDirectory::new()?;
+    let config = create_timeline_config(directory.path())?;
+    let output = run_menu(&config, "1\n5\n0\n")?;
+    assert!(
+        output.status.success(),
+        "successful precheck menu route failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("=== 预校验报告 ==="));
+    assert!(stdout.contains("=== 预校验完成: 错误 0 项，警告 0 项 ==="));
+    assert!(stdout.contains("[完成] 时序配置预校验通过。"));
+    assert!(stdout.contains("======== PyTools 菜单 ========"));
+    assert!(stdout.contains("再见。"));
+    assert!(!stdout.contains("\"errors\""));
+    Ok(())
+}
+
+#[test]
+fn timeline_precheck_menu_reports_errors_without_terminating_menu() -> Result<()> {
+    let directory = TestDirectory::new()?;
+    let config = create_timeline_config(directory.path())?;
+    let input_directory = directory.path().join("app").join("input");
+    fs::remove_dir_all(&input_directory)?;
+
+    let output = run_menu(&config, "1\n5\n0\n")?;
+    assert!(
+        output.status.success(),
+        "failed precheck must return to the menu: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("[错误] 全局配置/输入目录: 输入目录不存在:"));
+    assert!(stdout.contains("=== 预校验完成: 错误 1 项，警告 0 项 ==="));
+    assert!(stdout.contains("[失败] 发现 1 项错误"));
+    assert!(stdout.contains("======== PyTools 菜单 ========"));
+    assert!(stdout.contains("再见。"));
+    assert!(!stdout.contains("\"errors\""));
     Ok(())
 }
 
