@@ -1038,3 +1038,9 @@ Windows 原生验证：`cargo fmt --manifest-path pytools-core/Cargo.toml -- --c
 按新版需求“来源/目标表头名称、顺序和列数必须完全一致”收紧 `build_append_by_config_plans`：对既有目标 Sheet 比较规范化后的完整表头向量，列数或顺序不同即跳过该任务；仅当目标 Sheet 的使用区域和表头均为空时才按新表初始化，避免 A1 空而其他表头有值时覆盖目标。输入源和目标保持不变。与旧 PyCode `_headers_same` 允许目标多出列的行为存在明确差异，优先遵循本版已确认的严格匹配合同，不做宽松追加。
 
 Windows 原生验证：`cargo fmt -p pytools-core -- --check`、`cargo check --offline --locked -q -p pytools-core --bin pytools -j 1`、`cargo test --offline --locked -q -p pytools-core --test dedup_menu_cli --test dedup_append_execution -j 1`（14/14）、`git diff --check` 通过。新增 CLI 回归覆盖目标多一列、同列数但顺序不符、A1 为空而其他表头有值；均报告 `header_mismatch`、跳过两条配置任务且源/目标字节不变。未执行真实样本验收、Excel 手工打开或 Linux/deb 验收；PT-2-5 整体状态仍为**已实现，待 Windows 真实验收**。
+
+### 2026-10-27 PT-2-5 从 V2 菜单选择已检查中间表
+
+新版菜单 `2 → 3` 现先单选用户已检查的 `.xlsx` 时序宽表中间文件，再调用现有去重追加计划与执行逻辑；仅覆盖启用任务的来源工作簿路径，保留配置中的来源 Sheet、复合键、目标工作簿/Sheet 及提交规则。此步骤不自动调用或串联 PT-1-1，也不回写配置。直接 `dedup-append-plan --config` 命令仍遵循配置路径，保持旧 CLI 合同。
+
+Windows 原生验证：`cargo fmt -p pytools-core -- --check`、`cargo check --offline --locked -q -p pytools-core --bin pytools -j 1`、`cargo test --offline --locked -q -p pytools-core --test dedup_menu_cli --test dedup_append_execution -j 1`（14/14）、`git diff --check` 通过。菜单集成测试用与配置旧来源不同的临时工作簿，确认追加的数据来自用户所选输入；新目标照常经确认、安全发布且两份来源均不变。无真实用户中间表可验，Python/Rust 对拍、Excel 手工打开和 Linux/deb 验收未执行；PT-2-5 整体状态仍为**已实现，待 Windows 真实验收**。

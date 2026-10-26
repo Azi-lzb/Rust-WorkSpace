@@ -2248,6 +2248,7 @@ where
                     config_path,
                     global,
                     log_view,
+                    allow_native_dialog,
                     capabilities,
                     platform,
                 )?;
@@ -2279,6 +2280,7 @@ fn run_interactive_dedup_append_menu<R, W>(
     config_path: &Path,
     global: &GlobalConfig,
     log_view: &str,
+    allow_native_dialog: bool,
     capabilities: Option<&Path>,
     platform: Option<&str>,
 ) -> Result<()>
@@ -2290,20 +2292,31 @@ where
         capabilities.is_some() == platform.is_some(),
         "--capabilities and --platform must be provided together"
     );
+    let Some(source_workbook) = choose_single_append_source(
+        "选择已人工检查的时序宽表中间工作簿",
+        input,
+        output,
+        allow_native_dialog,
+    )?
+    else {
+        writeln!(output, "[已取消] 去重追加未执行。")?;
+        return Ok(());
+    };
     let started_at = Local::now();
     let started = Instant::now();
     match log_view {
-        "user" => writeln!(output, "开始处理：按配置追加到目标并生成计划")?,
+        "user" => writeln!(output, "开始处理：使用已检查的中间工作簿按配置去重追加")?,
         "developer" => writeln!(output, "PT-2 开始：PT-2-5 config_append")?,
         _ => {}
     }
 
     let planning_started = Instant::now();
     let action_output_dir = unique_menu_output_dir(&global.output_dir, "config-append");
-    let (mut report, plans) = match dedup_append_plan_bundle(
+    let (mut report, plans) = match dedup_append_plan_bundle_with_source(
         config_path,
         &action_output_dir,
         global.emit_plan_files,
+        Some(&source_workbook),
     ) {
         Ok(result) => result,
         Err(error) => {
@@ -4591,6 +4604,53 @@ where
     Ok(Some(path))
 }
 
+fn choose_single_append_source<R, W>(
+    title: &str,
+    input: &mut R,
+    output: &mut W,
+    allow_native_dialog: bool,
+) -> Result<Option<PathBuf>>
+where
+    R: BufRead,
+    W: Write,
+{
+    let Some(mut selected) = choose_input_paths(
+        title,
+        false,
+        NativeFileFilter::XlsxOnly,
+        input,
+        output,
+        allow_native_dialog,
+    )?
+    else {
+        return Ok(None);
+    };
+    if selected.len() != 1 {
+        writeln!(
+            output,
+            "[提示] PT-2-5 需要且只需要一个已检查的 .xlsx 中间工作簿。"
+        )?;
+        return Ok(None);
+    }
+    let path = selected.remove(0);
+    if !path
+        .extension()
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("xlsx"))
+    {
+        writeln!(output, "[跳过] PT-2-5 当前只接受 .xlsx 中间工作簿。")?;
+        return Ok(None);
+    }
+    if !path.is_file() {
+        writeln!(
+            output,
+            "[跳过] 中间工作簿不存在或不是文件：{}",
+            path.display()
+        )?;
+        return Ok(None);
+    }
+    Ok(Some(path))
+}
+
 fn choose_single_rural_loan_workbook<R, W>(
     title: &str,
     feature_id: &str,
@@ -5341,7 +5401,21 @@ fn dedup_append_plan_bundle(
     output_dir: &Path,
     emit_plan_files: bool,
 ) -> Result<(serde_json::Value, Vec<AppendTargetPlan>)> {
-    let tasks = load_dedup_tasks(config)?;
+    dedup_append_plan_bundle_with_source(config, output_dir, emit_plan_files, None)
+}
+
+fn dedup_append_plan_bundle_with_source(
+    config: &Path,
+    output_dir: &Path,
+    emit_plan_files: bool,
+    source_override: Option<&Path>,
+) -> Result<(serde_json::Value, Vec<AppendTargetPlan>)> {
+    let mut tasks = load_dedup_tasks(config)?;
+    if let Some(source) = source_override {
+        for task in tasks.iter_mut().filter(|task| task.enabled) {
+            task.source_wb = Some(source.to_path_buf());
+        }
+    }
     let reports = build_append_by_config_plans(&tasks, output_dir)?;
     fs::create_dir_all(&output_dir)?;
     let timestamp = Local::now().format("%Y%m%d_%H%M%S_%f");

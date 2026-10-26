@@ -168,7 +168,8 @@ fn interactive_dedup_menu_routes_four_v2_actions_without_committing_edits() -> R
             }));
     }
 
-    let append_plan = run_menu(&config, "2\n3\n0\n")?;
+    let append_input = format!("2\n3\n{}\n0\n", source.display());
+    let append_plan = run_menu(&config, &append_input)?;
     assert!(append_plan.status.success());
     let append_json = output_json(&append_plan)?;
     assert_eq!(append_json[0]["target_existed"], false);
@@ -274,11 +275,15 @@ fn interactive_dedup_append_requires_confirmation_then_creates_a_new_target() ->
     let root = TestDirectory::new()?;
     let config = create_dedup_config(root.path())?;
     let source = root.path().join("source.xlsx");
+    let reviewed_source = root.path().join("reviewed-intermediate.xlsx");
     let target = root.path().join("target.xlsx");
     create_duplicate_source(&source)?;
+    create_reviewed_intermediate(&reviewed_source)?;
     let source_before = fs::read(&source)?;
+    let reviewed_source_before = fs::read(&reviewed_source)?;
 
-    let output = run_menu_with_view(&config, "2\n3\nyes\n0\n", "developer")?;
+    let menu_input = format!("2\n3\n{}\nyes\n0\n", reviewed_source.display());
+    let output = run_menu_with_view(&config, &menu_input, "developer")?;
     assert!(
         output.status.success(),
         "confirmed append failed: {}",
@@ -288,6 +293,8 @@ fn interactive_dedup_append_requires_confirmation_then_creates_a_new_target() ->
     assert_eq!(report[0]["status"], "succeeded");
     assert_eq!(report[0]["execution"], "committed");
     assert_eq!(report[0]["target_existed"], false);
+    assert_eq!(report[0]["appended_rows"], 2);
+    assert_eq!(report[0]["duplicate_rows_filtered"], 1);
     assert_eq!(
         report[0]["execution_result"]["target_commit"]["operation"],
         "created"
@@ -300,7 +307,16 @@ fn interactive_dedup_append_requires_confirmation_then_creates_a_new_target() ->
     );
     assert!(candidate.is_file());
     assert_eq!(fs::read(&target)?, fs::read(&candidate)?);
+    let appended = read_workbook(&target)?;
+    let appended_sheet = appended
+        .sheets
+        .iter()
+        .find(|sheet| sheet.name == "Append")
+        .context("append target worksheet missing")?;
+    assert_eq!(appended_sheet.values["B2"]["value"], "checked-1");
+    assert_eq!(appended_sheet.values["B3"]["value"], "checked-2");
     assert_eq!(fs::read(&source)?, source_before);
+    assert_eq!(fs::read(&reviewed_source)?, reviewed_source_before);
 
     let log_dir = root.path().join("logs");
     let histories = fs::read_dir(&log_dir)?
@@ -340,7 +356,8 @@ fn interactive_dedup_append_keeps_existing_target_plan_only_without_capability()
     let source_before = fs::read(&source)?;
     let target_before = fs::read(&target)?;
 
-    let output = run_menu(&config, "2\n3\n0\n")?;
+    let menu_input = format!("2\n3\n{}\n0\n", source.display());
+    let output = run_menu(&config, &menu_input)?;
     assert!(
         output.status.success(),
         "plan-only append failed: {}",
@@ -405,9 +422,10 @@ fn interactive_dedup_append_commits_existing_target_with_matching_capability() -
         serde_json::to_vec_pretty(&capability_for(edit_plan))?,
     )?;
 
+    let menu_input = format!("2\n3\n{}\nyes\n0\n", source.display());
     let output = run_menu_with_capability(
         &config,
-        "2\n3\nyes\n0\n",
+        &menu_input,
         &capability_path,
         "synthetic-pt-2-5-menu-test",
     )?;
@@ -530,6 +548,26 @@ fn create_duplicate_source(path: &Path) -> Result<()> {
         sheet.write_string(row, 0, id)?;
         sheet.write_string(row, 1, id)?;
         sheet.write_number(row, 2, value)?;
+    }
+    workbook.save(path)?;
+    Ok(())
+}
+
+fn create_reviewed_intermediate(path: &Path) -> Result<()> {
+    let mut workbook = rust_xlsxwriter::Workbook::new();
+    let sheet = workbook.add_worksheet();
+    sheet.set_name("Commented")?;
+    for (column, header) in ["数据来源", "机构编号", "金额"].iter().enumerate() {
+        sheet.write_string(0, column as u16, *header)?;
+    }
+    for (row, id, amount) in [
+        (1, "checked-1", 10.0),
+        (2, "checked-1", 20.0),
+        (3, "checked-2", 30.0),
+    ] {
+        sheet.write_string(row, 0, "人工检查后的中间表")?;
+        sheet.write_string(row, 1, id)?;
+        sheet.write_number(row, 2, amount)?;
     }
     workbook.save(path)?;
     Ok(())
