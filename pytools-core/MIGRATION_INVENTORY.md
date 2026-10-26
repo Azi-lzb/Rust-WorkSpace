@@ -1033,7 +1033,7 @@ Windows 原生验证：`cargo fmt --manifest-path pytools-core/Cargo.toml -- --c
 
 新版去重菜单 `2 → 2` 已从仅生成计划改为实际新建去重结果簿：复用现有复合键计划与按顺序计算的 `DeleteRows` 操作，把后续重复行从副本移除并上移保留行；源文件只读。输出经共享 `excel_writer`/rust_xlsxwriter 新建、独立读取核对行映射后的值/类型，再由 `file_commit::create_target_from_candidate` 安全发布；候选失败时不发布，目标已存在时不覆盖。与 PT-2-3 共用纯数据合同，公式/错误、批注、合并、条件格式、数据验证、定义名称及未知 OOXML 部件均失败关闭。开发日志的 `committed_targets` 现只统计实际提交到历史目标的操作，不把新建结果簿计作目标提交。
 
-生命周期：**受阻**（共享 `excel-reader` 尚无按单元格坐标读取数字格式的 API）。Windows 菜单集成 `dedup_menu_cli` 7/7 通过，包含删除一条重复行、后续保留行上移、值/类型核对、工作表名称、输入字节不变、候选临时文件清理，并回归 PT-2-3 公式/批注拒绝及 PT-2-5 提交日志。已确认当前 V2 结果簿重建仅写 Calamine 值：数值 123 若以 `000000` 数字格式显示为 `000123`，输出会丢失该显示前导零；最小复现是纯数据 XLSX 中一个使用该格式的数值标识列。已将 reader API 需求与复现发给 main；PyTools 未改共享 crate。非纯数据工作簿被明确拒绝。真实样本、V2 删除结果 Python/Rust 端到端对拍、Excel 手工打开及 Linux/deb 仍未验证。
+生命周期：**受阻**（共享 `excel-reader` 尚无按单元格坐标读取数字格式的 API）。Windows 菜单集成 `dedup_menu_cli` 7/7 通过，包含删除一条重复行、后续保留行上移、值/类型核对、工作表名称、输入字节不变、候选临时文件清理，并回归 PT-2-3 公式/批注拒绝及 PT-2-5 提交日志。合成复现已运行 1/1：输入数值 123 的 `000000` 数字格式读回正确，PT-2-4 候选输出格式丢失；可复验用例保留在 `tests/dedup_number_format_blocker.rs`，因共享能力缺失暂标 ignored，断言修复后应保留格式。最小复现是纯数据 XLSX 中一个使用该格式的数值标识列。已将 reader API 需求与复现发给 main；PyTools 未改共享 crate。非纯数据工作簿被明确拒绝。真实样本、V2 删除结果 Python/Rust 端到端对拍、Excel 手工打开及 Linux/deb 仍未验证。
 
 ### 2026-10-27 PT-2-5 V2 追加目标表头严格匹配
 
