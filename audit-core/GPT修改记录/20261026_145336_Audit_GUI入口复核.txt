@@ -1,0 +1,33 @@
+【时间】2026-10-26 14:53:36 +08:00
+【执行者】Codex
+【修改前 commit】a90225bb76600c74e6268695fb5de1fcef647d00
+【修改后 commit】本次文档提交（待提交）
+【WIP】开始时工作树干净；无既有未提交工作。
+
+【目的】复核现有 Audit Windows Rust GUI 入口，将本轮真实启动与 bridge 冒烟证据记入迁移清单；复用既有 Rust launcher、原前端页面和 S2 API，没有重复开发 UI 或业务算法。
+
+【修改文件】
+- audit-core/MIGRATION_INVENTORY.md
+- audit-core/GPT修改记录/20261026_145336_Audit_GUI入口复核.txt
+
+【变化】
+- 将入口状态明确为 Windows 启动/接口冒烟已通过；真实 S2 业务及完整人工验收仍待验证。
+- 记录 Release 构建、原页面加载、S2 配置检查 API 和未接通接口 501 的实际结果。
+- 未修改 Rust 业务代码、共享 crates、配置或工作簿；未修改源 Python 项目。
+
+【配置/VBA 迁移影响】无。配置检查仅读取 workspace 默认配置。
+【组件版本】不升级。
+
+【测试】
+- Windows 11 x64：`cargo build --locked --offline --release -p pytools-core --bin pytools -p audit-core --bin open-data-audit-gui` 通过。
+- Windows 11 x64：`cargo test --locked --offline -p audit-core --lib web_bridge::tests`，8/8 通过。
+- Release `open-data-audit-gui.exe --port 18752` 默认启动模式启动；原页面显示 `Open-Data-Audit (Rust)`，S2 主界面可见。
+- `GET /`、`POST /api/get_state`、`POST /api/check_period_audit_config` 均返回 HTTP 200；`POST /api/start_dag_flow` 返回 HTTP 501。
+- 配置检查使用 workspace 默认配置；本轮未启动真实 S2 审核，也未修改任何工作簿。
+
+【未执行/已知问题】真实样本对拍、S2 全链路业务验收、完整 GUI 人工验收、Linux/目标系统测试未执行。入口复用原页面并通过本机浏览器承载，不是嵌入式 pywebview；S1/S3/S4/S5 及其他未迁移工作流仍明确不可用。
+
+【删除清单】无。
+【回滚提示】可回滚本次文档提交；不涉及代码或用户数据恢复。
+
+【补充测试 2026-10-26 14:55:32 +08:00】在当前 GUI 页面点击原有“检查配置”按钮，界面实际显示 S2 配置检查报告和 8 条默认配置警告；点击关闭后回到 S2 主界面。该操作仅读取 workspace 默认配置，不执行报表审核或写入工作簿。

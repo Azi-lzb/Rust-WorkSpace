@@ -82,10 +82,11 @@
 ## Rust 前端接入状态
 
 - 源项目 `core/frontend/web/index.html` 和 `core/frontend/assets/app-icon.{png,ico}` 已原样复制到 `frontend/`；HTML 与源文件 SHA-256 一致。源项目只读，没有修改。
-- Windows 可直接启动新增的 `open-data-audit-gui.exe`（无参数默认端口 8750，可用 `--port`/`--config` 覆盖）；它复用原 GUI 页面和同一 HTTP bridge，仅监听 `127.0.0.1`，默认启动尝试打开系统默认浏览器。原 `open-data-audit serve` 保留自动打开行为；`open-data-audit-gui --no-browser` 用于检查。打开失败时打印手动访问地址。该入口为沿用原页面的本机浏览器 GUI，不是嵌入式 pywebview 外壳；状态仍为“已实现，待 Windows 真实验收”。
+- Windows 可直接启动新增的 `open-data-audit-gui.exe`（无参数默认端口 8750，可用 `--port`/`--config` 覆盖）；它复用原 GUI 页面和同一 HTTP bridge，仅监听 `127.0.0.1`，默认启动尝试打开系统默认浏览器。原 `open-data-audit serve` 保留自动打开行为；`open-data-audit-gui --no-browser` 用于检查。打开失败时打印手动访问地址。该入口为沿用原页面的本机浏览器 GUI，不是嵌入式 pywebview 外壳；Windows 启动/接口冒烟已通过，真实 S2 业务和完整人工验收仍待验证。
 - bridge 在响应时注入运行时接口，保持 HTML 文件本身不变。当前页面启动后导航至已接入的 S2。
 - 当前连接 `get_state`、浏览器路径浏览、S2 配置检查、S2 路径选择/清除、输出目录固定/跟随、审核启动、进度和结果回传，以及有限的 UI 设置更新。选择或清除本期/上期目录会刷新两期文件配对预览，并支持 `.xls`/`.xlsx` 文件名列举。
 - 未迁移接口返回 HTTP 501；点击尚未接通的 DAG 工作流会在原界面明确提示“该功能尚未接入 Rust 版本”。取消和设置持久化尚未接入；S1/S3/S4/S5 的前端入口不表示其功能已经迁移。
 - 合成 S2 输入经 HTTP bridge 完整运行并生成三表 XLSX；该结果不替代真实业务模板、Windows 原生、麒麟/UOS、glibc 2.28 与 deb 验收。
 - 2026-10-26 Windows 11 x64 原生 Rust Release 复测：`cargo test -p audit-core --lib web_bridge::tests --locked --offline` 8/8、`cargo test -p audit-core --test s2_service_parity --locked --offline` 1/1 通过；Release `open-data-audit-gui.exe --no-browser --port <空闲端口>` 的 `GET /` 返回 200（原页面和注入 bridge 均存在），`POST /api/get_state` 返回 200，未迁移 `start_dag_flow` 返回 501。此前已从页面按钮执行配置检查并显示报告；工作区默认配置结果含模板默认项警告，只作为入口冒烟，不是真实业务验收；S2 真实审核及其他功能状态不变。
 - 本轮修复了页面同步空的旧 S1 路径字段会阻断 S2 配置检查的问题：只忽略 `input/templateDir/template/external/output` 的空值，非空未迁移值仍返回 501。两条回归覆盖空值兼容与非空拒绝。Release 二进制输出到本机 F: 隔离 Cargo target，未纳入 Git。
+- 本次独立 Windows Release 构建通过；`open-data-audit-gui.exe --port 18752` 默认启动模式可提供原界面，页面标题为 `Open-Data-Audit (Rust)`，主导航和 S2 配置面板可见。运行中 `GET /`、`POST /api/get_state`、`POST /api/check_period_audit_config` 均返回 200（配置检查读取 workspace 默认配置）；随后在 GUI 实际点击“检查配置”，页面显示配置检查结果和警告明细；未接通的 `POST /api/start_dag_flow` 返回 501。此次未运行真实 S2 审核或修改任何工作簿，真实样本/完整人工验收仍待验证。
