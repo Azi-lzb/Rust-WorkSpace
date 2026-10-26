@@ -3,6 +3,7 @@
 修改：
 - pytools-core/src/dedup_ops.rs：使用共享 excel-reader 单元格数字格式 API，保留数值、整数和日期序列的数字格式；重复标记行在红色填充上叠加原数字格式；候选发布前核对输出每个数值单元格的格式。
 - pytools-core/tests/dedup_number_format_blocker.rs：解除旧共享能力阻塞用例的 ignore，覆盖删除行后上移的零填充数字格式及源文件字节不变。
+- pytools-core/tests/dedup_menu_cli.rs：将真实菜单回归输入改为零填充数值 ID，确认 `2→1` 红色整行标记及 `2→2` 删除后的上移记录均保留格式。
 - pytools-core/MIGRATION_INVENTORY.md：记录直接单元格样式已修复及行/列默认样式仍受共享 API 限制。
 
 验证（Windows 原生 Rust，构建与临时文件放在 F:\PyTools_Rust_本轮工作文件_20261026）：

@@ -84,6 +84,14 @@ fn interactive_dedup_menu_routes_four_v2_actions_without_committing_edits() -> R
             "duplicate row cell {address} should have red fill"
         );
     }
+    assert_eq!(
+        cell_number_format(&check_output, "B2")?.as_deref(),
+        Some("000000")
+    );
+    assert_eq!(
+        cell_number_format(&check_output, "B3")?.as_deref(),
+        Some("000000")
+    );
     assert!(cell_fill(&check_output, "A2")?.is_none());
     assert!(cell_fill(&check_output, "D3")?.is_none());
     assert!(PathBuf::from(
@@ -141,6 +149,14 @@ fn interactive_dedup_menu_routes_four_v2_actions_without_committing_edits() -> R
             "surviving rows should shift upward after deletion"
         );
     }
+    assert_eq!(
+        cell_number_format(&delete_output, "B2")?.as_deref(),
+        Some("000000")
+    );
+    assert_eq!(
+        cell_number_format(&delete_output, "B3")?.as_deref(),
+        Some("000000")
+    );
     assert!(!deleted.sheets[0].values.contains_key("A4"));
     let config_delete_plan = PathBuf::from(
         config_delete_json[0]["plan_file"]
@@ -268,6 +284,17 @@ fn cell_fill(path: &Path, address: &str) -> Result<Option<String>> {
         .and_then(|fill| fill.pattern_fill())
         .and_then(|fill| fill.foreground_color())
         .map(|color| color.argb_str().to_ascii_uppercase()))
+}
+
+fn cell_number_format(path: &Path, address: &str) -> Result<Option<String>> {
+    let workbook = excel_editor::open_xlsx(path)?;
+    let sheet = workbook
+        .sheet_by_name("Commented")
+        .context("duplicate result worksheet missing")?;
+    Ok(sheet
+        .cell(address)
+        .and_then(|cell| cell.style().number_format())
+        .map(|format| format.format_code().to_owned()))
 }
 
 #[test]
@@ -580,9 +607,10 @@ fn create_pure_data_duplicate_source(path: &Path) -> Result<()> {
     sheet.write_string(0, 0, "源数据")?;
     sheet.write_string(0, 1, "ID")?;
     sheet.write_string(0, 2, "Value")?;
-    for (row, id, value) in [(1, "A", 10.0), (2, "A", 20.0), (3, "B", 30.0)] {
-        sheet.write_string(row, 0, id)?;
-        sheet.write_string(row, 1, id)?;
+    let code_format = rust_xlsxwriter::Format::new().set_num_format("000000");
+    for (row, id, value) in [(1, 123.0, 10.0), (2, 123.0, 20.0), (3, 456.0, 30.0)] {
+        sheet.write_string(row, 0, format!("row-{row}"))?;
+        sheet.write_number_with_format(row, 1, id, &code_format)?;
         sheet.write_number(row, 2, value)?;
     }
     workbook.save(path)?;
