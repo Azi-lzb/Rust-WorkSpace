@@ -1033,7 +1033,7 @@ Windows 原生验证：`cargo fmt --manifest-path pytools-core/Cargo.toml -- --c
 
 新版去重菜单 `2 → 2` 已从仅生成计划改为实际新建去重结果簿：复用现有复合键计划与按顺序计算的 `DeleteRows` 操作，把后续重复行从副本移除并上移保留行；源文件只读。输出经共享 `excel_writer`/rust_xlsxwriter 新建、独立读取核对行映射后的值/类型，再由 `file_commit::create_target_from_candidate` 安全发布；候选失败时不发布，目标已存在时不覆盖。与 PT-2-3 共用纯数据合同，公式/错误、批注、合并、条件格式、数据验证、定义名称及未知 OOXML 部件均失败关闭。开发日志的 `committed_targets` 现只统计实际提交到历史目标的操作，不把新建结果簿计作目标提交。
 
-生命周期：**受阻**（共享 `read_xlsx_cell_number_formats` 已接入并覆盖单元格直接样式，但其 API 契约不展开行/列默认样式；若数值标识格式来自行/列样式，当前路径无法确认有效格式并可能丢失显示前导零，需 main 协调共享 reader 补足或提供安全识别能力）。PyTools 对直接单元格样式已实现数值、整数和日期序列格式保留，并在发布候选前逐坐标核对；未知内置格式缺少代码时失败关闭。Windows 合成回归 `configured_delete_preserves_numeric_zero_padding_format` 1/1 通过：删除重复行后保留行上移，输出 A2/A3 的 `000000` 格式一致，输入字节不变。真实交互菜单现用数值 ID 覆盖 `2→1` 红色标记和 `2→2` 行上移后的数字格式；`dedup_menu_cli` 7/7、共享 `excel-reader` 17 个单测及 2 个集成测试、PyTools CLI 编译检查均通过。真实样本、V2 删除结果 Python/Rust 端到端对拍、Excel 手工打开及 Linux/deb 仍未验证；非纯数据工作簿仍明确拒绝。
+生命周期：**受阻**（main 已同步 reader fail-closed 修复 `134b2c3`：无显式 cell `s`、但命中 row `customFormat=1/true` 或匹配 column style 时返回含坐标/来源的错误；显式 cell style 优先。该修复避免把继承格式误报为 General，但不解析 row/column style，因此此类工作簿仍无法安全执行 PT-2-4，不能据此标记功能完成）。PyTools 对直接单元格样式已实现数值、整数和日期序列格式保留，并在发布候选前逐坐标核对；未知内置格式缺少代码时失败关闭。Windows 合成回归 `configured_delete_preserves_numeric_zero_padding_format` 与 `configured_delete_fails_closed_for_inherited_number_formats` 2/2 通过：直接格式删除后上移仍保留 `000000`；行样式/列样式继承输入均明确失败、不发布结果且源字节不变。共享 reader 继承样式定点单测 1/1、`dedup_menu_cli` 7/7 通过。真实样本、V2 删除结果 Python/Rust 端到端对拍、Excel 手工打开及 Linux/deb 仍未验证；非纯数据工作簿仍明确拒绝。
 
 ### 2026-10-27 PT-2-5 V2 追加目标表头严格匹配
 
