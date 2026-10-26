@@ -12,7 +12,7 @@ This directory implements Open-Data-Audit inside the shared rust-workspace. The 
 ## Scope and workflow
 
 - Keep Audit business behavior in audit-core. Shared spreadsheet primitives belong under crates/. Never depend on pytools-core.
-- Do not migrate business behavior until the reader, writer, and editor probe reports and their decisions are recorded.
+- For each business feature, check and record only the reader, writer, and editor capabilities that its actual data flow needs. Do not route an unvalidated Excel capability as production-ready. If a needed shared capability is blocked, retain the minimal reproduction and evidence for main, mark the affected feature blocked, and continue other independent migration work; completion of every workspace probe is not a prerequisite for starting unrelated features.
 - Source Python, config-real data, and real business workbooks are read-only. Use synthetic or explicitly sanitized fixtures and write probe outputs to temporary directories.
 - OpenPyXL is only an optional comparison baseline when the Rust probe cannot inspect a required property.
 - Formula recalculation is off by default. The current sidecar has a limited `recalculate` candidate; a future shared calculation interface belongs to an independent ExcelCalculator. Explicit normal/full recalculation may select an implemented, available, validated LibreOffice Calc or Windows Excel/WPS COM backend. Current formula coverage remains capability-specific; the main path preserves formula text and remains usable when an engine is absent.

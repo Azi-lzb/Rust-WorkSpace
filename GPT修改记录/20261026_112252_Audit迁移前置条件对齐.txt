@@ -1,0 +1,21 @@
+日期：2026-10-26 11:22:52
+
+执行者：Codex。修改前 commit：0b9d33c1728223ac74375989b8f3e2eb84c4a63b。修改后 HEAD 未变化，文档变更尚未提交。main 工作树保留未跟踪 HANDOFF_ZCODE_TO_CODEX.md；audit-dev 与 pytools-dev 均有活动 WIP，本轮未修改这两个工作树。
+
+目的：使迁移清单明确区分统一的功能阶段状态与原有对象/行为对拍结果；使 Audit 子规则遵循“并行完成独立功能、共享能力阻塞时登记并继续其他工作”的阶段策略，同时保留每个功能实际使用 Excel 能力的验收门槛。
+
+修改文件：
+- audit-core/AGENTS.md：取消“全部 reader/writer/editor 探针完成后才能迁业务”的全局前置条件。改为逐功能检查实际数据流所需能力；未验证能力不得作为生产能力；共享能力阻塞时记录复现并交 main，受影响功能标阻塞，继续其他独立功能。
+- DEVELOPMENT_GOAL.md：在 §8.5 明确每项功能单独记录生命周期阶段；既有“保留/丢失/损坏/不适用/未验证”继续作为对象级对拍结果，保留历史证据且不替代阶段状态。
+- AGENTS.md、rules/13_Rust_Excel读写修改与引擎路由规范.md、pytools-core/MIGRATION_PLAN.md：检查后确认当前 HEAD 已按四阶段策略更新，本轮不重复修改。
+
+验证：
+- 只读核对 main、audit-dev、pytools-dev Git 状态；未触碰 audit-dev 和 pytools-dev 的未提交内容。
+- 检查 Audit 前置条件与根阶段策略，确认修改后的规则允许独立功能推进且不降低相关 Excel 能力验收门槛。
+- 文档变更；未运行代码测试。
+
+未执行项与已知问题：Audit/PyTools Agent 需在安全同步节点接收该规则及根阶段策略；当前仍有活动工作树 WIP，不能直接覆盖或重置。业务状态和证据留待各 Agent 按新口径逐项同步。
+
+组件版本：不升级（纯文档/治理修改）。
+删除清单：无。
+回滚：只回滚本记录及 audit-core/AGENTS.md 中对应规则段落；不得改动 Audit/PyTools 工作树的 WIP。
