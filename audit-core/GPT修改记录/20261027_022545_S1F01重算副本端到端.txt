@@ -1,0 +1,30 @@
+时间：2026-10-27 02:25（Asia/Shanghai）
+执行者：Codex
+修改前 commit：a3ddc5a38b573aedf0f4cf220235f180d7a52a0f
+修改后功能 commit：2dfc027（feat(audit): wire S1 formula recalculation sidecar）
+修改前 WIP：存在此前 S1 历史写回、S3 当前值核对及迁移清单/报告等未提交工作；本次仅提交 S1 重算接线文件和本次库存增量，其他 WIP 保留。
+
+目的：将 S1-F01 显式 Excel/LibreOffice 重算出的副本正确接入公式审核与条件格式审核合流，并验证安全复制及结果输出。
+
+变更文件：
+- audit-core/src/s1_recalculation.rs：新增 sidecar 重算副本执行、安全输出路径和计算模式校验。
+- audit-core/src/bin/open-data-audit.rs：为 s1-audit-directory 增加显式重算及仅缓存诊断入口；用实际重算副本路径校验公式 Issue 配对；补充普通/开发者执行状态。
+- audit-core/src/s1_issue_chain.rs：拒绝源工作簿作为自身公式审核副本。
+- audit-core/src/lib.rs：导出 S1 重算模块。
+- audit-core/tests/s1_audit_directory_cli.rs：增加新鲜计算要求与 Excel COM 合成端到端覆盖，断言公式和已触发条件格式异常写入同一结果表，并确认输入及原审核副本不变。
+- audit-core/MIGRATION_INVENTORY.md：记录本次完成范围和未验收项。
+
+业务/配置/版本：不改变业务配置格式及输出列；本次仅允许显式触发计算或明确选择诊断旧缓存。audit-core Cargo 版本保持 0.1.0，未改共享 Excel-Core、Cargo.toml 或 Cargo.lock。
+
+测试：
+- Windows 原生 `cargo test --offline --locked -p audit-core --lib s1_recalculation::tests --quiet`：5 passed、1 ignored。
+- Windows 原生 `cargo test --offline --locked -p audit-core --test s1_audit_directory_cli --quiet`：6 passed、1 ignored。
+- 设置 `AUDIT_S1_RECALC_TEST_SIDECAR=F:\RustBuild\audit\debug\lo-convert.exe` 后，单独运行 ignored Excel COM 端到端测试：1 passed；实际引擎为 Excel.Application。测试验证完整公式文本、公式与条件格式 Issue 同入结果、生成历史结果工作簿，源输入与原审核副本字节不变。
+- `cargo build --offline --locked -p audit-core --bin open-data-audit --quiet` 和 `open-data-audit s1-audit-directory --help`：通过。二进制位于 `F:\RustBuild\audit\debug\open-data-audit.exe`。
+- 本次涉及的 Rust 文件 `rustfmt --edition 2024 --check ...`：通过。全 Workspace `cargo fmt --all -- --check` 报告其他既有文件的格式差异，未批量重排。
+
+未执行/已知问题：没有对真实 config-real 业务文件运行 Python/Rust 逐条对拍；没有验证完整工作簿对象保真或 Linux/目标系统。`s1-audit-directory` 仍要求公式副本 manifest 已提供审核副本，本次命令本身尚未将模板校验区域复制进源文件独立副本，因此 S1-F01 整体仍未验证。共享 ImportRange 能力请求 #8 未解决，本次不改变其状态。
+
+删除清单：无源代码/样本删除。端到端测试生成的 XLSX 位于临时目录，断言后由测试移除；真实 Python 项目和真实业务工作簿均未改动。
+
+回滚提示：如需撤销本次功能代码，针对功能 commit `2dfc027` 执行普通 `git revert 2dfc027`，并审阅迁移清单状态；不要 reset/clean。
