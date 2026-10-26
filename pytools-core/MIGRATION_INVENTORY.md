@@ -1040,3 +1040,9 @@ Windows 原生 `cargo fmt --manifest-path pytools-core/Cargo.toml -- --check` �
 旧版 `PyCode/main.py` 的时序菜单 1→5 直接显示预校验摘要并回到菜单；Rust 菜单此前复用 JSON CLI 输出且将配置问题作为进程错误。现菜单路由直接调用既有 `run_timeline_precheck` 业务 API，逐项展示错误/警告、计数与成功或失败提示后继续主循环；独立 `timeline-precheck` JSON CLI 不变。未修改预校验规则或迁移验收状态。
 
 Windows 原生 `timeline_menu_cli` 27/27、`cargo fmt --check`、`cargo build --offline --locked -p pytools-core --bin pytools -j 1` 通过。新增成功及配置错误菜单路由测试均使用临时合成配置；无参数直接运行构建产物并输入 0，显示 1–9/0 主菜单且正常退出。此轮未重新执行 Python/Rust 业务对拍；既有 1-5 预校验配置对拍证据仍适用。无工作簿输出或源文件修改，PT-1-5 真实业务样本验收状态不变。
+
+### 2026-10-26 PT-1-3/PT-1-4 真实规则交互菜单合成对拍
+
+新增 probe/compare_real_rules_menu.py 与报告 probe/reports/real_rules_menu_parity_20261026.json。只读使用公开 VBA 配置夹具中的 15 条真实时序规则和 146 条路径映射，经临时桥接配置驱动 PyCode 基线与真实 Rust 交互菜单；全局路径和三个源工作簿为临时合成数据。菜单 1→3 与 1→4 各处理 3 个源簿，PyCode 与 Rust 输出的工作表顺序、维度、单元格值/类型、数值格式、有效样式、合并、公式、定义名称和冻结窗格均精确一致；两种模式输出维度相同，为 9×8、7×5、4×6。开发者历史两项均 succeeded、记录 3 个输入和实际引擎 calamine/rust_xlsxwriter，未记录源路径；源簿处理前后字节一致。
+
+Windows 原生 pytools-core 二进制构建通过；真实菜单入口为 pytools menu → 1 → 3/4，手动分号路径输入。PT-1-3/PT-1-4 的真实源报表仍不可用，功能生命周期仍为未验证；该证据是真实配置规则与合成数据的组合，不是业务验收。原生文件对话框、目标追加/生产 capability、Kylin/UOS、glibc 2.28、离线 deb 未验证。PT-1-2 继续保持排除。

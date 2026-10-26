@@ -1,0 +1,113 @@
+{
+  "schema_version": 1,
+  "suite": "pytools.real_rules_interactive_menu_wide_summary_parity",
+  "date": "2026-10-26",
+  "status": "passed_synthetic_sources_real_rules_menu_parity",
+  "environment": {
+    "platform": "Windows 11 x64",
+    "rust_cli": "native MSVC executable",
+    "sample_kind": "synthetic source workbooks"
+  },
+  "configuration_source": {
+    "workbook": "tests/fixtures/vba_config/VbaV2.4.2.xlsm",
+    "origin": "public VBA_Excel_Tools fixture, HEAD cea6dfa",
+    "scope": "15 real timeline rules and 146 real path maps copied into temporary bridge configs; global paths synthetic"
+  },
+  "entry": "pytools menu -> 1 -> 3/4",
+  "source_workbooks": "three synthetic workbooks shaped to hit three real rules",
+  "cases": [
+    {
+      "feature_id": "PT-1-3",
+      "menu_route": "pytools menu -> 1 -> 3",
+      "status": "passed_exact",
+      "processed_sources": 3,
+      "python_rust_projection": "exact",
+      "compared_fields": [
+        "sheet_names_and_order",
+        "dimensions",
+        "cell_values_and_types",
+        "number_formats",
+        "effective_styles",
+        "merged_ranges",
+        "formulas",
+        "defined_names",
+        "freeze_panes"
+      ],
+      "output_sheet_names": [
+        "中外资本外币分地区",
+        "普惠分地区",
+        "分地区统计研究调研问卷"
+      ],
+      "output_dimensions": [
+        [
+          9,
+          8
+        ],
+        [
+          7,
+          5
+        ],
+        [
+          4,
+          6
+        ]
+      ],
+      "actual_engines": [
+        "calamine",
+        "rust_xlsxwriter"
+      ],
+      "developer_history": "succeeded; source paths omitted",
+      "target_append": "not exercised; bridge configuration has no target paths"
+    },
+    {
+      "feature_id": "PT-1-4",
+      "menu_route": "pytools menu -> 1 -> 4",
+      "status": "passed_exact",
+      "processed_sources": 3,
+      "python_rust_projection": "exact",
+      "compared_fields": [
+        "sheet_names_and_order",
+        "dimensions",
+        "cell_values_and_types",
+        "number_formats",
+        "effective_styles",
+        "merged_ranges",
+        "formulas",
+        "defined_names",
+        "freeze_panes"
+      ],
+      "output_sheet_names": [
+        "中外资本外币分地区",
+        "普惠分地区",
+        "分地区统计研究调研问卷"
+      ],
+      "output_dimensions": [
+        [
+          9,
+          8
+        ],
+        [
+          7,
+          5
+        ],
+        [
+          4,
+          6
+        ]
+      ],
+      "actual_engines": [
+        "calamine",
+        "rust_xlsxwriter"
+      ],
+      "developer_history": "succeeded; source paths omitted",
+      "target_append": "not exercised; bridge configuration has no target paths"
+    }
+  ],
+  "source_workbooks_unchanged": true,
+  "limitations": [
+    "Source workbooks are synthetic, not original PyTools business reports; this is not real-sample acceptance.",
+    "The menu used manual semicolon-separated paths; native file-dialog UI was not exercised.",
+    "No configured target append was exercised; no production ExcelModifier capability was used.",
+    "Kylin V10, UOS V20, glibc 2.28, and offline deb delivery remain unverified."
+  ]
+}
