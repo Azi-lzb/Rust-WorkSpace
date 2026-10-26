@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "status": "blocked",
+  "feature": "PT-7-6 area extraction time-only value classification",
+  "sample_kind": "synthetic XLSX time value with h:mm:ss format",
+  "source_python": "PyCode/core/feature_1_6_extract_sheets.py::run_extract_sheets",
+  "rust_entry": "pytools extract-sheets-area",
+  "shared_api_gap": "excel-reader returns CellValue without per-cell number-format metadata, so PyTools cannot distinguish a time-only value from an epoch date.",
+  "python_stats": {
+    "files": 1,
+    "extracted_sheets": 1,
+    "output_files": 1,
+    "failed_files": 0
+  },
+  "python_projection": {
+    "sheet_names": [
+      "Sheet_2"
+    ],
+    "sheets": [
+      {
+        "name": "Sheet_2",
+        "cells": [
+          {
+            "cell": "A1",
+            "type": "time",
+            "value": "00:00:00.000",
+            "number_format": "h:mm:ss"
+          }
+        ]
+      }
+    ]
+  },
+  "rust_returncode": 2,
+  "rust_error": "pytools: write extracted value at A1 from worksheet \"Sheet\": date/time uses an Excel epoch day that is ambiguous with a time-only value; output was not committed",
+  "rust_output_created": false,
+  "rust_projection": null,
+  "source_unchanged": true,
+  "scope_note": "Synthetic reproducer only. Real business time-only cells and other formats/platforms remain unverified. A reader metadata API is needed before implementing value classification without a PyTools-local OOXML reader."
+}

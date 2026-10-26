@@ -777,6 +777,12 @@ Windows 原生验证：`cargo fmt --manifest-path pytools-core/Cargo.toml -- --c
 
 真实业务时长样本、time-only 单元格、其他输入格式、Windows 原生文件对话框、全模板保真、Linux/glibc 2.28、麒麟/UOS 与离线 deb 仍未验证；PT-7-6 整体验收继续未完成。
 
+### 2026-10-26 PT-7-6 time-only 单元格受共享读取元数据能力阻塞
+
+最小合成输入为 XLSX `A1=time(00:00:00)`、number format `h:mm:ss`。只读 PyCode `run_extract_sheets` 经实际业务入口成功输出 `Sheet_2!A1`，类型 `time`、值 `00:00:00.000`、格式 `h:mm:ss`；Rust `extract-sheets-area` 以退出码 2 失败关闭，提示 Excel epoch 日期无法与 time-only 区分，未生成输出。机器复现 `probe/compare_sheet_extract_area_time_only.py` 与报告 `probe/reports/sheet_extract_area_time_only_blocker_20261026.json`。既有 `sheet_extract_area_operation_parity` 回归继续覆盖歧义 epoch 的无输出失败保护。
+
+阻塞原因：共享 `excel-reader::read_value_columns_with_iso_dates` 只返回 `CellValue`，没有按工作表/坐标读取有效 number format 的公共只读 API；不能仅按序列数值可靠地区分 Python `datetime.time`、`datetime.timedelta` 与 calendar datetime。已将最小复现和所需通用 API（按坐标读取 number-format 元数据，不包含 PyTools 业务概念）发给 main 协调，待共享能力安全同步后继续接线。time-only 子集状态为受阻；真实业务样本和其他格式仍未验证，不改变 PT-7-6 整体验收状态。
+
 ### 2026-10-25 PT-1-2 时序提取 Rust 主输出、目标追加与入口对拍
 
 新增 `timeline_extract` Rust 业务模块，按原 `PyCode.core.timeline_396.run_timeline_slim` 复用现有规则引擎，读取配置规则与路径映射，执行行头后缀、跨规则去重、日期和值写出，并以 `rust_xlsxwriter` 生成七列 `时序提取结果`。新增 `timeline-extract` CLI 及真实菜单 `pytools menu → 1 → 2`，接入 user/developer/off 日志视图与 PT-1-2 运行历史。读取、写入和目标提交事件记录实际引擎、进度与阶段耗时。

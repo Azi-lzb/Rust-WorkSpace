@@ -1,0 +1,21 @@
+时间：2026-10-26 16:09（Windows 11，UTC+8）
+执行者：Codex
+修改前/后 HEAD：`b364b02909613fd47d89a0d8a2d7738a48d84ffc`（仅增加复现/阻塞证据，未改业务代码）
+WIP：保留工作树原有的交接报告、PT-4-2/PT-6-2 未提交记录及迁移清单中的既有修改；未覆盖、暂存或清理这些内容。
+
+目的：把 PT-7-6 区域提取 time-only 类型差异记录为共享 reader 元数据 API 阻塞，保留可重复的最小业务对拍；按项目规则转 main 协调后继续其他迁移项。
+
+修改/新增文件：
+- `pytools-core/probe/compare_sheet_extract_area_time_only.py`：生成一个仅含 A1 的合成 XLSX（`datetime.time(00:00:00)`，格式 `h:mm:ss`），运行只读 PyCode `run_extract_sheets` 与真实 Rust `extract-sheets-area` CLI；能区分当前失败关闭与未来完整投影通过。
+- `pytools-core/probe/reports/sheet_extract_area_time_only_blocker_20261026.json`：记录 Python 输出类型/值/格式、Rust 失败阶段和无输出断言；不含真实路径或业务数据。
+- `pytools-core/MIGRATION_INVENTORY.md`：登记 time-only 子集的共享 API 阻塞和待验证状态。
+
+发现：PyCode 对合成输入成功输出 `Sheet_2!A1` 为 `time`、`00:00:00.000`、`h:mm:ss`。当前 Rust CLI 退出码 2，报“date/time uses an Excel epoch day that is ambiguous with a time-only value”，未生成输出；源字节不变。现有共享 `excel-reader::read_value_columns_with_iso_dates` 不暴露每个单元格的有效 number format，因此 PyTools 不能可靠地区分 time-only、elapsed duration 与 calendar datetime。未在业务层私自添加 OOXML 样式解析；已把最小复现及按 sheet/坐标读取 number-format 元数据的通用能力需求发送 main。
+
+验证：在 Windows 原生运行 `python pytools-core/probe/compare_sheet_extract_area_time_only.py --pytools-cli <pytools.exe> --python-project C:\Users\AZI\Desktop\VibeCode\4.pytools-main`。Python `failed_files=0`，Rust 按预期安全失败且无候选输出，输入字节不变；机器结果见上述 JSON。既有 `sheet_extract_area_operation_parity` 回归同时覆盖该类 epoch ambiguity 的拒绝提交保护。原项目保持只读。
+
+未执行/已知问题：尚无真实业务 time-only 样本；未实现 time-only 写出，也未验证其他格式或完整 PT-7-6 保真。等待 main 提供共享 API 后再实现和对拍；PT-7-6 time-only 子集暂记受阻，其余迁移继续。
+
+删除清单：无。
+回滚：可单独回滚本记录、探针、机器报告及迁移清单中的 time-only blocker 小节；不回滚 PT-7-6 已完成的累计时长/ISO-typed 子集或原有失败关闭测试。
+【组件版本】不升级；未改产品代码、共享 crate 或依赖。
