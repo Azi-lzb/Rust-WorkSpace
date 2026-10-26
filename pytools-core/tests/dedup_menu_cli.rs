@@ -112,19 +112,61 @@ fn interactive_dedup_menu_routes_four_v2_actions_without_committing_edits() -> R
     assert!(config_delete.status.success());
     let config_delete_json = output_json(&config_delete)?;
     assert_eq!(config_delete_json[0]["report"]["duplicate_rows"], 1);
-    assert_eq!(config_delete_json[0]["execution"], "plan_only");
+    assert_eq!(config_delete_json[0]["execution"], "written");
+    assert_eq!(config_delete_json[0]["status"], "succeeded");
+    let delete_output = PathBuf::from(
+        config_delete_json[0]["output_file"]
+            .as_str()
+            .context("config delete output path missing")?,
+    );
+    assert!(delete_output.is_file());
+    let deleted = read_workbook(&delete_output)?;
+    assert_eq!(deleted.sheets.len(), 1);
+    assert_eq!(deleted.sheets[0].name, "Commented");
+    assert_eq!(
+        deleted.sheets[0].values.len(),
+        source_dump.sheets[0].values.len() - 3
+    );
+    for address in ["A1", "B1", "C1", "A2", "B2", "C2"] {
+        assert_eq!(
+            deleted.sheets[0].values.get(address),
+            source_dump.sheets[0].values.get(address),
+            "nonduplicate row cell {address} should be preserved"
+        );
+    }
+    for (output_address, source_address) in [("A3", "A4"), ("B3", "B4"), ("C3", "C4")] {
+        assert_eq!(
+            deleted.sheets[0].values.get(output_address),
+            source_dump.sheets[0].values.get(source_address),
+            "surviving rows should shift upward after deletion"
+        );
+    }
+    assert!(!deleted.sheets[0].values.contains_key("A4"));
     let config_delete_plan = PathBuf::from(
         config_delete_json[0]["plan_file"]
             .as_str()
             .context("config delete plan path missing")?,
     );
     assert!(config_delete_plan.is_file());
-    assert!(!PathBuf::from(
-        config_delete_json[0]["report"]["plan"]["output"]
-            .as_str()
-            .context("config delete candidate path missing")?
-    )
-    .exists());
+    assert_eq!(
+        PathBuf::from(
+            config_delete_json[0]["report"]["plan"]["output"]
+                .as_str()
+                .context("config delete candidate path missing")?
+        ),
+        delete_output
+    );
+    for result in [&check_output, &delete_output] {
+        let result_dir = result.parent().context("duplicate result parent missing")?;
+        assert!(!fs::read_dir(result_dir)?
+            .filter_map(|entry| entry.ok())
+            .any(|entry| {
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .contains(".pytools-dedup-")
+            }));
+    }
 
     let append_plan = run_menu(&config, "2\n3\n0\n")?;
     assert!(append_plan.status.success());
@@ -431,6 +473,7 @@ fn interactive_dedup_menu_writes_developer_history_and_off_suppresses_it() -> Re
     assert_eq!(history["metrics"]["hit_sheets"], 1);
     assert_eq!(history["metrics"]["planned_operations"], 3);
     assert_eq!(history["metrics"]["written_outputs"], 1);
+    assert_eq!(history["metrics"]["committed_targets"], 0);
     assert!(history["elapsed_ms"].as_u64().is_some());
     assert!(history["stages"]
         .as_array()

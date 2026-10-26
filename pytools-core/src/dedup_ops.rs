@@ -15,9 +15,11 @@ use std::{
     collections::{BTreeMap, BTreeSet, HashSet},
     fs,
     path::{Path, PathBuf},
+    sync::atomic::{AtomicU64, Ordering},
 };
 
 type DateIsoMap = std::collections::HashMap<(String, String), String>;
+static DUPLICATE_RESULT_TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DuplicateAction {
@@ -251,14 +253,36 @@ pub fn build_config_duplicate_plan(
     Ok(summaries)
 }
 
-/// Create a new, data-only check workbook and color duplicate rows red.
-/// The source is never opened for writing; formulas and typed Excel errors
-/// fail closed because this pure-data writer cannot preserve them safely.
+/// Create a new data-only duplicate result workbook.
+/// The source is never opened for writing; unsupported workbook features fail closed.
 pub fn write_config_duplicate_check_candidate(
     input: &Path,
     output: &Path,
     plan: Option<&ExcelEditPlan>,
 ) -> Result<PathBuf> {
+    write_config_duplicate_result_candidate(input, output, plan, DuplicateAction::Check)
+}
+
+/// Create a new, data-only workbook with configured duplicate rows removed.
+/// The source is never opened for writing; unsupported workbook features fail closed.
+pub fn write_config_duplicate_delete_candidate(
+    input: &Path,
+    output: &Path,
+    plan: Option<&ExcelEditPlan>,
+) -> Result<PathBuf> {
+    write_config_duplicate_result_candidate(input, output, plan, DuplicateAction::Delete)
+}
+
+fn write_config_duplicate_result_candidate(
+    input: &Path,
+    output: &Path,
+    plan: Option<&ExcelEditPlan>,
+    action: DuplicateAction,
+) -> Result<PathBuf> {
+    anyhow::ensure!(
+        matches!(action, DuplicateAction::Check | DuplicateAction::Delete),
+        "unsupported configured duplicate output action"
+    );
     ensure_xlsx(input, output)?;
     anyhow::ensure!(
         !output.exists(),
@@ -266,25 +290,82 @@ pub fn write_config_duplicate_check_candidate(
         output.display()
     );
     if let Some(plan) = plan {
-        anyhow::ensure!(plan.input == input, "duplicate check plan input changed");
-        anyhow::ensure!(plan.output == output, "duplicate check plan output changed");
+        anyhow::ensure!(plan.input == input, "duplicate plan input changed");
+        anyhow::ensure!(plan.output == output, "duplicate plan output changed");
     }
 
     let source = read_workbook(input).with_context(|| format!("read {}", input.display()))?;
     let mut duplicate_rows = BTreeMap::<String, BTreeSet<usize>>::new();
+    let mut current_rows_by_sheet = BTreeMap::<String, Vec<usize>>::new();
+    if action == DuplicateAction::Delete {
+        for sheet in &source.sheets {
+            current_rows_by_sheet.insert(sheet.name.clone(), (1..=used_row_count(sheet)).collect());
+        }
+    }
     if let Some(plan) = plan {
         for operation in &plan.operations {
-            if let EditOperation::SetCellFillColor { sheet, cell, argb } = operation {
-                anyhow::ensure!(
-                    argb.eq_ignore_ascii_case("FFFF0000"),
-                    "unexpected duplicate check fill color {argb:?}"
-                );
-                let (row, _) = parse_a1(cell)
-                    .with_context(|| format!("invalid duplicate mark cell {cell:?}"))?;
-                duplicate_rows.entry(sheet.clone()).or_default().insert(row);
+            match (action, operation) {
+                (DuplicateAction::Check, EditOperation::SetCellFillColor { sheet, cell, argb }) => {
+                    anyhow::ensure!(
+                        argb.eq_ignore_ascii_case("FFFF0000"),
+                        "unexpected duplicate check fill color {argb:?}"
+                    );
+                    let (row, _) = parse_a1(cell)
+                        .with_context(|| format!("invalid duplicate mark cell {cell:?}"))?;
+                    anyhow::ensure!(
+                        source
+                            .sheets
+                            .iter()
+                            .any(|candidate| candidate.name == *sheet),
+                        "duplicate mark targets unknown worksheet {sheet:?}"
+                    );
+                    duplicate_rows.entry(sheet.clone()).or_default().insert(row);
+                }
+                (
+                    DuplicateAction::Delete,
+                    EditOperation::DeleteRows {
+                        sheet,
+                        first_row,
+                        count,
+                    },
+                ) => {
+                    let rows = current_rows_by_sheet.get_mut(sheet).with_context(|| {
+                        format!("delete plan targets unknown worksheet {sheet:?}")
+                    })?;
+                    let start = usize::try_from(*first_row)
+                        .context("duplicate deletion start row exceeds usize")?
+                        .checked_sub(1)
+                        .context("duplicate deletion row must be 1-based")?;
+                    let end = start
+                        .checked_add(usize::try_from(*count).context("row count exceeds usize")?)
+                        .context("duplicate deletion range overflows")?;
+                    anyhow::ensure!(
+                        end <= rows.len(),
+                        "duplicate deletion range exceeds current worksheet rows"
+                    );
+                    rows.drain(start..end);
+                }
+                _ => anyhow::bail!(
+                    "duplicate plan contains an operation incompatible with {action:?}"
+                ),
             }
         }
     }
+    let output_rows_by_sheet = if action == DuplicateAction::Delete {
+        current_rows_by_sheet
+            .into_iter()
+            .map(|(sheet, source_rows)| {
+                let output_rows = source_rows
+                    .into_iter()
+                    .enumerate()
+                    .map(|(output_index, source_row)| (source_row, output_index + 1))
+                    .collect::<BTreeMap<_, _>>();
+                (sheet, output_rows)
+            })
+            .collect::<BTreeMap<_, _>>()
+    } else {
+        BTreeMap::new()
+    };
 
     let red_fill =
         excel_writer::Format::new().set_background_color(excel_writer::Color::RGB(0xFF_00_00));
@@ -296,42 +377,42 @@ pub fn write_config_duplicate_check_candidate(
     for sheet in &source.sheets {
         anyhow::ensure!(
             sheet.formula_status == "read_by_calamine",
-            "formula metadata unavailable for duplicate check worksheet {:?}",
+            "formula metadata unavailable for duplicate output worksheet {:?}",
             sheet.name
         );
         anyhow::ensure!(
             sheet.formulas.is_empty(),
-            "pure-data duplicate check does not support formula cells in worksheet {:?}",
+            "pure-data duplicate output does not support formula cells in worksheet {:?}",
             sheet.name
         );
         anyhow::ensure!(
             sheet.comments_status == "read_by_namespace_aware_ooxml_supplement"
                 && sheet.comments.is_empty(),
-            "pure-data duplicate check cannot preserve comments in worksheet {:?}",
+            "pure-data duplicate output cannot preserve comments in worksheet {:?}",
             sheet.name
         );
         anyhow::ensure!(
             sheet.merge_status == "read_by_calamine" && sheet.merges.is_empty(),
-            "pure-data duplicate check cannot preserve merged cells in worksheet {:?}",
+            "pure-data duplicate output cannot preserve merged cells in worksheet {:?}",
             sheet.name
         );
         anyhow::ensure!(
             sheet.conditional_formatting_status == "read_by_namespace_aware_ooxml_supplement"
                 && sheet.conditional_formatting.is_empty(),
-            "pure-data duplicate check cannot preserve conditional formatting in worksheet {:?}",
+            "pure-data duplicate output cannot preserve conditional formatting in worksheet {:?}",
             sheet.name
         );
         anyhow::ensure!(
             sheet.data_validations_status == "read_by_namespace_aware_ooxml_supplement"
                 && sheet.data_validations.is_empty(),
-            "pure-data duplicate check cannot preserve data validations in worksheet {:?}",
+            "pure-data duplicate output cannot preserve data validations in worksheet {:?}",
             sheet.name
         );
         anyhow::ensure!(
             !sheet.values.values().any(|value| {
                 value.get("type").and_then(serde_json::Value::as_str) == Some("error")
             }),
-            "typed Excel error cells cannot be written by the duplicate check output engine in worksheet {:?}",
+            "typed Excel error cells cannot be written by the duplicate output engine in worksheet {:?}",
             sheet.name
         );
 
@@ -344,11 +425,23 @@ pub fn write_config_duplicate_check_candidate(
             let Some((row, column)) = parse_a1(address) else {
                 anyhow::bail!("invalid source cell address {address:?}");
             };
-            let row_index =
-                u32::try_from(row.saturating_sub(1)).context("worksheet row exceeds XLSX limit")?;
+            let output_row = if action == DuplicateAction::Delete {
+                output_rows_by_sheet
+                    .get(&sheet.name)
+                    .and_then(|rows| rows.get(&row))
+                    .copied()
+            } else {
+                Some(row)
+            };
+            let Some(output_row) = output_row else {
+                continue;
+            };
+            let row_index = u32::try_from(output_row.saturating_sub(1))
+                .context("worksheet row exceeds XLSX limit")?;
             let column_index = u16::try_from(column.saturating_sub(1))
                 .context("worksheet column exceeds XLSX limit")?;
-            let marked = marked_rows.is_some_and(|rows| rows.contains(&row));
+            let marked = action == DuplicateAction::Check
+                && marked_rows.is_some_and(|rows| rows.contains(&row));
             let value = ReaderCellValue::from_probe_json(value)
                 .with_context(|| format!("decode {}/{}", sheet.name, address))?;
             match value {
@@ -443,14 +536,14 @@ pub fn write_config_duplicate_check_candidate(
                 }
                 ReaderCellValue::DateTimeIso(_) | ReaderCellValue::DurationIso(_) => {
                     anyhow::bail!(
-                        "ISO-typed date or duration at {}/{} cannot be preserved by the duplicate check output engine",
+                        "ISO-typed date or duration at {}/{} cannot be preserved by the duplicate output engine",
                         sheet.name,
                         address
                     );
                 }
                 ReaderCellValue::Error(value) => {
                     anyhow::bail!(
-                        "typed Excel error at {}/{} cannot be written as a duplicate check value: {value}",
+                        "typed Excel error at {}/{} cannot be written as a duplicate result value: {value}",
                         sheet.name,
                         address
                     );
@@ -458,16 +551,18 @@ pub fn write_config_duplicate_check_candidate(
             }
         }
 
-        if let Some(marked_rows) = marked_rows {
-            for row in marked_rows {
-                for column in 1..=max_column {
-                    let address = cell_address(*row, column);
-                    if !sheet.values.contains_key(&address) {
-                        let row_index = u32::try_from(row.saturating_sub(1))
-                            .context("worksheet row exceeds XLSX limit")?;
-                        let column_index = u16::try_from(column.saturating_sub(1))
-                            .context("worksheet column exceeds XLSX limit")?;
-                        worksheet.write_blank(row_index, column_index, &red_fill)?;
+        if action == DuplicateAction::Check {
+            if let Some(marked_rows) = marked_rows {
+                for row in marked_rows {
+                    for column in 1..=max_column {
+                        let address = cell_address(*row, column);
+                        if !sheet.values.contains_key(&address) {
+                            let row_index = u32::try_from(row.saturating_sub(1))
+                                .context("worksheet row exceeds XLSX limit")?;
+                            let column_index = u16::try_from(column.saturating_sub(1))
+                                .context("worksheet column exceeds XLSX limit")?;
+                            worksheet.write_blank(row_index, column_index, &red_fill)?;
+                        }
                     }
                 }
             }
@@ -482,7 +577,7 @@ pub fn write_config_duplicate_check_candidate(
     let profile = inspect_xlsx_profile(input)?;
     anyhow::ensure!(
         profile.inventory_complete,
-        "duplicate check cannot rebuild a workbook with unknown OOXML parts"
+        "duplicate output cannot rebuild a workbook with unknown OOXML parts"
     );
     let unsupported_features = profile
         .features_present
@@ -492,55 +587,113 @@ pub fn write_config_duplicate_check_candidate(
         .collect::<Vec<_>>();
     anyhow::ensure!(
         unsupported_features.is_empty(),
-        "duplicate check cannot rebuild workbook with unsupported features: {}",
+        "duplicate output cannot rebuild workbook with unsupported features: {}",
         unsupported_features.join(", ")
     );
     let defined_names = excel_reader::read_defined_names(input)?;
     anyhow::ensure!(
         defined_names.is_empty(),
-        "duplicate check cannot preserve workbook defined names"
+        "duplicate output cannot preserve workbook defined names"
     );
 
-    if let Some(parent) = output.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(output)
-        .with_context(|| format!("reserve duplicate check output {}", output.display()))?;
+    let parent = output
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    fs::create_dir_all(parent)?;
+    let candidate = reserve_duplicate_result_temp(output)?;
     let validation = (|| -> Result<()> {
         workbook
-            .save(output)
-            .with_context(|| format!("write duplicate check output {}", output.display()))?;
-        let reopened = read_workbook(output)
-            .with_context(|| format!("reopen duplicate check output {}", output.display()))?;
+            .save(&candidate)
+            .with_context(|| format!("write duplicate result candidate {}", candidate.display()))?;
+        let reopened = read_workbook(&candidate).with_context(|| {
+            format!("reopen duplicate result candidate {}", candidate.display())
+        })?;
         anyhow::ensure!(
             reopened.sheets.len() == source.sheets.len(),
-            "duplicate check output worksheet count changed"
+            "duplicate result output worksheet count changed"
         );
         for (expected, actual) in source.sheets.iter().zip(&reopened.sheets) {
             anyhow::ensure!(
                 expected.name == actual.name,
-                "duplicate check output worksheet order/name changed"
+                "duplicate result output worksheet order/name changed"
             );
+            let expected_values = if action == DuplicateAction::Delete {
+                let rows = output_rows_by_sheet
+                    .get(&expected.name)
+                    .context("duplicate deletion output row map is missing")?;
+                let mut values = BTreeMap::new();
+                for (address, value) in &expected.values {
+                    let (source_row, column) = parse_a1(address)
+                        .with_context(|| format!("invalid source cell address {address:?}"))?;
+                    if let Some(output_row) = rows.get(&source_row) {
+                        values.insert(cell_address(*output_row, column), value.clone());
+                    }
+                }
+                values
+            } else {
+                expected.values.clone()
+            };
             anyhow::ensure!(
-                expected.values == actual.values,
-                "duplicate check output values/types differ in worksheet {:?}",
+                expected_values == actual.values,
+                "duplicate result output values/types differ in worksheet {:?}",
                 expected.name
             );
             anyhow::ensure!(
                 actual.formulas.is_empty() && actual.comments.is_empty(),
-                "duplicate check output unexpectedly contains formulas or comments"
+                "duplicate result output unexpectedly contains formulas or comments"
             );
         }
         Ok(())
     })();
     if let Err(error) = validation {
-        let _ = fs::remove_file(output);
+        let _ = fs::remove_file(&candidate);
         return Err(error);
     }
+    if let Err(error) = crate::file_commit::create_target_from_candidate(&candidate, output) {
+        let _ = fs::remove_file(&candidate);
+        return Err(error);
+    }
+    let _ = fs::remove_file(&candidate);
     Ok(output.to_path_buf())
+}
+
+fn reserve_duplicate_result_temp(output: &Path) -> Result<PathBuf> {
+    let parent = output
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let stem = output
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .unwrap_or("duplicate-result");
+    for _ in 0..1000 {
+        let sequence = DUPLICATE_RESULT_TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        let candidate = parent.join(format!(
+            ".{stem}.pytools-dedup-{}-{sequence}.tmp.xlsx",
+            std::process::id()
+        ));
+        match fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&candidate)
+        {
+            Ok(file) => {
+                drop(file);
+                return Ok(candidate);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => {
+                return Err(error).with_context(|| {
+                    format!("reserve duplicate result candidate {}", candidate.display())
+                });
+            }
+        }
+    }
+    bail!(
+        "cannot reserve a unique duplicate result candidate beside {}",
+        output.display()
+    )
 }
 
 fn duplicate_preservation(action: DuplicateAction) -> BTreeSet<PreservationRequirement> {
