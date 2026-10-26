@@ -7,12 +7,13 @@ import shutil
 import subprocess
 import tempfile
 from datetime import date
-from datetime import datetime
+from datetime import datetime, time, timedelta
 from pathlib import Path
 
 import openpyxl
 import xlrd
 from openpyxl import Workbook, load_workbook
+from openpyxl.utils.datetime import to_excel
 
 REPO = Path(__file__).resolve().parents[2]
 FIXTURE = REPO / "pytools-core" / "tests" / "fixtures" / "timeline" / "wide_summary_legacy.xls"
@@ -232,11 +233,80 @@ def main() -> int:
         if "ISO-typed date/time" not in iso_failure_detail or "cell type" not in iso_failure_detail:
             raise AssertionError(f"ISO date refusal detail is incomplete: {iso_failure_detail!r}")
 
+        serial_source = output_dir / "serial-date-time.xlsm"
+        serial_workbook = Workbook()
+        serial_sheet = serial_workbook.active
+        serial_sheet.title = "日期时间"
+        serial_sheet["A1"] = datetime(2024, 2, 29, 12, 30)
+        serial_sheet["A1"].number_format = "yyyy-mm-dd hh:mm:ss"
+        serial_sheet["A2"] = time(12, 30)
+        serial_sheet["A2"].number_format = "hh:mm"
+        serial_sheet["A3"] = timedelta(hours=26, minutes=15)
+        serial_sheet["A3"].number_format = "[h]:mm:ss"
+        serial_workbook.save(serial_source)
+        serial_source_before = serial_source.read_bytes()
+        serial_result = subprocess.run(
+            [
+                str(RUST_CLI),
+                "convert-excel",
+                "--config",
+                str(config),
+                "--to",
+                "xlsx",
+                "--engine",
+                "native",
+                "--output-dir",
+                str(output_dir),
+                "--log-dir",
+                str(output_dir / "logs"),
+                "--log-view",
+                "developer",
+                str(serial_source),
+            ],
+            check=False,
+            capture_output=True,
+        )
+        serial_stdout = (
+            serial_result.stdout.decode("utf-8-sig", errors="replace").replace("\x00", "")
+        )
+        if serial_result.returncode != 0:
+            raise AssertionError(
+                f"numeric serial date/time conversion failed: {serial_stdout[-1000:]!r}"
+            )
+        serial_report = json.loads(serial_stdout)
+        if serial_report.get("converted") != 1 or serial_report.get("failed") != 0:
+            raise AssertionError(f"unexpected numeric serial conversion result: {serial_report}")
+        serial_output = load_workbook(serial_report["items"][0]["output"], data_only=False)
+        try:
+            serial_output_sheet = serial_output["日期时间"]
+            serial_expected = {
+                "A1": to_excel(datetime(2024, 2, 29, 12, 30)),
+                "A2": to_excel(time(12, 30)),
+                "A3": timedelta(hours=26, minutes=15).total_seconds() / 86_400,
+            }
+            serial_actual = {}
+            for address, expected in serial_expected.items():
+                actual = serial_output_sheet[address].value
+                if isinstance(actual, bool) or not isinstance(actual, (int, float)):
+                    raise AssertionError(
+                        f"numeric serial cell type changed at {address}: {type(actual).__name__}"
+                    )
+                if not math.isclose(float(actual), expected, rel_tol=0.0, abs_tol=1e-10):
+                    raise AssertionError(
+                        f"numeric serial value differs at {address}: Python={expected!r}, "
+                        f"Rust={actual!r}"
+                    )
+                serial_actual[address] = float(actual)
+        finally:
+            serial_output.close()
+        if serial_source.read_bytes() != serial_source_before:
+            raise AssertionError("the numeric serial date/time source workbook was modified")
+
     report = {
         "schema_version": 1,
         "suite": "pytools.conversion.native_excel_value_only",
         "date": date.today().isoformat(),
-        "status": "passed_synthetic_python_rust_value_projection_and_type_guard",
+        "status": "passed_synthetic_python_rust_value_projection_and_date_type_checks",
         "environment": {
             "os": platform.platform(),
             "rust_entry": "Windows-native pytools convert-excel --engine native",
@@ -264,9 +334,22 @@ def main() -> int:
             "output_published": False,
             "source_unchanged": True,
         },
+        "numeric_serial_values": {
+            "date_system": "1900",
+            "cells": {
+                address: {
+                    "python_expected_serial": expected,
+                    "rust_output_number": serial_actual[address],
+                    "output_type": "number",
+                }
+                for address, expected in serial_expected.items()
+            },
+            "formatting_dropped": True,
+            "source_unchanged": True,
+        },
         "unverified": [
             "Real business XLS workbooks and configurations.",
-            "Formula text/cache parity against legacy XLS conversion, numeric serial date/time cells, booleans, error cells and empty-string cells.",
+            "Formula text/cache parity against legacy XLS conversion, 1904 date-system semantics, booleans, error cells and empty-string cells.",
             "Styles, comments, merged regions, dimensions, names, print settings, validations, conditional formatting, drawings and macros are intentionally not preserved by this value-only route.",
             "Windows desktop file dialog, glibc 2.28, Kylin V10/UOS V20 and offline deb delivery.",
         ],

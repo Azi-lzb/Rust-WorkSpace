@@ -2,7 +2,7 @@
   "schema_version": 1,
   "suite": "pytools.conversion.native_excel_value_only",
   "date": "2026-10-26",
-  "status": "passed_synthetic_python_rust_value_projection_and_type_guard",
+  "status": "passed_synthetic_python_rust_value_projection_and_date_type_checks",
   "environment": {
     "os": "Windows-11-10.0.26200-SP0",
     "rust_entry": "Windows-native pytools convert-excel --engine native",
@@ -46,9 +46,31 @@
     "output_published": false,
     "source_unchanged": true
   },
+  "numeric_serial_values": {
+    "date_system": "1900",
+    "cells": {
+      "A1": {
+        "python_expected_serial": 45351.520833333336,
+        "rust_output_number": 45351.52083333334,
+        "output_type": "number"
+      },
+      "A2": {
+        "python_expected_serial": 0.5208333333333334,
+        "rust_output_number": 0.5208333333333334,
+        "output_type": "number"
+      },
+      "A3": {
+        "python_expected_serial": 1.09375,
+        "rust_output_number": 1.09375,
+        "output_type": "number"
+      }
+    },
+    "formatting_dropped": true,
+    "source_unchanged": true
+  },
   "unverified": [
     "Real business XLS workbooks and configurations.",
-    "Formula text/cache parity against legacy XLS conversion, numeric serial date/time cells, booleans, error cells and empty-string cells.",
+    "Formula text/cache parity against legacy XLS conversion, 1904 date-system semantics, booleans, error cells and empty-string cells.",
     "Styles, comments, merged regions, dimensions, names, print settings, validations, conditional formatting, drawings and macros are intentionally not preserved by this value-only route.",
     "Windows desktop file dialog, glibc 2.28, Kylin V10/UOS V20 and offline deb delivery."
   ]
