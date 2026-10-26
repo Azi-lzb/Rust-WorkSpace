@@ -311,6 +311,109 @@ fn submission_check_uses_and_between_columns_and_or_for_institution_aliases() ->
 }
 
 #[test]
+fn submission_check_menu_uses_and_between_columns_and_or_for_institution_aliases() -> Result<()> {
+    let test_directory = TestDirectory::new()?;
+    let root = &test_directory.0;
+    let config = create_and_or_submission_config(root)?;
+    let sources = root.join("sources");
+    fs::create_dir_all(&sources)?;
+    fs::create_dir_all(root.join("output"))?;
+    fs::create_dir_all(root.join("logs"))?;
+    let names = [
+        "惠城区_中国工商银行股份有限公司_单家机构.xlsx",
+        "惠城区_工行_单家机构.xlsx",
+        "惠城区_未知机构_单家机构.xlsx",
+        "惠城区_工行_贷款报表.xlsx",
+        "龙门县_工行_单家机构.xlsx",
+    ];
+    let files = names
+        .iter()
+        .enumerate()
+        .map(|(index, name)| {
+            let path = sources.join(name);
+            fs::write(&path, format!("synthetic payload {index}"))?;
+            Ok(path)
+        })
+        .collect::<std::io::Result<Vec<_>>>()?;
+    let original_config = fs::read(&config)?;
+    let original_files = files
+        .iter()
+        .map(|path| fs::read(path).map(|bytes| (path.clone(), bytes)))
+        .collect::<std::io::Result<Vec<_>>>()?;
+
+    let input = format!("4\n6\n2\n{}\n0\n", sources.display());
+    let output = run_menu(&config, &input)?;
+    assert!(
+        output.status.success(),
+        "submission-check menu failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let start = output
+        .stdout
+        .iter()
+        .position(|byte| *byte == b'{')
+        .context("submission-check menu JSON output missing")?;
+    let report: Value = serde_json::Deserializer::from_slice(&output.stdout[start..])
+        .into_iter::<Value>()
+        .next()
+        .context("submission-check menu report missing")??;
+    assert_eq!(report["rules"], 1);
+    assert_eq!(report["files"], 5);
+    assert_eq!(report["submitted"], 1);
+    assert_eq!(report["missing"], 0);
+    assert_eq!(report["unmatched"], 3);
+
+    let report_path = PathBuf::from(report["output"].as_str().context("report path missing")?);
+    let workbook = excel_reader::read_workbook(&report_path)?;
+    let result_sheet = &workbook.sheets[0];
+    assert_eq!(result_sheet.name, "检查结果");
+    assert_eq!(
+        result_sheet.values["F2"]["value"].as_f64(),
+        Some(2.0),
+        "both a full name and its short alias satisfy the institution group"
+    );
+    assert_eq!(
+        {
+            let mut matched = result_sheet.values["G2"]["value"]
+                .as_str()
+                .context("matched-file list missing")?
+                .split('；')
+                .collect::<Vec<_>>();
+            matched.sort_unstable();
+            matched
+        },
+        [
+            "惠城区_中国工商银行股份有限公司_单家机构.xlsx",
+            "惠城区_工行_单家机构.xlsx",
+        ]
+    );
+    let unmatched_sheet = &workbook.sheets[2];
+    assert_eq!(unmatched_sheet.name, "未识别文件");
+    let mut unmatched = ["A2", "A3", "A4"]
+        .map(|address| {
+            unmatched_sheet.values[address]["value"]
+                .as_str()
+                .map(str::to_owned)
+                .context("unmatched-file name missing")
+        })
+        .into_iter()
+        .collect::<Result<Vec<_>>>()?;
+    unmatched.sort_unstable();
+    let mut expected_unmatched = names[2..]
+        .iter()
+        .map(|name| (*name).to_owned())
+        .collect::<Vec<_>>();
+    expected_unmatched.sort_unstable();
+    assert_eq!(unmatched, expected_unmatched);
+
+    assert_eq!(fs::read(&config)?, original_config);
+    for (path, bytes) in original_files {
+        assert_eq!(fs::read(&path)?, bytes, "input changed: {}", path.display());
+    }
+    Ok(())
+}
+
+#[test]
 fn submission_check_menu_matches_python_date_keyword_semantics() -> Result<()> {
     let test_directory = TestDirectory::new()?;
     let root = &test_directory.0;
@@ -652,6 +755,22 @@ fn create_config(root: &Path) -> Result<PathBuf> {
 fn create_and_or_submission_config(root: &Path) -> Result<PathBuf> {
     let config = root.join("submission-and-or-config.xlsx");
     let mut workbook = rust_xlsxwriter::Workbook::new();
+    let global = workbook.add_worksheet();
+    global.set_name("全局配置")?;
+    for (row, (key, value)) in [
+        ("输入目录", root.to_string_lossy().into_owned()),
+        (
+            "输出目录",
+            root.join("output").to_string_lossy().into_owned(),
+        ),
+        ("日志目录", root.join("logs").to_string_lossy().into_owned()),
+    ]
+    .iter()
+    .enumerate()
+    {
+        global.write_string(row as u32, 0, *key)?;
+        global.write_string(row as u32, 1, value)?;
+    }
     let sheet = workbook.add_worksheet();
     sheet.set_name("提交检查配置")?;
     for (column, header) in [

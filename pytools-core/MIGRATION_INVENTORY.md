@@ -1061,9 +1061,9 @@ Windows 原生验证：格式检查和 PyTools CLI `cargo check` 通过；`batch
 
 ### 2026-10-27 PT-4-8 新版提交检查 AND/OR 关键词入口回归
 
-补充新版业务要求 A07 的真实 `submission-check` CLI 合成回归：日期字段留空时不构成条件；县区“惠城区”、备用词“单家机构”必须命中；机构关键词中的全称/简称按 OR 匹配，而各非空字段组之间按 AND 匹配。两种别名文件命中，缺机构、缺备用词或缺县区的三份文件均列为未识别，配置与输入文件字节保持不变。该测试不改变既有规则实现或状态。
+补充新版业务要求 A07 的 `submission-check` 直接 CLI 与新版菜单 `4→6→2` 合成回归：日期字段留空时不构成条件；县区“惠城区”、备用词“单家机构”必须命中；机构关键词中的全称/简称按 OR 匹配，而各非空字段组之间按 AND 匹配。两种别名文件命中，缺机构、缺备用词或缺县区的三份文件均列为未识别，配置与输入文件字节保持不变。菜单扫描结果按文件集合验证，不把文件系统枚举顺序作为业务契约。该测试不改变既有规则实现或状态；无真实业务样本，PT-4-8 仍待 Windows 真实验收。
 
-Windows 原生验证：`cargo fmt -p pytools-core -- --check`、`cargo check --offline --locked -q -p pytools-core --bin pytools -j 1`、`cargo test --offline --locked -q -p pytools-core --test submission_check_parity -j 1`（5/5）、`git diff --check` 通过。只读核对的旧 Python `_load_submission_check_rules` / `_file_matches_submission_rule` 分别按非空组 AND、组内 token OR；本次未重新启动 Python，未执行真实业务样本或 Linux/deb 验收。
+Windows 原生验证：`cargo fmt -p pytools-core -- --check`、`cargo check --offline --locked -q -p pytools-core --bin pytools -j 1`、`cargo test --offline --locked -q -p pytools-core --test submission_check_parity -j 1`（6/6）、`git diff --check` 通过。只读核对的旧 Python `_load_submission_check_rules` / `_file_matches_submission_rule` 分别按非空组 AND、组内 token OR；本次未重新启动 Python，未执行真实业务样本或 Linux/deb 验收。全 workspace `cargo fmt --all -- --check` 另报告两个不属于 PyTools 的 Audit 格式差异，未修改 Audit 文件。
 
 ### 2026-10-27 V2 4-4 Office 格式转换 Windows COM 冒烟与修复
 
