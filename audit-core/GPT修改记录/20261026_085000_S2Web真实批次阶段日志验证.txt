@@ -1,0 +1,40 @@
+# 2026-10-26 S2 Web 真实批次阶段日志验证
+
+## 目的
+
+核实 S2 Web bridge 在真实报表批次运行时是否记录每个业务阶段、实际引擎和阶段耗时。此前的 Web 进度字段只更新界面状态，没有将阶段边界日志写入开发者日志；本次仅补齐 Audit 自有 Web worker 的阶段日志。
+
+## 提交与 WIP
+
+- 修改前 HEAD：`26ff3f3`（`audit-dev`，此前与 `origin/audit-dev` 同步）。
+- 修改前已有的唯一 tracked WIP：`audit-core/src/web_bridge.rs`，属于本次 S2 阶段日志实现；保留分支中的交接报告和全部未跟踪 S5 报告，不纳入本功能提交。
+- 业务版本：`audit-core 0.1.0`，未升级；本次是日志观测增强，没有改变业务判定规则。
+
+## 涉及文件
+
+- `audit-core/src/web_bridge.rs`：在阶段切换/结束时写入引擎和耗时的开发者日志，任务结束记录 reader、writer、结果数和总耗时；增加 Web bridge 合成回归。
+- `audit-core/probe/reports/s2_web_stage_logging_real_windows_native_20261026.json`：真实 HTTP 批次脱敏记录。
+- `audit-core/MIGRATION_INVENTORY.md`：补记真实 Web 阶段日志证据，同时保留 S2-F01 未验证状态。
+- `audit-core/GPT修改记录/20261026_085000_S2Web真实批次阶段日志验证.txt`：本记录。
+
+## 验证
+
+- `cargo test --locked -p audit-core --lib web_bridge::tests`：13 passed。
+- `cargo test --locked -p excel-reader ooxml_sheet_name_adapter_accepts_xlsm_metadata`：1 passed；确认 main 公共修复 `3e53e7e` 的等效 Audit 提交 `579155f` 仍可用。
+- `cargo build --locked -p audit-core --bin open-data-audit`：成功（有既有 unused/deprecation 类警告，未触及共享代码）。
+- `rustfmt --edition 2021 --check audit-core/src/web_bridge.rs` 与 `git diff --check -- audit-core/src/web_bridge.rs`：通过。
+- Windows 原生 loopback HTTP 使用只读真实 S2 配置、外部工作簿和 2026-06/2026-03 报表批次。两期各 21 个 XLS；Web 任务完成并生成 96,399 字节报告，任务随后通过 Calamine read-back；输出文件及临时目录已删除。
+- Web 摘要为 7 家机构、3 张表单、728 项指标、1095 条结果、536 项异常；按类别与严重级别的所有计数都与已有 Python/Rust CLI 真实对拍报告一致。
+- Web 开发者日志共 24 条，其中 11 个阶段均有开始/完成记录，成对引擎一致，记录实际毫秒耗时；reader 为 Calamine，writer 为 rust_xlsxwriter，总耗时 2249 ms。这是单次运行观察值，不是性能基准。
+- 此次没有再次对 Web 输出跑 17,520 格的 Python/Rust 全工作簿对拍，也没有重新计算 44 个输入文件的哈希；完整工作簿对拍和 44 个输入哈希不变的证据仍是 `probe/reports/s2_real_service_parity_windows_native_20261026.json` 中此前的 CLI 运行。
+- 一次烟测脚本最初使用了错误的 `findings` 字段名；按实际 API 字段 `totalFindings` 修正读取后，上述真实 Web 断言全部通过，Rust 任务本身第一次运行即正常完成。
+
+## 未执行项和限制
+
+- 未运行全部 Audit 测试、Linux/glibc 2.28、麒麟/UOS 或 deb 验收。
+- 其他真实批次、完整 S2 失败矩阵和本次 Web 输出的单独 Python/Rust 工作簿对拍未执行；S2-F01 整体仍未验收。
+- Audit #8 共享能力问题继续未解决；本次未修改共享 crate、根 Cargo 配置或 Cargo.lock。
+
+## 回滚
+
+回滚仅限本次 `web_bridge.rs` 阶段日志/回归测试、迁移清单补记、对应真实批次报告和本记录。保留其他 Agent 的工作、交接文件及未跟踪 S5 报告。

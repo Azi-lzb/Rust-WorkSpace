@@ -1165,28 +1165,61 @@ fn start_period_compare_v2(state: &AppState) -> std::result::Result<Value, ApiEr
 
 fn run_s2_worker(state: AppState, request: S2RunRequest) {
     let worker_started = Instant::now();
-    let mut active_stage = String::new();
-    let mut stage_started = worker_started;
+    let mut active_stage: Option<(String, String, Instant)> = None;
     let mut on_progress = |event: S2ProgressEvent| {
-        if active_stage != event.stage {
-            active_stage.clone_from(&event.stage);
-            stage_started = Instant::now();
-        }
+        let stage_changed = active_stage
+            .as_ref()
+            .map(|(stage, _, _)| stage != &event.stage)
+            .unwrap_or(true);
         let mut ui = state.lock();
+        if stage_changed {
+            if let Some((stage, engine, started)) = active_stage.take() {
+                push_detail_log(
+                    &mut ui.value,
+                    format!(
+                        "S2 阶段完成：stage={stage} engine={engine} elapsed_ms={}",
+                        started.elapsed().as_millis()
+                    ),
+                );
+            }
+            let engine = s2_engine_for_stage(&event.stage).unwrap_or("未映射");
+            push_detail_log(
+                &mut ui.value,
+                format!(
+                    "S2 阶段开始：stage={} label={} engine={} progress={}/{}",
+                    event.stage, event.label, engine, event.current, event.total
+                ),
+            );
+            active_stage = Some((event.stage.clone(), engine.to_owned(), Instant::now()));
+        }
+        let stage_elapsed = active_stage
+            .as_ref()
+            .map(|(_, _, started)| started.elapsed().as_secs_f64())
+            .unwrap_or_default();
         ui.value["status"] = json!(format!("{}……", event.label));
         ui.value["periodProgress"] = progress_value(
             &event,
             "running",
             worker_started.elapsed().as_secs_f64(),
-            stage_started.elapsed().as_secs_f64(),
+            stage_elapsed,
         );
     };
     let result = run_s2_audit(&request, Some(&mut on_progress));
+    drop(on_progress);
     let mut ui = state.lock();
     ui.value["busy"] = json!(false);
     ui.started_at = None;
     match result {
         Ok(result) => {
+            if let Some((stage, engine, started)) = active_stage.take() {
+                push_detail_log(
+                    &mut ui.value,
+                    format!(
+                        "S2 阶段完成：stage={stage} engine={engine} elapsed_ms={}",
+                        started.elapsed().as_millis()
+                    ),
+                );
+            }
             let summary = result.analysis.summary;
             let report_path = result.report_path.to_string_lossy().into_owned();
             ui.value["periodSummary"] = json!({
@@ -1206,9 +1239,26 @@ fn run_s2_worker(state: AppState, request: S2RunRequest) {
                 "elapsedSeconds": worker_started.elapsed().as_secs_f64()
             });
             ui.value["status"] = json!("跨期比较完成：已生成审核结果");
+            push_detail_log(
+                &mut ui.value,
+                format!(
+                    "S2 任务完成：reader=Calamine writer=rust_xlsxwriter findings={} total_ms={}",
+                    summary.total_findings,
+                    worker_started.elapsed().as_millis()
+                ),
+            );
             push_log(&mut ui.value, format!("审核完成：{}", report_path));
         }
         Err(error) => {
+            if let Some((stage, engine, started)) = active_stage.take() {
+                push_detail_log(
+                    &mut ui.value,
+                    format!(
+                        "S2 阶段失败：stage={stage} engine={engine} elapsed_ms={}",
+                        started.elapsed().as_millis()
+                    ),
+                );
+            }
             let message = format!("跨期比较失败：{error:#}");
             ui.value["periodProgress"] = json!({
                 "status": "failed", "stage": "failed", "label": "审核失败",
@@ -1217,6 +1267,13 @@ fn run_s2_worker(state: AppState, request: S2RunRequest) {
                 "elapsedSeconds": worker_started.elapsed().as_secs_f64()
             });
             ui.value["status"] = json!("跨期比较失败");
+            push_detail_log(
+                &mut ui.value,
+                format!(
+                    "S2 任务失败：total_ms={} error={error:#}",
+                    worker_started.elapsed().as_millis()
+                ),
+            );
             push_log(&mut ui.value, message);
         }
     }
@@ -1576,6 +1633,117 @@ mod tests {
         assert_eq!(served.replace(super::BRIDGE_JS, ""), super::ORIGINAL_HTML);
         assert!(served.contains("window.bridge = { api: api }"));
         assert!(super::ORIGINAL_HTML.contains("bridge.api.start_central_explanation_export()"));
+    }
+
+    #[test]
+    fn s2_web_run_persists_stage_engine_and_elapsed_detail_logs() {
+        let suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "audit_web_s2_progress_{}_{}",
+            std::process::id(),
+            suffix
+        ));
+        let current = root.join("current");
+        let previous = root.join("previous");
+        let output = root.join("output");
+        fs::create_dir_all(&current).expect("create S2 current directory");
+        fs::create_dir_all(&previous).expect("create S2 previous directory");
+        fs::create_dir_all(&output).expect("create S2 output directory");
+
+        let fixture_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+        let source_report = fixture_root.join("s2_import/9144#2026-06-30#x#20202#甲银行.xlsx");
+        fs::copy(
+            &source_report,
+            current.join("9144#2026-06-30#x#20202#甲银行.xlsx"),
+        )
+        .expect("copy current S2 fixture");
+        fs::copy(
+            &source_report,
+            previous.join("9144#2026-03-31#x#20202#甲银行.xlsx"),
+        )
+        .expect("copy previous S2 fixture");
+        let config = fixture_root.join("s2_config/check_valid.xlsx");
+        let external = fixture_root.join("s2_external_import/plain_layout.xlsx");
+        let state = AppState::new(config.clone());
+
+        for (kind, path) in [
+            ("pcCurDir", current.as_path()),
+            ("pcPreDir", previous.as_path()),
+            ("pcConfig", config.as_path()),
+            ("pcCentral", external.as_path()),
+            ("pcOutput", output.as_path()),
+        ] {
+            dispatch_api(
+                &state,
+                "choose_period_compare",
+                &[json!(kind), json!(path.to_string_lossy())],
+            )
+            .expect("select S2 Web API input path");
+        }
+        assert_eq!(
+            dispatch_api(&state, "start_period_compare_v2", &[]).expect("start S2 Web API run"),
+            json!(true)
+        );
+
+        for _ in 0..400 {
+            if state.get_state()["busy"] != true {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(25));
+        }
+        let final_state = state.get_state();
+        assert_eq!(final_state["busy"], false);
+        assert_eq!(final_state["periodProgress"]["status"], "completed");
+        let report = PathBuf::from(final_state["periodSummary"]["result"].as_str().unwrap());
+        assert!(report.is_file());
+
+        let logs = final_state["log"].as_array().expect("S2 Web logs");
+        for stage in [
+            "config",
+            "current",
+            "previous",
+            "validate",
+            "period",
+            "rules",
+            "external_read",
+            "external",
+            "export",
+            "save",
+            "complete",
+        ] {
+            let engine = crate::s2_service::s2_engine_for_stage(stage).unwrap();
+            assert!(
+                logs.iter().any(|entry| {
+                    entry["detail"] == true
+                        && entry["text"].as_str().is_some_and(|text| {
+                            text.contains(&format!("S2 阶段开始：stage={stage}"))
+                                && text.contains(&format!("engine={engine}"))
+                        })
+                }),
+                "missing start detail for S2 stage {stage}"
+            );
+            assert!(
+                logs.iter().any(|entry| {
+                    entry["detail"] == true
+                        && entry["text"].as_str().is_some_and(|text| {
+                            text.contains(&format!("S2 阶段完成：stage={stage}"))
+                                && text.contains(&format!("engine={engine}"))
+                                && text.contains("elapsed_ms=")
+                        })
+                }),
+                "missing completion detail for S2 stage {stage}"
+            );
+        }
+        assert!(logs.iter().any(|entry| {
+            entry["detail"] == true
+                && entry["text"]
+                    .as_str()
+                    .is_some_and(|text| text.contains("S2 任务完成：reader=Calamine"))
+        }));
+        fs::remove_dir_all(root).expect("remove temporary S2 Web API files");
     }
 
     #[test]

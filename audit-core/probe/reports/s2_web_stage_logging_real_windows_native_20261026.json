@@ -1,0 +1,80 @@
+{
+  "status": "passed_for_this_real_web_batch",
+  "feature": "S2-F01",
+  "operation": "real_loopback_http_batch_with_stage_engine_timing_logs",
+  "platform": "Windows native x64",
+  "entry": {
+    "command": "open-data-audit serve --port 19374 --config <read-only real S2 configuration>",
+    "api_methods": ["choose_period_compare", "start_period_compare_v2", "get_state"],
+    "business_handler": "run_s2_audit"
+  },
+  "sample": {
+    "current_period": "2026-06-30",
+    "previous_period": "2026-03-31",
+    "current_direct_child_xls": 21,
+    "previous_direct_child_xls": 21,
+    "real_configuration": true,
+    "real_external_workbook": true
+  },
+  "result": {
+    "status": "completed",
+    "summary_matches_existing_python_rust_cli_parity_report": true,
+    "institutions": 7,
+    "forms": 3,
+    "indicators": 728,
+    "total_findings": 1095,
+    "abnormal_findings": 536,
+    "by_type": {
+      "period": 262,
+      "external": 263,
+      "rules": 3,
+      "quality": 8
+    },
+    "by_severity": {
+      "hard": 521,
+      "soft": 15
+    }
+  },
+  "logging": {
+    "developer_detail_entries": 24,
+    "stage_count": 11,
+    "stage_start_and_completion_entries": 22,
+    "task_reader": "Calamine",
+    "task_writer": "rust_xlsxwriter",
+    "total_elapsed_ms": 2249,
+    "stage_elapsed_ms_is_observation_not_benchmark": true,
+    "stages": [
+      {"stage": "config", "engine": "Calamine", "elapsed_ms": 247},
+      {"stage": "current", "engine": "Calamine", "elapsed_ms": 45},
+      {"stage": "previous", "engine": "Calamine", "elapsed_ms": 40},
+      {"stage": "validate", "engine": "Rust audit-core", "elapsed_ms": 4},
+      {"stage": "period", "engine": "Rust audit-core", "elapsed_ms": 734},
+      {"stage": "rules", "engine": "Rust audit-core", "elapsed_ms": 12},
+      {"stage": "external_read", "engine": "Calamine", "elapsed_ms": 94},
+      {"stage": "external", "engine": "Rust audit-core", "elapsed_ms": 41},
+      {"stage": "export", "engine": "rust_xlsxwriter", "elapsed_ms": 120},
+      {"stage": "save", "engine": "rust_xlsxwriter + Calamine read-back", "elapsed_ms": 905},
+      {"stage": "complete", "engine": "Rust audit-core", "elapsed_ms": 2}
+    ]
+  },
+  "output": {
+    "workbook_created": true,
+    "size_bytes_before_cleanup": 96399,
+    "save_readback_stage_completed": true,
+    "temporary_output_removed_after_smoke": true
+  },
+  "comparison_scope": {
+    "existing_cli_parity_report": "probe/reports/s2_real_service_parity_windows_native_20261026.json",
+    "existing_cli_report_compared_cells": 17520,
+    "existing_cli_report_cell_difference_count": 0,
+    "web_output_full_python_rust_workbook_diff_repeated_this_run": false,
+    "input_sha256_rechecked_this_web_run": false,
+    "prior_cli_report_changed_input_hashes": 0
+  },
+  "limitations": [
+    "The full workbook Python/Rust comparison is the existing CLI evidence; this Web run checked the output creation/read-back and compared the full summary to that report, but did not run a second full workbook diff.",
+    "All S2 input and export failure cases, Linux/glibc 2.28, Kylin/UOS, and deb packaging remain unverified.",
+    "S2-F01 remains unverified overall.",
+    "Audit shared capability issue #8 remains unresolved."
+  ]
+}
