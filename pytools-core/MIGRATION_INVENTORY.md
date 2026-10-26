@@ -1047,6 +1047,6 @@ Windows 原生验证：`cargo fmt -p pytools-core -- --check`、`cargo check --o
 
 ### 2026-10-27 PT-4-8 提交检查递归扫描错误处理
 
-修复提交检查直接接收目录时递归扫描会吞掉 `read_dir` 和目录项读取错误、继续生成可能缺文件的报告的问题。现在扫描错误会传播到调用端，运行日志记录 `input_scan` 失败及 `input_scan_failed`，并在生成报告前停止；不存在的顶层路径仍按现有行为忽略。生命周期仍为**已实现，待 Windows 真实验收**。
+修复提交检查直接接收目录时递归扫描会吞掉 `read_dir` 和目录项读取错误、继续生成可能缺文件的报告的问题。现在扫描错误会传播到调用端，运行日志记录 `input_scan` 失败及 `input_scan_failed`，并在生成报告前停止；不存在的顶层路径仍按现有行为忽略。旧 `PyCode/main.py::_collect_files` 使用 `Path.rglob("*")` + `Path.is_file()`；以源项目 Python 3.12.10 对合成 Windows junction 的定点实测确认，旧逻辑会遍历目录链接目标。Rust 因此保留目录链接遍历，并用当前递归链路中的 canonical ancestor 集合阻止回环；非循环链接目标仍会收集。
 
-Windows 原生验证：`cargo fmt -p pytools-core`、`cargo check --offline --locked -q -p pytools-core --bin pytools -j 1`、新增递归扫描错误单测 1/1、`submission_check_parity` 4/4、`git diff --check` 通过。目录 CLI 冒烟用嵌套合成文件确认递归输入统计与显式文件列表一致；现有 Python/Rust 报表正常路径对拍回归通过。未模拟真实权限拒绝/瞬时 I/O 故障，未进行用户样本、Windows 真实目录或 Linux/deb 验收，状态不升级。
+Windows 原生验证：`cargo fmt -p pytools-core -- --check`、`cargo check --offline --locked -q -p pytools-core --bin pytools -j 1`、扫描错误及 junction 遍历/回环单测 2/2、`submission_check_parity` 4/4、`git diff --check` 通过。独立目录 CLI 冒烟用嵌套合成文件确认递归输入统计与显式文件列表一致；既有 Python/Rust 报表正常路径对拍回归通过。未模拟真实权限拒绝/瞬时 I/O 故障，未进行用户样本、Windows 真实业务目录或 Linux/deb 验收，状态不升级。

@@ -592,7 +592,7 @@ fn collect_files(inputs: &[PathBuf]) -> Result<Vec<PathBuf>> {
     let mut seen = std::collections::BTreeSet::new();
     for path in inputs {
         if path.is_dir() {
-            walk(path, &mut out)?;
+            walk(path, &mut out, &mut std::collections::BTreeSet::new())?;
         } else if path.is_file() {
             out.push(path.clone());
         }
@@ -607,7 +607,16 @@ fn collect_files(inputs: &[PathBuf]) -> Result<Vec<PathBuf>> {
     out.retain(|path| seen.insert(path.canonicalize().unwrap_or_else(|_| path.clone())));
     Ok(out)
 }
-fn walk(root: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
+fn walk(
+    root: &Path,
+    out: &mut Vec<PathBuf>,
+    active_directories: &mut std::collections::BTreeSet<PathBuf>,
+) -> Result<()> {
+    let root_identity = fs::canonicalize(root)
+        .with_context(|| format!("resolve submission-check directory {}", root.display()))?;
+    if !active_directories.insert(root_identity.clone()) {
+        return Ok(());
+    }
     let entries = fs::read_dir(root)
         .with_context(|| format!("scan submission-check directory {}", root.display()))?;
     for entry in entries {
@@ -618,12 +627,21 @@ fn walk(root: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
             )
         })?;
         let path = entry.path();
-        if path.is_dir() {
-            walk(&path, out)?;
-        } else if path.is_file() {
+        let metadata = match fs::metadata(&path) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => {
+                return Err(error)
+                    .with_context(|| format!("inspect submission-check entry {}", path.display()));
+            }
+        };
+        if metadata.is_dir() {
+            walk(&path, out, active_directories)?;
+        } else if metadata.is_file() {
             out.push(path);
         }
     }
+    active_directories.remove(&root_identity);
     Ok(())
 }
 
@@ -637,6 +655,32 @@ mod tests {
         time::{SystemTime, UNIX_EPOCH},
     };
 
+    #[cfg(windows)]
+    use std::process::Command;
+
+    #[cfg(windows)]
+    struct TemporaryDirectory(PathBuf);
+
+    #[cfg(windows)]
+    impl TemporaryDirectory {
+        fn new(name: &str) -> Result<Self> {
+            let nonce = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
+            let path = std::env::temp_dir().join(format!(
+                "pytools-submission-{name}-{}-{nonce}",
+                std::process::id()
+            ));
+            fs::create_dir_all(&path)?;
+            Ok(Self(path))
+        }
+    }
+
+    #[cfg(windows)]
+    impl Drop for TemporaryDirectory {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
     #[test]
     fn recursive_scan_reports_read_dir_errors() -> Result<()> {
         let nonce = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
@@ -646,7 +690,7 @@ mod tests {
         ));
         fs::write(&path, b"not a directory")?;
         let mut files = Vec::<PathBuf>::new();
-        let result = walk(&path, &mut files);
+        let result = walk(&path, &mut files, &mut std::collections::BTreeSet::new());
         fs::remove_file(&path)?;
 
         let error = result.expect_err("scanning a file as a directory must fail");
@@ -654,6 +698,62 @@ mod tests {
             .to_string()
             .contains("scan submission-check directory"));
         assert!(files.is_empty());
+        Ok(())
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn recursive_scan_follows_directory_junctions_and_stops_cycles() -> Result<()> {
+        let root = TemporaryDirectory::new("junction-cycle")?;
+        let scan_root = root.0.join("root");
+        let child = scan_root.join("child");
+        let linked_target = root.0.join("outside-target");
+        fs::create_dir_all(&child)?;
+        fs::create_dir_all(&linked_target)?;
+        let root_file = scan_root.join("root.txt");
+        let child_file = child.join("child.txt");
+        let linked_file = linked_target.join("outside.txt");
+        fs::write(&root_file, b"root")?;
+        fs::write(&child_file, b"child")?;
+        fs::write(&linked_file, b"outside")?;
+
+        create_junction(&child.join("back-to-root"), &scan_root)?;
+        create_junction(&child.join("linked-target"), &linked_target)?;
+
+        let mut files = Vec::new();
+        walk(
+            &scan_root,
+            &mut files,
+            &mut std::collections::BTreeSet::new(),
+        )?;
+        files.sort();
+        assert_eq!(
+            files,
+            vec![
+                child_file,
+                child.join("linked-target/outside.txt"),
+                root_file
+            ]
+        );
+        Ok(())
+    }
+
+    #[cfg(windows)]
+    fn create_junction(link: &std::path::Path, target: &std::path::Path) -> Result<()> {
+        let link_arg = link.to_string_lossy().replace('\'', "''");
+        let target_arg = target.to_string_lossy().replace('\'', "''");
+        let script = format!(
+            "New-Item -ItemType Junction -Path '{link_arg}' -Target '{target_arg}' -ErrorAction Stop | Out-Null"
+        );
+        let output = Command::new("powershell.exe")
+            .args(["-NoProfile", "-NonInteractive", "-Command", script.as_str()])
+            .output()?;
+        anyhow::ensure!(
+            output.status.success(),
+            "could not create test directory junction: {}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
         Ok(())
     }
 }
