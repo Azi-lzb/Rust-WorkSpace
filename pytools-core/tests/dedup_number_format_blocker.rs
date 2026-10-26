@@ -41,7 +41,6 @@ impl Drop for TestDir {
 }
 
 #[test]
-#[ignore = "blocked until shared excel-reader exposes per-cell number formats"]
 fn configured_delete_preserves_numeric_zero_padding_format() -> Result<()> {
     let dir = TestDir::new();
     let input = dir.path("input.xlsx");
@@ -57,18 +56,22 @@ fn configured_delete_preserves_numeric_zero_padding_format() -> Result<()> {
     worksheet.write_string(1, 1, "同键")?;
     worksheet.write_number_with_format(2, 0, 456.0, &code_format)?;
     worksheet.write_string(2, 1, "同键")?;
+    worksheet.write_number_with_format(3, 0, 789.0, &code_format)?;
+    worksheet.write_string(3, 1, "唯一键")?;
     workbook.save(&input)?;
+    let input_bytes = fs::read(&input)?;
 
-    let read_format = |path: &PathBuf| -> Result<Option<String>> {
+    let read_format = |path: &PathBuf, address: &str| -> Result<Option<String>> {
         let book = excel_editor::open_xlsx(path)?;
         let format = book
             .sheet_by_name("Data")?
-            .cell("A2")
+            .cell(address)
             .and_then(|cell| cell.style().number_format())
             .map(|format| format.format_code().to_owned());
         Ok(format)
     };
-    assert_eq!(read_format(&input)?.as_deref(), Some("000000"));
+    assert_eq!(read_format(&input, "A2")?.as_deref(), Some("000000"));
+    assert_eq!(read_format(&input, "A4")?.as_deref(), Some("000000"));
 
     let task = DedupTask {
         row_no: 2,
@@ -86,6 +89,8 @@ fn configured_delete_preserves_numeric_zero_padding_format() -> Result<()> {
     let plan = reports[0].plan.as_ref();
     write_config_duplicate_delete_candidate(&input, &output, plan)?;
 
-    assert_eq!(read_format(&output)?.as_deref(), Some("000000"));
+    assert_eq!(read_format(&output, "A2")?.as_deref(), Some("000000"));
+    assert_eq!(read_format(&output, "A3")?.as_deref(), Some("000000"));
+    assert_eq!(fs::read(&input)?, input_bytes);
     Ok(())
 }

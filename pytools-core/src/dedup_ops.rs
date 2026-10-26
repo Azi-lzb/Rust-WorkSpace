@@ -7,8 +7,8 @@ use excel_editor::{
     WorkbookFeature, WorkbookFormat,
 };
 use excel_reader::{
-    read_value_columns_with_iso_dates, read_workbook, uses_1904_date_system,
-    CellValue as ReaderCellValue, SheetDump,
+    read_value_columns_with_iso_dates, read_workbook, read_xlsx_cell_number_formats,
+    uses_1904_date_system, CellNumberFormatRequest, CellValue as ReaderCellValue, SheetDump,
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -295,6 +295,7 @@ fn write_config_duplicate_result_candidate(
     }
 
     let source = read_workbook(input).with_context(|| format!("read {}", input.display()))?;
+    let input_number_formats = read_numeric_cell_formats(input, &source)?;
     let mut duplicate_rows = BTreeMap::<String, BTreeSet<usize>>::new();
     let mut current_rows_by_sheet = BTreeMap::<String, Vec<usize>>::new();
     if action == DuplicateAction::Delete {
@@ -369,10 +370,9 @@ fn write_config_duplicate_result_candidate(
 
     let red_fill =
         excel_writer::Format::new().set_background_color(excel_writer::Color::RGB(0xFF_00_00));
-    let red_date_fill = excel_writer::Format::new()
-        .set_background_color(excel_writer::Color::RGB(0xFF_00_00))
-        .set_num_format("yyyy/m/d h:mm:ss");
-    let date_format = excel_writer::Format::new().set_num_format("yyyy/m/d h:mm:ss");
+    let mut number_formats = BTreeMap::<String, excel_writer::Format>::new();
+    let mut red_number_formats = BTreeMap::<String, excel_writer::Format>::new();
+    let mut expected_number_formats = BTreeMap::<String, BTreeMap<String, String>>::new();
     let mut workbook = excel_writer::Workbook::new();
     for sheet in &source.sheets {
         anyhow::ensure!(
@@ -444,6 +444,26 @@ fn write_config_duplicate_result_candidate(
                 && marked_rows.is_some_and(|rows| rows.contains(&row));
             let value = ReaderCellValue::from_probe_json(value)
                 .with_context(|| format!("decode {}/{}", sheet.name, address))?;
+            let number_format = match &value {
+                ReaderCellValue::Number(_)
+                | ReaderCellValue::Integer(_)
+                | ReaderCellValue::DateTimeSerial(_) => Some(
+                    input_number_formats
+                        .get(&sheet.name)
+                        .and_then(|formats| formats.get(address))
+                        .map(String::as_str)
+                        .with_context(|| {
+                            format!("number format metadata missing at {}!{address}", sheet.name)
+                        })?,
+                ),
+                _ => None,
+            };
+            if let Some(number_format) = number_format {
+                expected_number_formats
+                    .entry(sheet.name.clone())
+                    .or_default()
+                    .insert(cell_address(output_row, column), number_format.to_owned());
+            }
             match value {
                 ReaderCellValue::Empty => {
                     if marked {
@@ -469,15 +489,33 @@ fn write_config_duplicate_result_candidate(
                         sheet.name,
                         address
                     );
+                    let number_format = number_format.expect("numeric value has a number format");
                     if marked {
+                        let format = red_number_formats
+                            .entry(number_format.to_owned())
+                            .or_insert_with(|| {
+                                excel_writer::Format::new()
+                                    .set_background_color(excel_writer::Color::RGB(0xFF_00_00))
+                                    .set_num_format(number_format)
+                            });
                         worksheet.write_number_with_format(
                             row_index,
                             column_index,
                             value,
-                            &red_fill,
+                            format,
                         )?;
                     } else {
-                        worksheet.write_number(row_index, column_index, value)?;
+                        let format = number_formats
+                            .entry(number_format.to_owned())
+                            .or_insert_with(|| {
+                                excel_writer::Format::new().set_num_format(number_format)
+                            });
+                        worksheet.write_number_with_format(
+                            row_index,
+                            column_index,
+                            value,
+                            format,
+                        )?;
                     }
                 }
                 ReaderCellValue::Integer(value) => {
@@ -488,15 +526,33 @@ fn write_config_duplicate_result_candidate(
                         sheet.name,
                         address
                     );
+                    let number_format = number_format.expect("integer value has a number format");
                     if marked {
+                        let format = red_number_formats
+                            .entry(number_format.to_owned())
+                            .or_insert_with(|| {
+                                excel_writer::Format::new()
+                                    .set_background_color(excel_writer::Color::RGB(0xFF_00_00))
+                                    .set_num_format(number_format)
+                            });
                         worksheet.write_number_with_format(
                             row_index,
                             column_index,
                             number,
-                            &red_fill,
+                            format,
                         )?;
                     } else {
-                        worksheet.write_number(row_index, column_index, number)?;
+                        let format = number_formats
+                            .entry(number_format.to_owned())
+                            .or_insert_with(|| {
+                                excel_writer::Format::new().set_num_format(number_format)
+                            });
+                        worksheet.write_number_with_format(
+                            row_index,
+                            column_index,
+                            number,
+                            format,
+                        )?;
                     }
                 }
                 ReaderCellValue::Boolean(value) => {
@@ -518,19 +574,32 @@ fn write_config_duplicate_result_candidate(
                         sheet.name,
                         address
                     );
+                    let number_format = number_format.expect("date serial has a number format");
                     if marked {
+                        let format = red_number_formats
+                            .entry(number_format.to_owned())
+                            .or_insert_with(|| {
+                                excel_writer::Format::new()
+                                    .set_background_color(excel_writer::Color::RGB(0xFF_00_00))
+                                    .set_num_format(number_format)
+                            });
                         worksheet.write_number_with_format(
                             row_index,
                             column_index,
                             value,
-                            &red_date_fill,
+                            format,
                         )?;
                     } else {
+                        let format = number_formats
+                            .entry(number_format.to_owned())
+                            .or_insert_with(|| {
+                                excel_writer::Format::new().set_num_format(number_format)
+                            });
                         worksheet.write_number_with_format(
                             row_index,
                             column_index,
                             value,
-                            &date_format,
+                            format,
                         )?;
                     }
                 }
@@ -644,6 +713,11 @@ fn write_config_duplicate_result_candidate(
                 "duplicate result output unexpectedly contains formulas or comments"
             );
         }
+        let actual_number_formats = read_numeric_cell_formats(&candidate, &reopened)?;
+        anyhow::ensure!(
+            expected_number_formats == actual_number_formats,
+            "duplicate result output numeric number formats differ from the source rows"
+        );
         Ok(())
     })();
     if let Err(error) = validation {
@@ -656,6 +730,51 @@ fn write_config_duplicate_result_candidate(
     }
     let _ = fs::remove_file(&candidate);
     Ok(output.to_path_buf())
+}
+
+type NumberFormatsBySheet = BTreeMap<String, BTreeMap<String, String>>;
+
+fn read_numeric_cell_formats(
+    path: &Path,
+    workbook: &excel_reader::WorkbookDump,
+) -> Result<NumberFormatsBySheet> {
+    let requests = workbook
+        .sheets
+        .iter()
+        .flat_map(|sheet| {
+            sheet.values.iter().filter_map(move |(address, value)| {
+                matches!(
+                    value.get("type").and_then(serde_json::Value::as_str),
+                    Some("number" | "integer" | "datetime_serial")
+                )
+                .then(|| CellNumberFormatRequest {
+                    sheet_name: sheet.name.clone(),
+                    cell_reference: address.clone(),
+                })
+            })
+        })
+        .collect::<Vec<_>>();
+    let metadata = read_xlsx_cell_number_formats(path, &requests)
+        .with_context(|| format!("read numeric cell formats from {}", path.display()))?;
+    anyhow::ensure!(
+        metadata.len() == requests.len(),
+        "number-format reader returned incomplete metadata for {}",
+        path.display()
+    );
+    let mut formats = NumberFormatsBySheet::new();
+    for info in metadata {
+        let format_code = info.format_code.with_context(|| {
+            format!(
+                "unsupported built-in number format id {} at {}!{}",
+                info.number_format_id, info.sheet_name, info.cell_reference
+            )
+        })?;
+        formats
+            .entry(info.sheet_name)
+            .or_default()
+            .insert(info.cell_reference, format_code);
+    }
+    Ok(formats)
 }
 
 fn reserve_duplicate_result_temp(output: &Path) -> Result<PathBuf> {
