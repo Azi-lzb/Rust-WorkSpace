@@ -76,6 +76,8 @@ def create_rust_config(
     sheet_keywords: str,
     stitch_mode: str,
     case_label: str,
+    workbook_keywords: str,
+    exclude_keywords: str,
 ) -> None:
     workbook = Workbook()
     global_config = workbook.active
@@ -90,9 +92,9 @@ def create_rust_config(
     extraction.append(
         [
             "是",
-            "",
+            workbook_keywords,
             sheet_keywords,
-            "",
+            exclude_keywords,
             area_spec,
             stitch_mode,
             output_folder,
@@ -165,11 +167,13 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--pytools-cli", type=Path, required=True)
     parser.add_argument("--python-project", type=Path, required=True)
-    parser.add_argument("--source", type=Path, required=True)
+    parser.add_argument("--source", type=Path, action="append", required=True)
     parser.add_argument("--output-root", type=Path, required=True)
     parser.add_argument("--report", type=Path, required=True)
     parser.add_argument("--area-spec", default=AREA_SPEC)
+    parser.add_argument("--workbook-keywords", default="")
     parser.add_argument("--sheet-keywords", default="")
+    parser.add_argument("--exclude-keywords", default="")
     parser.add_argument("--stitch-mode", default="")
     parser.add_argument("--expected-merged-child-values-suppressed", type=int)
     parser.add_argument(
@@ -177,12 +181,14 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    if not args.source.is_file():
-        raise FileNotFoundError(args.source)
+    sources = args.source
+    for source in sources:
+        if not source.is_file():
+            raise FileNotFoundError(source)
     if args.output_root.exists() and any(args.output_root.iterdir()):
         raise FileExistsError(f"refusing to reuse non-empty output directory {args.output_root}")
     args.output_root.mkdir(parents=True, exist_ok=True)
-    source_before = args.source.read_bytes()
+    source_before = [source.read_bytes() for source in sources]
 
     sys.dont_write_bytecode = True
     source_python = args.python_project.resolve() / "PyCode"
@@ -197,9 +203,9 @@ def main() -> int:
     output_name = "1.报表分口径_区域提取.xlsx"
     task = {
         "row_no": 2,
-        "workbook_keywords": "",
+        "workbook_keywords": args.workbook_keywords,
         "sheet_keywords": args.sheet_keywords,
-        "exclude_keywords": "",
+        "exclude_keywords": args.exclude_keywords,
         "area_spec": args.area_spec,
         "stitch_mode": args.stitch_mode,
         "output_folder": output_folder,
@@ -209,7 +215,7 @@ def main() -> int:
 
     try:
         python_stats = legacy.run_extract_sheets(
-            [args.source],
+            sources,
             [task],
             python_output,
             python_logs,
@@ -225,6 +231,8 @@ def main() -> int:
             args.sheet_keywords,
             args.stitch_mode,
             args.case_label,
+            args.workbook_keywords,
+            args.exclude_keywords,
         )
         rust_process = subprocess.run(
             [
@@ -235,7 +243,7 @@ def main() -> int:
                 "--log-view",
                 "developer",
             ],
-            input=f"7\n6\nn\n{args.source.resolve()}\n",
+            input=f"7\n6\nn\n{';'.join(str(source.resolve()) for source in sources)}\n",
             capture_output=True,
             encoding="utf-8",
             errors="replace",
@@ -263,30 +271,46 @@ def main() -> int:
         patch_events = [event for event in events if event.get("phase") == "ooxml_error_patch"]
         if not merge_events:
             raise AssertionError("Rust menu did not record merged-cell compatibility handling")
-        merge_match = re.search(
-            r"忽略 (\d+) 个合并子单元格值", str(merge_events[-1].get("user_message", ""))
-        )
-        if merge_match is None:
-            raise AssertionError("Rust menu merge compatibility event omitted its cell count")
-        merged_child_values_suppressed = int(merge_match.group(1))
-        if (
-            args.expected_merged_child_values_suppressed is not None
-            and merged_child_values_suppressed
-            != args.expected_merged_child_values_suppressed
-        ):
-            raise AssertionError(
-                "Rust menu merge compatibility count did not match the expected selected sheets"
+        merged_child_values_suppressed = []
+        for event in merge_events:
+            merge_match = re.search(
+                r"忽略 (\d+) 个合并子单元格值", str(event.get("user_message", ""))
             )
-        source_unchanged = args.source.read_bytes() == source_before
+            if merge_match is None:
+                raise AssertionError(
+                    "Rust menu merge compatibility event omitted its cell count"
+                )
+            merged_child_values_suppressed.append(int(merge_match.group(1)))
+        if args.expected_merged_child_values_suppressed is not None:
+            if len(merged_child_values_suppressed) != 1:
+                raise AssertionError(
+                    "a single expected merged-child count requires exactly one selected source workbook"
+                )
+            if merged_child_values_suppressed[0] != args.expected_merged_child_values_suppressed:
+                raise AssertionError(
+                    "Rust menu merge compatibility count did not match the expected selected sheets"
+                )
+        source_unchanged = all(
+            source.read_bytes() == before
+            for source, before in zip(sources, source_before)
+        )
 
         if python_stats.get("failed_files") != 0:
             raise AssertionError("Python baseline reported failed source files")
         if run_log.get("status") != "succeeded":
             raise AssertionError("Rust menu run log did not report success")
-        patch_succeeded = bool(
-            patch_events and patch_events[-1].get("status") == "succeeded"
+        stat_keys = ("files", "extracted_sheets", "output_files", "failed_files")
+        rust_result = run_log.get("result", {})
+        rust_stats = {key: rust_result.get(key) for key in stat_keys}
+        python_stat_summary = {key: python_stats.get(key) for key in stat_keys}
+        if rust_stats != python_stat_summary:
+            raise AssertionError(
+                f"Python/Rust run statistics differ: {python_stat_summary} != {rust_stats}"
+            )
+        patch_succeeded = bool(patch_events) and all(
+            event.get("status") == "succeeded" for event in patch_events
         )
-        if python_summary["error_cells"] and not patch_succeeded:
+        if python_summary["error_cells"] and not patch_events:
             raise AssertionError("Rust menu did not report successful Excel error-cell preservation")
         if patch_events and not patch_succeeded:
             raise AssertionError("Rust menu reported a failed Excel error-cell patch")
@@ -297,7 +321,21 @@ def main() -> int:
                 f"Python/Rust projection differs at {len(difference_locations)} sampled locations"
             )
         if not source_unchanged:
-            raise AssertionError("the original PyTools source workbook changed")
+            raise AssertionError("one or more original PyTools source workbooks changed")
+
+        source_filtering = []
+        for index, source in enumerate(sources):
+            keyword_match = bool(legacy._workbook_matches(source, task))
+            excluded = bool(legacy._name_matches_exclude(source.name, task))
+            source_filtering.append(
+                {
+                    "id": f"source_{index + 1}",
+                    "bytes": len(source_before[index]),
+                    "workbook_keyword_match": keyword_match,
+                    "exclude_keyword_match": excluded,
+                    "selected": keyword_match and not excluded,
+                }
+            )
 
         report = {
             "schema_version": 1,
@@ -306,14 +344,21 @@ def main() -> int:
             "case_label": args.case_label,
             "stitch_mode": args.stitch_mode,
             "sample_kind": "original PyTools business workbook; read-only source",
-            "source_basename": args.source.name,
-            "source_bytes": len(source_before),
+            "source_count": len(sources),
+            "source_files": [
+                {"id": f"source_{index + 1}", "bytes": len(before)}
+                for index, before in enumerate(source_before)
+            ],
+            "source_filtering": source_filtering,
             "area_spec": args.area_spec,
+            "workbook_keywords": args.workbook_keywords,
+            "exclude_keywords": args.exclude_keywords,
             "entry": "Rust PyTools CLI menu → 7 → 6",
             "python_baseline": "PyCode/core/feature_1_6_extract_sheets.py::run_extract_sheets",
             "python_stats": {
                 key: value for key, value in python_stats.items() if key != "paths"
             },
+            "rust_stats": rust_stats,
             "rust_run_status": run_log.get("status"),
             "rust_engines": sorted(
                 {
@@ -322,11 +367,19 @@ def main() -> int:
                     if isinstance(event, dict) and event.get("actual_engine")
                 }
             ),
-            "rust_merge_value_compatibility": {
-                "actual_engine": merge_events[-1].get("actual_engine"),
-                "stored_merged_child_values_suppressed": merged_child_values_suppressed,
-                "expected_stored_merged_child_values_suppressed": args.expected_merged_child_values_suppressed,
-            },
+            "rust_merge_value_compatibility": [
+                {
+                    "matched_source_index": index + 1,
+                    "actual_engine": event.get("actual_engine"),
+                    "stored_merged_child_values_suppressed": count,
+                    "expected_stored_merged_child_values_suppressed": args.expected_merged_child_values_suppressed
+                    if len(merge_events) == 1
+                    else None,
+                }
+                for index, (event, count) in enumerate(
+                    zip(merge_events, merged_child_values_suppressed)
+                )
+            ],
             "rust_error_patch_required": python_summary["error_cells"] > 0,
             "rust_error_patch_succeeded": patch_succeeded,
             "rust_error_cells_preserved": (
@@ -334,6 +387,13 @@ def main() -> int:
             ),
             "python_projection": python_summary,
             "rust_projection": rust_summary,
+            "worksheet_count": len(python_projection["sheet_names"]),
+            "unique_worksheet_names": len(set(python_projection["sheet_names"])),
+            "duplicate_suffix_count": sum(
+                1
+                for name in python_projection["sheet_names"]
+                if re.search(r"_2$", name)
+            ),
             "exact_output_projection_match": exact_match,
             "difference_locations": difference_locations,
             "source_unchanged": source_unchanged,

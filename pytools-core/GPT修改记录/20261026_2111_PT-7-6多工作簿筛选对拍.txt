@@ -1,0 +1,19 @@
+执行者：Codex（pytools-dev）
+修改前 HEAD：47979ac；分支：pytools-dev；origin/pytools-dev 同步。
+WIP 保护：修改前 MIGRATION_INVENTORY.md 已有用户未提交内容，另有未跟踪的 HANDOFF_ZCODE_TO_CODEX.md、docs/PYTOOLS_RUST_V2_BUSINESS_REQUIREMENTS.md 和既有 GPT 记录；均保留。原 Python 项目和真实源工作簿只读。F 盘临时产物集中在 F:\PyTools_Rust_本轮工作文件_20261026。
+
+目的：让 PT-7-6 多工作簿真实样本复验可复现，并验证工作簿关键字、排除规则和同名页签合并。
+
+修改文件：
+- pytools-core/probe/compare_pt7_6_original_business_workbook.py：支持多个 --source、工作簿筛选参数；断言 Python/Rust 运行统计相同；报告仅记录匿名 source id、字节数和筛选判定。
+- pytools-core/probe/reports/sheet_extract_area_original_pytools_multifile_parity_20261026.json
+- pytools-core/MIGRATION_INVENTORY.md
+- 本修改记录。
+
+验证：`py -3 -B pytools-core/probe/compare_pt7_6_original_business_workbook.py ...` 通过真实 Rust CLI 菜单 7→6 及只读 PyCode 对拍。4 个候选文件中 2 个命中、1 个排除、1 个未命中；双方统计均 files=4、extracted_sheets=30、output_files=1、failed_files=0。30 张输出表、6,340 个非空格的坐标/类型/值/数字格式投影精确一致；15 个重名页签使用 `_2` 后缀；全部输入字节未改变。产物位于 F 盘本轮专用目录。
+
+未执行项/已知限制：本次没有改 Rust 产品代码；PT-7-6 其他真实模板、Windows 人工入口、Linux/glibc 2.28、麒麟/UOS 和 deb 未验证。PT-7-6 保持迁移中，PT-1-2 保持排除。未修改共享 crate、Cargo 文件、Audit、DEVELOPMENT_GOAL、原 Python 源树及其他工作树。
+
+【组件版本】pytools-core 0.1.0；不升级。
+删除清单：无。
+修改后提交：本记录随本功能提交，SHA 以 Git 历史为准。回滚可 revert 本功能提交；保留 F 盘测试产物及所有原有 WIP。

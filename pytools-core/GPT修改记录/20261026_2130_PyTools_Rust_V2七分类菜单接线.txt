@@ -1,0 +1,23 @@
+执行者：Codex（pytools-dev）
+修改前 HEAD：47979ac；分支：pytools-dev；origin/pytools-dev 同步。
+WIP 保护：修改前 MIGRATION_INVENTORY.md 和 PT-7-6 probe 有未提交修改；另有未跟踪的 HANDOFF_ZCODE_TO_CODEX.md、docs/PYTOOLS_RUST_V2_BUSINESS_REQUIREMENTS.md 与两份既有 GPT 记录；全部保留。原 Python 项目只读。构建、测试临时目录放在 F:\PyTools_Rust_本轮工作文件_20261026。
+
+目的：实施 PyTools Rust V2 七分类 CLI 菜单，优先复用已迁移 Rust 功能并明确标注尚未实现项。
+
+修改文件：
+- pytools-core/src/bin/pytools.rs：无参数直接启动进入 V2；新增 `menu-v2` / `--menu-version v2`；增加七分类菜单、稳定功能 ID 路由、旧处理器兼容接线；V2 命名区域汇总明确返回尚未实现，不调用旧批注汇总。
+- pytools-core/tests/summary_menu_cli.rs：增加 V2 菜单展示、真实 PT-6-1 菜单调用、输入源保护、未实现项安全提示和直接启动冒烟。
+- pytools-core/MIGRATION_INVENTORY.md
+- 本修改记录。
+
+验证（Windows 原生）：
+- `cargo fmt --manifest-path pytools-core/Cargo.toml -- --check` 通过。
+- `cargo test --offline --locked --manifest-path pytools-core/Cargo.toml --test summary_menu_cli v2_ -- -q`：3/3 通过。
+- `cargo build --offline --locked --manifest-path pytools-core/Cargo.toml --bin pytools -j 1` 通过。
+- V2 菜单→“1-2 按使用区域快速汇总”完成实际 Rust PT-6-1 输出；测试源工作簿字节未改变。V2“1-3 按模板命名区域汇总”显示尚未实现且未创建输出。
+
+未执行项/已知限制：本轮只完成入口接线和 PT-6-1 入口冒烟；其余 V2 业务逐项真实样本验收、Windows 人工验收及 Linux/glibc 2.28、麒麟/UOS、deb 未执行。PT-6-1 等业务验收状态不因接线测试升级；PT-1-2 继续排除。未修改共享 Excel-Core、根 Cargo 依赖、Audit、DEVELOPMENT_GOAL 或旧 Python 项目。
+
+【组件版本】pytools-core 0.1.0；不升级。
+删除清单：无。
+修改后提交：本记录随 V2 菜单功能提交，SHA 以 Git 历史为准。回滚可 revert 本功能提交，不清理 F 盘工作文件夹或其他 WIP。

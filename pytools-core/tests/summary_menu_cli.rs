@@ -150,6 +150,106 @@ fn interactive_menu_routes_used_range_summary_through_global_config() -> Result<
 }
 
 #[test]
+fn v2_menu_routes_used_range_summary_and_displays_seven_categories() -> Result<()> {
+    let root = TestDirectory::new()?;
+    let config = create_app_config(root.path())?;
+    let source = root.path().join("v2 source.xlsx");
+    create_used_range_source(&source, "central", 13.0)?;
+    let source_before = fs::read(&source)?;
+    let input = format!("1\n2\n{}\n0\n", source.display());
+
+    let output = run_menu_v2(&config, &input)?;
+    assert!(
+        output.status.success(),
+        "V2 PT-6-1 entry failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    for label in [
+        "PyTools Rust V2",
+        "数据提取与汇总",
+        "数据去重与追加",
+        "报表打印",
+        "文件处理",
+        "专用报表处理",
+        "归档整理",
+        "配置与快捷操作",
+        "1-2 按使用区域快速汇总（PT-6-1）",
+        "可手动输入路径",
+    ] {
+        assert!(stdout.contains(label), "V2 menu output omitted {label:?}");
+    }
+    assert!(
+        !stdout.contains("按批注汇总（模板+源文件）"),
+        "V2 must not expose the retired annotation-based summary"
+    );
+    assert!(stdout.contains("stable_feature_id=data.used_range_summary"));
+
+    let logs = root.path().join("app").join("logs");
+    let (_history_path, history, _) = read_single_history(&logs, "PT-6-1_")?;
+    assert_eq!(history["feature_id"], "PT-6-1");
+    assert_eq!(history["status"], "succeeded");
+    assert_eq!(history["summary"]["files"], 1);
+    assert_eq!(history["summary"]["rows"], 2);
+    assert_eq!(fs::read(&source)?, source_before);
+    assert!(root.path().join("app").join("output").is_dir());
+    Ok(())
+}
+
+#[test]
+fn v2_named_range_summary_is_explicitly_unimplemented() -> Result<()> {
+    let root = TestDirectory::new()?;
+    let config = create_app_config(root.path())?;
+    let output = run_menu_v2(&config, "1\n3\n0\n")?;
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("1-3 按模板命名区域汇总（尚未实现）"));
+    assert!(stdout.contains("[尚未实现] 模板命名区域汇总尚未实现"));
+    assert!(!stdout.contains("PT-6-2"));
+    assert!(!root.path().join("app").join("output").exists());
+    Ok(())
+}
+
+#[test]
+fn direct_launch_opens_the_seven_category_v2_menu() -> Result<()> {
+    let root = TestDirectory::new()?;
+    let config = create_app_config(root.path())?;
+    let mut child = Command::new(env!("CARGO_BIN_EXE_pytools"))
+        .env("PYTOOLS_CONFIG_PATH", &config)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .context("start PyTools without a command")?;
+    child
+        .stdin
+        .take()
+        .context("direct-launch stdin missing")?
+        .write_all(b"0\n")?;
+    let output = child
+        .wait_with_output()
+        .context("wait for direct PyTools launch")?;
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    for category in [
+        "PyTools Rust V2",
+        "数据提取与汇总",
+        "数据去重与追加",
+        "报表打印",
+        "文件处理",
+        "专用报表处理",
+        "归档整理",
+        "配置与快捷操作",
+    ] {
+        assert!(
+            stdout.contains(category),
+            "direct launch omitted {category:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn interactive_summary_menu_routes_comment_summary_with_template_and_sources() -> Result<()> {
     let root = TestDirectory::new()?;
     let config = create_app_config(root.path())?;
@@ -410,6 +510,29 @@ fn run_menu(config: &Path, input: &str) -> Result<Output> {
     child
         .wait_with_output()
         .context("wait for interactive menu")
+}
+
+fn run_menu_v2(config: &Path, input: &str) -> Result<Output> {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_pytools"))
+        .arg("menu-v2")
+        .arg("--config")
+        .arg(config)
+        .arg("--log-view")
+        .arg("developer")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .context("start PyTools Rust V2 menu")?;
+    child
+        .stdin
+        .take()
+        .context("V2 menu stdin missing")?
+        .write_all(input.as_bytes())
+        .context("send V2 menu selections")?;
+    child
+        .wait_with_output()
+        .context("wait for PyTools Rust V2 menu")
 }
 
 fn read_single_history(log_dir: &Path, prefix: &str) -> Result<(PathBuf, Value, String)> {

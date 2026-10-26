@@ -72,7 +72,7 @@ use pytools_core::timeline_ops::{
     HeaderPathCompareProgress, HeaderPathCompareRunEvent, WideSummaryProgress, WideSummaryRunEvent,
 };
 use std::fs::{self, File, OpenOptions};
-use std::io::{self, BufRead, IsTerminal, Write};
+use std::io::{self, BufRead, Cursor, IsTerminal, Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
@@ -86,7 +86,7 @@ fn main() {
 fn run() -> Result<()> {
     let mut arguments = std::env::args().skip(1);
     let Some(command) = arguments.next() else {
-        return run_interactive_menu(Vec::new());
+        return run_interactive_menu(vec!["--menu-version".to_owned(), "v2".to_owned()]);
     };
     if command == "--help" || command == "-h" {
         print_usage();
@@ -102,6 +102,11 @@ fn run() -> Result<()> {
     }
     match command.as_str() {
         "menu" | "interactive" => run_interactive_menu(arguments),
+        "menu-v2" => {
+            let mut menu_arguments = vec!["--menu-version".to_owned(), "v2".to_owned()];
+            menu_arguments.extend(arguments);
+            run_interactive_menu(menu_arguments)
+        }
         "timeline-precheck" => run_timeline_precheck_cli(arguments),
         "timeline-compare" => run_timeline_compare_cli(arguments),
         "timeline-extract" => run_timeline_extract_cli(arguments),
@@ -182,6 +187,15 @@ fn run_interactive_menu(arguments: Vec<String>) -> Result<()> {
     );
     let capabilities = options.values.get("capabilities").map(PathBuf::from);
     let platform = options.values.get("platform").cloned();
+    let menu_version = options
+        .values
+        .get("menu-version")
+        .map(String::as_str)
+        .unwrap_or("legacy");
+    anyhow::ensure!(
+        matches!(menu_version, "legacy" | "v2"),
+        "--menu-version must be legacy or v2"
+    );
     anyhow::ensure!(
         capabilities.is_some() == platform.is_some(),
         "--capabilities and --platform must be provided together"
@@ -199,17 +213,31 @@ fn run_interactive_menu(arguments: Vec<String>) -> Result<()> {
     let mut input = stdin.lock();
     let stdout = io::stdout();
     let mut output = stdout.lock();
-    run_interactive_main_menu(
-        &mut input,
-        &mut output,
-        &config_path,
-        &mut global,
-        &mut config_error,
-        log_view,
-        allow_native_dialog,
-        capabilities.as_deref(),
-        platform.as_deref(),
-    )
+    if menu_version == "v2" {
+        run_interactive_v2_main_menu(
+            &mut input,
+            &mut output,
+            &config_path,
+            &mut global,
+            &mut config_error,
+            log_view,
+            allow_native_dialog,
+            capabilities.as_deref(),
+            platform.as_deref(),
+        )
+    } else {
+        run_interactive_main_menu(
+            &mut input,
+            &mut output,
+            &config_path,
+            &mut global,
+            &mut config_error,
+            log_view,
+            allow_native_dialog,
+            capabilities.as_deref(),
+            platform.as_deref(),
+        )
+    }
 }
 
 fn fallback_menu_global(config_path: &Path) -> Result<GlobalConfig> {
@@ -380,6 +408,839 @@ where
             }
             _ => writeln!(output, "仅接受 1、2、3、4、5、6、7、8、9 或 0")?,
         }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum V2LegacyMenu {
+    Timeline,
+    Dedup,
+    Print,
+    Convert,
+    Summary,
+    Batch,
+    Archive,
+    Config,
+    Quick,
+}
+
+#[derive(Clone, Copy)]
+enum V2MenuAction {
+    Legacy {
+        menu: V2LegacyMenu,
+        choice: &'static str,
+    },
+    ConfigInitialize,
+    NotImplemented(&'static str),
+}
+
+struct V2MenuEntry {
+    choice: &'static str,
+    feature_id: &'static str,
+    label: &'static str,
+    action: V2MenuAction,
+}
+
+struct V2MenuCategory {
+    choice: &'static str,
+    title: &'static str,
+    entries: &'static [V2MenuEntry],
+}
+
+const V2_DATA_ENTRIES: &[V2MenuEntry] = &[
+    V2MenuEntry {
+        choice: "1",
+        feature_id: "data.wide_summary",
+        label: "1-1 时序宽表汇总（旧 1-4；供人工检查，不自动追加）",
+        action: V2MenuAction::Legacy {
+            menu: V2LegacyMenu::Timeline,
+            choice: "4",
+        },
+    },
+    V2MenuEntry {
+        choice: "2",
+        feature_id: "data.used_range_summary",
+        label: "1-2 按使用区域快速汇总（PT-6-1）",
+        action: V2MenuAction::Legacy {
+            menu: V2LegacyMenu::Summary,
+            choice: "1",
+        },
+    },
+    V2MenuEntry {
+        choice: "3",
+        feature_id: "data.named_range_summary",
+        label: "1-3 按模板命名区域汇总（尚未实现）",
+        action: V2MenuAction::NotImplemented(
+            "模板命名区域汇总尚未实现；旧版批注定位汇总不能替代命名区域规则。",
+        ),
+    },
+    V2MenuEntry {
+        choice: "4",
+        feature_id: "data.header_path_compare",
+        label: "1-4 表头路径比对与映射建议（PT-1-1）",
+        action: V2MenuAction::Legacy {
+            menu: V2LegacyMenu::Timeline,
+            choice: "1",
+        },
+    },
+    V2MenuEntry {
+        choice: "5",
+        feature_id: "data.timeline_precheck",
+        label: "1-5 时序配置预校验（PT-1-5）",
+        action: V2MenuAction::Legacy {
+            menu: V2LegacyMenu::Timeline,
+            choice: "5",
+        },
+    },
+];
+
+const V2_DEDUP_ENTRIES: &[V2MenuEntry] = &[
+    V2MenuEntry {
+        choice: "1",
+        feature_id: "dedup.config_check",
+        label: "2-1 按配置检查重复数据（PT-2-3；生成计划）",
+        action: V2MenuAction::Legacy {
+            menu: V2LegacyMenu::Dedup,
+            choice: "3",
+        },
+    },
+    V2MenuEntry {
+        choice: "2",
+        feature_id: "dedup.config_delete",
+        label: "2-2 按配置删除重复数据（PT-2-4；计划/能力门控）",
+        action: V2MenuAction::Legacy {
+            menu: V2LegacyMenu::Dedup,
+            choice: "4",
+        },
+    },
+    V2MenuEntry {
+        choice: "3",
+        feature_id: "dedup.append_to_history",
+        label: "2-3 去重追加到历史工作簿（PT-2-5；独立步骤）",
+        action: V2MenuAction::Legacy {
+            menu: V2LegacyMenu::Dedup,
+            choice: "5",
+        },
+    },
+    V2MenuEntry {
+        choice: "4",
+        feature_id: "dedup.config_precheck",
+        label: "2-4 去重/追加配置预校验（PT-2-6）",
+        action: V2MenuAction::Legacy {
+            menu: V2LegacyMenu::Dedup,
+            choice: "6",
+        },
+    },
+];
+
+const V2_PRINT_ENTRIES: &[V2MenuEntry] = &[
+    V2MenuEntry {
+        choice: "1",
+        feature_id: "print.static_report",
+        label: "3-1 按配置生成静态打印报表（PT-3-3；计划/能力门控）",
+        action: V2MenuAction::Legacy {
+            menu: V2LegacyMenu::Print,
+            choice: "3",
+        },
+    },
+    V2MenuEntry {
+        choice: "2",
+        feature_id: "print.config_precheck",
+        label: "3-2 打印配置预校验（PT-3-4）",
+        action: V2MenuAction::Legacy {
+            menu: V2LegacyMenu::Print,
+            choice: "4",
+        },
+    },
+];
+
+const V2_FILE_ENTRIES: &[V2MenuEntry] = &[
+    V2MenuEntry {
+        choice: "1",
+        feature_id: "files.institution_filename_normalize",
+        label: "4-1 文件名机构标准化（局部映射）",
+        action: V2MenuAction::Legacy {
+            menu: V2LegacyMenu::Convert,
+            choice: "7",
+        },
+    },
+    V2MenuEntry {
+        choice: "2",
+        feature_id: "files.sort_prefix_add",
+        label: "4-2 添加文件排序前缀",
+        action: V2MenuAction::Legacy {
+            menu: V2LegacyMenu::Convert,
+            choice: "9",
+        },
+    },
+    V2MenuEntry {
+        choice: "3",
+        feature_id: "files.sort_prefix_remove",
+        label: "4-2 清理文件排序前缀",
+        action: V2MenuAction::Legacy {
+            menu: V2LegacyMenu::Convert,
+            choice: "10",
+        },
+    },
+    V2MenuEntry {
+        choice: "4",
+        feature_id: "files.rename_from_cell_content",
+        label: "4-3 根据工作簿内容命名（现有内容前缀功能）",
+        action: V2MenuAction::Legacy {
+            menu: V2LegacyMenu::Convert,
+            choice: "5",
+        },
+    },
+    V2MenuEntry {
+        choice: "5",
+        feature_id: "files.convert_excel",
+        label: "4-4 Excel 转换（目标 XLS/ET→XLSX；ET 保真待验收）",
+        action: V2MenuAction::Legacy {
+            menu: V2LegacyMenu::Convert,
+            choice: "2",
+        },
+    },
+    V2MenuEntry {
+        choice: "6",
+        feature_id: "files.convert_word",
+        label: "4-4 Word 转换（目标 DOC→DOCX；保真待验收）",
+        action: V2MenuAction::Legacy {
+            menu: V2LegacyMenu::Convert,
+            choice: "3",
+        },
+    },
+    V2MenuEntry {
+        choice: "7",
+        feature_id: "files.rename_sheets",
+        label: "4-5 按配置映射修改 Sheet 名（计划/能力门控）",
+        action: V2MenuAction::Legacy {
+            menu: V2LegacyMenu::Convert,
+            choice: "4",
+        },
+    },
+    V2MenuEntry {
+        choice: "8",
+        feature_id: "files.submission_check",
+        label: "4-6 机构提交完整性检查",
+        action: V2MenuAction::Legacy {
+            menu: V2LegacyMenu::Convert,
+            choice: "8",
+        },
+    },
+];
+
+const V2_SPECIAL_REPORT_ENTRIES: &[V2MenuEntry] = &[
+    V2MenuEntry {
+        choice: "1",
+        feature_id: "reports.village_bank_split",
+        label: "5-1 村镇银行分机构拆分（PT-7-1；计划/能力门控）",
+        action: V2MenuAction::Legacy {
+            menu: V2LegacyMenu::Batch,
+            choice: "1",
+        },
+    },
+    V2MenuEntry {
+        choice: "2",
+        feature_id: "reports.institution_name_normalize",
+        label: "5-2 分机构名称标准化（PT-7-2；计划/能力门控）",
+        action: V2MenuAction::Legacy {
+            menu: V2LegacyMenu::Batch,
+            choice: "2",
+        },
+    },
+    V2MenuEntry {
+        choice: "3",
+        feature_id: "reports.remove_foreign_bank_rows",
+        label: "5-3 删除分机构表中的外资机构行（PT-7-3；计划/能力门控）",
+        action: V2MenuAction::Legacy {
+            menu: V2LegacyMenu::Batch,
+            choice: "3",
+        },
+    },
+    V2MenuEntry {
+        choice: "4",
+        feature_id: "reports.fx_header_currency_fix",
+        label: "5-4 外汇打印表头币种修正（PT-7-4；计划/能力门控）",
+        action: V2MenuAction::Legacy {
+            menu: V2LegacyMenu::Batch,
+            choice: "4",
+        },
+    },
+    V2MenuEntry {
+        choice: "5",
+        feature_id: "reports.region_sum_check",
+        label: "5-5 分县区总分校验（PT-7-5）",
+        action: V2MenuAction::Legacy {
+            menu: V2LegacyMenu::Batch,
+            choice: "5",
+        },
+    },
+    V2MenuEntry {
+        choice: "6",
+        feature_id: "reports.extract_sheet_area",
+        label: "5-6 按配置提取指定 Sheet 区域（PT-7-6）",
+        action: V2MenuAction::Legacy {
+            menu: V2LegacyMenu::Batch,
+            choice: "6",
+        },
+    },
+    V2MenuEntry {
+        choice: "7",
+        feature_id: "reports.rural_loan_adjustment",
+        label: "5-7 涉农贷款比上月修正（PT-7-7；计划/能力门控）",
+        action: V2MenuAction::Legacy {
+            menu: V2LegacyMenu::Batch,
+            choice: "7",
+        },
+    },
+    V2MenuEntry {
+        choice: "8",
+        feature_id: "reports.quarterly_rural_loan_adjustment",
+        label: "5-8 季度涉农贷款修正及分地区核对（PT-7-8；计划/能力门控）",
+        action: V2MenuAction::Legacy {
+            menu: V2LegacyMenu::Batch,
+            choice: "8",
+        },
+    },
+];
+
+const V2_ARCHIVE_ENTRIES: &[V2MenuEntry] = &[
+    V2MenuEntry {
+        choice: "1",
+        feature_id: "archive.date_preview",
+        label: "6-1 按日期预览归档分类（PT-8-1）",
+        action: V2MenuAction::Legacy {
+            menu: V2LegacyMenu::Archive,
+            choice: "1",
+        },
+    },
+    V2MenuEntry {
+        choice: "2",
+        feature_id: "archive.type_preview",
+        label: "6-1 按类型预览归档分类（PT-8-2）",
+        action: V2MenuAction::Legacy {
+            menu: V2LegacyMenu::Archive,
+            choice: "2",
+        },
+    },
+    V2MenuEntry {
+        choice: "3",
+        feature_id: "archive.execute_plan",
+        label: "6-2 执行已确认的复制归档计划（PT-8-3）",
+        action: V2MenuAction::Legacy {
+            menu: V2LegacyMenu::Archive,
+            choice: "3",
+        },
+    },
+    V2MenuEntry {
+        choice: "4",
+        feature_id: "archive.date_copy",
+        label: "6-2 按日期复制归档（PT-8-4；不移动源文件）",
+        action: V2MenuAction::Legacy {
+            menu: V2LegacyMenu::Archive,
+            choice: "4",
+        },
+    },
+    V2MenuEntry {
+        choice: "5",
+        feature_id: "archive.type_copy",
+        label: "6-2 按类型复制归档（PT-8-5；不移动源文件）",
+        action: V2MenuAction::Legacy {
+            menu: V2LegacyMenu::Archive,
+            choice: "5",
+        },
+    },
+];
+
+const V2_CONFIG_ENTRIES: &[V2MenuEntry] = &[
+    V2MenuEntry {
+        choice: "1",
+        feature_id: "config.initialize_or_repair",
+        label: "7-1 初始化 / 修复配置（保留已有明细）",
+        action: V2MenuAction::ConfigInitialize,
+    },
+    V2MenuEntry {
+        choice: "2",
+        feature_id: "config.reload_and_view",
+        label: "7-2 重新加载并查看配置状态",
+        action: V2MenuAction::Legacy {
+            menu: V2LegacyMenu::Config,
+            choice: "2",
+        },
+    },
+    V2MenuEntry {
+        choice: "3",
+        feature_id: "quick.open_config",
+        label: "7-3 打开配置文件",
+        action: V2MenuAction::Legacy {
+            menu: V2LegacyMenu::Quick,
+            choice: "1",
+        },
+    },
+    V2MenuEntry {
+        choice: "4",
+        feature_id: "quick.open_latest_output",
+        label: "7-4 打开最近输出",
+        action: V2MenuAction::Legacy {
+            menu: V2LegacyMenu::Quick,
+            choice: "2",
+        },
+    },
+    V2MenuEntry {
+        choice: "5",
+        feature_id: "quick.open_output_directory",
+        label: "7-5 打开输出目录",
+        action: V2MenuAction::Legacy {
+            menu: V2LegacyMenu::Quick,
+            choice: "3",
+        },
+    },
+];
+
+const V2_MENU_CATEGORIES: &[V2MenuCategory] = &[
+    V2MenuCategory {
+        choice: "1",
+        title: "数据提取与汇总",
+        entries: V2_DATA_ENTRIES,
+    },
+    V2MenuCategory {
+        choice: "2",
+        title: "数据去重与追加",
+        entries: V2_DEDUP_ENTRIES,
+    },
+    V2MenuCategory {
+        choice: "3",
+        title: "报表打印",
+        entries: V2_PRINT_ENTRIES,
+    },
+    V2MenuCategory {
+        choice: "4",
+        title: "文件处理",
+        entries: V2_FILE_ENTRIES,
+    },
+    V2MenuCategory {
+        choice: "5",
+        title: "专用报表处理",
+        entries: V2_SPECIAL_REPORT_ENTRIES,
+    },
+    V2MenuCategory {
+        choice: "6",
+        title: "归档整理",
+        entries: V2_ARCHIVE_ENTRIES,
+    },
+    V2MenuCategory {
+        choice: "7",
+        title: "配置与快捷操作",
+        entries: V2_CONFIG_ENTRIES,
+    },
+];
+
+fn run_interactive_v2_main_menu<R, W>(
+    input: &mut R,
+    output: &mut W,
+    config_path: &Path,
+    global: &mut GlobalConfig,
+    config_error: &mut Option<String>,
+    log_view: &str,
+    allow_native_dialog: bool,
+    capabilities: Option<&Path>,
+    platform: Option<&str>,
+) -> Result<()>
+where
+    R: BufRead,
+    W: Write,
+{
+    loop {
+        writeln!(output, "======== PyTools Rust V2 ========")?;
+        writeln!(output, "  1  数据提取与汇总")?;
+        writeln!(output, "  2  数据去重与追加")?;
+        writeln!(output, "  3  报表打印")?;
+        writeln!(output, "  4  文件处理")?;
+        writeln!(output, "  5  专用报表处理")?;
+        writeln!(output, "  6  归档整理")?;
+        writeln!(output, "  7  配置与快捷操作")?;
+        writeln!(output, "  0  退出")?;
+        writeln!(output, "=================================")?;
+        if let Some(error) = config_error.as_deref() {
+            writeln!(
+                output,
+                "[配置不可用] {}；请使用 7-1 初始化/修复配置。",
+                config_path.display()
+            )?;
+            if log_view == "developer" {
+                writeln!(output, "[配置诊断] {error}")?;
+            }
+        }
+
+        let Some(choice) = read_menu_choice(input, output, "主菜单选择> ")? else {
+            writeln!(output, "再见。")?;
+            return Ok(());
+        };
+        if choice == "0" {
+            writeln!(output, "再见。")?;
+            return Ok(());
+        }
+        let Some(category) = V2_MENU_CATEGORIES
+            .iter()
+            .find(|category| category.choice == choice)
+        else {
+            writeln!(output, "仅接受 1、2、3、4、5、6、7 或 0")?;
+            continue;
+        };
+        if category.choice != "7" && config_error.is_some() {
+            writeln!(output, "当前配置不可用；请先进入 7-1 修复或初始化配置。")?;
+            continue;
+        }
+        let Some(entry) = run_v2_submenu(input, output, category)? else {
+            continue;
+        };
+        if log_view == "developer" {
+            writeln!(output, "[V2 路由] stable_feature_id={}", entry.feature_id)?;
+        } else if log_view == "user" {
+            writeln!(output, "开始处理：{}", entry.label)?;
+        }
+        let result = match entry.action {
+            V2MenuAction::Legacy { menu, choice } => run_v2_legacy_action(
+                menu,
+                choice,
+                input,
+                output,
+                config_path,
+                global,
+                config_error,
+                log_view,
+                allow_native_dialog,
+                capabilities,
+                platform,
+            ),
+            V2MenuAction::ConfigInitialize => run_v2_config_initialize(
+                input,
+                output,
+                config_path,
+                global,
+                config_error,
+                log_view,
+                capabilities,
+                platform,
+            ),
+            V2MenuAction::NotImplemented(message) => {
+                writeln!(output, "[尚未实现] {message}")?;
+                Ok(())
+            }
+        };
+        if let Err(error) = result {
+            writeln!(output, "[运行失败] {}：{error:#}", entry.label)?;
+        }
+    }
+}
+
+fn run_v2_submenu<R, W>(
+    input: &mut R,
+    output: &mut W,
+    category: &V2MenuCategory,
+) -> Result<Option<&'static V2MenuEntry>>
+where
+    R: BufRead,
+    W: Write,
+{
+    loop {
+        writeln!(output, "------ {} ------", category.title)?;
+        for entry in category.entries {
+            writeln!(output, "  {}  {}", entry.choice, entry.label)?;
+        }
+        writeln!(output, "  0  返回")?;
+        writeln!(output, "------------------------")?;
+        let Some(choice) = read_menu_choice(input, output, "子菜单选择> ")? else {
+            return Ok(None);
+        };
+        if choice == "0" {
+            return Ok(None);
+        }
+        if let Some(entry) = category.entries.iter().find(|entry| entry.choice == choice) {
+            return Ok(Some(entry));
+        }
+        writeln!(output, "输入无效，请重试。")?;
+    }
+}
+
+fn run_v2_legacy_action<R, W>(
+    menu: V2LegacyMenu,
+    choice: &'static str,
+    input: &mut R,
+    output: &mut W,
+    config_path: &Path,
+    global: &mut GlobalConfig,
+    config_error: &mut Option<String>,
+    log_view: &str,
+    allow_native_dialog: bool,
+    capabilities: Option<&Path>,
+    platform: Option<&str>,
+) -> Result<()>
+where
+    R: BufRead,
+    W: Write,
+{
+    let prefixed = if matches!(menu, V2LegacyMenu::Config) && choice == "2" {
+        format!("{choice}\n0\n")
+    } else {
+        format!("{choice}\n")
+    };
+    let mut routed_input = V2PrefixedInput::new(prefixed.into_bytes(), input);
+    let mut routed_output = V2LegacyMenuOutput::new(output);
+    let result = match menu {
+        V2LegacyMenu::Timeline => run_interactive_timeline_menu(
+            &mut routed_input,
+            &mut routed_output,
+            config_path,
+            global,
+            log_view,
+            allow_native_dialog,
+            capabilities,
+            platform,
+        ),
+        V2LegacyMenu::Dedup => run_interactive_dedup_menu(
+            &mut routed_input,
+            &mut routed_output,
+            config_path,
+            global,
+            log_view,
+            allow_native_dialog,
+            capabilities,
+            platform,
+        ),
+        V2LegacyMenu::Print => run_interactive_print_menu(
+            &mut routed_input,
+            &mut routed_output,
+            config_path,
+            global,
+            log_view,
+            allow_native_dialog,
+            capabilities,
+            platform,
+        ),
+        V2LegacyMenu::Convert => run_interactive_convert_menu(
+            &mut routed_input,
+            &mut routed_output,
+            config_path,
+            global,
+            log_view,
+            allow_native_dialog,
+            capabilities,
+            platform,
+        ),
+        V2LegacyMenu::Summary => run_interactive_summary_menu(
+            &mut routed_input,
+            &mut routed_output,
+            global,
+            log_view,
+            allow_native_dialog,
+        ),
+        V2LegacyMenu::Batch => run_interactive_batch_menu(
+            &mut routed_input,
+            &mut routed_output,
+            config_path,
+            global,
+            log_view,
+            allow_native_dialog,
+            capabilities,
+            platform,
+        ),
+        V2LegacyMenu::Archive => run_interactive_archive_menu(
+            &mut routed_input,
+            &mut routed_output,
+            config_path,
+            global,
+            log_view,
+            allow_native_dialog,
+        ),
+        V2LegacyMenu::Config => run_interactive_config_menu(
+            &mut routed_input,
+            &mut routed_output,
+            config_path,
+            global,
+            config_error,
+            log_view,
+            capabilities,
+            platform,
+        ),
+        V2LegacyMenu::Quick => {
+            run_interactive_quick_menu(&mut routed_input, &mut routed_output, config_path, global)
+        }
+    };
+    routed_output.finish()?;
+    result
+}
+
+fn run_v2_config_initialize<R, W>(
+    input: &mut R,
+    output: &mut W,
+    config_path: &Path,
+    global: &mut GlobalConfig,
+    config_error: &mut Option<String>,
+    log_view: &str,
+    capabilities: Option<&Path>,
+    platform: Option<&str>,
+) -> Result<()>
+where
+    R: BufRead,
+    W: Write,
+{
+    let started_at = Local::now();
+    let started = Instant::now();
+    let mut facts = ConfigMenuRunFacts::new();
+    if log_view == "user" {
+        writeln!(output, "开始处理：初始化/修复配置表")?;
+    } else if log_view == "developer" {
+        writeln!(output, "PT-5 开始：PT-5-1 initialize_or_repair")?;
+    }
+    if let Err(error) = run_interactive_config_initialize_or_repair(
+        input,
+        output,
+        config_path,
+        global,
+        config_error,
+        log_view,
+        capabilities,
+        platform,
+        &mut facts,
+    ) {
+        facts.status = "failed";
+        facts.error_type = Some("config_initialize_or_repair_failed");
+        if log_view == "developer" {
+            writeln!(output, "[配置操作失败] {error:#}")?;
+        } else {
+            writeln!(
+                output,
+                "[配置操作失败] 请检查配置文件是否为有效的 .xlsx，再重试或联系开发者。"
+            )?;
+        }
+    }
+    finish_config_menu_action(
+        output,
+        global,
+        log_view,
+        "PT-5-1",
+        "initialize_or_repair",
+        "初始化/修复配置表",
+        &started_at,
+        started.elapsed().as_millis(),
+        &facts,
+    )
+}
+
+struct V2PrefixedInput<'a, R> {
+    prefix: Cursor<Vec<u8>>,
+    inner: &'a mut R,
+}
+
+impl<'a, R> V2PrefixedInput<'a, R> {
+    fn new(prefix: Vec<u8>, inner: &'a mut R) -> Self {
+        Self {
+            prefix: Cursor::new(prefix),
+            inner,
+        }
+    }
+
+    fn prefix_has_remaining(&self) -> bool {
+        self.prefix.position() < self.prefix.get_ref().len() as u64
+    }
+}
+
+impl<R: BufRead> Read for V2PrefixedInput<'_, R> {
+    fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+        let length = {
+            let available = self.fill_buf()?;
+            let length = available.len().min(buffer.len());
+            buffer[..length].copy_from_slice(&available[..length]);
+            length
+        };
+        self.consume(length);
+        Ok(length)
+    }
+}
+
+impl<R: BufRead> BufRead for V2PrefixedInput<'_, R> {
+    fn fill_buf(&mut self) -> io::Result<&[u8]> {
+        if self.prefix_has_remaining() {
+            self.prefix.fill_buf()
+        } else {
+            self.inner.fill_buf()
+        }
+    }
+
+    fn consume(&mut self, amount: usize) {
+        if self.prefix_has_remaining() {
+            self.prefix.consume(amount);
+        } else {
+            self.inner.consume(amount);
+        }
+    }
+}
+
+struct V2LegacyMenuOutput<'a, W> {
+    inner: &'a mut W,
+    in_legacy_menu: bool,
+    pending: Vec<u8>,
+}
+
+impl<'a, W: Write> V2LegacyMenuOutput<'a, W> {
+    fn new(inner: &'a mut W) -> Self {
+        Self {
+            inner,
+            in_legacy_menu: false,
+            pending: Vec::new(),
+        }
+    }
+
+    fn write_line(&mut self, line: &[u8]) -> io::Result<()> {
+        let text = String::from_utf8_lossy(line);
+        let text = text.trim_end_matches(['\r', '\n']);
+        if self.in_legacy_menu {
+            if !text.is_empty() && text.chars().all(|character| character == '-') {
+                self.in_legacy_menu = false;
+            }
+            return Ok(());
+        }
+        if text.starts_with("------ ") && text.ends_with(" ------") {
+            self.in_legacy_menu = true;
+            return Ok(());
+        }
+        self.inner.write_all(line)
+    }
+
+    fn flush_pending(&mut self) -> io::Result<()> {
+        if self.pending.is_empty() {
+            return Ok(());
+        }
+        if self.in_legacy_menu || self.pending == "子菜单选择> ".as_bytes() {
+            self.pending.clear();
+            return Ok(());
+        }
+        let pending = std::mem::take(&mut self.pending);
+        self.inner.write_all(&pending)
+    }
+
+    fn finish(&mut self) -> io::Result<()> {
+        self.flush_pending()?;
+        self.inner.flush()
+    }
+}
+
+impl<W: Write> Write for V2LegacyMenuOutput<'_, W> {
+    fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
+        for byte in buffer {
+            self.pending.push(*byte);
+            if *byte == b'\n' {
+                let line = std::mem::take(&mut self.pending);
+                self.write_line(&line)?;
+            }
+        }
+        Ok(buffer.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.flush_pending()?;
+        self.inner.flush()
     }
 }
 
@@ -11844,8 +12705,8 @@ fn write_region_sum_run_history(
 fn print_usage() {
     eprintln!(
         "Usage:\n\
-         pytools [menu] [--config <config.xlsx>] [--log-view user|developer|off] [--capabilities <json> --platform <id>]\n\
-         no command opens the migrated menu; available categories: 1 (timeline 1-1 and 1-3 through 1-5; 1-2 excluded), 2 (dedup 1-6), 3 (print 1-4; legacy PDF item 5 is not implemented), 4 (conversion and file naming 1-10), 5 (configuration 1/2), 6 (summary 1/2), 7 (batch 7-1/7-8), 8 (archive 1-5), and 9 (quick tools 1-3)\n\
+         pytools [menu-v2|menu] [--menu-version v2|legacy] [--config <config.xlsx>] [--log-view user|developer|off] [--capabilities <json> --platform <id>]\n\
+         no command opens the 7-category PyTools Rust V2 menu; menu-v2 opens V2 explicitly; menu defaults to the legacy 9-category menu for compatibility\n\
          timeline-precheck --config <workbook.xlsx>\n\
          timeline-compare --config <workbook.xlsx> --template <workbook.xlsx> [--log-dir <dir>] [--log-view user|developer|off] <source.xlsx>...\n\
          timeline-extract --config <workbook.xlsx> [--output-dir <dir>] [--log-dir <dir>] [--log-view user|developer|off] [--capabilities <json> --platform <id> [--commit-target]] [<source.xlsx>...]\n\

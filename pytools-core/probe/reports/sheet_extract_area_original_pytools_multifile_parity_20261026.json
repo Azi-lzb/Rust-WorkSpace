@@ -1,0 +1,124 @@
+{
+  "schema_version": 1,
+  "status": "passed",
+  "feature": "PT-7-6 original PyTools business workbook area extraction",
+  "case_label": "multi-source keyword filtering and duplicate-sheet grouping",
+  "stitch_mode": "",
+  "sample_kind": "original PyTools business workbook; read-only source",
+  "source_count": 4,
+  "source_files": [
+    {
+      "id": "source_1",
+      "bytes": 816501
+    },
+    {
+      "id": "source_2",
+      "bytes": 115431
+    },
+    {
+      "id": "source_3",
+      "bytes": 142339
+    },
+    {
+      "id": "source_4",
+      "bytes": 53835
+    }
+  ],
+  "source_filtering": [
+    {
+      "id": "source_1",
+      "bytes": 816501,
+      "workbook_keyword_match": false,
+      "exclude_keyword_match": false,
+      "selected": false
+    },
+    {
+      "id": "source_2",
+      "bytes": 115431,
+      "workbook_keyword_match": true,
+      "exclude_keyword_match": false,
+      "selected": true
+    },
+    {
+      "id": "source_3",
+      "bytes": 142339,
+      "workbook_keyword_match": true,
+      "exclude_keyword_match": false,
+      "selected": true
+    },
+    {
+      "id": "source_4",
+      "bytes": 53835,
+      "workbook_keyword_match": true,
+      "exclude_keyword_match": true,
+      "selected": false
+    }
+  ],
+  "area_spec": "A1:XFD1048576",
+  "workbook_keywords": "2.报表",
+  "exclude_keywords": "仅公式校验",
+  "entry": "Rust PyTools CLI menu → 7 → 6",
+  "python_baseline": "PyCode/core/feature_1_6_extract_sheets.py::run_extract_sheets",
+  "python_stats": {
+    "files": 4,
+    "extracted_sheets": 30,
+    "output_files": 1,
+    "failed_files": 0
+  },
+  "rust_stats": {
+    "files": 4,
+    "extracted_sheets": 30,
+    "output_files": 1,
+    "failed_files": 0
+  },
+  "rust_run_status": "succeeded",
+  "rust_engines": [
+    "Calamine + namespace-aware OOXML",
+    "calamine",
+    "hard_link create-only publication",
+    "rust_xlsxwriter"
+  ],
+  "rust_merge_value_compatibility": [
+    {
+      "matched_source_index": 1,
+      "actual_engine": "Calamine + namespace-aware OOXML",
+      "stored_merged_child_values_suppressed": 0,
+      "expected_stored_merged_child_values_suppressed": null
+    },
+    {
+      "matched_source_index": 2,
+      "actual_engine": "Calamine + namespace-aware OOXML",
+      "stored_merged_child_values_suppressed": 0,
+      "expected_stored_merged_child_values_suppressed": null
+    }
+  ],
+  "rust_error_patch_required": false,
+  "rust_error_patch_succeeded": false,
+  "rust_error_cells_preserved": true,
+  "python_projection": {
+    "worksheet_count": 30,
+    "non_empty_cells": 6340,
+    "cell_type_counts": {
+      "int": 2029,
+      "str": 4311
+    },
+    "error_cells": 0
+  },
+  "rust_projection": {
+    "worksheet_count": 30,
+    "non_empty_cells": 6340,
+    "cell_type_counts": {
+      "int": 2029,
+      "str": 4311
+    },
+    "error_cells": 0
+  },
+  "worksheet_count": 30,
+  "unique_worksheet_names": 30,
+  "duplicate_suffix_count": 15,
+  "exact_output_projection_match": true,
+  "difference_locations": [],
+  "source_unchanged": true,
+  "output_location": "local F: drive test folder; excluded from Git",
+  "scope_note": "This records one original PyTools workbook comparison for the configured multi-source keyword filtering and duplicate-sheet grouping value-extraction task. It does not complete all PT-7-6 templates, Windows manual acceptance, or Linux/deb validation."
+}

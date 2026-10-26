@@ -1076,3 +1076,17 @@ PT-7-6 仍为迁移中：这仍是一个原业务工作簿的三种配置对拍�
 无效区域 `NOT_A_RANGE` 曾在 Rust 中静默跳过。现菜单 user/developer 日志发出 `area_parse` warning，运行历史记录 `invalid_area_spec`，源不变且不发布输出。只读验证旧 PyCode 会在 warning 后因默认工作簿残留，额外生成一个仅含空白 `Sheet` 的 XLSX；Rust 不复刻该空白输出副作用，作为输入保护差异明确记录，不算完全对拍。
 
 Windows 原生 `cargo fmt --manifest-path pytools-core/Cargo.toml --check`、`cargo test --offline --locked -q -p pytools-core --test sheet_extract_area_operation_parity -j 1`（18/18）、`cargo build --offline --locked -q -p pytools-core --bin pytools -j 1` 通过。PT-7-6 仍为迁移中；其他原业务模板、人工文件弹窗及 Linux/目标机未验收；PT-1-2 继续排除。未改共享 crate 或 Python 源树。
+
+### 2026-10-26 PT-7-6 原 PyTools 多工作簿筛选与同名页签对拍
+
+使用原 PyTools `xlsx/` 目录 4 个只读工作簿候选，通过 Rust CLI 菜单 `7→6` 和旧 PyCode `run_extract_sheets` 验证工作簿包含关键字、排除关键字及多源同名页签处理。包含规则命中 2 个源、未命中 1 个；排除规则跳过 1 个。Python/Rust 统计完全一致：files=4、extracted_sheets=30、output_files=1、failed_files=0。输出 30 个唯一页签，其中 15 个采用 `_2` 后缀；6,340 个非空单元格（2,029 个整数、4,311 个字符串）的坐标、类型、值和数字格式投影精确一致，源文件字节未改变。探针新增运行统计相等断言和匿名筛选明细；机器报告：`probe/reports/sheet_extract_area_original_pytools_multifile_parity_20261026.json`。派生文件均保存在 `F:\PyTools_Rust_本轮工作文件_20261026\PT-7-6_多文件复验_20261026`。
+
+PT-7-6 仍为迁移中；该结果仅覆盖此批真实工作簿及全区域提取，不代表其他模板、Windows 人工文件选择或 Linux/deb 验收。PT-1-2 继续排除。未改 Rust 产品代码、共享 crate 或原 Python 项目。
+
+### 2026-10-26 PyTools Rust V2 七分类菜单与现有入口接线
+
+无参数直接启动默认显示新版 7 个一级菜单；`menu-v2` 与 `menu --menu-version v2` 可显式进入，`menu` 继续兼容旧 9 类菜单。新版每项使用稳定功能 ID 映射到现有 Rust 菜单处理器，不复制业务算法；保留现有路径输入、批量选择、目录/递归选择能力。PT-6-1 已从 V2 的“1-2 按使用区域快速汇总”实调；V2 不提供已取消的批注去重/汇总和 PDF 项。新设计“按模板命名区域汇总”明确显示尚未实现，不映射到旧批注汇总。
+
+Windows 原生验证：`cargo fmt --manifest-path pytools-core/Cargo.toml -- --check`、`cargo test --offline --locked --manifest-path pytools-core/Cargo.toml --test summary_menu_cli v2_ -- -q`（3/3）、`cargo build --offline --locked --manifest-path pytools-core/Cargo.toml --bin pytools -j 1` 通过。入口冒烟覆盖直接启动 7 分类菜单、V2 菜单→PT-6-1 生成真实 XLSX、源文件不变，以及命名区域项目明确未实现且不生成输出。
+
+菜单入口本身已接通；各业务功能状态沿用既有记录，不因菜单接线升级为 Windows 真实验收通过。PT-1-2 继续排除。其他 V2 项目的真实业务对拍、Windows 人工验收及 Linux/deb 尚待后续；未修改共享 crate、根 Cargo 文件或原 Python 项目。
