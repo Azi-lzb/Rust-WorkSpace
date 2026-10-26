@@ -13,7 +13,7 @@ from pathlib import Path
 import openpyxl
 import xlrd
 from openpyxl import Workbook, load_workbook
-from openpyxl.utils.datetime import to_excel
+from openpyxl.utils.datetime import MAC_EPOCH, to_excel
 
 REPO = Path(__file__).resolve().parents[2]
 FIXTURE = REPO / "pytools-core" / "tests" / "fixtures" / "timeline" / "wide_summary_legacy.xls"
@@ -302,6 +302,57 @@ def main() -> int:
         if serial_source.read_bytes() != serial_source_before:
             raise AssertionError("the numeric serial date/time source workbook was modified")
 
+        epoch_source = output_dir / "epoch-1904.xlsm"
+        epoch_workbook = Workbook()
+        epoch_workbook.epoch = MAC_EPOCH
+        epoch_sheet = epoch_workbook.active
+        epoch_sheet.title = "日期"
+        epoch_sheet["A1"] = datetime(2024, 2, 29)
+        epoch_sheet["A1"].number_format = "yyyy-mm-dd"
+        epoch_sheet["B1"] = "=DATE(2024,2,29)"
+        epoch_workbook.save(epoch_source)
+        epoch_source_before = epoch_source.read_bytes()
+        epoch_result = subprocess.run(
+            [
+                str(RUST_CLI),
+                "convert-excel",
+                "--config",
+                str(config),
+                "--to",
+                "xlsx",
+                "--engine",
+                "native",
+                "--output-dir",
+                str(output_dir),
+                "--log-dir",
+                str(output_dir / "logs"),
+                "--log-view",
+                "developer",
+                str(epoch_source),
+            ],
+            check=False,
+            capture_output=True,
+        )
+        epoch_stdout = (
+            epoch_result.stdout.decode("utf-8-sig", errors="replace").replace("\x00", "")
+        )
+        if epoch_result.returncode != 2:
+            raise AssertionError(
+                f"1904 date-system XLSM must fail closed; exit={epoch_result.returncode}, "
+                f"stdout={epoch_stdout[-1000:]!r}"
+            )
+        epoch_report = json.loads(epoch_stdout)
+        if epoch_report.get("converted") != 0 or epoch_report.get("failed") != 1:
+            raise AssertionError(f"unexpected 1904 date-system result: {epoch_report}")
+        epoch_output = output_dir / "epoch-1904.xlsx"
+        if epoch_output.exists():
+            raise AssertionError("1904 date-system refusal published an output workbook")
+        if epoch_source.read_bytes() != epoch_source_before:
+            raise AssertionError("the 1904 date-system source workbook was modified")
+        epoch_failure_detail = str(epoch_report["items"][0].get("detail", ""))
+        if "1904 date system" not in epoch_failure_detail:
+            raise AssertionError(f"1904 date-system refusal detail is incomplete: {epoch_failure_detail!r}")
+
     report = {
         "schema_version": 1,
         "suite": "pytools.conversion.native_excel_value_only",
@@ -347,9 +398,17 @@ def main() -> int:
             "formatting_dropped": True,
             "source_unchanged": True,
         },
+        "date_epoch_guard": {
+            "input": "synthetic XLSM with 1904 epoch, typed date serial 43889 and formula text",
+            "rust_result": "conversion refused because the new-workbook writer cannot preserve the source epoch",
+            "converted": epoch_report["converted"],
+            "failed": epoch_report["failed"],
+            "output_published": False,
+            "source_unchanged": True,
+        },
         "unverified": [
             "Real business XLS workbooks and configurations.",
-            "Formula text/cache parity against legacy XLS conversion, 1904 date-system semantics, booleans, error cells and empty-string cells.",
+            "Formula text/cache parity against legacy XLS conversion, 1904 epoch detection for legacy .xls/.xlsb inputs, booleans, error cells and empty-string cells.",
             "Styles, comments, merged regions, dimensions, names, print settings, validations, conditional formatting, drawings and macros are intentionally not preserved by this value-only route.",
             "Windows desktop file dialog, glibc 2.28, Kylin V10/UOS V20 and offline deb delivery.",
         ],

@@ -960,4 +960,6 @@ Windows 原生验证：`cargo fmt --manifest-path pytools-core/Cargo.toml -- --c
 
 Windows 原生 `cargo fmt --manifest-path pytools-core/Cargo.toml -- --check` 通过；`cargo test --offline --locked -p pytools-core --lib conversion::tests -j 1` 7/7、`cargo test --offline --locked -p pytools-core --test conversion_menu_cli -j 1` 9/9 通过。`probe/compare_native_excel_value_conversion.py` 复跑通过：原合成 XLS 值投影仍与 xlrd/openpyxl 一致；ISO 日期合成工作簿被 Rust CLI 拒绝、失败计数 1、无输出且源字节不变。另以 1900 日期系统合成 XLSM 验证日期、时刻、26 小时 15 分时长三个数值序列输出为数值并与 Python serial 相差不超过 1e-10；格式按合同丢弃，源未变。报告：`probe/reports/native_excel_value_conversion_parity_20261026.json`。
 
-仅覆盖 1900 日期系统合成数值序列和 ISO-typed 日期/时长拒绝，不验证 1904 日期系统语义或真实 XLS/XLSM 保真对拍；PT-4-2 仍未验收。公式缓存、错误值/空文本入口、Windows 原生文件对话框、glibc 2.28、麒麟/UOS 与离线 deb 仍未完成本功能验收。
+另用合成 1904 日期系统 XLSM 确认原转换曾成功写出默认 1900 epoch，使日期 serial 43889 从源日期 2024-02-29 被重新解释为 2020-02-28；PyTools 现调用共享 reader `uses_1904_date_system` 在 native 写入前拒绝检测到 1904 epoch 的 OOXML 输入，菜单与帮助也提示。已向 main 请求把共享 epoch 检测扩至 BIFF `.xls` 与 `.xlsb`；当前 helper 对这两种格式返回 false，修复需安全同步后再补防护。
+
+目前合成覆盖 1900 日期系统数值序列、ISO-typed 日期/时长拒绝、1904 `.xlsm` 失败关闭；不覆盖 `.xls/.xlsb` 的 1904 epoch 检测或真实 XLS/XLSM 保真对拍。PT-4-2 仍未验收。公式缓存、错误值/空文本入口、Windows 原生文件对话框、glibc 2.28、麒麟/UOS 与离线 deb 仍未完成本功能验收。

@@ -272,6 +272,7 @@ fn native_excel_conversion_menu_requires_confirmation_and_runs_xls_values() -> R
     assert!(converted_output.contains("不会保留样式"));
     assert!(converted_output.contains("也不会重算公式"));
     assert!(converted_output.contains("ISO 日期/时长、错误值、空文本"));
+    assert!(converted_output.contains("1904 日期系统的 XLSM"));
 
     let report = output_json(&converted)?;
     assert_eq!(report["converted"], 1);

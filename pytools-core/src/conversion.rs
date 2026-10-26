@@ -887,6 +887,11 @@ fn convert_native_excel_values(input: &Path, output: &Path, source_ext: &str) ->
         "refusing to overwrite existing file: {}",
         output.display()
     );
+    anyhow::ensure!(
+        !excel_reader::uses_1904_date_system(input)
+            .with_context(|| format!("inspect source date system {}", input.display()))?,
+        "native value-only conversion refuses .{source_ext} input using the 1904 date system because the writer cannot preserve its workbook epoch; use an external fidelity engine"
+    );
 
     let source = read_workbook(input).with_context(|| {
         format!(

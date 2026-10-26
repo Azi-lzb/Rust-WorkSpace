@@ -68,9 +68,17 @@
     "formatting_dropped": true,
     "source_unchanged": true
   },
+  "date_epoch_guard": {
+    "input": "synthetic XLSM with 1904 epoch, typed date serial 43889 and formula text",
+    "rust_result": "conversion refused because the new-workbook writer cannot preserve the source epoch",
+    "converted": 0,
+    "failed": 1,
+    "output_published": false,
+    "source_unchanged": true
+  },
   "unverified": [
     "Real business XLS workbooks and configurations.",
-    "Formula text/cache parity against legacy XLS conversion, 1904 date-system semantics, booleans, error cells and empty-string cells.",
+    "Formula text/cache parity against legacy XLS conversion, 1904 epoch detection for legacy .xls/.xlsb inputs, booleans, error cells and empty-string cells.",
     "Styles, comments, merged regions, dimensions, names, print settings, validations, conditional formatting, drawings and macros are intentionally not preserved by this value-only route.",
     "Windows desktop file dialog, glibc 2.28, Kylin V10/UOS V20 and offline deb delivery."
   ]
