@@ -237,6 +237,123 @@ fn interactive_conversion_menu_routes_all_ten_file_workflows() -> Result<()> {
 }
 
 #[test]
+fn native_excel_conversion_menu_requires_confirmation_and_runs_xls_values() -> Result<()> {
+    let root = TestDirectory::new()?;
+    let config = create_config(root.path())?;
+    let sources = root.path().join("sources");
+    fs::create_dir_all(&sources)?;
+
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/timeline/wide_summary_legacy.xls");
+    let source = sources.join("legacy-values.xls");
+    fs::copy(&fixture, &source)?;
+    let source_before = fs::read(&source)?;
+
+    let declined = run_native_value_action(&config, &source, "no", "developer")?;
+    assert!(
+        declined.status.success(),
+        "decline failed: {}",
+        stderr(&declined)
+    );
+    let declined_output = String::from_utf8_lossy(&declined.stdout);
+    assert!(declined_output.contains("警告："));
+    assert!(declined_output.contains("已取消："));
+    assert!(!sources.join("xlsx").exists());
+    assert_eq!(fs::read(&source)?, source_before);
+
+    let converted = run_native_value_action(&config, &source, "yes", "developer")?;
+    assert!(
+        converted.status.success(),
+        "native XLS conversion failed: {}",
+        stderr(&converted)
+    );
+    let converted_output = String::from_utf8_lossy(&converted.stdout);
+    assert!(converted_output.contains("CSV 输入则将每个非空值作为文本写入"));
+    assert!(converted_output.contains("不会保留样式"));
+    assert!(converted_output.contains("也不会重算公式"));
+
+    let report = output_json(&converted)?;
+    assert_eq!(report["converted"], 1);
+    assert_eq!(report["failed"], 0);
+    let output = PathBuf::from(
+        report["items"][0]["output"]
+            .as_str()
+            .context("native XLS output path missing")?,
+    );
+    assert_eq!(output, sources.join("xlsx").join("legacy-values.xlsx"));
+    assert!(report["items"][0]["detail"]
+        .as_str()
+        .is_some_and(|detail| detail.contains("native value-only conversion validated")));
+
+    let source_workbook = read_workbook(&source)?;
+    let output_workbook = read_workbook(&output)?;
+    assert_eq!(source_workbook.sheets.len(), output_workbook.sheets.len());
+    for (source_sheet, output_sheet) in source_workbook.sheets.iter().zip(&output_workbook.sheets) {
+        assert_eq!(source_sheet.name, output_sheet.name);
+        assert_eq!(
+            source_sheet.values.keys().collect::<Vec<_>>(),
+            output_sheet.values.keys().collect::<Vec<_>>()
+        );
+        for (address, source_value) in &source_sheet.values {
+            let output_value = &output_sheet.values[address];
+            let source_type = source_value["type"].as_str();
+            let output_type = output_value["type"].as_str();
+            if matches!(
+                (source_type, output_type),
+                (Some("integer"), Some("number")) | (Some("number"), Some("integer"))
+            ) {
+                assert_eq!(
+                    source_value["value"].as_f64(),
+                    output_value["value"].as_f64(),
+                    "numeric value differs at {}!{}",
+                    source_sheet.name,
+                    address
+                );
+            } else {
+                assert_eq!(
+                    source_value, output_value,
+                    "cell value differs at {}!{}",
+                    source_sheet.name, address
+                );
+            }
+        }
+        assert_eq!(source_sheet.formulas, output_sheet.formulas);
+    }
+
+    let history_path = PathBuf::from(
+        report["run_history_path"]
+            .as_str()
+            .context("native conversion history path missing")?,
+    );
+    let history: Value = serde_json::from_slice(&fs::read(history_path)?)?;
+    assert_eq!(history["feature_id"], "PT-4-2");
+    assert!(history["actual_engines"]
+        .as_array()
+        .is_some_and(|engines| engines
+            .iter()
+            .any(|engine| engine == "calamine + rust_xlsxwriter")));
+    let conversion_event = history["events"]
+        .as_array()
+        .and_then(|events| {
+            events.iter().find(|event| {
+                event["phase"] == "convert_file"
+                    && event["status"] == "completed"
+                    && event["actual_engine"] == "calamine + rust_xlsxwriter"
+            })
+        })
+        .context("native conversion completion event missing")?;
+    for component in ["excel-reader/calamine", "excel-writer/rust_xlsxwriter"] {
+        assert!(conversion_event["components"]
+            .as_array()
+            .is_some_and(|components| components.iter().any(|value| value == component)));
+    }
+    assert!(!serde_json::to_string(&history)?.contains("legacy-values.xls"));
+    assert_eq!(fs::read(&source)?, source_before);
+
+    Ok(())
+}
+
+#[test]
 fn conversion_menu_and_cli_emit_redacted_dual_view_progress() -> Result<()> {
     let root = TestDirectory::new()?;
     let config = create_config(root.path())?;
@@ -999,6 +1116,26 @@ fn run_sheet_rename_menu(
 fn run_action(config: &Path, action: u8, mode: u8, selected: &Path) -> Result<Output> {
     let input = format!("4\n{action}\n{mode}\n{}\n0\n", selected.display());
     run_menu(config, &input)
+}
+
+fn run_native_value_action(
+    config: &Path,
+    selected: &Path,
+    confirmation: &str,
+    log_view: &str,
+) -> Result<Output> {
+    let confirmed = matches!(
+        confirmation.trim().to_ascii_lowercase().as_str(),
+        "y" | "yes" | "是"
+    );
+    let input = if confirmed {
+        format!("4\n11\n{confirmation}\n1\n{}\n0\n0\n", selected.display())
+    } else {
+        format!("4\n11\n{confirmation}\n0\n0\n")
+    };
+    let mut child = menu_command(config);
+    child.arg("--log-view").arg(log_view);
+    finish_menu(child, &input)
 }
 
 fn run_action_with_log_view(

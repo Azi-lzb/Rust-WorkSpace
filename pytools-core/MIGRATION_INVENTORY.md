@@ -943,3 +943,13 @@ Windows 原生格式检查、PT-4-8 集成测试、CLI 构建通过；原配置 
 Windows 原生回归：`cargo test --offline --locked -p pytools-core --test dedup_menu_cli --test dedup_append_execution -j 1`，11/11 通过；包含确认创建新目标、取消保留计划、既有目标缺 capability 时未改动，以及合成 capability 经菜单提交既有目标。`cargo build --offline --locked -p pytools-core --bin pytools -j 1` 通过。Ubuntu WSL 普通 host 回归同命令 11/11 通过；此为普通 Linux 功能验证，不是 glibc 2.28 构建或目标系统验收。
 
 本轮没有原项目真实样本，未重新运行 Python/Rust 业务对拍；既有 `probe/reports/real_shape_dedup_parity_20261025.json` 仍只证明真实参数形态 × 合成文件对拍。PT-2-5 整项的真实业务样本、生产 capability、Excel 保真目标验收、麒麟/UOS 与离线 deb 仍未验收。
+
+### 2026-10-26 PT-4-2 原生值转换交互入口与合成对拍
+
+转换菜单类别 4 新增第 11 项，显式选择 `--engine native --to xlsx`。用户确认前会说明仅保留工作表名称/顺序、存储值和公式文本，列明样式、缓存、批注、合并、尺寸、打印设置、宏等损失及不执行公式重算；取消时不显示文件选择流程、不生成输出。筛选只接受 `.csv/.xls/.xlsm/.xlsb`，执行时沿用 PT-4-2 双视图日志并记录实际 `calamine + rust_xlsxwriter` 引擎。既有保真转换菜单项和 sidecar 失败关闭行为不变。
+
+Windows 原生验证：`cargo fmt --manifest-path pytools-core/Cargo.toml -- --check`；`cargo test --offline --locked -p pytools-core --test conversion_menu_cli -j 1`（9/9）；`cargo test --offline --locked -p pytools-core --lib conversion::tests -j 1`（6/6）。新增菜单端到端测试以仓库 `.xls` 合成夹具验证拒绝确认时无输出、确认后转成 `.xlsx`、源文件字节不变、工作表/坐标和值一致、公式映射保持为空（该夹具无公式），整数 42 的 XLSX 数值语义一致，以及开发者历史的真实引擎和脱敏。
+
+合成值投影报告为 `probe/reports/native_excel_value_conversion_parity_20261026.json`，复跑入口为 `probe/compare_native_excel_value_conversion.py`。只读 `xlrd 2.0.1` 读取合成 XLS，`openpyxl 3.1.5` 读回 Rust 输出；1 个工作表、2 个非空格（1 文本、1 数值）的坐标与值一致，源文件未变。XLS 整数 42 在 Rust 读取投影中为 integer，XLSX 数字 42.0 为 number，Excel 数值精确相等；该投影差异已在报告中注明。该值投影不等于与旧 PyCode 保真转换结果对拍。
+
+该验证不覆盖真实业务样本、公式文本/缓存、日期时间、空字符串/错误值、样式及其他明确不保留对象，也未手工验证 Windows 文件选择器、glibc 2.28、麒麟/UOS 或离线 deb。之前记录的真实 `.xls` sidecar 保真失败仍有效；PT-4-2 整体仍为未验收。

@@ -3126,11 +3126,36 @@ where
         writeln!(output, "  8  提交缺失检查")?;
         writeln!(output, "  9  添加文件排序前缀")?;
         writeln!(output, " 10  取消文件排序前缀")?;
+        writeln!(output, " 11  原生值转换到 XLSX（仅保留值/公式文本）")?;
         writeln!(output, "  0  返回")?;
         writeln!(output, "----------------------")?;
         let Some(choice) = read_menu_choice(input, output, "子菜单选择> ")? else {
             return Ok(());
         };
+        if choice == "11" {
+            writeln!(
+                output,
+                concat!(
+                    "警告：该模式生成纯数据 XLSX；Excel 输入只保留工作表名称/顺序、存储值和公式文本，",
+                    "CSV 输入则将每个非空值作为文本写入。\n",
+                    "不会保留样式、公式缓存、批注、合并区域、行列尺寸、定义名称、打印设置、",
+                    "数据验证、条件格式、绘图对象或宏，也不会重算公式。\n",
+                    "遇到无法安全表示的单元格时会失败；源文件不会修改。"
+                )
+            )?;
+            let confirmed =
+                read_menu_choice(input, output, "输入 y/yes/是 确认继续；其他输入取消> ")?
+                    .is_some_and(|answer| {
+                        matches!(
+                            answer.trim().to_ascii_lowercase().as_str(),
+                            "y" | "yes" | "是"
+                        )
+                    });
+            if !confirmed {
+                writeln!(output, "已取消：未选择文件，也未生成转换结果。")?;
+                continue;
+            }
+        }
         let operation = match choice.as_str() {
             "1" => Some(("批量重命名文件", NativeFileFilter::AllFiles)),
             "2" => Some(("批量转换 Excel 文件", NativeFileFilter::ExcelConversion)),
@@ -3141,9 +3166,13 @@ where
             "8" => Some(("检查提交文件", NativeFileFilter::AllFiles)),
             "9" => Some(("添加文件排序前缀", NativeFileFilter::AllFiles)),
             "10" => Some(("取消文件排序前缀", NativeFileFilter::AllFiles)),
+            "11" => Some((
+                "批量原生值转换（CSV/XLS/XLSM/XLSB 到 XLSX）",
+                NativeFileFilter::NativeValueConversion,
+            )),
             "0" => return Ok(()),
             _ => {
-                writeln!(output, "仅接受 1 至 10 或 0")?;
+                writeln!(output, "仅接受 1 至 11 或 0")?;
                 continue;
             }
         };
@@ -3347,6 +3376,24 @@ where
                 } else {
                     run_remove_file_sort_prefix(arguments)?;
                 }
+            }
+            "11" => {
+                arguments.extend([
+                    "--to".to_owned(),
+                    "xlsx".to_owned(),
+                    "--engine".to_owned(),
+                    "native".to_owned(),
+                    "--log-dir".to_owned(),
+                    global.log_dir.to_string_lossy().into_owned(),
+                    "--log-view".to_owned(),
+                    log_view.to_owned(),
+                ]);
+                arguments.extend(
+                    paths
+                        .into_iter()
+                        .map(|path| path.to_string_lossy().into_owned()),
+                );
+                run_convert_batch_cli(arguments, true)?;
             }
             _ => unreachable!("conversion menu operation was validated"),
         }
@@ -4171,6 +4218,7 @@ where
 enum NativeFileFilter {
     ExcelWorkbooks,
     ExcelConversion,
+    NativeValueConversion,
     XlsxOrXlsm,
     XlsxOnly,
     WordDocuments,
@@ -4185,6 +4233,9 @@ impl NativeFileFilter {
             }
             Self::ExcelConversion => {
                 "Excel files (*.csv;*.et;*.xls;*.xlsx;*.xlsm;*.xlsb)\0*.csv;*.et;*.xls;*.xlsx;*.xlsm;*.xlsb\0All files (*.*)\0*.*\0\0"
+            }
+            Self::NativeValueConversion => {
+                "Native value conversion (*.csv;*.xls;*.xlsm;*.xlsb)\0*.csv;*.xls;*.xlsm;*.xlsb\0All files (*.*)\0*.*\0\0"
             }
             Self::XlsxOrXlsm => {
                 "Excel files (*.xlsx;*.xlsm)\0*.xlsx;*.xlsm\0All files (*.*)\0*.*\0\0"
@@ -4210,6 +4261,9 @@ impl NativeFileFilter {
                     extension.as_str(),
                     "csv" | "et" | "xls" | "xlsx" | "xlsm" | "xlsb"
                 )
+            }
+            Self::NativeValueConversion => {
+                matches!(extension.as_str(), "csv" | "xls" | "xlsm" | "xlsb")
             }
             Self::XlsxOrXlsm => matches!(extension.as_str(), "xlsx" | "xlsm"),
             Self::XlsxOnly => extension == "xlsx",
