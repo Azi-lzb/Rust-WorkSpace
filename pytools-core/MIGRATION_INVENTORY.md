@@ -965,3 +965,9 @@ Windows 原生 `cargo fmt --manifest-path pytools-core/Cargo.toml -- --check` �
 另对仓库只读 VBA 配置 fixture `VbaV2.4.2.xlsm` 经真实 Rust CLI 做完整值投影：14 个工作表、39,015 个非空格（1,781 个日期、4,775 个数值、32,459 个文本），零差异；源未变，目标按合同移除 VBA。它是仓库测试 fixture，不是用户业务模板，且不含公式。
 
 目前合成覆盖 1900 日期系统数值序列、ISO-typed 日期/时长拒绝、1904 `.xlsm` 失败关闭和上述仓库 fixture；不覆盖 `.xls/.xlsb` 的 1904 epoch 检测或真实 XLS/XLSM 保真对拍。PT-4-2 仍未验收。公式缓存、错误值/空文本入口、Windows 原生文件对话框、glibc 2.28、麒麟/UOS 与离线 deb 仍未完成本功能验收。
+
+### 2026-10-26 PT-4-2 合成公式与布尔值 CLI 对拍
+
+扩展正向 1900 日期系统 XLSM 探针，经 Windows 原生 `convert-excel --engine native` 转换日期/时间/累计时长序列、true/false 布尔值和 `=SUM(A1,A2)` 普通公式。Python/openpyxl 源类型与 Rust 输出逐项对照：序列值数值相等、布尔值保留为布尔类型、公式文本与类型一致；源文件未变。公式缓存不属于本次断言，按 native value-only 契约明确未验证；格式仍按菜单告知不保留。
+
+该验证只补充合成正向 CLI 类型覆盖，不是 PyCode 旧保真转换对拍或用户真实业务样本验收；错误值/空文本、legacy `.xls/.xlsb` 的 1904 日期系统、真实输入、Windows 文件选择器、glibc 2.28、麒麟/UOS 与离线 deb 仍未验收，PT-4-2 整体继续未验收。

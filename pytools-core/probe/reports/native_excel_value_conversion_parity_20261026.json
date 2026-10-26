@@ -65,6 +65,26 @@
         "output_type": "number"
       }
     },
+    "boolean_cells": {
+      "B1": {
+        "python_value": true,
+        "rust_value": true,
+        "output_type": "boolean"
+      },
+      "B2": {
+        "python_value": false,
+        "rust_value": false,
+        "output_type": "boolean"
+      }
+    },
+    "formula_cells": {
+      "C1": {
+        "python_formula_text": "=SUM(A1,A2)",
+        "rust_formula_text": "=SUM(A1,A2)",
+        "output_type": "formula",
+        "cache_parity": "not tested; native value-only conversion does not preserve formula caches"
+      }
+    },
     "formatting_dropped": true,
     "source_unchanged": true
   },

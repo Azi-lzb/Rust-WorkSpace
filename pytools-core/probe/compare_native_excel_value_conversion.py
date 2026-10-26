@@ -244,6 +244,9 @@ def main() -> int:
         serial_sheet["A2"].number_format = "hh:mm"
         serial_sheet["A3"] = timedelta(hours=26, minutes=15)
         serial_sheet["A3"].number_format = "[h]:mm:ss"
+        serial_sheet["B1"] = True
+        serial_sheet["B2"] = False
+        serial_sheet["C1"] = "=SUM(A1,A2)"
         serial_workbook.save(serial_source)
         serial_source_before = serial_source.read_bytes()
         serial_result = subprocess.run(
@@ -298,6 +301,18 @@ def main() -> int:
                         f"Rust={actual!r}"
                     )
                 serial_actual[address] = float(actual)
+            for address, expected in {"B1": True, "B2": False}.items():
+                actual = serial_output_sheet[address]
+                if actual.data_type != "b" or actual.value is not expected:
+                    raise AssertionError(
+                        f"boolean cell type/value changed at {address}: "
+                        f"Python={expected!r}, Rust={actual.value!r}/{actual.data_type!r}"
+                    )
+            formula = serial_output_sheet["C1"]
+            if formula.data_type != "f" or formula.value != "=SUM(A1,A2)":
+                raise AssertionError(
+                    f"formula text/type changed at C1: {formula.value!r}/{formula.data_type!r}"
+                )
         finally:
             serial_output.close()
         if serial_source.read_bytes() != serial_source_before:
@@ -543,6 +558,18 @@ def main() -> int:
                     "output_type": "number",
                 }
                 for address, expected in serial_expected.items()
+            },
+            "boolean_cells": {
+                "B1": {"python_value": True, "rust_value": True, "output_type": "boolean"},
+                "B2": {"python_value": False, "rust_value": False, "output_type": "boolean"},
+            },
+            "formula_cells": {
+                "C1": {
+                    "python_formula_text": "=SUM(A1,A2)",
+                    "rust_formula_text": "=SUM(A1,A2)",
+                    "output_type": "formula",
+                    "cache_parity": "not tested; native value-only conversion does not preserve formula caches",
+                }
             },
             "formatting_dropped": True,
             "source_unchanged": True,
