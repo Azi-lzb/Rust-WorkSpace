@@ -1,0 +1,18 @@
+日期：2026-10-26
+
+执行者：Codex；修改前 commit：3e53e7e7d5f18bb2c8d152f7033bcd078bc875fa；修改后 commit：本功能提交（提交后以 Git 历史为准）。修改前 main 跟踪工作区干净；保留未跟踪 HANDOFF_ZCODE_TO_CODEX.md；未触碰 Audit/PyTools 工作树。
+
+目的：扩展共享 Reader 的 1904 日期系统识别。避免将 Calamine 支持的 BIFF8 XLS/XLSB 误报为 1900 日期系统；不增加 Writer API，使用方仍可对不支持的 1904 重建场景失败关闭。
+
+修改文件：
+- crates/excel-reader/src/lib.rs：XLSX/XLSM/XLSX-family 继续用 namespace-aware OOXML workbookPr；XLS/XLSB 改用 Calamine 的 has_1904_epoch；伪 .xls 仍先按 CFB/OLE 签名拒绝。
+
+验证：
+- `cargo test --offline --locked -p excel-reader`：17 项通过。
+- 测试覆盖合成 XLSX/XLSM 的 1904、1900 设置及伪 .xls 签名拒绝。
+- `rustfmt --edition 2021 --check` 修改文件与 `git diff --check`：通过。
+
+未验证/已知边界：没有可用的真实 1904 .xls 或 .xlsb 样本；Calamine 的 XLS/XLSB 读取分支已按 API 实现但本轮未对真实 1904 legacy 工作簿验收。未修改 PyTools 的失败关闭策略或业务代码。
+
+组件版本：不升级，crate 版本维持 0.1.0。
+回滚：回滚本提交中的 excel-reader/src/lib.rs 与本记录；不得改动其他并行工作树。
