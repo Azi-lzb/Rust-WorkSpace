@@ -1,0 +1,24 @@
+时间：2026-10-27（Asia/Shanghai）
+执行者：Codex（main）
+修改前 HEAD：ef051a716df2b63a00d55c6d62f4b516cbfa99a0；修改后提交见本记录所在 Git 提交。
+WIP：保留既有 `crates/ooxml-patch/src/lib.rs` 未提交修改及 `HANDOFF_ZCODE_TO_CODEX.md` 未跟踪文件；未改写、暂存或提交它们。
+
+目的：修复 Windows Excel COM 重算成功后，`finally` 对已关闭 Workbook COM 代理二次调用 `Close($false)`，导致 `0x80010108 (RPC_E_DISCONNECTED)` 并错误返回失败的问题。
+
+修改文件：
+- `sidecar/lo-convert/src/main.rs`
+- 本记录
+
+修改内容：成功执行 `SaveAs` 和 `Close($true)` 后立即将 `$book` 设为 `$null`，保留 finally 对尚未成功关闭的工作簿执行清理的路径；增加独立单元测试验证成功关闭后清空引用且 finally 仍保留异常路径清理。未变更 ExcelModifier、业务规则、协议、依赖、配置或引擎默认路由。
+
+验证：
+- `cargo fmt -p lo-convert -- --check`：通过。
+- `git diff --check -- sidecar/lo-convert/src/main.rs`：通过。
+- `cargo test --offline --locked -p lo-convert`：6 个单元测试通过；集成测试用例返回成功，但本机未安装 `soffice`，根据测试实现该用例提前跳过，不能视为 LibreOffice 实际重算验收。
+- 修复后的 Windows Excel COM 端到端合成公式测试：待 Audit Agent 安全同步本提交后复跑 `explicit_sidecar_recalculates_synthetic_formula_copy_without_changing_input`；当前不标记为通过。
+
+未执行项与风险：本轮没有在 main 工作树启动额外 Excel COM 实例，避免与活动 Agent 的 Excel COM 测试冲突。COM 的真实重算、缓存与输入保护须由 Audit 使用其既有合成测试复验；本单元测试只验证生成脚本的关闭生命周期。
+
+组件版本：不升级。
+删除清单：无。
+回滚：仅回滚本次 `sidecar/lo-convert/src/main.rs` 与本记录对应的提交；保留其他工作区 WIP。

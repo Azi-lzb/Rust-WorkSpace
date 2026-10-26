@@ -354,7 +354,7 @@ fn run_com_recalculate(input: &Path, output: &Path) -> Result<String> {
 
 fn com_recalculate_script(input: &Path, output: &Path) -> String {
     format!(
-        "$ErrorActionPreference='Stop';\n$app=$null; $appName=''; $lastError='';\ntry {{ $app=New-Object -ComObject 'Excel.Application'; $appName='Excel.Application' }} catch {{ $lastError=$_.Exception.Message }}\nif ($null -eq $app) {{ throw \"Microsoft Excel COM is unavailable: $lastError\" }}\n$book=$null;\ntry {{ $app.Visible=$false; $app.DisplayAlerts=$false; $book=$app.Workbooks.Open('{}',$false,$false); $app.CalculateFullRebuild(); $book.SaveAs('{}',51); $book.Close($true) }} finally {{ if ($null -ne $book) {{ $book.Close($false) }}; if ($null -ne $app) {{ $app.Quit() }} }}\nWrite-Output $appName\n",
+        "$ErrorActionPreference='Stop';\n$app=$null; $appName=''; $lastError='';\ntry {{ $app=New-Object -ComObject 'Excel.Application'; $appName='Excel.Application' }} catch {{ $lastError=$_.Exception.Message }}\nif ($null -eq $app) {{ throw \"Microsoft Excel COM is unavailable: $lastError\" }}\n$book=$null;\ntry {{ $app.Visible=$false; $app.DisplayAlerts=$false; $book=$app.Workbooks.Open('{}',$false,$false); $app.CalculateFullRebuild(); $book.SaveAs('{}',51); $book.Close($true); $book=$null }} finally {{ if ($null -ne $book) {{ $book.Close($false) }}; if ($null -ne $app) {{ $app.Quit() }} }}\nWrite-Output $appName\n",
         ps_quote(&input.to_string_lossy()),
         ps_quote(&output.to_string_lossy())
     )
@@ -1179,6 +1179,14 @@ mod recalculation_tests {
         assert!(!script.contains("KET.Application"));
         assert!(!script.contains("ket.Application"));
         assert!(!script.contains("wps.Application"));
+    }
+
+    #[test]
+    fn windows_com_recalculation_clears_book_after_successful_close() {
+        let script =
+            com_recalculate_script(Path::new(r"C:\input.xlsx"), Path::new(r"C:\output.xlsx"));
+        assert!(script.contains("$book.Close($true); $book=$null"));
+        assert!(script.contains("finally { if ($null -ne $book) { $book.Close($false) }"));
     }
 
     #[test]
