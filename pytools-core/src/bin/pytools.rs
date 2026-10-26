@@ -4865,15 +4865,13 @@ fn collect_menu_source_files(
         );
         collect_menu_source_files_from_folder(folder, folder, recursive, filter, &mut files)?;
     }
-    let mut seen = std::collections::BTreeSet::new();
-    files.retain(|path| {
-        let identity = fs::canonicalize(path)
-            .unwrap_or_else(|_| path.to_path_buf())
-            .to_string_lossy()
-            .to_lowercase();
-        seen.insert(identity)
-    });
-    Ok(files)
+    let mut unique = std::collections::BTreeMap::new();
+    for path in files {
+        let resolved = fs::canonicalize(&path).unwrap_or(path);
+        let identity = resolved.to_string_lossy().to_lowercase();
+        unique.entry(identity).or_insert(resolved);
+    }
+    Ok(unique.into_values().collect())
 }
 
 fn collect_menu_source_files_from_folder(

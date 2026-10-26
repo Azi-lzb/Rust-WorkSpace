@@ -50,17 +50,22 @@ fn interactive_v2_data_menu_routes_compare_wide_summary_and_precheck() -> Result
     let config = create_timeline_config(root.path())?;
     let template = root.path().join("template.xlsx");
     let compare_source = root.path().join("sample compare source.xlsx");
-    let wide_source_dir = root.path().join("sample wide sources");
+    let wide_source_dir = root.path().join("z sample wide sources");
     let wide_source = wide_source_dir.join("sample wide source.xlsx");
     let nested_source_dir = wide_source_dir.join("nested");
     fs::create_dir_all(&nested_source_dir)?;
     let nested_wide_source = nested_source_dir.join("sample nested wide source.xlsx");
+    let earlier_source_dir = root.path().join("a sample wide sources");
+    fs::create_dir_all(&earlier_source_dir)?;
+    let earlier_wide_source = earlier_source_dir.join("sample earliest source.xlsx");
     create_wide_source(&template, "模板甲", 10.0)?;
     create_wide_source(&compare_source, "来源甲", 12.0)?;
     create_wide_source(&wide_source, "宽表甲", 17.5)?;
     create_wide_source(&nested_wide_source, "宽表乙", 27.5)?;
+    create_wide_source(&earlier_wide_source, "宽表丙", 37.5)?;
     let wide_source_before = fs::read(&wide_source)?;
     let nested_wide_source_before = fs::read(&nested_wide_source)?;
+    let earlier_wide_source_before = fs::read(&earlier_wide_source)?;
 
     let compare = run_menu(
         &config,
@@ -94,10 +99,11 @@ fn interactive_v2_data_menu_routes_compare_wide_summary_and_precheck() -> Result
             "1
 1
 3
-{}
+{};{}
 0
 ",
-            wide_source_dir.display()
+            wide_source_dir.display(),
+            earlier_source_dir.display()
         ),
     )?;
     assert!(
@@ -107,9 +113,20 @@ fn interactive_v2_data_menu_routes_compare_wide_summary_and_precheck() -> Result
     );
     assert!(String::from_utf8_lossy(&no_suffix.stdout).contains("1  时序宽表汇总"));
     let no_suffix_stdout = String::from_utf8_lossy(&no_suffix.stdout);
-    assert!(no_suffix_stdout.contains("递归共识别文件 2 个"));
+    assert!(no_suffix_stdout.contains("递归共识别文件 3 个"));
     assert!(no_suffix_stdout.contains("sample wide source.xlsx"));
     assert!(no_suffix_stdout.contains("sample nested wide source.xlsx"));
+    assert!(no_suffix_stdout.contains("sample earliest source.xlsx"));
+    let earlier_position = no_suffix_stdout
+        .find(earlier_wide_source.to_string_lossy().as_ref())
+        .context("earlier selected workbook is missing from menu output")?;
+    let nested_position = no_suffix_stdout
+        .find(nested_wide_source.to_string_lossy().as_ref())
+        .context("nested selected workbook is missing from menu output")?;
+    let top_level_position = no_suffix_stdout
+        .find(wide_source.to_string_lossy().as_ref())
+        .context("top-level selected workbook is missing from menu output")?;
+    assert!(earlier_position < nested_position && nested_position < top_level_position);
     let no_suffix_output = find_output(&output_dir, "行头不加后缀")?;
     let no_suffix_dump = read_workbook(&no_suffix_output)?;
     let wide_sheet = no_suffix_dump
@@ -124,8 +141,10 @@ fn interactive_v2_data_menu_routes_compare_wide_summary_and_precheck() -> Result
         .collect::<Vec<_>>();
     assert!(wide_values.contains(&"宽表甲"));
     assert!(wide_values.contains(&"宽表乙"));
+    assert!(wide_values.contains(&"宽表丙"));
     assert_eq!(fs::read(&wide_source)?, wide_source_before);
     assert_eq!(fs::read(&nested_wide_source)?, nested_wide_source_before);
+    assert_eq!(fs::read(&earlier_wide_source)?, earlier_wide_source_before);
 
     let precheck = run_menu(
         &config, "1
