@@ -8,12 +8,48 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from xml.etree import ElementTree as ET
+from zipfile import ZIP_DEFLATED, ZipFile
 
 from openpyxl import Workbook, load_workbook
 from openpyxl.utils.datetime import MAC_EPOCH
 
 from compare_sheet_extract_area_durations import create_rust_config, project_workbook
 
+
+_CONTENT_TYPES_NS = "http://schemas.openxmlformats.org/package/2006/content-types"
+_MACRO_ENABLED_WORKBOOK_TYPE = "application/vnd.ms-excel.sheet.macroEnabled.main+xml"
+
+
+def create_macro_enabled_xlsm(source_xlsx: Path, output_xlsm: Path) -> None:
+    with ZipFile(source_xlsx) as source_archive:
+        parts = [
+            (item, source_archive.read(item.filename))
+            for item in source_archive.infolist()
+        ]
+    content_types = next(
+        data for item, data in parts if item.filename == "[Content_Types].xml"
+    )
+    root = ET.fromstring(content_types)
+    workbook_override = next(
+        (
+            node
+            for node in root.findall(f"{{{_CONTENT_TYPES_NS}}}Override")
+            if node.get("PartName") == "/xl/workbook.xml"
+        ),
+        None,
+    )
+    if workbook_override is None:
+        raise ValueError("synthetic XLSX has no workbook content-type override")
+    workbook_override.set("ContentType", _MACRO_ENABLED_WORKBOOK_TYPE)
+    content_types = ET.tostring(root, encoding="utf-8", xml_declaration=True)
+
+    with ZipFile(output_xlsm, "w", compression=ZIP_DEFLATED) as output_archive:
+        for item, data in parts:
+            output_archive.writestr(
+                item,
+                content_types if item.filename == "[Content_Types].xml" else data,
+            )
 
 def create_source(path: Path, date_1904: bool) -> bytes:
     workbook = Workbook()
@@ -33,10 +69,26 @@ def create_source(path: Path, date_1904: bool) -> bytes:
     ]
     for row, (value, number_format) in enumerate(cases, start=1):
         worksheet.cell(row=row, column=1, value=value).number_format = number_format
-    workbook.save(path)
-    workbook.close()
+    if path.suffix.lower() == ".xlsm":
+        xlsx_path = path.with_suffix(".xlsx")
+        workbook.save(xlsx_path)
+        workbook.close()
+        create_macro_enabled_xlsm(xlsx_path, path)
+        xlsx_path.unlink()
+    else:
+        workbook.save(path)
+        workbook.close()
     return path.read_bytes()
 
+
+def macro_enabled_without_vba_project(path: Path) -> bool:
+    with ZipFile(path) as archive:
+        content_types = archive.read("[Content_Types].xml")
+        parts = set(archive.namelist())
+    return (
+        b"macroEnabled.main+xml" in content_types
+        and "xl/vbaProject.bin" not in parts
+    )
 
 def main() -> int:
     parser = argparse.ArgumentParser()
@@ -56,11 +108,20 @@ def main() -> int:
 
     with tempfile.TemporaryDirectory(prefix="pytools-time-only-blocker-") as temporary:
         root = Path(temporary)
-        sources = [root / "time-only-1900.xlsx", root / "time-only-1904.xlsx"]
+        sources = [
+            root / "time-only-1900.xlsx",
+            root / "time-only-1900-macro.xlsm",
+            root / "time-only-1904.xlsx",
+            root / "time-only-1904-macro.xlsm",
+        ]
         source_snapshots = {
-            source: create_source(source, date_1904=index == 1)
-            for index, source in enumerate(sources)
+            source: create_source(source, date_1904="1904" in source.stem)
+            for source in sources
         }
+        xlsm_sources = [source for source in sources if source.suffix.lower() == ".xlsm"]
+        xlsm_packages_valid = bool(xlsm_sources) and all(
+            macro_enabled_without_vba_project(source) for source in xlsm_sources
+        )
 
         python_output = root / "python-output"
         python_logs = root / "python-logs"
@@ -127,6 +188,7 @@ def main() -> int:
                 and rust_stats["failed_files"] == 0
                 and python_projection == rust_projection
                 and sources_unchanged
+                and xlsm_packages_valid
                 else "failed"
             )
 
@@ -135,8 +197,8 @@ def main() -> int:
                 "status": status,
                 "feature": "PT-7-6 area extraction time-only value classification",
                 "sample_kind": (
-                    "synthetic XLSX files in 1900 and 1904 epochs with midnight, rounding, "
-                    "date-only, built-in time, elapsed-duration formats, and an implicit column default style"
+                    "synthetic XLSX and macro-enabled XLSM files (without a VBA project) in "
+                    "1900/1904 epochs with rounding, date-only, time, elapsed-duration and column styles"
                 ),
                 "source_python": "PyCode/core/feature_1_6_extract_sheets.py::run_extract_sheets",
                 "rust_entry": "pytools extract-sheets-area",
@@ -154,10 +216,11 @@ def main() -> int:
                 "rust_output_created": rust_path.is_file(),
                 "rust_projection": rust_projection,
                 "sources_unchanged": sources_unchanged,
+                "xlsm_packages_macro_enabled_without_vba": xlsm_packages_valid,
                 "scope_note": (
-                    "Synthetic parity only. Real business time-only cells, row default styles, unknown built-in "
-                    "number formats, other formats, and target-platform "
-                    "delivery remain unverified. Unsupported or ambiguous metadata must fail closed."
+                    "Synthetic macro-enabled XLSM inputs have no VBA project. Real business time-only cells, "
+                    "VBA-bearing XLSM parity, row default styles, unknown built-in formats, other input formats, "
+                    "and target-platform delivery remain unverified. Unsupported metadata must fail closed."
                 ),
             }
             report_path.parent.mkdir(parents=True, exist_ok=True)

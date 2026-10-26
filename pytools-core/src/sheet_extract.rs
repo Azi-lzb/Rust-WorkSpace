@@ -650,13 +650,17 @@ where
         if !source_path
             .extension()
             .and_then(|extension| extension.to_str())
-            .is_some_and(|extension| extension.eq_ignore_ascii_case("xlsx"))
+            .is_some_and(|extension| {
+                extension.eq_ignore_ascii_case("xlsx") || extension.eq_ignore_ascii_case("xlsm")
+            })
         {
             let file_name = source_path
                 .file_name()
                 .map(|name| name.to_string_lossy().into_owned())
                 .unwrap_or_else(|| source_path.display().to_string());
-            let message = format!("工作表提取当前仅验收 .xlsx 输入；请先显式转换：{file_name}");
+            let message = format!(
+                "工作表区域提取仅接受 .xlsx/.xlsm；整表样式导入仍仅接受 .xlsx：{file_name}"
+            );
             emitter.emit(
                 "input_filter",
                 "failed",

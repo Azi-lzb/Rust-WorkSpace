@@ -2,26 +2,28 @@
   "schema_version": 1,
   "status": "passed",
   "feature": "PT-7-6 area extraction time-only value classification",
-  "sample_kind": "synthetic XLSX files in 1900 and 1904 epochs with midnight, rounding, date-only, built-in time, elapsed-duration formats, and an implicit column default style",
+  "sample_kind": "synthetic XLSX and macro-enabled XLSM files (without a VBA project) in 1900/1904 epochs with rounding, date-only, time, elapsed-duration and column styles",
   "source_python": "PyCode/core/feature_1_6_extract_sheets.py::run_extract_sheets",
   "rust_entry": "pytools extract-sheets-area",
   "python_stats": {
-    "files": 2,
-    "extracted_sheets": 2,
+    "files": 4,
+    "extracted_sheets": 4,
     "output_files": 1,
     "failed_files": 0
   },
   "rust_returncode": 0,
   "rust_stats": {
-    "files": 2,
-    "extracted_sheets": 2,
+    "files": 4,
+    "extracted_sheets": 4,
     "output_files": 1,
     "failed_files": 0
   },
   "python_projection": {
     "sheet_names": [
       "Sheet_2",
-      "Sheet_3"
+      "Sheet_3",
+      "Sheet_4",
+      "Sheet_5"
     ],
     "sheets": [
       {
@@ -79,6 +81,112 @@
       },
       {
         "name": "Sheet_3",
+        "cells": [
+          {
+            "cell": "A1",
+            "type": "time",
+            "value": "00:00:00.000",
+            "number_format": "h:mm:ss"
+          },
+          {
+            "cell": "B1",
+            "type": "float",
+            "value": "0.5",
+            "number_format": "General"
+          },
+          {
+            "cell": "A2",
+            "type": "time",
+            "value": "00:00:00.000",
+            "number_format": "h:mm:ss"
+          },
+          {
+            "cell": "A3",
+            "type": "time",
+            "value": "00:00:00.001",
+            "number_format": "h:mm:ss"
+          },
+          {
+            "cell": "A4",
+            "type": "time",
+            "value": "23:59:59.999",
+            "number_format": "h:mm:ss"
+          },
+          {
+            "cell": "A5",
+            "type": "time",
+            "value": "12:00:00.000",
+            "number_format": "h:mm:ss"
+          },
+          {
+            "cell": "A6",
+            "type": "time",
+            "value": "12:00:00.000",
+            "number_format": "h:mm:ss"
+          },
+          {
+            "cell": "A7",
+            "type": "timedelta",
+            "value": "12:00:00",
+            "number_format": "[hh]:mm:ss"
+          }
+        ]
+      },
+      {
+        "name": "Sheet_4",
+        "cells": [
+          {
+            "cell": "A1",
+            "type": "time",
+            "value": "00:00:00.000",
+            "number_format": "h:mm:ss"
+          },
+          {
+            "cell": "B1",
+            "type": "float",
+            "value": "0.5",
+            "number_format": "General"
+          },
+          {
+            "cell": "A2",
+            "type": "time",
+            "value": "00:00:00.000",
+            "number_format": "h:mm:ss"
+          },
+          {
+            "cell": "A3",
+            "type": "time",
+            "value": "00:00:00.001",
+            "number_format": "h:mm:ss"
+          },
+          {
+            "cell": "A4",
+            "type": "time",
+            "value": "23:59:59.999",
+            "number_format": "h:mm:ss"
+          },
+          {
+            "cell": "A5",
+            "type": "time",
+            "value": "12:00:00.000",
+            "number_format": "h:mm:ss"
+          },
+          {
+            "cell": "A6",
+            "type": "time",
+            "value": "12:00:00.000",
+            "number_format": "h:mm:ss"
+          },
+          {
+            "cell": "A7",
+            "type": "timedelta",
+            "value": "12:00:00",
+            "number_format": "[hh]:mm:ss"
+          }
+        ]
+      },
+      {
+        "name": "Sheet_5",
         "cells": [
           {
             "cell": "A1",
@@ -137,7 +245,9 @@
   "rust_projection": {
     "sheet_names": [
       "Sheet_2",
-      "Sheet_3"
+      "Sheet_3",
+      "Sheet_4",
+      "Sheet_5"
     ],
     "sheets": [
       {
@@ -245,9 +355,116 @@
             "number_format": "[hh]:mm:ss"
           }
         ]
+      },
+      {
+        "name": "Sheet_4",
+        "cells": [
+          {
+            "cell": "A1",
+            "type": "time",
+            "value": "00:00:00.000",
+            "number_format": "h:mm:ss"
+          },
+          {
+            "cell": "B1",
+            "type": "float",
+            "value": "0.5",
+            "number_format": "General"
+          },
+          {
+            "cell": "A2",
+            "type": "time",
+            "value": "00:00:00.000",
+            "number_format": "h:mm:ss"
+          },
+          {
+            "cell": "A3",
+            "type": "time",
+            "value": "00:00:00.001",
+            "number_format": "h:mm:ss"
+          },
+          {
+            "cell": "A4",
+            "type": "time",
+            "value": "23:59:59.999",
+            "number_format": "h:mm:ss"
+          },
+          {
+            "cell": "A5",
+            "type": "time",
+            "value": "12:00:00.000",
+            "number_format": "h:mm:ss"
+          },
+          {
+            "cell": "A6",
+            "type": "time",
+            "value": "12:00:00.000",
+            "number_format": "h:mm:ss"
+          },
+          {
+            "cell": "A7",
+            "type": "timedelta",
+            "value": "12:00:00",
+            "number_format": "[hh]:mm:ss"
+          }
+        ]
+      },
+      {
+        "name": "Sheet_5",
+        "cells": [
+          {
+            "cell": "A1",
+            "type": "time",
+            "value": "00:00:00.000",
+            "number_format": "h:mm:ss"
+          },
+          {
+            "cell": "B1",
+            "type": "float",
+            "value": "0.5",
+            "number_format": "General"
+          },
+          {
+            "cell": "A2",
+            "type": "time",
+            "value": "00:00:00.000",
+            "number_format": "h:mm:ss"
+          },
+          {
+            "cell": "A3",
+            "type": "time",
+            "value": "00:00:00.001",
+            "number_format": "h:mm:ss"
+          },
+          {
+            "cell": "A4",
+            "type": "time",
+            "value": "23:59:59.999",
+            "number_format": "h:mm:ss"
+          },
+          {
+            "cell": "A5",
+            "type": "time",
+            "value": "12:00:00.000",
+            "number_format": "h:mm:ss"
+          },
+          {
+            "cell": "A6",
+            "type": "time",
+            "value": "12:00:00.000",
+            "number_format": "h:mm:ss"
+          },
+          {
+            "cell": "A7",
+            "type": "timedelta",
+            "value": "12:00:00",
+            "number_format": "[hh]:mm:ss"
+          }
+        ]
       }
     ]
   },
   "sources_unchanged": true,
-  "scope_note": "Synthetic parity only. Real business time-only cells, row default styles, unknown built-in number formats, other formats, and target-platform delivery remain unverified. Unsupported or ambiguous metadata must fail closed."
+  "xlsm_packages_macro_enabled_without_vba": true,
+  "scope_note": "Synthetic macro-enabled XLSM inputs have no VBA project. Real business time-only cells, VBA-bearing XLSM parity, row default styles, unknown built-in formats, other input formats, and target-platform delivery remain unverified. Unsupported metadata must fail closed."
 }

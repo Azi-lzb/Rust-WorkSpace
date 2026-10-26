@@ -51,7 +51,7 @@ PT-6-1 当前 HEAD 6cc0232 的 Windows 原生 MSVC CLI 复验：原 PyTools xlsx
 
 普通版工作表提取除 `sheet_extract` 纯逻辑（Python helper 11/11，`probe/reports/sheet_extract_parity.json`）外，现有 area-only 文件流程候选 `run_extract_sheets_area_candidate`，并通过 `pytools extract-sheets-area --config <配置簿> [--output-dir <目录>] <源工作簿>...` 接入 Rust CLI。它加载现有“工作表提取”任务配置，使用共享 `excel-reader`/Calamine 读取值，以 rust_xlsxwriter 新建输出簿；支持文件/工作表关键字匹配与排除、A1 多区域横向/纵向拼接、空行列压缩、输出路径和工作表重名处理。写出后重开校验工作表数量、名称、尺寸和非空格数量；输出先写临时文件，经校验后用不覆盖目标的硬链接提交，提交失败时撤销本轮输出。合成 XLSX 对拍覆盖两个有效源工作簿和一个损坏输入，输出 4 张表至 1 个新工作簿，统计 files=2、extracted_sheets=4、output_files=1、failed_files=1；值、表名、尺寸与只读 PyCode 基线一致，输入文件字节未变。Python 基线和 Rust 对拍报告分别为 `probe/reports/sheet_extract_area_python_baseline.json`、`probe/reports/sheet_extract_area_parity.json`，人工记录见 `GPT修改记录/20261023_081520_pytools工作表区域提取Rust候选与CLI对拍.txt`。
 
-此候选仅覆盖 XLSX：区域值由 Calamine 读取并以 rust_xlsxwriter 新建输出，区域模式沿用 Python data_only=True 且不复制公式文本；整表模式需通过 ExcelModifier capability。extract-sheets --append-existing 现支持对既有 XLSX 区域或整表结果追加新工作表，但仅在提供匹配 --capabilities、--platform 且目标簿 inventory 完整时执行；默认 CLI/菜单仍拒绝覆盖既有输出。日期、时长、错误值及非有限数目前显式拒绝。其他格式、真实模板及文件弹窗尚未验证。
+区域模式接受 .xlsx/.xlsm 作为值输入，并以 Calamine 读取、rust_xlsxwriter 新建 .xlsx；与 Python data_only=True 一致，不复制公式文本或 VBA。日历日期、time-only 和累计时长已有独立合成对拍；错误值及非有限数仍失败关闭。整表模式仍仅接受 .xlsx，并需通过 ExcelModifier capability。extract-sheets --append-existing 现支持对既有 XLSX 区域或整表结果追加新工作表，但仅在提供匹配 --capabilities、--platform 且目标簿 inventory 完整时执行；默认 CLI/菜单仍拒绝覆盖既有输出。其他格式、真实业务模板、Windows 原生文件弹窗及目标平台仍未验证。
 
 机构名称规范化已有 `.xlsx` Rust CLI（`pytools institution-normalize --config ... <workbook>...`），默认只生成计划；执行须显式 `--apply` 并提供匹配的 ExcelModifier capability。候选按原规则在“分机构”工作表统一选择 A 列或 B 列，精确映射优先，其次按映射顺序不区分大小写做子串映射；多文件用 Rayon 并行，同一路径重复出现时退回顺序处理。原 `run_normalize_institution` 候选与 Python `_process_sheet` 在一份四工作表合成簿上对拍，Rust probe 的 sheet 名、20 个值、1 条公式、1 个合并区域和 1 条批注均保留；文件统计与 Python 一致（3 个匹配工作表、2 个改动工作表、3 行改动）。openpyxl 元数据检查还验证了该夹具的样式、行列尺寸、批注、合并区域、页面设置和页眉页脚。`build_institution_normalize_plan` 通过共享 `excel-reader` 构造 3 个 `SetCellValue` 操作，并与 Python 基线的统计及变更格一致，计划对拍报告为 `probe/reports/institution_normalize_plan_parity.json`，该单独报告未执行修改引擎。另有显式忽略的集成测试在合成四工作表夹具上临时登记 fixture-scoped capability，实际执行 CLI → ExcelModifier → `openpyxl_worker`，并对拍值、公式、批注、合并、样式、行列尺寸、页面设置、页眉页脚和源文件安全性；执行报告为 `probe/reports/institution_normalize_openpyxl_execution_20261024.json`，状态明确为 `synthetic_passed_not_production_acceptance`。worker 修复了 openpyxl 写出时遗漏的 `xml:space="preserve"`，并由 Rust 读取候选临时文件完成保留项验证。该 capability 仅为测试临时文件，不产生生产 Passed 登记，也不改变默认路由。以上仅为合成 XLSX 证据；无经授权真实样本，`.xlsm`、真实模板、Windows 原生执行、目标 Linux/glibc 2.28 和 deb 尚未验证；PT-7-2 生产状态仍为未验证。旧直接 umya 候选未改为 ExcelModifier 默认路由。
 
@@ -790,6 +790,14 @@ main 提供的 excel-reader::read_xlsx_cell_number_formats 已由主线提交 ec
 Windows 原生验证：cargo fmt --manifest-path pytools-core/Cargo.toml -- --check；cargo test --offline --locked -p pytools-core --lib sheet_extract::duration_tests -j 1（7/7）；cargo build --offline --locked -p pytools-core --bin pytools -j 1；区域提取安全/输出候选回归、time-only 数字菜单 pytools menu → 7 → 6 及原区域菜单回归各 1/1。只读 PyCode run_extract_sheets 与真实 Rust extract-sheets-area CLI 的合成对拍在 1900/1904 两种 epoch 下均通过：午夜、0.5/1.5 毫秒舍入、日末舍入、日期格式、内置样式 h:mm 和 [h]:mm:ss 累计时长的完整输出类型、值、工作表名及 number format 一致；两个源簿字节未变。机器报告：probe/reports/sheet_extract_area_time_only_parity_20261026.json。Rust 菜单回归另确认源簿不变并生成可读输出。
 
 仍未验证真实业务 time-only 工作簿、未知内置格式及行默认样式、非 XLSX 输入、Windows 原生文件弹窗、全模板保真和 Linux/目标机交付。time-only 合成子集已实现并完成合成对拍；PT-7-6 整体仍处于迁移中，不视为 Windows 真实验收通过。
+
+### 2026-10-26 PT-7-6 区域提取支持 XLSM 值输入
+
+旧 PyCode 文件选择器接受 .xlsm，以 load_workbook(data_only=True) 提取值并新建 .xlsx，不保留 VBA。Rust 7→6 菜单此前虽然文件选择器包含 .xlsm，后续白名单却只传 .xlsx；区域 CLI 也拒绝 .xlsm。现区域模式接受 .xlsx/.xlsm 并输出新 .xlsx；需要样式导入的整表模式仍限 .xlsx，继续要求 capability。
+
+Windows 原生验证：cargo fmt --manifest-path pytools-core/Cargo.toml -- --check、cargo test --offline --locked -p pytools-core --test sheet_extract_area_operation_parity -j 1（16/16）、cargo build --offline --locked -p pytools-core --bin pytools -j 1 通过。实际 pytools menu → 7 → 6 对仓库中的宏工作簿测试夹具执行单个文本格提取，生成 .xlsx，输入字节未变。Python/Rust extract-sheets-area 对拍以 1900/1904 epoch 下 .xlsx 与宏启用内容类型 .xlsm（无 VBA 项目）的 4 个合成输入运行，完整输出投影相同；双方均 files=4、extracted_sheets=4、output_files=1、failed_files=0，源未变。机器报告：probe/reports/sheet_extract_area_time_only_parity_20261026.json。
+
+该证据不代表 PyTools 真实业务 .xlsm 样本完整验收或宏保留能力；输出合同是值提取到新建 .xlsx。真实业务工作簿、完整宏簿 Python/Rust 对拍、整表 .xlsm 样式导入、原生文件弹窗与目标 Linux/deb 仍未验证。PT-7-6 整体保持迁移中。
 
 ### 2026-10-25 PT-1-2 时序提取 Rust 主输出、目标追加与入口对拍
 

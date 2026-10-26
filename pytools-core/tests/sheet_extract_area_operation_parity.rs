@@ -689,7 +689,7 @@ fn interactive_menu_routes_area_extraction_matches_python_and_records_engines() 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stdout.contains("6  工作表数据提取（普通无批注版）"));
-    assert!(stdout.contains("PT-7-6 当前仅验收 .xlsx"));
+    assert!(stdout.contains("PT-7-6 区域提取仅接受 .xlsx/.xlsm"));
     assert!(stdout.contains("\"files\": 2"));
     assert!(stdout.contains("\"extracted_sheets\": 4"));
     assert!(stdout.contains("\"output_files\": 1"));
@@ -1725,6 +1725,62 @@ fn interactive_menu_extracts_calendar_datetime_values() {
         ))
     );
     assert_eq!(fs::read(source).unwrap(), original_source);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn interactive_menu_extracts_macro_enabled_xlsm_area_to_new_xlsx() {
+    let root = temporary_directory("sheet-extract-xlsm-menu");
+    let source =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/vba_config/VbaV2.4.2.xlsm");
+    let source_bytes = fs::read(&source).unwrap();
+    let source_sheets = read_value_columns(&source, 16_384).unwrap();
+    let (source_sheet_name, source_cell, expected_text) = source_sheets
+        .iter()
+        .find_map(|sheet| {
+            sheet
+                .values
+                .iter()
+                .find_map(|(address, value)| match value {
+                    CellValue::Text(text) if !text.trim().is_empty() => {
+                        Some((sheet.name.clone(), address.clone(), text.clone()))
+                    }
+                    _ => None,
+                })
+        })
+        .expect("macro-enabled test workbook contains a non-empty text cell");
+
+    let mut task = load_tasks(&cases())[0].clone();
+    task.workbook_keywords = "VbaV2.4.2".to_owned();
+    task.sheet_keywords = source_sheet_name;
+    task.area_spec = source_cell;
+    task.output_folder = "xlsm-area".to_owned();
+    task.output_name = "xlsm-area.xlsx".to_owned();
+    let config = create_menu_config(&root, &[task]);
+    let output = run_menu(&config, &format!("7\n6\nn\n{}\n", source.display()));
+    assert!(
+        output.status.success(),
+        "XLSM area extraction menu failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let output_path = root.join("app/output/xlsm-area/xlsm-area.xlsx");
+    assert!(output_path.is_file());
+    assert_eq!(
+        output_path
+            .extension()
+            .and_then(|extension| extension.to_str()),
+        Some("xlsx")
+    );
+    let output_sheets = read_value_columns(&output_path, 16_384).unwrap();
+    assert_eq!(output_sheets.len(), 1);
+    assert_eq!(output_sheets[0].values.len(), 1);
+    assert!(matches!(
+        output_sheets[0].values.get("A1"),
+        Some(CellValue::Text(value)) if value == &expected_text
+    ));
+    assert_eq!(fs::read(&source).unwrap(), source_bytes);
     fs::remove_dir_all(root).unwrap();
 }
 

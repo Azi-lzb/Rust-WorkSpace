@@ -3966,21 +3966,21 @@ where
                 };
                 let mut sources = Vec::new();
                 for path in selected {
-                    if path
-                        .extension()
-                        .is_some_and(|extension| extension.eq_ignore_ascii_case("xlsx"))
-                    {
+                    if path.extension().is_some_and(|extension| {
+                        extension.eq_ignore_ascii_case("xlsx")
+                            || extension.eq_ignore_ascii_case("xlsm")
+                    }) {
                         sources.push(path);
                     } else {
                         writeln!(
                             output,
-                            "[跳过] {}：PT-7-6 当前仅验收 .xlsx；请先显式转换，未验收格式不会交给读取器。",
+                            "[跳过] {}：PT-7-6 区域提取仅接受 .xlsx/.xlsm；整表样式导入仍仅接受 .xlsx。",
                             path.display()
                         )?;
                     }
                 }
                 if sources.is_empty() {
-                    writeln!(output, "[提示] 没有可处理的 .xlsx 工作簿。")?;
+                    writeln!(output, "[提示] 没有可处理的 .xlsx/.xlsm 工作簿。")?;
                     return Ok(());
                 }
                 let mut arguments = config_cli_arguments(config_path);

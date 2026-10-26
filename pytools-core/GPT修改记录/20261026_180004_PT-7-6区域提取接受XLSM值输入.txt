@@ -1,0 +1,11 @@
+功能：PT-7-6 工作表区域提取接受 XLSM 值输入
+目的：对齐旧 PyCode 文件选择器和 data_only=True 区域提取行为。区域模式读取 XLSX/XLSM 并生成新的 XLSX，不承诺保留 VBA；整表样式导入仍限 XLSX。
+修改文件：
+- pytools-core/src/sheet_extract.rs：区域输入格式门接受 .xlsx/.xlsm。
+- pytools-core/src/bin/pytools.rs：7→6 菜单接纳 .xlsm 并更新跳过提示。
+- pytools-core/tests/sheet_extract_area_operation_parity.rs：增加真实菜单路由和宏启用仓库夹具的单格提取回归。
+- pytools-core/probe/compare_sheet_extract_area_time_only.py 与 probe/reports/sheet_extract_area_time_only_parity_20261026.json：增加 1900/1904 epoch 下合成 XLSM 的 Python/Rust 区域结果对拍。
+- pytools-core/MIGRATION_INVENTORY.md：记录能力边界和验证状态。
+验证：cargo fmt --manifest-path pytools-core/Cargo.toml -- --check 通过；cargo test --offline --locked -p pytools-core --test sheet_extract_area_operation_parity -j 1 为 16/16；cargo build --offline --locked -p pytools-core --bin pytools -j 1 通过；本次重跑的合成对拍通过，Python/Rust 均处理 4 个输入、提取 4 张表、写出 1 个文件、失败 0 个，源输入未变。构建缓存位于 F:\Rust_Workspace_迁移产物_20261026\归档内容_20261026\PyTools_构建缓存_20261026。
+未执行/边界：没有真实业务 XLSM 样本；合成 XLSM 不含 VBA 项目；单格菜单测试不是完整业务验收。真实业务文件完整对拍、VBA 保留、整表 XLSM 样式导入、原生文件弹窗及 Linux/deb 仍未验证。PT-7-6 整体维持“迁移中”。原 Python 项目和真实数据只读。
+回滚：单独回退本功能提交即可撤销本次 Rust 入口、测试、探针和清单记录；不影响其他 PT 功能。
