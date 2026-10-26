@@ -1,0 +1,242 @@
+use excel_writer::Workbook;
+use serde_json::Value;
+use std::{
+    fs,
+    path::{Path, PathBuf},
+    process::{Command, Output},
+    time::{SystemTime, UNIX_EPOCH},
+};
+
+struct TemporaryRoot(PathBuf);
+
+impl TemporaryRoot {
+    fn new() -> Self {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock after Unix epoch")
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "audit_s3_execution_compare_cli_{}_{}",
+            std::process::id(),
+            nonce
+        ));
+        fs::create_dir_all(&path).expect("create temporary test directory");
+        Self(path)
+    }
+
+    fn path(&self, name: &str) -> PathBuf {
+        self.0.join(name)
+    }
+}
+
+impl Drop for TemporaryRoot {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
+fn write_sheet(workbook: &mut Workbook, name: &str, headers: &[&str], rows: &[&[&str]]) {
+    let worksheet = workbook.add_worksheet();
+    worksheet.set_name(name).expect("set config worksheet name");
+    for (column, header) in headers.iter().enumerate() {
+        worksheet
+            .write_string(0, column as u16, *header)
+            .expect("write config header");
+    }
+    for (row_index, row) in rows.iter().enumerate() {
+        for (column, value) in row.iter().enumerate() {
+            worksheet
+                .write_string(row_index as u32 + 1, column as u16, *value)
+                .expect("write config value");
+        }
+    }
+}
+
+fn write_configs(common_path: &Path, feature_path: &Path) {
+    let mut common = Workbook::new();
+    write_sheet(
+        &mut common,
+        "运行参数",
+        &["参数", "值"],
+        &[&["默认源数据单位", "元"], &["默认目标单位", "亿元"]],
+    );
+    write_sheet(&mut common, "单位换算例外", &["指标代码", "启用"], &[]);
+    write_sheet(
+        &mut common,
+        "环比警戒",
+        &[
+            "下限",
+            "上限",
+            "备注文字",
+            "填充颜色",
+            "是否整行填充",
+            "金额变动阈值",
+            "是否说明",
+        ],
+        &[],
+    );
+    common.save(common_path).expect("save synthetic 3.0 config");
+
+    let mut feature = Workbook::new();
+    write_sheet(
+        &mut feature,
+        "指标参照",
+        &["指标代码", "表单代码", "行序号", "指标别名"],
+        &[&["I001", "F001", "1", "合成指标"]],
+    );
+    write_sheet(
+        &mut feature,
+        "规则动作",
+        &[
+            "规则编号",
+            "规则说明",
+            "规则动作",
+            "指标代码",
+            "数据属性",
+            "币种",
+            "比较指标代码",
+            "人民币阈值(亿元)",
+            "美元阈值(亿美元)",
+            "变幅阈值(%)",
+            "来源分组",
+            "适用表单",
+            "适用频度",
+            "适用批次",
+            "适用场景",
+            "详细说明",
+            "启用",
+            "停用原因",
+            "备注",
+        ],
+        &[],
+    );
+    write_sheet(
+        &mut feature,
+        "表达式校验",
+        &[
+            "规则编号",
+            "规则说明",
+            "校验表达式",
+            "是否取反",
+            "容差值(万元)",
+            "启用",
+            "停用原因",
+        ],
+        &[],
+    );
+    feature
+        .save(feature_path)
+        .expect("save synthetic 3.1 config");
+}
+
+fn write_data(path: &Path, record_date: &str, value: &str) {
+    let csv = format!(
+        "业务类,数据日期,机构类代码,机构类名称,地区代码,地区名称,指标顺序码,指标代码,指标名称,数据属性,币种,频度,批次,数据值\nC001,{record_date},ORG1,示例机构,R001,示例地区,1,I001,合成指标,余额,CNY,月报,第1批,{value}\n"
+    );
+    fs::write(path, csv).expect("write synthetic central CSV");
+}
+
+fn run_cli(
+    current: &Path,
+    previous: &Path,
+    common_config: &Path,
+    feature_config: &Path,
+    output: &Path,
+) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_open-data-audit"))
+        .arg("s3-execution-compare")
+        .arg("--current-data")
+        .arg(current)
+        .arg("--previous-data")
+        .arg(previous)
+        .arg("--common-config")
+        .arg(common_config)
+        .arg("--feature-config")
+        .arg(feature_config)
+        .arg("--output-workbook")
+        .arg(output)
+        .arg("--expression-schema")
+        .arg("five-segment")
+        .arg("--developer-view")
+        .output()
+        .expect("run S3-F01 CLI")
+}
+
+#[test]
+fn cli_runs_configured_comparison_writes_result_and_refuses_overwrite() {
+    let root = TemporaryRoot::new();
+    let current = root.path("current.csv");
+    let previous = root.path("previous.csv");
+    let common_config = root.path("common.xlsx");
+    let feature_config = root.path("feature.xlsx");
+    let output = root.path("comparison.xlsx");
+    write_data(&current, "2026-08-31", "1000");
+    write_data(&previous, "2026-07-31", "900");
+    write_configs(&common_config, &feature_config);
+
+    let inputs_before = [
+        fs::read(&current).expect("read current input"),
+        fs::read(&previous).expect("read previous input"),
+        fs::read(&common_config).expect("read common config"),
+        fs::read(&feature_config).expect("read feature config"),
+    ];
+    let result = run_cli(
+        &current,
+        &previous,
+        &common_config,
+        &feature_config,
+        &output,
+    );
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    assert!(output.is_file(), "S3-F01 should create its result workbook");
+    assert!(
+        fs::metadata(&output).expect("stat result workbook").len() > 0,
+        "result workbook should not be empty"
+    );
+    let summary: Value = serde_json::from_slice(&result.stdout).expect("parse CLI summary");
+    assert_eq!(summary["status"], "completed");
+    assert_eq!(summary["feature"], "S3-F01");
+    assert_eq!(summary["rows"], 1);
+    assert_eq!(summary["engines"]["config_reader"], "calamine");
+    assert_eq!(summary["engines"]["writer"], "rust_xlsxwriter");
+
+    let events = String::from_utf8_lossy(&result.stderr)
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).expect("parse progress event"))
+        .collect::<Vec<_>>();
+    assert!(events.iter().any(|event| event["status"] == "started"));
+    assert!(events.iter().any(|event| event["status"] == "completed"));
+    assert!(events
+        .iter()
+        .any(|event| event["step"] == "读取本期/上期导数"));
+
+    let inputs_after = [
+        fs::read(&current).expect("reread current input"),
+        fs::read(&previous).expect("reread previous input"),
+        fs::read(&common_config).expect("reread common config"),
+        fs::read(&feature_config).expect("reread feature config"),
+    ];
+    assert_eq!(inputs_after, inputs_before, "inputs must remain unchanged");
+
+    let output_before = fs::read(&output).expect("read published result");
+    let overwrite = run_cli(
+        &current,
+        &previous,
+        &common_config,
+        &feature_config,
+        &output,
+    );
+    assert!(
+        !overwrite.status.success(),
+        "existing output must be rejected"
+    );
+    assert_eq!(
+        fs::read(&output).expect("reread published result"),
+        output_before,
+        "refused rerun must preserve the existing output"
+    );
+}

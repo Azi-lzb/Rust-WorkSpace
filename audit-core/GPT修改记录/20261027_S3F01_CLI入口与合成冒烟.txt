@@ -1,0 +1,19 @@
+日期：2026-10-27
+功能：S3-F01 大集中执行比较 CLI 入口切片
+
+修改文件：
+- audit-core/src/bin/open-data-audit.rs：为既有 `run_execution_compare_files` 增加 `s3-execution-compare` CLI 接线；支持本期/上期多文件输入、3.0/3.1 配置、五段式/八段式表达式模式、独立输出路径和普通/开发者双视图日志。
+- audit-core/src/lib.rs、audit-core/src/s3_execution_compare.rs：将当前已验证的 S3-F01 业务模块纳入 Audit crate 并供 CLI 调用；实现内容包括现有 3.0/3.1 配置读取、比较计算和结果写入。
+- audit-core/tests/s3_execution_compare_cli.rs：新增合成 CSV 与配置工作簿 CLI 端到端测试，覆盖输出生成、引擎/进度字段、输入保护和拒绝覆盖。
+- audit-core/MIGRATION_INVENTORY.md：记录入口切片和验证范围，保留 S3-F01 整体未验收状态。
+
+验证：
+- Windows `cargo check --offline --locked -p audit-core --bin open-data-audit` 通过。
+- Windows `cargo test --offline --locked -p audit-core --test s3_execution_compare_cli -- --nocapture`：1 passed。
+- Windows `cargo test --offline --locked -p audit-core --lib s3_execution_compare::tests -- --nocapture`：11 passed，1 ignored。
+- 使用旧 Python 项目只读 `config-real/3.0大集中通用配置.xlsx` 与 `3.1大集中执行比较_配置.xlsx` 的配置加载测试：1 passed，读取 13 档环比、1711 指标参照、5082 条动作规则和 2844 条表达式规则；原配置未修改。
+- `cargo run --offline --locked -p audit-core --bin open-data-audit -- s3-execution-compare --help` 和 `git diff --check` 通过。
+
+未执行/限制：没有获得真实两期 S3 数据，未进行 Python/Rust 真实结果对拍；未连接 Audit GUI；因此只完成 CLI 入口切片，S3-F01 整体仍是迁移中。未进行 Linux、WSL 或 deb 验证。
+
+回滚：移除此子命令、对应集成测试及本条迁移记录即可；既有 S3 业务服务保持不变。

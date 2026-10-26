@@ -38,6 +38,7 @@ use audit_core::{
     s3_current_value_check::{
         input_reader_for_paths, python_regex_scope_matcher, run_current_value_check_files,
     },
+    s3_execution_compare::{run_execution_compare_files, S3ExpressionSchema},
     s3_explanation_export::export_selected_explanations,
     s3_explanation_feedback::plan_explanation_feedback_import,
     s5_config::load_configuration,
@@ -51,7 +52,7 @@ use audit_core::{
     s5_template_matching::match_s5_template,
     web_bridge::serve_web_ui,
 };
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -91,6 +92,9 @@ enum Command {
     /// Match S3-F03 institution feedback and write a read-only ExcelEditPlan.
     #[command(name = "s3-plan-explanation-feedback-import")]
     S3PlanExplanationFeedbackImport(S3PlanExplanationFeedbackImportArgs),
+    /// Run the S3-F01 configured two-period comparison and create its result workbook.
+    #[command(name = "s3-execution-compare")]
+    S3ExecutionCompare(S3ExecutionCompareArgs),
     /// Run S3-F04 current/previous period checks from CSV, XLSX, or XLS files.
     #[command(name = "s3-check-current-values")]
     S3CheckCurrentValues(S3CurrentValueCheckArgs),
@@ -812,6 +816,45 @@ struct S3CurrentValueCheckArgs {
     developer_view: bool,
 }
 
+#[derive(Debug, Args)]
+struct S3ExecutionCompareArgs {
+    /// Current-period central data; repeat once per workbook or CSV.
+    #[arg(long = "current-data", required = true)]
+    current_paths: Vec<PathBuf>,
+
+    /// Previous-period central data; repeat once per workbook or CSV.
+    #[arg(long = "previous-data", required = true)]
+    previous_paths: Vec<PathBuf>,
+
+    /// Shared 3.0 S3 configuration workbook.
+    #[arg(long)]
+    common_config: PathBuf,
+
+    /// S3-F01 3.1 execution comparison configuration workbook.
+    #[arg(long)]
+    feature_config: PathBuf,
+
+    /// New .xlsx path for the comparison result. Existing files are never overwritten.
+    #[arg(long)]
+    output_workbook: PathBuf,
+
+    /// Select the legacy expression reference schema; defaults to eight segments.
+    #[arg(long, value_enum, default_value_t = S3ExpressionSchemaArg::LegacyEightSegment)]
+    expression_schema: S3ExpressionSchemaArg,
+
+    /// Emit developer-view JSON progress with selected schema, engines and stage timings.
+    #[arg(long, default_value_t = false)]
+    developer_view: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+enum S3ExpressionSchemaArg {
+    #[value(name = "five-segment")]
+    FiveSegment,
+    #[value(name = "legacy-eight-segment")]
+    LegacyEightSegment,
+}
+
 #[derive(Debug, Serialize)]
 struct S2CliOutput {
     status: &'static str,
@@ -893,6 +936,9 @@ fn run() -> Result<()> {
         }
         Command::S3CheckCurrentValues(arguments) => {
             run_s3_current_value_check(arguments)?;
+        }
+        Command::S3ExecutionCompare(arguments) => {
+            run_s3_execution_compare(arguments)?;
         }
         Command::TemplateSuggest(arguments) => {
             let depth = if arguments.recursive {
@@ -1379,6 +1425,164 @@ fn run_s5_detect_period(arguments: S5DetectPeriodArgs) -> Result<()> {
         });
         println!("{}", serde_json::to_string_pretty(&user_output)?);
     }
+    Ok(())
+}
+
+fn run_s3_execution_compare(arguments: S3ExecutionCompareArgs) -> Result<()> {
+    let started = Instant::now();
+    let started_at = chrono::Local::now().to_rfc3339();
+    let expression_schema = match arguments.expression_schema {
+        S3ExpressionSchemaArg::FiveSegment => S3ExpressionSchema::FiveSegment,
+        S3ExpressionSchemaArg::LegacyEightSegment => S3ExpressionSchema::LegacyEightSegment,
+    };
+    let expression_schema_name = match expression_schema {
+        S3ExpressionSchema::FiveSegment => "five-segment",
+        S3ExpressionSchema::LegacyEightSegment => "legacy-eight-segment",
+    };
+    if arguments.developer_view {
+        eprintln!(
+            "{}",
+            serde_json::to_string(&json!({
+                "type": "progress",
+                "product": "open-data-audit",
+                "feature": "S3-F01",
+                "step": "execution_compare",
+                "status": "started",
+                "started_at": started_at,
+                "expression_schema": expression_schema_name
+            }))?
+        );
+    } else {
+        eprintln!("正在执行 S3-F01 本期/上期比较…");
+    }
+
+    let mut input_paths = arguments.current_paths.clone();
+    input_paths.extend_from_slice(&arguments.previous_paths);
+    let report = match run_execution_compare_files(
+        &arguments.current_paths,
+        &arguments.previous_paths,
+        &arguments.common_config,
+        &arguments.feature_config,
+        &arguments.output_workbook,
+        expression_schema,
+        |step| {
+            if arguments.developer_view {
+                eprintln!(
+                    "{}",
+                    serde_json::to_string(&json!({
+                        "type": "progress",
+                        "product": "open-data-audit",
+                        "feature": "S3-F01",
+                        "step": step,
+                        "status": "running",
+                        "expression_schema": expression_schema_name
+                    }))
+                    .unwrap_or_else(|_| "{}".to_owned())
+                );
+            } else {
+                eprintln!("{step}…");
+            }
+        },
+    ) {
+        Ok(report) => report,
+        Err(error) => {
+            if arguments.developer_view {
+                eprintln!(
+                    "{}",
+                    serde_json::to_string(&json!({
+                        "type": "progress",
+                        "product": "open-data-audit",
+                        "feature": "S3-F01",
+                        "step": "execution_compare",
+                        "status": "failed",
+                        "finished_at": chrono::Local::now().to_rfc3339(),
+                        "expression_schema": expression_schema_name,
+                        "config_reader": "calamine",
+                        "input_reader": input_reader_for_paths(&input_paths),
+                        "writer": "rust_xlsxwriter",
+                        "elapsed_ms": started.elapsed().as_millis(),
+                        "error": format!("{error:#}")
+                    }))?
+                );
+            } else {
+                eprintln!("S3-F01 执行比较失败，未报告成功结果：{error:#}");
+            }
+            return Err(error);
+        }
+    };
+
+    if arguments.developer_view {
+        eprintln!(
+            "{}",
+            serde_json::to_string(&json!({
+                "type": "progress",
+                "product": "open-data-audit",
+                "feature": "S3-F01",
+                "step": "execution_compare",
+                "status": "completed",
+                "started_at": started_at,
+                "finished_at": chrono::Local::now().to_rfc3339(),
+                "expression_schema": expression_schema_name,
+                "config_reader": report.config_reader,
+                "input_reader": report.input_reader,
+                "writer": report.writer,
+                "rows": report.rows,
+                "current_records": report.current_records,
+                "previous_records": report.previous_records,
+                "enabled_action_rules": report.enabled_action_rules,
+                "applicable_action_rules": report.applicable_action_rules,
+                "triggered_action_rules": report.triggered_action_rules,
+                "enabled_expression_rules": report.enabled_expression_rules,
+                "triggered_expression_rules": report.triggered_expression_rules,
+                "expression_errors": report.expression_errors,
+                "config_read_time_ms": report.config_read_time_ms,
+                "input_read_time_ms": report.input_read_time_ms,
+                "calculation_time_ms": report.calculation_time_ms,
+                "workbook_write_time_ms": report.workbook_write_time_ms,
+                "elapsed_ms": started.elapsed().as_millis()
+            }))?
+        );
+    } else {
+        eprintln!(
+            "S3-F01 比较完成：{} 行（本期 {} 条、上期 {} 条）；输出：{}；耗时 {} ms。",
+            report.rows,
+            report.current_records,
+            report.previous_records,
+            report.output_path.display(),
+            started.elapsed().as_millis()
+        );
+    }
+
+    let mut output = json!({
+        "status": "completed",
+        "feature": "S3-F01",
+        "expression_schema": expression_schema_name,
+        "output_workbook": report.output_path,
+        "rows": report.rows,
+        "current_records": report.current_records,
+        "previous_records": report.previous_records,
+        "enabled_action_rules": report.enabled_action_rules,
+        "applicable_action_rules": report.applicable_action_rules,
+        "triggered_action_rules": report.triggered_action_rules,
+        "enabled_expression_rules": report.enabled_expression_rules,
+        "triggered_expression_rules": report.triggered_expression_rules,
+        "expression_errors": report.expression_errors
+    });
+    if arguments.developer_view {
+        output["engines"] = json!({
+            "config_reader": report.config_reader,
+            "input_reader": report.input_reader,
+            "writer": report.writer
+        });
+        output["timings_ms"] = json!({
+            "config_read": report.config_read_time_ms,
+            "input_read": report.input_read_time_ms,
+            "calculation": report.calculation_time_ms,
+            "workbook_write": report.workbook_write_time_ms,
+            "total": report.total_time_ms
+        });
+    }
+    println!("{}", serde_json::to_string_pretty(&output)?);
     Ok(())
 }
 
