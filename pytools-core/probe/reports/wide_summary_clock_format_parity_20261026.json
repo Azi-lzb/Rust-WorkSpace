@@ -17,7 +17,9 @@
     "number_formats": [
       "h:mm:ss",
       "h:mm",
-      "mm:ss"
+      "mm:ss",
+      "hh:mm AM/PM",
+      "h:mm:ss.000"
     ],
     "date_systems": [
       "1900",
@@ -52,7 +54,7 @@
       "summary_effective_styles": "exact",
       "target_append_status": "passed",
       "target_actual_engine": "rust_xlsxwriter",
-      "target_elapsed_ms": 50,
+      "target_elapsed_ms": 42,
       "appended_rows": 4,
       "duplicate_rows_filtered": 1,
       "candidate_equals_committed": true
@@ -72,7 +74,7 @@
       "summary_effective_styles": "exact",
       "target_append_status": "passed",
       "target_actual_engine": "rust_xlsxwriter",
-      "target_elapsed_ms": 50,
+      "target_elapsed_ms": 47,
       "appended_rows": 5,
       "duplicate_rows_filtered": 0,
       "candidate_equals_committed": true
@@ -92,7 +94,7 @@
       "summary_effective_styles": "exact",
       "target_append_status": "passed",
       "target_actual_engine": "rust_xlsxwriter",
-      "target_elapsed_ms": 46,
+      "target_elapsed_ms": 43,
       "appended_rows": 4,
       "duplicate_rows_filtered": 1,
       "candidate_equals_committed": true
@@ -112,13 +114,93 @@
       "summary_effective_styles": "exact",
       "target_append_status": "passed",
       "target_actual_engine": "rust_xlsxwriter",
-      "target_elapsed_ms": 48,
+      "target_elapsed_ms": 47,
       "appended_rows": 5,
       "duplicate_rows_filtered": 0,
       "candidate_equals_committed": true
     },
     {
       "number_format": "h:mm",
+      "date_system": "1900",
+      "row_suffix": false,
+      "summary_status": "passed",
+      "summary_dimensions": [
+        [
+          6,
+          9
+        ]
+      ],
+      "summary_cell_count": 54,
+      "summary_effective_styles": "exact",
+      "target_append_status": "passed",
+      "target_actual_engine": "rust_xlsxwriter",
+      "target_elapsed_ms": 44,
+      "appended_rows": 4,
+      "duplicate_rows_filtered": 1,
+      "candidate_equals_committed": true
+    },
+    {
+      "number_format": "h:mm",
+      "date_system": "1900",
+      "row_suffix": true,
+      "summary_status": "passed",
+      "summary_dimensions": [
+        [
+          6,
+          9
+        ]
+      ],
+      "summary_cell_count": 54,
+      "summary_effective_styles": "exact",
+      "target_append_status": "passed",
+      "target_actual_engine": "rust_xlsxwriter",
+      "target_elapsed_ms": 44,
+      "appended_rows": 5,
+      "duplicate_rows_filtered": 0,
+      "candidate_equals_committed": true
+    },
+    {
+      "number_format": "h:mm",
+      "date_system": "1904",
+      "row_suffix": false,
+      "summary_status": "passed",
+      "summary_dimensions": [
+        [
+          6,
+          9
+        ]
+      ],
+      "summary_cell_count": 54,
+      "summary_effective_styles": "exact",
+      "target_append_status": "passed",
+      "target_actual_engine": "rust_xlsxwriter",
+      "target_elapsed_ms": 56,
+      "appended_rows": 4,
+      "duplicate_rows_filtered": 1,
+      "candidate_equals_committed": true
+    },
+    {
+      "number_format": "h:mm",
+      "date_system": "1904",
+      "row_suffix": true,
+      "summary_status": "passed",
+      "summary_dimensions": [
+        [
+          6,
+          9
+        ]
+      ],
+      "summary_cell_count": 54,
+      "summary_effective_styles": "exact",
+      "target_append_status": "passed",
+      "target_actual_engine": "rust_xlsxwriter",
+      "target_elapsed_ms": 46,
+      "appended_rows": 5,
+      "duplicate_rows_filtered": 0,
+      "candidate_equals_committed": true
+    },
+    {
+      "number_format": "mm:ss",
       "date_system": "1900",
       "row_suffix": false,
       "summary_status": "passed",
@@ -138,7 +220,7 @@
       "candidate_equals_committed": true
     },
     {
-      "number_format": "h:mm",
+      "number_format": "mm:ss",
       "date_system": "1900",
       "row_suffix": true,
       "summary_status": "passed",
@@ -152,15 +234,35 @@
       "summary_effective_styles": "exact",
       "target_append_status": "passed",
       "target_actual_engine": "rust_xlsxwriter",
-      "target_elapsed_ms": 49,
+      "target_elapsed_ms": 45,
       "appended_rows": 5,
       "duplicate_rows_filtered": 0,
       "candidate_equals_committed": true
     },
     {
-      "number_format": "h:mm",
+      "number_format": "mm:ss",
       "date_system": "1904",
       "row_suffix": false,
+      "summary_status": "passed",
+      "summary_dimensions": [
+        [
+          6,
+          9
+        ]
+      ],
+      "summary_cell_count": 54,
+      "summary_effective_styles": "exact",
+      "target_append_status": "passed",
+      "target_actual_engine": "rust_xlsxwriter",
+      "target_elapsed_ms": 43,
+      "appended_rows": 4,
+      "duplicate_rows_filtered": 1,
+      "candidate_equals_committed": true
+    },
+    {
+      "number_format": "mm:ss",
+      "date_system": "1904",
+      "row_suffix": true,
       "summary_status": "passed",
       "summary_dimensions": [
         [
@@ -173,32 +275,12 @@
       "target_append_status": "passed",
       "target_actual_engine": "rust_xlsxwriter",
       "target_elapsed_ms": 46,
-      "appended_rows": 4,
-      "duplicate_rows_filtered": 1,
-      "candidate_equals_committed": true
-    },
-    {
-      "number_format": "h:mm",
-      "date_system": "1904",
-      "row_suffix": true,
-      "summary_status": "passed",
-      "summary_dimensions": [
-        [
-          6,
-          9
-        ]
-      ],
-      "summary_cell_count": 54,
-      "summary_effective_styles": "exact",
-      "target_append_status": "passed",
-      "target_actual_engine": "rust_xlsxwriter",
-      "target_elapsed_ms": 44,
       "appended_rows": 5,
       "duplicate_rows_filtered": 0,
       "candidate_equals_committed": true
     },
     {
-      "number_format": "mm:ss",
+      "number_format": "hh:mm AM/PM",
       "date_system": "1900",
       "row_suffix": false,
       "summary_status": "passed",
@@ -212,13 +294,13 @@
       "summary_effective_styles": "exact",
       "target_append_status": "passed",
       "target_actual_engine": "rust_xlsxwriter",
-      "target_elapsed_ms": 44,
+      "target_elapsed_ms": 42,
       "appended_rows": 4,
       "duplicate_rows_filtered": 1,
       "candidate_equals_committed": true
     },
     {
-      "number_format": "mm:ss",
+      "number_format": "hh:mm AM/PM",
       "date_system": "1900",
       "row_suffix": true,
       "summary_status": "passed",
@@ -232,13 +314,13 @@
       "summary_effective_styles": "exact",
       "target_append_status": "passed",
       "target_actual_engine": "rust_xlsxwriter",
-      "target_elapsed_ms": 52,
+      "target_elapsed_ms": 48,
       "appended_rows": 5,
       "duplicate_rows_filtered": 0,
       "candidate_equals_committed": true
     },
     {
-      "number_format": "mm:ss",
+      "number_format": "hh:mm AM/PM",
       "date_system": "1904",
       "row_suffix": false,
       "summary_status": "passed",
@@ -252,13 +334,13 @@
       "summary_effective_styles": "exact",
       "target_append_status": "passed",
       "target_actual_engine": "rust_xlsxwriter",
-      "target_elapsed_ms": 44,
+      "target_elapsed_ms": 41,
       "appended_rows": 4,
       "duplicate_rows_filtered": 1,
       "candidate_equals_committed": true
     },
     {
-      "number_format": "mm:ss",
+      "number_format": "hh:mm AM/PM",
       "date_system": "1904",
       "row_suffix": true,
       "summary_status": "passed",
@@ -272,7 +354,87 @@
       "summary_effective_styles": "exact",
       "target_append_status": "passed",
       "target_actual_engine": "rust_xlsxwriter",
-      "target_elapsed_ms": 49,
+      "target_elapsed_ms": 43,
+      "appended_rows": 5,
+      "duplicate_rows_filtered": 0,
+      "candidate_equals_committed": true
+    },
+    {
+      "number_format": "h:mm:ss.000",
+      "date_system": "1900",
+      "row_suffix": false,
+      "summary_status": "passed",
+      "summary_dimensions": [
+        [
+          6,
+          9
+        ]
+      ],
+      "summary_cell_count": 54,
+      "summary_effective_styles": "exact",
+      "target_append_status": "passed",
+      "target_actual_engine": "rust_xlsxwriter",
+      "target_elapsed_ms": 45,
+      "appended_rows": 4,
+      "duplicate_rows_filtered": 1,
+      "candidate_equals_committed": true
+    },
+    {
+      "number_format": "h:mm:ss.000",
+      "date_system": "1900",
+      "row_suffix": true,
+      "summary_status": "passed",
+      "summary_dimensions": [
+        [
+          6,
+          9
+        ]
+      ],
+      "summary_cell_count": 54,
+      "summary_effective_styles": "exact",
+      "target_append_status": "passed",
+      "target_actual_engine": "rust_xlsxwriter",
+      "target_elapsed_ms": 42,
+      "appended_rows": 5,
+      "duplicate_rows_filtered": 0,
+      "candidate_equals_committed": true
+    },
+    {
+      "number_format": "h:mm:ss.000",
+      "date_system": "1904",
+      "row_suffix": false,
+      "summary_status": "passed",
+      "summary_dimensions": [
+        [
+          6,
+          9
+        ]
+      ],
+      "summary_cell_count": 54,
+      "summary_effective_styles": "exact",
+      "target_append_status": "passed",
+      "target_actual_engine": "rust_xlsxwriter",
+      "target_elapsed_ms": 42,
+      "appended_rows": 4,
+      "duplicate_rows_filtered": 1,
+      "candidate_equals_committed": true
+    },
+    {
+      "number_format": "h:mm:ss.000",
+      "date_system": "1904",
+      "row_suffix": true,
+      "summary_status": "passed",
+      "summary_dimensions": [
+        [
+          6,
+          9
+        ]
+      ],
+      "summary_cell_count": 54,
+      "summary_effective_styles": "exact",
+      "target_append_status": "passed",
+      "target_actual_engine": "rust_xlsxwriter",
+      "target_elapsed_ms": 45,
       "appended_rows": 5,
       "duplicate_rows_filtered": 0,
       "candidate_equals_committed": true

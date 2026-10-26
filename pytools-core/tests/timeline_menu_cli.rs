@@ -405,17 +405,24 @@ fn wide_summary_cli_preserves_time_format_serials_at_and_above_one_day() -> Resu
 #[test]
 fn wide_summary_cli_projects_clock_formats_across_midnight_rounding() -> Result<()> {
     for command in ["wide-summary", "wide-summary-row-suffix"] {
-        for (number_format, serial, expected_type) in [
+        for (format_index, (number_format, serial, expected_type)) in [
             ("h:mm", 0.5, "string"),
             ("h:mm", 0.999_999_999, "datetime_serial"),
+            ("hh:mm AM/PM", 0.5, "string"),
+            ("hh:mm AM/PM", 0.999_999_999, "datetime_serial"),
+            ("h:mm:ss.000", 0.5, "string"),
+            ("h:mm:ss.000", 0.999_999_999, "datetime_serial"),
             ("mm:ss", 0.5, "string"),
             ("mm:ss", 0.999_999_999, "datetime_serial"),
-        ] {
+        ]
+        .into_iter()
+        .enumerate()
+        {
             let root = TestDirectory::new()?;
             let config = create_timeline_config(root.path())?;
             let source = root
                 .path()
-                .join(format!("sample_clock_format_{number_format}_{serial}.xlsx"));
+                .join(format!("sample_clock_format_{format_index}_{serial}.xlsx"));
             create_wide_source_with_number_format_serial(
                 &source,
                 "时钟格式边界",

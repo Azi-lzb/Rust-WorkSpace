@@ -1972,7 +1972,7 @@ def main() -> int:
         return 0
 
     if sys.argv[1:] == ["--clock-time-formats"]:
-        formats = ["h:mm:ss", "h:mm", "mm:ss"]
+        formats = ["h:mm:ss", "h:mm", "mm:ss", "hh:mm AM/PM", "h:mm:ss.000"]
         with tempfile.TemporaryDirectory(
             prefix="pytools-wide-clock-format-probe-", ignore_cleanup_errors=True
         ) as temp:
