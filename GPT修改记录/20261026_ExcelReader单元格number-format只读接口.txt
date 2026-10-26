@@ -1,0 +1,17 @@
+目的：为 PyTools PT-7-6 提供通用只读 Excel 单元格 number-format 元数据，不将业务分类放入共享 crate。
+
+修改文件：
+- crates/excel-reader/src/lib.rs
+- 本记录
+
+修改内容：新增按 workbook 批量请求、按 worksheet 名与 A1 坐标返回 cell style index、numberFormat ID 与格式代码的 OOXML reader API；仅支持 XLSX/XLSM，不改变 Calamine 值读取路由或既有 CellValue。未知内置格式保留 numberFormat ID 并返回无格式代码；不展开行/列默认样式，也不替业务判断日期、时间或时长语义。
+
+验证：
+- `cargo test -p excel-reader cell_number_format --locked --offline -- --nocapture`：2 项通过；缓存位于 `F:\rust-workspace-targets\main-excel-reader-number-format`。
+- `cargo test -p excel-reader --locked --offline`：19 项通过（17 个单元测试、2 个集成测试）。
+
+未验证：尚未接入 PyTools PT-7-6，未使用原项目真实样本完成 Python/Rust 对拍；不得据此登记业务验收通过。
+
+已知限制：格式 ID 23–36 等无法映射到稳定内置格式代码的保留为 `number_format_id`，`format_code` 为 `None`；行或列级默认样式未展开。
+
+回滚：撤销本次 excel-reader 接口与测试提交及本记录；保留其它工作区修改。
