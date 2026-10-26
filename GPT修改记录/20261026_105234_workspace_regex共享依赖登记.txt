@@ -1,0 +1,17 @@
+日期：2026-10-26
+
+执行者：Codex；修改前 commit：3e53e7e7d5f18bb2c8d152f7033bcd078bc875fa；修改后 commit：本配置提交（提交后以 Git 历史为准）。修改前 main 跟踪工作区干净；保留未跟踪 HANDOFF_ZCODE_TO_CODEX.md。Audit/PyTools 工作树均有未提交内容，未修改或同步它们。
+
+目的：响应 Audit 对 S3-F04 96 个机构范围正则配置的共享依赖请求，按 workspace 规则集中声明第三方依赖版本。
+
+修改文件：
+- Cargo.toml：在 workspace.dependencies 声明 `regex = "1"`。
+
+验证：
+- `cargo metadata --offline --no-deps --format-version 1`：通过。
+- 当前 main 成员尚未引用 regex，因此 Cargo.lock 不含未使用的 regex 锁项；Audit 在自己的 Cargo.toml 引用 `regex.workspace = true` 时再更新共享锁文件。
+
+未验证/已知边界：本提交不实现 Audit 正则匹配、不修改 Audit 工作树；真实 S3-F04 规则仍由 Audit Agent 验证。
+
+组件版本：不升级。
+回滚：回滚本提交中的 workspace regex 声明与本记录；不得改动其他并行工作树。
