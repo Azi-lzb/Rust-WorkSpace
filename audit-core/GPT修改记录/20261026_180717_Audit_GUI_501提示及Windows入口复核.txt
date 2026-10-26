@@ -1,0 +1,27 @@
+时间：2026-10-26 18:07（Asia/Shanghai）
+执行者：Codex
+分支：codex/windows-operable-entries
+修改前 commit：2392e0af5986bc7854d88b3b312f16dae99028e3；开始时 tracked worktree 干净
+修改后 commit：以本记录所在提交为准
+
+目的：让旧 Audit GUI 中尚未接通的按钮在原页面显示 Rust bridge 返回的明确 501 错误；复核 Windows 可启动入口。
+
+文件：
+- `audit-core/src/web_bridge.rs`：所有 501 响应显示后端错误 toast/alert，DAG 保留专用提示；增加生成页面包含提示逻辑的回归断言。
+- `audit-core/MIGRATION_INVENTORY.md`：更新 GUI 未接通状态和本轮 Windows 验证证据。
+- 本记录。
+
+入口与业务影响：继续使用与旧 GUI SHA-256 一致的 `frontend/web/index.html`，没有改 HTML；Audit GUI 仍以 loopback HTTP 服务启动并自动打开默认浏览器。已接通业务仍为 S2 Rust 服务。未接通业务仍返回 501；S1/S3/S4/S5 未因此提升迁移状态。没有改 Excel 路由、共享 crates 或源 Python 项目。
+
+【组件版本】不升级（入口错误提示和复核记录）。
+
+验证：
+- Windows `cargo test --locked --offline -p audit-core --lib web_bridge::tests`：9/9 通过，包含 S2 合成 API 端到端执行、原页面与 bridge 注入及 501 提示检查。
+- Windows Release 构建成功：`CARGO_TARGET_DIR=F:\CodexBuilds\windows-operable-entries-20261026-audit-501-toast cargo build --locked --offline --release -p audit-core --bin open-data-audit-gui`。可执行文件：`F:\CodexBuilds\windows-operable-entries-20261026-audit-501-toast\release\open-data-audit-gui.exe`。
+- 直接启动 Release GUI（`--no-browser`、临时空闲端口、合成 S2 配置）：原页面和旧导航 `GET /` 返回 200，`POST /api/get_state` 返回 200；`POST /api/recognize` 返回 501 和“Rust 迁移版尚未实现接口：recognize”，页面 runtime bridge 含通用可见错误提示。
+- 未对真实工作簿运行审核，也未验证 Linux/deb 或 S2 真实业务验收。
+
+未执行项与已知问题：本次只复核入口及 S2 合成回归；S1-F01 读写闭环、S3/S4/S5 页面业务、真实样本和目标系统验收仍按迁移清单状态处理。
+
+删除清单：无。
+回滚：回滚 `web_bridge.rs` 中 501 提示条件及对应断言，并还原迁移清单新增行；无需回滚业务数据或 Excel 文件。

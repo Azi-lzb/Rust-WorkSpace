@@ -33,6 +33,7 @@
 - 2026-10-26 Codex 本地 Debug 复核：`cargo test -p pytools-core --test interactive_menu --locked --offline` 5/5 通过；`target/debug/pytools.exe` 无参数启动并输入 `0`，实际显示 1–9 菜单后正常退出。菜单中已接通和未接通项目仍按上述清单区分，未提升真实样本验收状态。
 - 本轮 Windows 原生 Release 复核：`cargo test -p pytools-core --test interactive_menu --locked --offline` 5/5 通过；联合 Release 构建成功，直接运行 `target/release/pytools.exe` 并输入 `0` 显示完整 1–9 主菜单后正常退出。可执行文件路径为工作树下 `target/release/pytools.exe`。本轮未逐项运行菜单功能，不提升任何业务验收状态。
 - 2026-10-26 Codex 当前 Release 入口复核：菜单未实现项文案已统一明确包含“尚未实现”。`cargo test -p pytools-core --test interactive_menu --locked --offline` 5/5 通过；直接运行 `target/release/pytools.exe`，输入 `0` 显示 1–9 菜单并退出，输入 `7`、`1` 时显示未实现提示且未执行命令。业务真实样本、其余已接通菜单项的逐项验收及 Linux/deb 仍待验证。
+- 本轮 Windows Release 入口复核：`interactive_menu` 5/5 通过；独立 Release 目录中的 `pytools.exe` 显示 1–9 数字菜单，选择 6-1 后由 Rust 汇总生成 1 个 XLSX，合成源夹具 SHA-256 未变化。此项是 CLI 接线冒烟，不提升该汇总功能的真实业务验收状态；菜单其余功能、真实样本与 Linux/deb 仍按本清单状态跟踪。
 
 ## 输入与转换矩阵
 

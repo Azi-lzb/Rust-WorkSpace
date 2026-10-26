@@ -47,11 +47,14 @@ const BRIDGE_JS: &str = r#"
       return response.json().then(function (data) {
         if (!response.ok || (data && data.error)) {
           var message = (data && data.error) || ('HTTP ' + response.status);
-          if (response.status === 501 && method === 'start_dag_flow') {
+          if (response.status === 501) {
+            var visibleMessage = method === 'start_dag_flow'
+              ? '该功能尚未接入 Rust 版本。'
+              : message;
             if (typeof window.showToast === 'function') {
-              window.showToast('该功能尚未接入 Rust 版本。');
+              window.showToast(visibleMessage);
             } else {
-              window.alert('该功能尚未接入 Rust 版本。');
+              window.alert(visibleMessage);
             }
           }
           throw new Error(message);
@@ -1037,6 +1040,8 @@ mod tests {
         assert_eq!(served.replace(super::BRIDGE_JS, ""), expected);
         assert!(served.contains("window.bridge = { api: api }"));
         assert!(served.contains("该功能尚未接入 Rust 版本。"));
+        assert!(served.contains("if (response.status === 501)"));
+        assert!(served.contains("window.showToast(visibleMessage)"));
         assert!(!served.contains("__AUDIT_APP_TITLE__"));
         assert!(!served.contains("__AUDIT_ICON_URL__"));
     }
