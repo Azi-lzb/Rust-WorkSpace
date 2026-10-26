@@ -1086,3 +1086,7 @@ Windows 原生验证：cargo fmt --manifest-path pytools-core/Cargo.toml -- --ch
 ### 2026-10-27 PT-5-1 配置修复保留退休 Sheet 中的数据
 
 旧 Python 的 `initialize_or_repair_config` 会删除“校验规则生成配置”“校验规则映射表”两张退休 Sheet；新版需求明确配置修复不能丢弃现有业务明细。Rust 修复计划现保留这两张 Sheet，不再发出 `DeleteSheet` 操作。Windows `config_menu_cli` 6/6 通过；计划模式回归确认旧 Sheet 仍保留于源簿、修复计划不含删除操作且不创建候选。Unix 隔离 openpyxl 执行回归已更新为检查候选中两张 Sheet 的数据保留，但本轮未执行（需要专用隔离 runtime）。真实用户配置及 Excel 手工验收仍未完成；与旧 Python 删除退休 Sheet 的行为存在有意差异，以新版保留数据约束为准。
+
+### 2026-10-27 PT-5-1 配置表头错位失败关闭
+
+如果已知配置字段出现在非预期列，或规范表头单元格含公式，Rust 修复现在拒绝生成修复计划，报告 Sheet/坐标；不创建输出目录、不生成候选，源配置保持字节不变。普通未知表头文本仍按配置模式修复。Windows 原生真实菜单 `7→1` 集成回归 `config_menu_cli` 7/7 通过。该安全拒绝规则比旧 Python 仅重写表头更严格，遵循 V2 对歧义修复的要求；未验证真实用户配置和 Excel 手工保真。

@@ -282,6 +282,46 @@ pub fn view_config(path: impl AsRef<Path>) -> Result<ConfigView> {
     })
 }
 
+fn ensure_header_layout_unambiguous(
+    sheet_name: &str,
+    sheet: &SheetDump,
+    headers: &[&str],
+) -> Result<()> {
+    let mut expected_columns = BTreeMap::<&str, Vec<usize>>::new();
+    for (index, header) in headers.iter().enumerate() {
+        expected_columns.entry(header).or_default().push(index + 1);
+    }
+
+    for address in sheet.formulas.keys() {
+        if let Some((row, column)) = parse_a1(address) {
+            if row == 1 && column <= headers.len() {
+                bail!(
+                    "configuration header layout is ambiguous: {sheet_name}!{address} contains a formula; refusing repair to protect existing configuration"
+                );
+            }
+        }
+    }
+
+    for address in sheet.values.keys() {
+        let Some((row, column)) = parse_a1(address) else {
+            continue;
+        };
+        if row != 1 {
+            continue;
+        }
+        let value = cell_text(sheet, address).trim().to_owned();
+        let Some(expected) = expected_columns.get(value.as_str()) else {
+            continue;
+        };
+        if !expected.contains(&column) {
+            bail!(
+                "configuration header layout is ambiguous: {sheet_name}!{address} contains {value:?}, expected column(s) {expected:?}; refusing repair to protect existing configuration"
+            );
+        }
+    }
+    Ok(())
+}
+
 /// Build a non-destructive repair plan using the legacy configuration schema:
 /// correct configured headers/comments, add missing sheets/defaults, and fill
 /// named examples only when their sheets have no data rows. Existing sheets,
@@ -316,6 +356,7 @@ pub fn build_config_repair_plan(
     let mut operations = Vec::new();
     for (sheet_name, headers) in SHEET_SPECS {
         if let Some(sheet) = dump.sheets.iter().find(|sheet| sheet.name == *sheet_name) {
+            ensure_header_layout_unambiguous(sheet_name, sheet, headers)?;
             for (column, header) in headers.iter().enumerate() {
                 let address = format!("{}1", column_letters(column + 1));
                 if sheet.formulas.contains_key(&address) || cell_text(sheet, &address) != *header {

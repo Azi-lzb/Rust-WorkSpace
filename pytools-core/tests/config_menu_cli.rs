@@ -186,6 +186,43 @@ fn existing_configuration_repair_menu_saves_a_plan_without_modifying_source() ->
 }
 
 #[test]
+fn ambiguous_configuration_headers_fail_closed_without_creating_a_repair_plan() -> Result<()> {
+    let root = TestDirectory::new()?;
+    let config = root.path().join("app/config/config.xlsx");
+    write_ambiguous_config(&config)?;
+    let source_before = fs::read(&config)?;
+
+    let output = run_menu(&config, "7\n1\n0\n0\n", "developer")?;
+    anyhow::ensure!(
+        output.status.success(),
+        "ambiguous configuration repair menu failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("configuration header layout is ambiguous"),
+        "{stdout}"
+    );
+    assert_eq!(fs::read(&config)?, source_before);
+    assert!(!root.path().join("app/output").exists());
+
+    let history_path = fs::read_dir(root.path().join("app/logs"))?
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.path())
+        .find(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with("pytools-config-initialize_or_repair-"))
+        })
+        .context("ambiguous configuration repair history missing")?;
+    let history: Value = serde_json::from_slice(&fs::read(history_path)?)?;
+    assert_eq!(history["feature_id"], "PT-5-1");
+    assert_eq!(history["status"], "failed");
+    assert_eq!(history["error_type"], "config_initialize_or_repair_failed");
+    Ok(())
+}
+
+#[test]
 fn config_menu_history_records_writer_and_view_without_config_contents() -> Result<()> {
     let root = TestDirectory::new()?;
     let config = root.path().join("app/config/config.xlsx");
@@ -331,6 +368,20 @@ fn write_incomplete_config(path: &Path) -> Result<()> {
         sheet.set_name(obsolete)?;
         sheet.write_string(1, 0, "existing user detail")?;
     }
+    workbook.save(path)?;
+    Ok(())
+}
+
+fn write_ambiguous_config(path: &Path) -> Result<()> {
+    fs::create_dir_all(path.parent().context("configuration parent missing")?)?;
+    let mut workbook = Workbook::new();
+    let global = workbook.add_worksheet();
+    global.set_name("全局配置")?;
+    global.write_string(0, 0, "值")?;
+    global.write_string(0, 1, "键")?;
+    global.write_string(0, 2, "备注")?;
+    global.write_string(1, 0, "输入目录")?;
+    global.write_string(1, 1, "existing path")?;
     workbook.save(path)?;
     Ok(())
 }
