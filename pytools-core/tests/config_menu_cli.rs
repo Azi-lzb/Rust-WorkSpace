@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use excel_editor::{EditOperation, ExcelEditPlan};
 use excel_reader::read_workbook;
 use rust_xlsxwriter::Workbook;
 use serde_json::Value;
@@ -146,10 +147,12 @@ fn existing_configuration_repair_menu_saves_a_plan_without_modifying_source() ->
         })
         .context("configuration repair output directory missing")?;
     let plan_path = action_dir.join("repair-plan.json");
-    let plan: Value = serde_json::from_slice(&fs::read(&plan_path)?)?;
-    assert!(plan["operations"]
-        .as_array()
-        .is_some_and(|items| !items.is_empty()));
+    let plan: ExcelEditPlan = serde_json::from_slice(&fs::read(&plan_path)?)?;
+    assert!(!plan.operations.is_empty());
+    assert!(plan
+        .operations
+        .iter()
+        .all(|operation| !matches!(operation, EditOperation::DeleteSheet { .. })));
     assert!(!action_dir.join("config-candidate.xlsx").exists());
     assert_eq!(fs::read(&config)?, source_before);
 
@@ -322,6 +325,11 @@ fn write_incomplete_config(path: &Path) -> Result<()> {
     {
         global.write_string((row + 1) as u32, 0, *key)?;
         global.write_string((row + 1) as u32, 1, *value)?;
+    }
+    for obsolete in ["校验规则生成配置", "校验规则映射表"] {
+        let sheet = workbook.add_worksheet();
+        sheet.set_name(obsolete)?;
+        sheet.write_string(1, 0, "existing user detail")?;
     }
     workbook.save(path)?;
     Ok(())

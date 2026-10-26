@@ -282,10 +282,10 @@ pub fn view_config(path: impl AsRef<Path>) -> Result<ConfigView> {
     })
 }
 
-/// Build a non-destructive repair plan matching the legacy configuration repair
-/// contract: correct configured headers/comments, add missing sheets/defaults,
-/// fill the named examples only when their sheets have no data rows, and remove
-/// the two obsolete configuration sheets.
+/// Build a non-destructive repair plan using the legacy configuration schema:
+/// correct configured headers/comments, add missing sheets/defaults, and fill
+/// named examples only when their sheets have no data rows. Existing sheets,
+/// including retired configuration sheets, are retained to protect data.
 pub fn build_config_repair_plan(
     input: impl AsRef<Path>,
     output: impl AsRef<Path>,
@@ -358,13 +358,9 @@ pub fn build_config_repair_plan(
             }
         }
     }
-    for obsolete in ["校验规则生成配置", "校验规则映射表"] {
-        if dump.sheets.iter().any(|sheet| sheet.name == obsolete) {
-            operations.push(EditOperation::DeleteSheet {
-                name: obsolete.to_owned(),
-            });
-        }
-    }
+    // V2 repair preserves existing workbook data. Although the legacy Python
+    // repair removed these retired sheets, their rows may still contain user
+    // configuration and must not be discarded by an automatic repair.
     if let Some(sheet) = dump.sheets.iter().find(|sheet| sheet.name == "全局配置") {
         let mut rows = std::collections::BTreeMap::new();
         let mut key_cells = sheet

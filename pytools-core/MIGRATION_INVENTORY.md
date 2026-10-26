@@ -1082,3 +1082,7 @@ Windows 原生验证：`cargo fmt --manifest-path sidecar/lo-convert/Cargo.toml`
 将文件处理 CLI 集成用例的输入序列对齐当前 V2 子菜单：转换走 4→4→1/2，Sheet 改名走 4→5，内容命名走 4→3，提交检查走 4→6，排序前缀走 4→2→1/2。移除测试中已取消的同格式复制、内容前缀撤销、局部映射和菜单原生值转换行为，改为断言已取消入口不显示。转换本身仍通过上一条记录中的 Windows COM 实际菜单冒烟验证。
 
 Windows 原生验证：cargo fmt --manifest-path pytools-core/Cargo.toml -- --check；cargo test --offline --locked -p pytools-core --test conversion_menu_cli -j 1，10/10 通过；git diff --check 通过。此改动只校准过期菜单输入与 V2 范围断言，不改变生产业务实现或真实验收状态。
+
+### 2026-10-27 PT-5-1 配置修复保留退休 Sheet 中的数据
+
+旧 Python 的 `initialize_or_repair_config` 会删除“校验规则生成配置”“校验规则映射表”两张退休 Sheet；新版需求明确配置修复不能丢弃现有业务明细。Rust 修复计划现保留这两张 Sheet，不再发出 `DeleteSheet` 操作。Windows `config_menu_cli` 6/6 通过；计划模式回归确认旧 Sheet 仍保留于源簿、修复计划不含删除操作且不创建候选。Unix 隔离 openpyxl 执行回归已更新为检查候选中两张 Sheet 的数据保留，但本轮未执行（需要专用隔离 runtime）。真实用户配置及 Excel 手工验收仍未完成；与旧 Python 删除退休 Sheet 的行为存在有意差异，以新版保留数据约束为准。

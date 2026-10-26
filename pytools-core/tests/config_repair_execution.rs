@@ -146,7 +146,7 @@ fn make_incomplete_config(path: &Path) -> Result<()> {
     for obsolete in ["校验规则生成配置", "校验规则映射表"] {
         let sheet = workbook.add_worksheet();
         sheet.set_name(obsolete)?;
-        sheet.write_string(0, 0, "remove-me")?;
+        sheet.write_string(1, 0, "remove-me")?;
     }
 
     let custom = workbook.add_worksheet();
@@ -248,7 +248,7 @@ fn pt_5_1_config_repair_executes_as_one_capability_gated_openpyxl_batch() -> Res
     let plan_json = assert_success(&plan_only)?;
     let plan: ExcelEditPlan = serde_json::from_slice(&fs::read(&plan_path)?)?;
     assert_eq!(plan_json["input"], input.to_string_lossy().as_ref());
-    assert_eq!(plan.operations.len(), 258);
+    assert_eq!(plan.operations.len(), 256);
     assert!(!plan
         .preserve
         .contains(&PreservationRequirement::UnmodifiedPackageParts));
@@ -285,18 +285,14 @@ fn pt_5_1_config_repair_executes_as_one_capability_gated_openpyxl_batch() -> Res
         .map(|candidate| candidate.name.as_str())
         .collect::<Vec<_>>();
     assert_eq!(
-        &sheet_names[..5],
-        [
-            "全局配置",
-            "重命名配置",
-            "归档类型配置",
-            "文件排序配置",
-            "Custom user sheet"
-        ]
+        &sheet_names[..4],
+        ["全局配置", "重命名配置", "归档类型配置", "文件排序配置"]
     );
-    assert_eq!(sheet_names.len(), 12);
-    assert!(!sheet_names.contains(&"校验规则生成配置"));
-    assert!(!sheet_names.contains(&"校验规则映射表"));
+    assert_eq!(sheet_names.len(), 14);
+    let obsolete_generate = sheet(&output, "校验规则生成配置")?;
+    let obsolete_mapping = sheet(&output, "校验规则映射表")?;
+    assert_eq!(text_at(obsolete_generate, "A2"), Some("remove-me"));
+    assert_eq!(text_at(obsolete_mapping, "A2"), Some("remove-me"));
 
     let global = sheet(&output, "全局配置")?;
     assert_eq!(text_at(global, "A1"), Some("键"));
