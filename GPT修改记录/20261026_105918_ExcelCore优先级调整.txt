@@ -1,0 +1,17 @@
+日期：2026-10-26
+
+执行者：Codex；修改前 commit：09ab66387a8d87573a541aa014ec12e36101a30d；修改后 commit：本记录对应提交（提交后以 Git 历史为准）。main 跟踪工作区干净；保留本地未跟踪 HANDOFF_ZCODE_TO_CODEX.md。Audit/PyTools 工作树存在未提交修改，未修改或同步它们。
+
+目的：把用户 2026-10-26 确认的 Excel-Core 后续优先级记入现有架构清单，避免旧的候选对比建议被误读为继续扩展所有编辑引擎。
+
+修改文件：
+- EXCEL_ENGINE_ARCHITECTURE.md：将第 4 节标题改为修改引擎候选能力边界；新增当前优先级，明确 Read=Calamine、Create=rust_xlsxwriter、Edit 优先 OOXML Patch/Umya、openpyxl 兼容能力保留但暂停扩展、Excelize 暂停、Calculate 复用 LO/Excel COM sidecar，并列出 #8、S1-F01、legacy epoch、打印模板的顺序。
+
+验证：
+- `git diff --check`：通过。
+- 仅编辑架构清单；未修改代码、默认路由或能力记录，因此未运行测试。
+
+未完成/已知边界：文档不代表任何真实模板能力验收；所有原矩阵状态保持不变，print Rust 替代与公式复制生产路由仍需真实业务样本证明。
+
+组件版本：不升级。
+回滚：回滚本提交中的 EXCEL_ENGINE_ARCHITECTURE.md 与本记录；不得改动其他并行工作树。
