@@ -403,6 +403,70 @@ fn wide_summary_cli_preserves_time_format_serials_at_and_above_one_day() -> Resu
 }
 
 #[test]
+fn wide_summary_cli_projects_clock_formats_across_midnight_rounding() -> Result<()> {
+    for command in ["wide-summary", "wide-summary-row-suffix"] {
+        for (number_format, serial, expected_type) in [
+            ("h:mm", 0.5, "string"),
+            ("h:mm", 0.999_999_999, "datetime_serial"),
+            ("mm:ss", 0.5, "string"),
+            ("mm:ss", 0.999_999_999, "datetime_serial"),
+        ] {
+            let root = TestDirectory::new()?;
+            let config = create_timeline_config(root.path())?;
+            let source = root
+                .path()
+                .join(format!("sample_clock_format_{number_format}_{serial}.xlsx"));
+            create_wide_source_with_number_format_serial(
+                &source,
+                "时钟格式边界",
+                serial,
+                number_format,
+            )?;
+            let source_before = fs::read(&source)?;
+
+            let output = Command::new(env!("CARGO_BIN_EXE_pytools"))
+                .arg(command)
+                .arg("--config")
+                .arg(&config)
+                .arg("--log-view")
+                .arg("developer")
+                .arg(&source)
+                .output()
+                .context("run wide-summary CLI with a clock-only number format")?;
+            assert!(
+                output.status.success(),
+                "{command} did not process {number_format} serial {serial}: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+
+            let report: Value = serde_json::from_slice(&output.stdout)?;
+            let summary_path = report["output"]
+                .as_str()
+                .map(PathBuf::from)
+                .context("clock-format summary output path missing")?;
+            let dump = read_workbook(&summary_path)?;
+            let summary = dump
+                .sheets
+                .iter()
+                .find(|sheet| sheet.name == "WideRule")
+                .context("clock-format summary sheet missing")?;
+            let value = &summary.values["G2"];
+            assert_eq!(
+                value["type"], expected_type,
+                "{number_format} serial {serial} type changed in {command}"
+            );
+            if expected_type == "string" {
+                assert_eq!(value["value"], "12:00:00");
+            } else {
+                assert_eq!(value["value"].as_f64(), Some(1.0));
+            }
+            assert_eq!(fs::read(&source)?, source_before);
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn wide_summary_cli_processes_legacy_xls_without_ooxml_metadata() -> Result<()> {
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests")

@@ -92,6 +92,7 @@ def make_input(
     cached_formula: bool = False,
     date_1904: bool = False,
     time_only: bool = False,
+    time_only_number_format: str | None = None,
     elapsed_duration: bool = False,
     elapsed_formula: bool = False,
     elapsed_formula_serial: float = 1.123456789,
@@ -132,7 +133,7 @@ def make_input(
         sheet["B5"] = "=8+2.25"
     elif time_only:
         sheet["B5"] = datetime_time(12, 34, 56, 123000)
-        sheet["B5"].number_format = "h:mm:ss"
+        sheet["B5"].number_format = time_only_number_format or "h:mm:ss"
     elif date_1904:
         sheet["B5"] = datetime(2024, 6, 30)
         sheet["B5"].number_format = "yyyy/m/d"
@@ -153,8 +154,8 @@ def make_input(
         sheet["E1"].number_format = "yyyy/m/d"
     if time_only:
         boundary_values = (
-            (8, "公司丙", datetime_time(0, 0), "h:mm:ss"),
-            (9, "公司丁", 0.999999999, "h:mm:ss"),
+            (8, "公司丙", datetime_time(0, 0), time_only_number_format or "h:mm:ss"),
+            (9, "公司丁", 0.999999999, time_only_number_format or "h:mm:ss"),
         )
         for row, company, value, number_format in boundary_values:
             sheet.cell(row=row, column=1, value=company)
@@ -1014,6 +1015,7 @@ def run_case(
     cached_formula: bool = False,
     date_1904: bool = False,
     time_only: bool = False,
+    time_only_number_format: str | None = None,
     elapsed_duration: bool = False,
     elapsed_formula: bool = False,
     elapsed_formula_serial: float = 1.123456789,
@@ -1044,6 +1046,7 @@ def run_case(
         cached_formula=cached_formula,
         date_1904=date_1904,
         time_only=time_only,
+        time_only_number_format=time_only_number_format,
         elapsed_duration=elapsed_duration,
         elapsed_formula=elapsed_formula,
         elapsed_formula_serial=elapsed_formula_serial,
@@ -1222,6 +1225,7 @@ def run_case(
         "elapsed_number_format": elapsed_number_format,
         "cached_formula_value_projected": cached_formula or elapsed_formula,
         "time_only_value": time_only,
+        "time_only_number_format": time_only_number_format,
         "source_date_system": "1904" if date_1904 else "1900",
         "calendar_date_projection": date_projection,
         "subday_time_normalization": time_normalization,
@@ -1965,6 +1969,118 @@ def main() -> int:
                 json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
             )
             print(json.dumps({"report": str(report_path), "result": result}, ensure_ascii=False))
+        return 0
+
+    if sys.argv[1:] == ["--clock-time-formats"]:
+        formats = ["h:mm:ss", "h:mm", "mm:ss"]
+        with tempfile.TemporaryDirectory(
+            prefix="pytools-wide-clock-format-probe-", ignore_cleanup_errors=True
+        ) as temp:
+            root = Path(temp)
+            results = []
+            for index, number_format in enumerate(formats):
+                format_root = root / f"format_{index}"
+                format_root.mkdir()
+                for date_1904 in (False, True):
+                    for row_suffix in (False, True):
+                        result = run_case(
+                            format_root,
+                            row_suffix,
+                            date_1904=date_1904,
+                            time_only=True,
+                            time_only_number_format=number_format,
+                        )
+                        execution = result["target_execution_summary"]
+                        results.append(
+                            {
+                                "number_format": number_format,
+                                "date_system": result["source_date_system"],
+                                "row_suffix": row_suffix,
+                                "summary_status": result["summary_status"],
+                                "summary_dimensions": result["summary_dimensions"],
+                                "summary_cell_count": result["summary_cell_count"],
+                                "summary_effective_styles": result[
+                                    "summary_effective_styles"
+                                ],
+                                "target_append_status": result["target_append_status"],
+                                "target_actual_engine": result[
+                                    "target_execution_history"
+                                ]["actual_engine"],
+                                "target_elapsed_ms": execution["elapsed_ms"],
+                                "appended_rows": execution["appended_rows"],
+                                "duplicate_rows_filtered": execution[
+                                    "duplicate_rows_filtered"
+                                ],
+                                "candidate_equals_committed": result[
+                                    "target_candidate_matches_committed_bytes"
+                                ],
+                            }
+                        )
+            report = {
+                "schema_version": 1,
+                "suite": "pytools.timeline.wide_summary_clock_time_format_parity",
+                "date": date.today().isoformat(),
+                "status": "passed_synthetic_python_rust_parity",
+                "baseline": "PyCode/core/wide_397_398.py::run_wide_summary",
+                "rust_entry": "pytools menu -> 1 timeline -> 3/4 wide summary -> confirm",
+                "environment": {
+                    "python": sys.version.split()[0],
+                    "pandas": version("pandas"),
+                    "openpyxl": version("openpyxl"),
+                    "rust_cli": "Windows native executable via PYTOOLS_RUST_CLI",
+                },
+                "input": {
+                    "format": "xlsx",
+                    "kind": "synthetic",
+                    "number_formats": formats,
+                    "date_systems": ["1900", "1904"],
+                    "cases_per_format": [
+                        "time-only serials below one day",
+                        "midnight and millisecond precision",
+                        "serial rounded into the following calendar day",
+                        "row-suffix and no-suffix summary variants",
+                        "new target append",
+                    ],
+                },
+                "comparison": {
+                    "all_summary_values_types_and_effective_styles": "exact",
+                    "all_new_target_values_types_and_effective_styles": "exact",
+                    "source_and_configuration_unchanged": True,
+                },
+                "results": results,
+                "safety": {
+                    "source_unchanged": True,
+                    "configuration_unchanged": True,
+                    "outputs_temporary_only": True,
+                    "report_contains_input_filenames_or_cell_values": False,
+                },
+                "limitations": [
+                    "Synthetic inputs only; a sanitized real wide-summary workbook is still required for business acceptance.",
+                    "Only the listed xlsx number formats and menu/target paths were tested.",
+                    "Linux targets and offline deb acceptance were not tested.",
+                ],
+            }
+            report_path = (
+                WORKSPACE
+                / "pytools-core"
+                / "probe"
+                / "reports"
+                / f"wide_summary_clock_format_parity_{date.today():%Y%m%d}.json"
+            )
+            report_path.write_text(
+                json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+            )
+            print(
+                json.dumps(
+                    {
+                        "report": str(report_path),
+                        "formats": len(formats),
+                        "cases": len(results),
+                        "status": report["status"],
+                    },
+                    ensure_ascii=False,
+                )
+            )
         return 0
 
     if sys.argv[1:] == ["--subday-time-only"]:
