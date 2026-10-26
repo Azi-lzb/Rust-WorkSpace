@@ -94,6 +94,19 @@ fn make_existing_target(path: &Path) -> Result<()> {
     Ok(())
 }
 
+fn make_header_only_target(path: &Path, headers: &[&str]) -> Result<()> {
+    let mut workbook = Workbook::new();
+    let sheet = workbook.add_worksheet();
+    sheet.set_name("Combined")?;
+    for (column, header) in headers.iter().enumerate() {
+        if !header.is_empty() {
+            sheet.write_string(0, column as u16, *header)?;
+        }
+    }
+    workbook.save(path)?;
+    Ok(())
+}
+
 fn style_fill(
     book: &excel_editor::Workbook,
     sheet_name: &str,
@@ -309,6 +322,64 @@ fn pt_2_5_absent_target_appends_unique_rows_through_the_rust_cli() -> Result<()>
         combined.formulas.get("C5").map(String::as_str),
         Some("B3*2")
     );
+
+    Ok(())
+}
+
+#[test]
+fn pt_2_5_skips_existing_targets_when_header_names_order_or_width_differ() -> Result<()> {
+    let dir = TestDir::new();
+    let source = dir.path("source.xlsx");
+    make_source(&source)?;
+    let source_before = fs::read(&source)?;
+
+    for (case, headers) in [
+        (
+            "extra-target-column",
+            vec!["ID", "Amount", "Derived", "Extra"],
+        ),
+        ("reordered-target-columns", vec!["Amount", "ID", "Derived"]),
+        (
+            "blank-first-but-not-empty-header",
+            vec!["", "ExistingHeader"],
+        ),
+    ] {
+        let case_dir = dir.path(case);
+        fs::create_dir_all(&case_dir)?;
+        let target = case_dir.join("target.xlsx");
+        let config = case_dir.join("config.xlsx");
+        let output_dir = case_dir.join("output");
+        make_header_only_target(&target, &headers)?;
+        make_config(&config, &source, &target)?;
+        let target_before = fs::read(&target)?;
+
+        let planned = Command::new(env!("CARGO_BIN_EXE_pytools"))
+            .args(["dedup-append-plan", "--config"])
+            .arg(&config)
+            .args(["--output-dir"])
+            .arg(&output_dir)
+            .output()?;
+        let reports = assert_success(&planned)?;
+        assert_eq!(reports.as_array().map(Vec::len), Some(1));
+        assert_eq!(reports[0]["target_existed"], true);
+        assert_eq!(reports[0]["task_ok"], 0);
+        assert_eq!(reports[0]["task_skipped"], 2);
+        assert_eq!(reports[0]["appended_rows"], 0);
+        assert!(reports[0]["issues"].as_array().is_some_and(|issues| {
+            issues.len() == 2
+                && issues.iter().all(|issue| {
+                    issue
+                        .as_str()
+                        .is_some_and(|text| text.contains("header_mismatch"))
+                })
+        }));
+        assert_eq!(
+            fs::read(&target)?,
+            target_before,
+            "{case} target was modified"
+        );
+        assert_eq!(fs::read(&source)?, source_before);
+    }
 
     Ok(())
 }

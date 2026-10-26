@@ -957,9 +957,7 @@ pub fn build_append_by_config_plans(
                 .collect::<Vec<_>>();
             if !sheet_state.is_new_sheet
                 && !sheet_state.is_empty_sheet
-                && source_headers.iter().enumerate().any(|(index, header)| {
-                    sheet_state.headers.get(index).map(String::as_str) != Some(header.as_str())
-                })
+                && source_headers != sheet_state.headers
             {
                 report.task_skipped += 1;
                 report.issues.push(format!(
@@ -1452,11 +1450,10 @@ impl AppendSheetState {
             };
         };
         let rows = used_row_count(sheet);
-        let first_cell_empty = normalize(&cell_text(sheet, 1, 1, date_values)).is_empty();
-        let is_empty_sheet = rows <= 1 && first_cell_empty;
-        let headers = (1..=used_column_count(sheet))
+        let headers: Vec<String> = (1..=used_column_count(sheet))
             .map(|column| normalize(&cell_text(sheet, 1, column, date_values)))
             .collect();
+        let is_empty_sheet = rows <= 1 && headers.iter().all(String::is_empty);
         let next_row = rows.saturating_add(1).max(2);
         Self {
             is_new_sheet: false,

@@ -1032,3 +1032,9 @@ Windows 原生验证：`cargo fmt --manifest-path pytools-core/Cargo.toml -- --c
 新版去重菜单 `2 → 2` 已从仅生成计划改为实际新建去重结果簿：复用现有复合键计划与按顺序计算的 `DeleteRows` 操作，把后续重复行从副本移除并上移保留行；源文件只读。输出经共享 `excel_writer`/rust_xlsxwriter 新建、独立读取核对行映射后的值/类型，再由 `file_commit::create_target_from_candidate` 安全发布；候选失败时不发布，目标已存在时不覆盖。与 PT-2-3 共用纯数据合同，公式/错误、批注、合并、条件格式、数据验证、定义名称及未知 OOXML 部件均失败关闭。开发日志的 `committed_targets` 现只统计实际提交到历史目标的操作，不把新建结果簿计作目标提交。
 
 生命周期：**已实现，待 Windows 真实验收**。Windows 菜单集成 `dedup_menu_cli` 7/7 通过，包含删除一条重复行、后续保留行上移、值/类型核对、工作表名称、输入字节不变、候选临时文件清理，并回归 PT-2-3 公式/批注拒绝及 PT-2-5 提交日志。未执行真实业务样本、V2 删除结果的 Python/Rust 端到端对拍、Excel 手工打开、Linux 目标环境或离线 deb 验收；非纯数据工作簿被明确拒绝。
+
+### 2026-10-27 PT-2-5 V2 追加目标表头严格匹配
+
+按新版需求“来源/目标表头名称、顺序和列数必须完全一致”收紧 `build_append_by_config_plans`：对既有目标 Sheet 比较规范化后的完整表头向量，列数或顺序不同即跳过该任务；仅当目标 Sheet 的使用区域和表头均为空时才按新表初始化，避免 A1 空而其他表头有值时覆盖目标。输入源和目标保持不变。与旧 PyCode `_headers_same` 允许目标多出列的行为存在明确差异，优先遵循本版已确认的严格匹配合同，不做宽松追加。
+
+Windows 原生验证：`cargo fmt -p pytools-core -- --check`、`cargo check --offline --locked -q -p pytools-core --bin pytools -j 1`、`cargo test --offline --locked -q -p pytools-core --test dedup_menu_cli --test dedup_append_execution -j 1`（14/14）、`git diff --check` 通过。新增 CLI 回归覆盖目标多一列、同列数但顺序不符、A1 为空而其他表头有值；均报告 `header_mismatch`、跳过两条配置任务且源/目标字节不变。未执行真实样本验收、Excel 手工打开或 Linux/deb 验收；PT-2-5 整体状态仍为**已实现，待 Windows 真实验收**。
