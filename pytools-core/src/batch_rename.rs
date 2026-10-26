@@ -5,6 +5,7 @@ use chrono::Local;
 use excel_reader::{read_workbook, uses_1904_date_system, SheetDump};
 use serde::Serialize;
 use serde_json::Value;
+use std::io;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
@@ -339,9 +340,8 @@ fn rename_one(
         return skip("name_same".to_owned());
     }
 
-    let target_path = next_available_path(&desired_path);
-    match std::fs::rename(path, &target_path) {
-        Ok(()) => BatchRenameRow {
+    match rename_to_available_path(path, &desired_path) {
+        Ok(target_path) => BatchRenameRow {
             source_path: source_path.to_owned(),
             original_name: original_name.to_owned(),
             new_name: target_path
@@ -355,26 +355,101 @@ fn rename_one(
     }
 }
 
-fn next_available_path(path: &Path) -> PathBuf {
-    if !path.exists() {
-        return path.to_path_buf();
-    }
-    let parent = path.parent().unwrap_or_else(|| Path::new("."));
-    let stem = path
+fn rename_to_available_path(source: &Path, desired_path: &Path) -> io::Result<PathBuf> {
+    let parent = desired_path.parent().unwrap_or_else(|| Path::new("."));
+    let stem = desired_path
         .file_stem()
         .map(|value| value.to_string_lossy().into_owned())
         .unwrap_or_default();
-    let suffix = path
+    let extension = desired_path
         .extension()
         .map(|value| format!(".{}", value.to_string_lossy()))
         .unwrap_or_default();
-    for index in 1usize.. {
-        let candidate = parent.join(format!("{stem}_{index}{suffix}"));
-        if !candidate.exists() {
-            return candidate;
+    for suffix_index in 0usize.. {
+        let candidate = if suffix_index == 0 {
+            desired_path.to_path_buf()
+        } else {
+            parent.join(format!("{stem}_{suffix_index}{extension}"))
+        };
+        match rename_without_replacing(source, &candidate) {
+            Ok(()) => return Ok(candidate),
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error),
         }
     }
     unreachable!("usize collision suffix range exhausted")
+}
+
+#[cfg(windows)]
+fn rename_without_replacing(source: &Path, destination: &Path) -> io::Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::MoveFileW;
+
+    let source = source
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect::<Vec<_>>();
+    let destination = destination
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect::<Vec<_>>();
+    let moved = unsafe { MoveFileW(source.as_ptr(), destination.as_ptr()) };
+    if moved == 0 {
+        Err(io::Error::last_os_error())
+    } else {
+        Ok(())
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn rename_without_replacing(source: &Path, destination: &Path) -> io::Result<()> {
+    use std::ffi::CString;
+    use std::os::raw::c_int;
+    use std::os::unix::ffi::OsStrExt;
+
+    const AT_FDCWD: c_int = -100;
+    const RENAME_NOREPLACE: u32 = 1;
+
+    let source = CString::new(source.as_os_str().as_bytes())
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "source path contains NUL"))?;
+    let destination = CString::new(destination.as_os_str().as_bytes()).map_err(|_| {
+        io::Error::new(io::ErrorKind::InvalidInput, "destination path contains NUL")
+    })?;
+    let result = unsafe {
+        renameat2(
+            AT_FDCWD,
+            source.as_ptr(),
+            AT_FDCWD,
+            destination.as_ptr(),
+            RENAME_NOREPLACE,
+        )
+    };
+    if result == 0 {
+        Ok(())
+    } else {
+        Err(io::Error::last_os_error())
+    }
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
+fn rename_without_replacing(_source: &Path, _destination: &Path) -> io::Result<()> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "atomic no-replace rename is unavailable on this platform",
+    ))
+}
+
+#[cfg(target_os = "linux")]
+unsafe extern "C" {
+    fn renameat2(
+        olddirfd: std::os::raw::c_int,
+        oldpath: *const std::os::raw::c_char,
+        newdirfd: std::os::raw::c_int,
+        newpath: *const std::os::raw::c_char,
+        flags: u32,
+    ) -> std::os::raw::c_int;
 }
 
 fn same_resolved_path(left: &Path, right: &Path) -> bool {
@@ -532,6 +607,47 @@ fn cell_address(mut column: usize, row: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    struct TestDirectory(PathBuf);
+
+    impl TestDirectory {
+        fn new() -> Self {
+            let nonce = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("clock must be after Unix epoch")
+                .as_nanos();
+            let path = std::env::temp_dir().join(format!(
+                "pytools-batch-rename-noreplace-{}-{nonce}",
+                std::process::id()
+            ));
+            fs::create_dir_all(&path).expect("create isolated test directory");
+            Self(path)
+        }
+    }
+
+    impl Drop for TestDirectory {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn no_replace_rename_keeps_an_existing_destination_unchanged() {
+        let directory = TestDirectory::new();
+        let source = directory.0.join("source.xlsx");
+        let destination = directory.0.join("destination.xlsx");
+        fs::write(&source, b"source bytes").expect("write source");
+        fs::write(&destination, b"existing destination").expect("write destination");
+
+        let error = rename_without_replacing(&source, &destination)
+            .expect_err("existing destination must not be replaced");
+
+        assert_eq!(error.kind(), io::ErrorKind::AlreadyExists);
+        assert_eq!(fs::read(&source).unwrap(), b"source bytes");
+        assert_eq!(fs::read(&destination).unwrap(), b"existing destination");
+    }
 
     #[test]
     fn ordered_mapping_updates_value_without_changing_match_priority() {
