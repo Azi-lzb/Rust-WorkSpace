@@ -79,6 +79,9 @@ pub enum PreservationRequirement {
     RowAndColumnDimensions,
     PageSettings,
     HeaderFooterText,
+    /// OOXML relationship preservation. A sheet-scoped `drop_allowed`
+    /// exception on a retained sheet requires an explicit row-data rewrite;
+    /// package relationship targets and references are still validated.
     Relationships,
     UnmodifiedPackageParts,
     SheetIdentityAndOrder,
@@ -698,16 +701,49 @@ impl ExcelEditPlan {
             // Legacy allowances describe property loss on worksheets the plan
             // deletes, so they keep requiring an explicit DeleteSheet. The
             // merged non-anchor payload allowance covers engine rewrite loss
-            // on retained worksheets and stands alone.
+            // on retained worksheets and stands alone. Relationships may also
+            // change on a retained worksheet only when the plan explicitly
+            // replaces its managed row data.
+            let deletes_sheet = self.operations.iter().any(
+                |operation| matches!(operation, EditOperation::DeleteSheet { name } if name == sheet),
+            );
             let requires_delete_sheet = allowed.iter().any(|requirement| {
-                *requirement != PreservationRequirement::MergedNonAnchorPayloads
-            });
-            if requires_delete_sheet
-                && !self.operations.iter().any(
-                    |operation| matches!(operation, EditOperation::DeleteSheet { name } if name == sheet),
+                !matches!(
+                    requirement,
+                    PreservationRequirement::MergedNonAnchorPayloads
+                        | PreservationRequirement::Relationships
                 )
-            {
+            });
+            if requires_delete_sheet && !deletes_sheet {
                 bail!("drop_allowed for worksheet {sheet:?} requires an explicit DeleteSheet operation");
+            }
+            if allowed.contains(&PreservationRequirement::Relationships) && !deletes_sheet {
+                if !self
+                    .preserve
+                    .contains(&PreservationRequirement::Relationships)
+                {
+                    bail!("relationship drop allowance for worksheet {sheet:?} requires Relationships in preserve");
+                }
+                let deletes_rows = self.operations.iter().any(|operation| {
+                    matches!(operation, EditOperation::DeleteRows { sheet: target, .. } if target == sheet)
+                });
+                if !deletes_rows {
+                    bail!("relationship drop allowance for retained worksheet {sheet:?} requires a DeleteRows operation on that worksheet");
+                }
+                let rewrites_data = self.operations.iter().any(|operation| match operation {
+                    EditOperation::SetCellValue { sheet: target, .. }
+                    | EditOperation::SetFormulaText { sheet: target, .. } => target == sheet,
+                    EditOperation::CopyRange { target_sheet, .. }
+                    | EditOperation::ImportRange { target_sheet, .. }
+                    | EditOperation::CopyRangeWithFormulaTranslation { target_sheet, .. }
+                    | EditOperation::ImportRangeWithFormulaTranslation { target_sheet, .. } => {
+                        target_sheet == sheet
+                    }
+                    _ => false,
+                });
+                if !rewrites_data {
+                    bail!("relationship drop allowance for retained worksheet {sheet:?} requires cell values or formulas to be rewritten");
+                }
             }
         }
         Ok(())
@@ -1507,6 +1543,113 @@ mod tests {
             .collect(),
         );
         assert!(mixed.validate().is_err());
+    }
+
+    #[test]
+    fn retained_sheet_relationship_allowance_requires_explicit_data_replacement() {
+        let directory = TestDir::new();
+        let directory = directory.0.as_path();
+        let mut replacement = plan(
+            directory,
+            vec![
+                EditOperation::DeleteRows {
+                    sheet: "Data".to_owned(),
+                    first_row: 2,
+                    count: 1,
+                },
+                set_value(),
+            ],
+        );
+        replacement
+            .preserve
+            .insert(PreservationRequirement::Relationships);
+        replacement.drop_allowed.insert(
+            "Data".to_owned(),
+            [PreservationRequirement::Relationships]
+                .into_iter()
+                .collect(),
+        );
+        assert!(replacement.validate().is_ok());
+
+        let mut missing_delete = plan(directory, vec![set_value()]);
+        missing_delete
+            .preserve
+            .insert(PreservationRequirement::Relationships);
+        missing_delete.drop_allowed.insert(
+            "Data".to_owned(),
+            [PreservationRequirement::Relationships]
+                .into_iter()
+                .collect(),
+        );
+        assert!(missing_delete
+            .validate()
+            .unwrap_err()
+            .to_string()
+            .contains("DeleteRows"));
+
+        let mut missing_write = plan(
+            directory,
+            vec![EditOperation::DeleteRows {
+                sheet: "Data".to_owned(),
+                first_row: 2,
+                count: 1,
+            }],
+        );
+        missing_write
+            .preserve
+            .insert(PreservationRequirement::Relationships);
+        missing_write.drop_allowed.insert(
+            "Data".to_owned(),
+            [PreservationRequirement::Relationships]
+                .into_iter()
+                .collect(),
+        );
+        assert!(missing_write
+            .validate()
+            .unwrap_err()
+            .to_string()
+            .contains("cell values or formulas to be rewritten"));
+
+        let mut not_preserved = plan(
+            directory,
+            vec![
+                EditOperation::DeleteRows {
+                    sheet: "Data".to_owned(),
+                    first_row: 2,
+                    count: 1,
+                },
+                set_value(),
+            ],
+        );
+        not_preserved.drop_allowed.insert(
+            "Data".to_owned(),
+            [PreservationRequirement::Relationships]
+                .into_iter()
+                .collect(),
+        );
+        assert!(not_preserved
+            .validate()
+            .unwrap_err()
+            .to_string()
+            .contains("requires Relationships in preserve"));
+    }
+
+    #[test]
+    fn relationship_allowance_on_deleted_sheet_keeps_existing_semantics() {
+        let directory = TestDir::new();
+        let mut deleted = plan(
+            directory.0.as_path(),
+            vec![EditOperation::DeleteSheet {
+                name: "Data".to_owned(),
+            }],
+        );
+        deleted.drop_allowed.insert(
+            "Data".to_owned(),
+            [PreservationRequirement::Relationships]
+                .into_iter()
+                .collect(),
+        );
+        assert!(deleted.validate().is_ok());
     }
 
     #[test]
