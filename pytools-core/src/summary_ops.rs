@@ -2458,7 +2458,8 @@ fn named_structure_mismatch(
     source: &SheetDump,
     bounds: NamedRegionBounds,
 ) -> Result<Option<String>> {
-    let mut addresses = BTreeSet::new();
+    const DETAIL_LIMIT: usize = 20;
+    let mut addresses = BTreeMap::new();
     for address in template
         .values
         .keys()
@@ -2474,24 +2475,74 @@ fn named_structure_mismatch(
             && column >= bounds.start_column
             && column <= bounds.end_column
         {
-            addresses.insert(address.clone());
+            addresses.insert((row, column), address.clone());
         }
     }
-    for address in addresses {
+    let mut details = Vec::new();
+    let mut mismatch_count = 0usize;
+    for (_, address) in addresses {
         let template_formula = template.formulas.get(&address);
         let source_formula = source.formulas.get(&address);
-        if template_formula.is_some() || source_formula.is_some() {
-            if template_formula != source_formula {
-                return Ok(Some(format!("公式位置或文本在 {address} 不一致")));
+        let mismatch = if (template_formula.is_some() || source_formula.is_some())
+            && template_formula != source_formula
+        {
+            Some(format!("公式 {address}"))
+        } else if template_formula.is_none()
+            && source_formula.is_none()
+            && cell_at_or_merged(template, &address) != cell_at_or_merged(source, &address)
+        {
+            Some(format!("单元格 {address}"))
+        } else {
+            None
+        };
+        if let Some(mismatch) = mismatch {
+            mismatch_count += 1;
+            if details.len() < DETAIL_LIMIT {
+                details.push(mismatch);
             }
-        } else if cell_at_or_merged(template, &address) != cell_at_or_merged(source, &address) {
-            return Ok(Some(format!("单元格结构在 {address} 不一致")));
         }
     }
-    if named_region_merges(template, bounds)? != named_region_merges(source, bounds)? {
-        return Ok(Some("合并区域不一致".to_owned()));
+
+    let template_merges = named_region_merges(template, bounds)?;
+    let source_merges = named_region_merges(source, bounds)?;
+    for merge in template_merges.difference(&source_merges) {
+        mismatch_count += 1;
+        if details.len() < DETAIL_LIMIT {
+            details.push(format!("模板多出合并区域 {}", format_merge_range(*merge)));
+        }
     }
-    Ok(None)
+    for merge in source_merges.difference(&template_merges) {
+        mismatch_count += 1;
+        if details.len() < DETAIL_LIMIT {
+            details.push(format!("源文件多出合并区域 {}", format_merge_range(*merge)));
+        }
+    }
+
+    if mismatch_count == 0 {
+        return Ok(None);
+    }
+    let omitted = mismatch_count.saturating_sub(details.len());
+    let suffix = if omitted > 0 {
+        format!("；另有 {omitted} 处未展开")
+    } else {
+        String::new()
+    };
+    Ok(Some(format!(
+        "共 {mismatch_count} 处不一致：{}{suffix}",
+        details.join("；")
+    )))
+}
+
+fn format_merge_range(
+    (start_row, start_column, end_row, end_column): (usize, usize, usize, usize),
+) -> String {
+    format!(
+        "{}{}:{}{}",
+        column_letters(start_column),
+        start_row,
+        column_letters(end_column),
+        end_row
+    )
 }
 
 fn named_region_merges(

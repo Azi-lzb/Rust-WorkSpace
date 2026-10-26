@@ -198,10 +198,15 @@ fn interactive_v2_named_range_summary_uses_named_regions_and_skips_bad_structure
             .len(),
         1
     );
-    assert!(history["summary"]["skipped_sources"][0]["reason"]
+    let structure_reason = history["summary"]["skipped_sources"][0]["reason"]
         .as_str()
-        .unwrap()
-        .contains("A1"));
+        .unwrap();
+    assert!(structure_reason.contains("A1"), "{structure_reason}");
+    assert!(structure_reason.contains("B1"), "{structure_reason}");
+    assert!(
+        structure_reason.contains("共 2 处不一致"),
+        "{structure_reason}"
+    );
     assert!(!history_text.contains("记录甲"));
     assert!(history_path.starts_with(&logs));
 
@@ -435,6 +440,7 @@ fn create_named_range_template(path: &Path) -> Result<()> {
     let worksheet = workbook.add_worksheet();
     worksheet.set_name("数据")?;
     worksheet.write_string(0, 0, "结构A")?;
+    worksheet.write_string(0, 1, "结构版本A")?;
     worksheet.write_string(1, 1, "资产")?;
     worksheet.write_string(2, 1, "贷款余额")?;
     worksheet.write_string(1, 2, "资产")?;
@@ -443,7 +449,7 @@ fn create_named_range_template(path: &Path) -> Result<()> {
     worksheet.write_string(2, 3, "名称")?;
     worksheet.write_string(8, 5, "指标")?;
     worksheet.write_string(8, 6, "金额")?;
-    workbook.define_name("表结构区域_1", "'数据'!$A$1")?;
+    workbook.define_name("表结构区域_1", "'数据'!$A$1:$B$1")?;
     workbook.define_name("表头区域_1", "'数据'!$B$2:$D$3")?;
     workbook.define_name("任意行汇总区域_1", "'数据'!$B$4:$D$5")?;
     workbook.define_name("表头区域_2", "'数据'!$F$9:$G$9")?;
@@ -460,6 +466,15 @@ fn create_named_range_source(
     let worksheet = workbook.add_worksheet();
     worksheet.set_name("数据")?;
     worksheet.write_string(0, 0, structure)?;
+    worksheet.write_string(
+        0,
+        1,
+        if structure == "结构A" {
+            "结构版本A"
+        } else {
+            "结构版本B"
+        },
+    )?;
     worksheet.write_string(3, 1, "甲")?;
     worksheet.write_number(3, 2, 0.0)?;
     worksheet.write_string(3, 3, "记录甲")?;
