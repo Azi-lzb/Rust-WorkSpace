@@ -23,7 +23,8 @@ use pytools_core::conversion::{
 };
 use pytools_core::dedup_ops::{
     build_append_by_config_plans, build_comment_duplicate_plan, build_config_duplicate_plan,
-    precheck_dedup_tasks, write_new_append_candidate, AppendTargetPlan, DuplicateAction,
+    precheck_dedup_tasks, write_config_duplicate_check_candidate, write_new_append_candidate,
+    AppendTargetPlan, DuplicateAction,
 };
 use pytools_core::edit_plan::{apply_plan_file, apply_plan_with_capability_file};
 use pytools_core::file_commit::{
@@ -2217,10 +2218,11 @@ where
                     },
                 ]);
                 let (feature_id, action, label) = if choice == "3" {
-                    ("PT-2-3", "config_check", "按配置检查重复并生成计划")
+                    ("PT-2-3", "config_check", "按配置检查重复并生成标记工作簿")
                 } else {
                     ("PT-2-4", "config_delete", "按配置删除重复并生成计划")
                 };
+                let actual_components = ["Rust duplicate detection", "Calamine via excel-reader"];
                 run_dedup_menu_action(
                     output,
                     global,
@@ -2228,13 +2230,13 @@ where
                     feature_id,
                     action,
                     label,
-                    &[
-                        "Rust duplicate planning",
-                        "Calamine via excel-reader",
-                        "OOXML workbook profile metadata",
-                    ],
+                    &actual_components,
                     arguments,
-                    dedup_config_plan_result,
+                    if choice == "3" {
+                        dedup_config_check_result
+                    } else {
+                        dedup_config_plan_result
+                    },
                 )?;
                 return Ok(());
             }
@@ -2685,10 +2687,28 @@ fn run_dedup_menu_action<W: Write>(
     let metrics = dedup_menu_metrics(&report);
     let failed_precheck =
         action == "config_precheck" && metrics["failed_tasks"].as_u64().unwrap_or_default() > 0;
+    let failed_outputs =
+        action == "config_check" && metrics["failed_targets"].as_u64().unwrap_or_default() > 0;
     let status = if failed_precheck {
         "failed"
+    } else if failed_outputs {
+        "partial"
     } else {
         "succeeded"
+    };
+    let mut components = actual_components.to_vec();
+    if action == "config_check"
+        && metrics["written_outputs"].as_u64().unwrap_or_default() > 0
+        && !components.contains(&"rust_xlsxwriter")
+    {
+        components.push("rust_xlsxwriter");
+    }
+    let error_type = if failed_precheck {
+        Some("dedup_precheck_failures")
+    } else if failed_outputs {
+        Some("dedup_check_output_failures")
+    } else {
+        None
     };
 
     match log_view {
@@ -2706,11 +2726,11 @@ fn run_dedup_menu_action<W: Write>(
                 &started_at,
                 elapsed_ms,
                 &metrics,
-                actual_components,
-                failed_precheck.then_some("dedup_precheck_failures"),
+                    &components,
+                    error_type,
             ) {
-                Ok(path) => writeln!(output, "PT-2 完成：{feature_id}，{}，实际组件：{}，ExcelModifier 未调用，耗时 {elapsed_ms} ms；运行记录：{}", dedup_menu_summary(action, &metrics), actual_components.join(", "), path.display())?,
-                Err(error) => writeln!(output, "PT-2 完成：{feature_id}，{}，实际组件：{}，ExcelModifier 未调用，耗时 {elapsed_ms} ms；运行记录写入失败：{error:#}", dedup_menu_summary(action, &metrics), actual_components.join(", "))?,
+                Ok(path) => writeln!(output, "PT-2 完成：{feature_id}，{}，实际组件：{}，ExcelModifier 未调用，耗时 {elapsed_ms} ms；运行记录：{}", dedup_menu_summary(action, &metrics), components.join(", "), path.display())?,
+                Err(error) => writeln!(output, "PT-2 完成：{feature_id}，{}，实际组件：{}，ExcelModifier 未调用，耗时 {elapsed_ms} ms；运行记录写入失败：{error:#}", dedup_menu_summary(action, &metrics), components.join(", "))?,
             }
         }
         _ => {}
@@ -2721,6 +2741,12 @@ fn run_dedup_menu_action<W: Write>(
         bail!(
             "dedup precheck found {} failure(s)",
             metrics["failed_tasks"].as_u64().unwrap_or_default()
+        );
+    }
+    if failed_outputs {
+        bail!(
+            "configured duplicate check failed for {} workbook(s)",
+            metrics["failed_targets"].as_u64().unwrap_or_default()
         );
     }
     Ok(())
@@ -2740,6 +2766,7 @@ fn dedup_menu_metrics(report: &serde_json::Value) -> serde_json::Value {
     let mut committed_targets = 0u64;
     let mut planned_only_targets = 0u64;
     let mut failed_targets = 0u64;
+    let mut written_outputs = 0u64;
     for item in &items {
         let details = item.get("report").unwrap_or(item);
         duplicate_rows += details["duplicate_rows"].as_u64().unwrap_or_default();
@@ -2757,6 +2784,7 @@ fn dedup_menu_metrics(report: &serde_json::Value) -> serde_json::Value {
         planned_only_targets +=
             u64::from(item["status"] == "planned_only" || item["status"] == "cancelled");
         failed_targets += u64::from(item["status"] == "failed");
+        written_outputs += u64::from(item["output_file"].is_string());
     }
     serde_json::json!({
         "processed_groups": items.len(),
@@ -2769,6 +2797,7 @@ fn dedup_menu_metrics(report: &serde_json::Value) -> serde_json::Value {
         "committed_targets": committed_targets,
         "planned_only_targets": planned_only_targets,
         "failed_targets": failed_targets,
+        "written_outputs": written_outputs,
         "passed_tasks": report["ok"].as_u64().unwrap_or_default(),
         "warning_tasks": report["warn"].as_u64().unwrap_or_default(),
         "failed_tasks": report["fail"].as_u64().unwrap_or_default(),
@@ -2796,6 +2825,15 @@ fn dedup_menu_summary(action: &str, metrics: &serde_json::Value) -> String {
             metrics["skipped_tasks"].as_u64().unwrap_or_default()
         );
     }
+    if action == "config_check" {
+        return format!(
+            "生成 {} 个检查工作簿，发现 {} 条重复行，失败 {} 个工作簿，跳过 {} 项",
+            metrics["written_outputs"].as_u64().unwrap_or_default(),
+            metrics["duplicate_rows"].as_u64().unwrap_or_default(),
+            metrics["failed_targets"].as_u64().unwrap_or_default(),
+            metrics["skipped_tasks"].as_u64().unwrap_or_default()
+        );
+    }
     format!(
         "处理 {} 个工作簿组，命中 {} 张表，发现 {} 条重复行，计划操作 {} 项",
         metrics["processed_groups"].as_u64().unwrap_or_default(),
@@ -2819,6 +2857,14 @@ fn write_dedup_menu_run_history(
     fs::create_dir_all(&global.log_dir)
         .with_context(|| format!("create dedup log directory {}", global.log_dir.display()))?;
     let timestamp = Local::now().format("%Y%m%d_%H%M%S_%f");
+    let writer_invoked = actual_components.contains(&"rust_xlsxwriter");
+    let stage = if action == "config_precheck" {
+        "configuration_precheck"
+    } else if writer_invoked {
+        "read_plan_write_and_verify_new_workbook"
+    } else {
+        "workbook_read_and_plan"
+    };
     let history = serde_json::json!({
         "schema_version": 1,
         "feature_id": feature_id,
@@ -2826,12 +2872,12 @@ fn write_dedup_menu_run_history(
         "status": status,
         "started_at": started_at.to_rfc3339(),
         "elapsed_ms": elapsed_ms,
-        "stages": [{"name": if action == "config_precheck" { "configuration_precheck" } else { "workbook_read_and_plan" }, "elapsed_ms": elapsed_ms}],
+        "stages": [{"name": stage, "elapsed_ms": elapsed_ms}],
         "metrics": metrics,
         "actual_engines": actual_components,
         "excel_modifier_invoked": false,
-        "excel_writer_invoked": false,
-        "plan_only": action != "config_precheck",
+        "excel_writer_invoked": writer_invoked,
+        "plan_only": action != "config_precheck" && !writer_invoked,
         "error_type": error_type,
     });
     for suffix in 1..=1000 {
@@ -5087,6 +5133,68 @@ fn run_dedup_config_plan(arguments: Vec<String>) -> Result<()> {
     let result = dedup_config_plan_result(arguments)?;
     println!("{}", serde_json::to_string_pretty(&result)?);
     Ok(())
+}
+
+fn dedup_config_check_result(arguments: Vec<String>) -> Result<serde_json::Value> {
+    let options = parse_cli_arguments(arguments)?;
+    let config = required_path(&options, "config")?;
+    let output_dir = options
+        .values
+        .get("output-dir")
+        .map(PathBuf::from)
+        .unwrap_or(load_global(&config)?.output_dir);
+    let emit_plan_files = plan_files_enabled(&config);
+    let tasks = load_dedup_tasks(&config)?;
+    let mut outputs = std::collections::BTreeMap::new();
+    for task in tasks.iter().filter(|task| task.enabled) {
+        if let Some(input) = &task.source_wb {
+            outputs
+                .entry(input.clone())
+                .or_insert_with(|| unique_workbook_candidate(input, &output_dir, "dedup"));
+        }
+    }
+    fs::create_dir_all(&output_dir)?;
+    let reports = build_config_duplicate_plan(&tasks, &outputs, DuplicateAction::Check)?;
+    let mut results = Vec::with_capacity(reports.len());
+    for (index, report) in reports.into_iter().enumerate() {
+        let input = report
+            .workbook
+            .as_ref()
+            .context("configured duplicate check report has no source workbook")?;
+        let output = outputs
+            .get(input)
+            .context("configured duplicate check output mapping is missing")?;
+        let mut plan_path = None;
+        if emit_plan_files {
+            if let Some(plan) = &report.plan {
+                let path = output_dir.join(format!(
+                    "dedup-plan-{}-{index}.json",
+                    Local::now().format("%Y%m%d_%H%M%S")
+                ));
+                fs::write(&path, serde_json::to_vec_pretty(plan)?)?;
+                plan_path = Some(path);
+            }
+        }
+
+        match write_config_duplicate_check_candidate(input, output, report.plan.as_ref()) {
+            Ok(path) => results.push(serde_json::json!({
+                "report": report,
+                "output_file": path,
+                "plan_file": plan_path,
+                "execution": "written",
+                "status": "succeeded",
+            })),
+            Err(error) => results.push(serde_json::json!({
+                "report": report,
+                "output_file": null,
+                "plan_file": plan_path,
+                "execution": "failed",
+                "status": "failed",
+                "error": format!("{error:#}"),
+            })),
+        }
+    }
+    Ok(serde_json::Value::Array(results))
 }
 
 fn dedup_config_plan_result(arguments: Vec<String>) -> Result<serde_json::Value> {

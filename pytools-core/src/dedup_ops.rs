@@ -4,7 +4,7 @@ use crate::config::DedupTask;
 use anyhow::{bail, Context, Result};
 use excel_editor::{
     inspect_xlsx_profile, CellValue, EditOperation, ExcelEditPlan, PreservationRequirement,
-    WorkbookFormat,
+    WorkbookFeature, WorkbookFormat,
 };
 use excel_reader::{
     read_value_columns_with_iso_dates, read_workbook, uses_1904_date_system,
@@ -249,6 +249,298 @@ pub fn build_config_duplicate_plan(
         });
     }
     Ok(summaries)
+}
+
+/// Create a new, data-only check workbook and color duplicate rows red.
+/// The source is never opened for writing; formulas and typed Excel errors
+/// fail closed because this pure-data writer cannot preserve them safely.
+pub fn write_config_duplicate_check_candidate(
+    input: &Path,
+    output: &Path,
+    plan: Option<&ExcelEditPlan>,
+) -> Result<PathBuf> {
+    ensure_xlsx(input, output)?;
+    anyhow::ensure!(
+        !output.exists(),
+        "refusing to overwrite {}",
+        output.display()
+    );
+    if let Some(plan) = plan {
+        anyhow::ensure!(plan.input == input, "duplicate check plan input changed");
+        anyhow::ensure!(plan.output == output, "duplicate check plan output changed");
+    }
+
+    let source = read_workbook(input).with_context(|| format!("read {}", input.display()))?;
+    let mut duplicate_rows = BTreeMap::<String, BTreeSet<usize>>::new();
+    if let Some(plan) = plan {
+        for operation in &plan.operations {
+            if let EditOperation::SetCellFillColor { sheet, cell, argb } = operation {
+                anyhow::ensure!(
+                    argb.eq_ignore_ascii_case("FFFF0000"),
+                    "unexpected duplicate check fill color {argb:?}"
+                );
+                let (row, _) = parse_a1(cell)
+                    .with_context(|| format!("invalid duplicate mark cell {cell:?}"))?;
+                duplicate_rows.entry(sheet.clone()).or_default().insert(row);
+            }
+        }
+    }
+
+    let red_fill =
+        excel_writer::Format::new().set_background_color(excel_writer::Color::RGB(0xFF_00_00));
+    let red_date_fill = excel_writer::Format::new()
+        .set_background_color(excel_writer::Color::RGB(0xFF_00_00))
+        .set_num_format("yyyy/m/d h:mm:ss");
+    let date_format = excel_writer::Format::new().set_num_format("yyyy/m/d h:mm:ss");
+    let mut workbook = excel_writer::Workbook::new();
+    for sheet in &source.sheets {
+        anyhow::ensure!(
+            sheet.formula_status == "read_by_calamine",
+            "formula metadata unavailable for duplicate check worksheet {:?}",
+            sheet.name
+        );
+        anyhow::ensure!(
+            sheet.formulas.is_empty(),
+            "pure-data duplicate check does not support formula cells in worksheet {:?}",
+            sheet.name
+        );
+        anyhow::ensure!(
+            sheet.comments_status == "read_by_namespace_aware_ooxml_supplement"
+                && sheet.comments.is_empty(),
+            "pure-data duplicate check cannot preserve comments in worksheet {:?}",
+            sheet.name
+        );
+        anyhow::ensure!(
+            sheet.merge_status == "read_by_calamine" && sheet.merges.is_empty(),
+            "pure-data duplicate check cannot preserve merged cells in worksheet {:?}",
+            sheet.name
+        );
+        anyhow::ensure!(
+            sheet.conditional_formatting_status == "read_by_namespace_aware_ooxml_supplement"
+                && sheet.conditional_formatting.is_empty(),
+            "pure-data duplicate check cannot preserve conditional formatting in worksheet {:?}",
+            sheet.name
+        );
+        anyhow::ensure!(
+            sheet.data_validations_status == "read_by_namespace_aware_ooxml_supplement"
+                && sheet.data_validations.is_empty(),
+            "pure-data duplicate check cannot preserve data validations in worksheet {:?}",
+            sheet.name
+        );
+        anyhow::ensure!(
+            !sheet.values.values().any(|value| {
+                value.get("type").and_then(serde_json::Value::as_str) == Some("error")
+            }),
+            "typed Excel error cells cannot be written by the duplicate check output engine in worksheet {:?}",
+            sheet.name
+        );
+
+        let marked_rows = duplicate_rows.get(&sheet.name);
+        let max_row = used_row_count(sheet);
+        let max_column = used_column_count(sheet);
+        let worksheet = workbook.add_worksheet();
+        worksheet.set_name(&sheet.name)?;
+        for (address, value) in &sheet.values {
+            let Some((row, column)) = parse_a1(address) else {
+                anyhow::bail!("invalid source cell address {address:?}");
+            };
+            let row_index =
+                u32::try_from(row.saturating_sub(1)).context("worksheet row exceeds XLSX limit")?;
+            let column_index = u16::try_from(column.saturating_sub(1))
+                .context("worksheet column exceeds XLSX limit")?;
+            let marked = marked_rows.is_some_and(|rows| rows.contains(&row));
+            let value = ReaderCellValue::from_probe_json(value)
+                .with_context(|| format!("decode {}/{}", sheet.name, address))?;
+            match value {
+                ReaderCellValue::Empty => {
+                    if marked {
+                        worksheet.write_blank(row_index, column_index, &red_fill)?;
+                    }
+                }
+                ReaderCellValue::Text(value) => {
+                    if marked {
+                        worksheet.write_string_with_format(
+                            row_index,
+                            column_index,
+                            &value,
+                            &red_fill,
+                        )?;
+                    } else {
+                        worksheet.write_string(row_index, column_index, &value)?;
+                    }
+                }
+                ReaderCellValue::Number(value) => {
+                    anyhow::ensure!(
+                        value.is_finite(),
+                        "non-finite value at {}/{}",
+                        sheet.name,
+                        address
+                    );
+                    if marked {
+                        worksheet.write_number_with_format(
+                            row_index,
+                            column_index,
+                            value,
+                            &red_fill,
+                        )?;
+                    } else {
+                        worksheet.write_number(row_index, column_index, value)?;
+                    }
+                }
+                ReaderCellValue::Integer(value) => {
+                    let number = value as f64;
+                    anyhow::ensure!(
+                        number as i128 == value as i128,
+                        "integer value at {}/{} cannot be represented without precision loss",
+                        sheet.name,
+                        address
+                    );
+                    if marked {
+                        worksheet.write_number_with_format(
+                            row_index,
+                            column_index,
+                            number,
+                            &red_fill,
+                        )?;
+                    } else {
+                        worksheet.write_number(row_index, column_index, number)?;
+                    }
+                }
+                ReaderCellValue::Boolean(value) => {
+                    if marked {
+                        worksheet.write_boolean_with_format(
+                            row_index,
+                            column_index,
+                            value,
+                            &red_fill,
+                        )?;
+                    } else {
+                        worksheet.write_boolean(row_index, column_index, value)?;
+                    }
+                }
+                ReaderCellValue::DateTimeSerial(value) => {
+                    anyhow::ensure!(
+                        value.is_finite(),
+                        "non-finite date at {}/{}",
+                        sheet.name,
+                        address
+                    );
+                    if marked {
+                        worksheet.write_number_with_format(
+                            row_index,
+                            column_index,
+                            value,
+                            &red_date_fill,
+                        )?;
+                    } else {
+                        worksheet.write_number_with_format(
+                            row_index,
+                            column_index,
+                            value,
+                            &date_format,
+                        )?;
+                    }
+                }
+                ReaderCellValue::DateTimeIso(_) | ReaderCellValue::DurationIso(_) => {
+                    anyhow::bail!(
+                        "ISO-typed date or duration at {}/{} cannot be preserved by the duplicate check output engine",
+                        sheet.name,
+                        address
+                    );
+                }
+                ReaderCellValue::Error(value) => {
+                    anyhow::bail!(
+                        "typed Excel error at {}/{} cannot be written as a duplicate check value: {value}",
+                        sheet.name,
+                        address
+                    );
+                }
+            }
+        }
+
+        if let Some(marked_rows) = marked_rows {
+            for row in marked_rows {
+                for column in 1..=max_column {
+                    let address = cell_address(*row, column);
+                    if !sheet.values.contains_key(&address) {
+                        let row_index = u32::try_from(row.saturating_sub(1))
+                            .context("worksheet row exceeds XLSX limit")?;
+                        let column_index = u16::try_from(column.saturating_sub(1))
+                            .context("worksheet column exceeds XLSX limit")?;
+                        worksheet.write_blank(row_index, column_index, &red_fill)?;
+                    }
+                }
+            }
+        }
+        anyhow::ensure!(
+            max_row <= 1_048_576 && max_column <= 16_384,
+            "source worksheet {:?} exceeds XLSX dimensions",
+            sheet.name
+        );
+    }
+
+    let profile = inspect_xlsx_profile(input)?;
+    anyhow::ensure!(
+        profile.inventory_complete,
+        "duplicate check cannot rebuild a workbook with unknown OOXML parts"
+    );
+    let unsupported_features = profile
+        .features_present
+        .iter()
+        .filter(|feature| **feature != WorkbookFeature::Relationships)
+        .map(|feature| format!("{feature:?}"))
+        .collect::<Vec<_>>();
+    anyhow::ensure!(
+        unsupported_features.is_empty(),
+        "duplicate check cannot rebuild workbook with unsupported features: {}",
+        unsupported_features.join(", ")
+    );
+    let defined_names = excel_reader::read_defined_names(input)?;
+    anyhow::ensure!(
+        defined_names.is_empty(),
+        "duplicate check cannot preserve workbook defined names"
+    );
+
+    if let Some(parent) = output.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(output)
+        .with_context(|| format!("reserve duplicate check output {}", output.display()))?;
+    let validation = (|| -> Result<()> {
+        workbook
+            .save(output)
+            .with_context(|| format!("write duplicate check output {}", output.display()))?;
+        let reopened = read_workbook(output)
+            .with_context(|| format!("reopen duplicate check output {}", output.display()))?;
+        anyhow::ensure!(
+            reopened.sheets.len() == source.sheets.len(),
+            "duplicate check output worksheet count changed"
+        );
+        for (expected, actual) in source.sheets.iter().zip(&reopened.sheets) {
+            anyhow::ensure!(
+                expected.name == actual.name,
+                "duplicate check output worksheet order/name changed"
+            );
+            anyhow::ensure!(
+                expected.values == actual.values,
+                "duplicate check output values/types differ in worksheet {:?}",
+                expected.name
+            );
+            anyhow::ensure!(
+                actual.formulas.is_empty() && actual.comments.is_empty(),
+                "duplicate check output unexpectedly contains formulas or comments"
+            );
+        }
+        Ok(())
+    })();
+    if let Err(error) = validation {
+        let _ = fs::remove_file(output);
+        return Err(error);
+    }
+    Ok(output.to_path_buf())
 }
 
 fn duplicate_preservation(action: DuplicateAction) -> BTreeSet<PreservationRequirement> {

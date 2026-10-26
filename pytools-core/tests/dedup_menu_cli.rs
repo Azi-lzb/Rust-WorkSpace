@@ -2,6 +2,7 @@ use anyhow::{Context, Result};
 use excel_editor::{
     BackendCapability, CapabilityEvidence, CapabilityStatus, EditOperation, EngineId, ExcelEditPlan,
 };
+use excel_reader::read_workbook;
 use pytools_core::dedup_ops::AppendTargetPlan;
 use serde::Deserialize;
 use serde_json::Value;
@@ -50,7 +51,7 @@ fn interactive_dedup_menu_routes_four_v2_actions_without_committing_edits() -> R
     let config = create_dedup_config(root.path())?;
     let source = root.path().join("source.xlsx");
     let target = root.path().join("target.xlsx");
-    create_duplicate_source(&source)?;
+    create_pure_data_duplicate_source(&source)?;
     let source_before = fs::read(&source)?;
 
     let menu = run_menu(&config, "2\n0\n0\n")?;
@@ -63,7 +64,28 @@ fn interactive_dedup_menu_routes_four_v2_actions_without_committing_edits() -> R
     assert!(config_check.status.success());
     let config_check_json = output_json(&config_check)?;
     assert_eq!(config_check_json[0]["report"]["duplicate_rows"], 1);
-    assert_eq!(config_check_json[0]["execution"], "plan_only");
+    assert_eq!(config_check_json[0]["execution"], "written");
+    assert_eq!(config_check_json[0]["status"], "succeeded");
+    let check_output = PathBuf::from(
+        config_check_json[0]["output_file"]
+            .as_str()
+            .context("config check output path missing")?,
+    );
+    assert!(check_output.is_file());
+    let checked = read_workbook(&check_output)?;
+    let source_dump = read_workbook(&source)?;
+    assert_eq!(checked.sheets.len(), 1);
+    assert_eq!(checked.sheets[0].name, "Commented");
+    assert_eq!(checked.sheets[0].values, source_dump.sheets[0].values);
+    assert!(checked.sheets[0].comments.is_empty());
+    for address in ["A3", "B3", "C3"] {
+        assert!(
+            cell_fill(&check_output, address)?.is_some_and(|color| color.ends_with("FF0000")),
+            "duplicate row cell {address} should have red fill"
+        );
+    }
+    assert!(cell_fill(&check_output, "A2")?.is_none());
+    assert!(cell_fill(&check_output, "D3")?.is_none());
     assert!(PathBuf::from(
         config_check_json[0]["plan_file"]
             .as_str()
@@ -77,12 +99,14 @@ fn interactive_dedup_menu_routes_four_v2_actions_without_committing_edits() -> R
             .len(),
         3
     );
-    assert!(!PathBuf::from(
-        config_check_json[0]["report"]["plan"]["output"]
-            .as_str()
-            .context("config check candidate path missing")?
-    )
-    .exists());
+    assert_eq!(
+        PathBuf::from(
+            config_check_json[0]["report"]["plan"]["output"]
+                .as_str()
+                .context("config check candidate path missing")?
+        ),
+        check_output
+    );
 
     let config_delete = run_menu(&config, "2\n2\n0\n")?;
     assert!(config_delete.status.success());
@@ -135,6 +159,72 @@ fn interactive_dedup_menu_routes_four_v2_actions_without_committing_edits() -> R
     let log_dir = root.path().join("logs");
     assert!(!log_dir.exists() || fs::read_dir(log_dir)?.next().is_none());
     Ok(())
+}
+
+#[test]
+fn configured_duplicate_check_rejects_formula_workbooks_without_output() -> Result<()> {
+    let root = TestDirectory::new()?;
+    let config = create_dedup_config(root.path())?;
+    let source = root.path().join("source.xlsx");
+    create_duplicate_source_with_formula(&source)?;
+    let source_before = fs::read(&source)?;
+
+    let output = run_menu(&config, "2\n1\n0\n")?;
+    assert!(!output.status.success());
+    let report = output_json(&output)?;
+    assert_eq!(report[0]["execution"], "failed");
+    assert_eq!(report[0]["status"], "failed");
+    assert!(report[0]["error"]
+        .as_str()
+        .is_some_and(|error| error.contains("does not support formula cells")));
+    assert!(report[0]["output_file"].is_null());
+    assert!(!PathBuf::from(
+        report[0]["report"]["plan"]["output"]
+            .as_str()
+            .context("formula check candidate path missing")?
+    )
+    .exists());
+    assert_eq!(fs::read(&source)?, source_before);
+    Ok(())
+}
+
+#[test]
+fn configured_duplicate_check_rejects_comment_workbooks_without_output() -> Result<()> {
+    let root = TestDirectory::new()?;
+    let config = create_dedup_config(root.path())?;
+    let source = root.path().join("source.xlsx");
+    create_duplicate_source(&source)?;
+    let source_before = fs::read(&source)?;
+
+    let output = run_menu(&config, "2\n1\n0\n")?;
+    assert!(!output.status.success());
+    let report = output_json(&output)?;
+    assert_eq!(report[0]["execution"], "failed");
+    assert!(report[0]["error"]
+        .as_str()
+        .is_some_and(|error| error.contains("comments")));
+    assert!(report[0]["output_file"].is_null());
+    assert!(!PathBuf::from(
+        report[0]["report"]["plan"]["output"]
+            .as_str()
+            .context("comment check candidate path missing")?
+    )
+    .exists());
+    assert_eq!(fs::read(&source)?, source_before);
+    Ok(())
+}
+
+fn cell_fill(path: &Path, address: &str) -> Result<Option<String>> {
+    let workbook = excel_editor::open_xlsx(path)?;
+    let sheet = workbook
+        .sheet_by_name("Commented")
+        .context("duplicate check worksheet missing")?;
+    Ok(sheet
+        .cell(address)
+        .and_then(|cell| cell.style().fill())
+        .and_then(|fill| fill.pattern_fill())
+        .and_then(|fill| fill.foreground_color())
+        .map(|color| color.argb_str().to_ascii_uppercase()))
 }
 
 #[test]
@@ -310,7 +400,7 @@ fn interactive_dedup_menu_writes_developer_history_and_off_suppresses_it() -> Re
     let root = TestDirectory::new()?;
     let config = create_dedup_config(root.path())?;
     let source = root.path().join("source.xlsx");
-    create_duplicate_source(&source)?;
+    create_pure_data_duplicate_source(&source)?;
     let input = "2\n1\n0\n".to_owned();
 
     let developer = run_menu_with_view(&config, &input, "developer")?;
@@ -340,6 +430,7 @@ fn interactive_dedup_menu_writes_developer_history_and_off_suppresses_it() -> Re
     assert_eq!(history["metrics"]["duplicate_rows"], 1);
     assert_eq!(history["metrics"]["hit_sheets"], 1);
     assert_eq!(history["metrics"]["planned_operations"], 3);
+    assert_eq!(history["metrics"]["written_outputs"], 1);
     assert!(history["elapsed_ms"].as_u64().is_some());
     assert!(history["stages"]
         .as_array()
@@ -349,8 +440,15 @@ fn interactive_dedup_menu_writes_developer_history_and_off_suppresses_it() -> Re
         .is_some_and(|engines| engines
             .iter()
             .any(|engine| engine == "Calamine via excel-reader")));
+    assert!(history["actual_engines"]
+        .as_array()
+        .is_some_and(|engines| engines.iter().any(|engine| engine == "rust_xlsxwriter")));
     assert_eq!(history["excel_modifier_invoked"], false);
-    assert_eq!(history["excel_writer_invoked"], false);
+    assert_eq!(history["excel_writer_invoked"], true);
+    assert_eq!(history["plan_only"], false);
+    assert!(history["stages"].as_array().is_some_and(|stages| stages
+        .iter()
+        .any(|stage| stage["name"] == "read_plan_write_and_verify_new_workbook")));
     assert!(!history_text.contains("source.xlsx"));
     assert!(!history_text.contains(&root.path().to_string_lossy().to_string()));
 
@@ -389,6 +487,46 @@ fn create_duplicate_source(path: &Path) -> Result<()> {
         sheet.write_string(row, 0, id)?;
         sheet.write_string(row, 1, id)?;
         sheet.write_number(row, 2, value)?;
+    }
+    workbook.save(path)?;
+    Ok(())
+}
+
+fn create_pure_data_duplicate_source(path: &Path) -> Result<()> {
+    let mut workbook = rust_xlsxwriter::Workbook::new();
+    let sheet = workbook.add_worksheet();
+    sheet.set_name("Commented")?;
+    sheet.write_string(0, 0, "源数据")?;
+    sheet.write_string(0, 1, "ID")?;
+    sheet.write_string(0, 2, "Value")?;
+    for (row, id, value) in [(1, "A", 10.0), (2, "A", 20.0), (3, "B", 30.0)] {
+        sheet.write_string(row, 0, id)?;
+        sheet.write_string(row, 1, id)?;
+        sheet.write_number(row, 2, value)?;
+    }
+    workbook.save(path)?;
+    Ok(())
+}
+
+fn create_duplicate_source_with_formula(path: &Path) -> Result<()> {
+    let mut workbook = rust_xlsxwriter::Workbook::new();
+    let sheet = workbook.add_worksheet();
+    sheet.set_name("Commented")?;
+    sheet.write_string(0, 0, "源数据")?;
+    sheet.write_string(0, 1, "ID")?;
+    sheet.write_string(0, 2, "Value")?;
+    for (row, id, formula, result) in [
+        (1, "A", "5+5", "10"),
+        (2, "A", "10+10", "20"),
+        (3, "B", "15+15", "30"),
+    ] {
+        sheet.write_string(row, 0, id)?;
+        sheet.write_string(row, 1, id)?;
+        sheet.write_formula(
+            row,
+            2,
+            rust_xlsxwriter::Formula::new(formula).set_result(result),
+        )?;
     }
     workbook.save(path)?;
     Ok(())
