@@ -256,15 +256,14 @@ fn run_recalculate(arguments: Vec<String>) -> Result<()> {
 
 fn run_libreoffice_recalculate(input: &Path, temp_dir: &Path) -> Result<String> {
     let profile = temp_dir.join("lo-profile");
-    fs::create_dir_all(&profile).context("create LibreOffice isolated profile directory")?;
-    let profile_uri = file_uri(&profile)?;
+    let profile_argument = libreoffice_user_installation_arg(&profile)?;
     let command = Command::new("soffice")
         .arg("--headless")
         .arg("--nologo")
         .arg("--nodefault")
         .arg("--nolockcheck")
         .arg("--nofirststartwizard")
-        .arg(format!("-env:UserInstallation={profile_uri}"))
+        .arg(profile_argument)
         .arg("--convert-to")
         .arg("xlsx:Calc MS Excel 2007 XML")
         .arg("--outdir")
@@ -308,6 +307,11 @@ fn file_uri(path: &Path) -> Result<String> {
     Ok(format!("file://{encoded}"))
 }
 
+fn libreoffice_user_installation_arg(profile: &Path) -> Result<String> {
+    fs::create_dir_all(profile).context("create LibreOffice isolated profile directory")?;
+    Ok(format!("-env:UserInstallation={}", file_uri(profile)?))
+}
+
 fn require_engine_output(path: &Path) -> Result<()> {
     ensure!(
         path.is_file() && fs::metadata(path)?.len() > 0,
@@ -319,11 +323,7 @@ fn require_engine_output(path: &Path) -> Result<()> {
 
 fn run_com_recalculate(input: &Path, output: &Path) -> Result<String> {
     let script_path = output.with_extension("recalculate.ps1");
-    let script = format!(
-        "$ErrorActionPreference='Stop';\n$app=$null; $appName=''; $lastError='';\nforeach ($name in @('Excel.Application','ket.Application','KET.Application','kwps.Application','KWPS.Application','wps.Application')) {{ if ($null -eq $app) {{ try {{ $app=New-Object -ComObject $name; $appName=$name }} catch {{ $lastError=$_.Exception.Message }} }} }}\nif ($null -eq $app) {{ throw \"No supported spreadsheet COM engine is available: $lastError\" }}\n$book=$null;\ntry {{ $app.Visible=$false; $app.DisplayAlerts=$false; $book=$app.Workbooks.Open('{}',$false,$false); $app.CalculateFullRebuild(); $book.SaveAs('{}',51); $book.Close($true) }} finally {{ if ($null -ne $book) {{ $book.Close($false) }}; if ($null -ne $app) {{ $app.Quit() }} }}\nWrite-Output $appName\n",
-        ps_quote(&input.to_string_lossy()),
-        ps_quote(&output.to_string_lossy())
-    );
+    let script = com_recalculate_script(input, output);
     fs::write(&script_path, script)?;
     let result = Command::new("powershell.exe")
         .args([
@@ -350,6 +350,14 @@ fn run_com_recalculate(input: &Path, output: &Path) -> Result<String> {
         "COM recalculation did not report the selected application"
     );
     Ok(engine)
+}
+
+fn com_recalculate_script(input: &Path, output: &Path) -> String {
+    format!(
+        "$ErrorActionPreference='Stop';\n$app=$null; $appName=''; $lastError='';\ntry {{ $app=New-Object -ComObject 'Excel.Application'; $appName='Excel.Application' }} catch {{ $lastError=$_.Exception.Message }}\nif ($null -eq $app) {{ throw \"Microsoft Excel COM is unavailable: $lastError\" }}\n$book=$null;\ntry {{ $app.Visible=$false; $app.DisplayAlerts=$false; $book=$app.Workbooks.Open('{}',$false,$false); $app.CalculateFullRebuild(); $book.SaveAs('{}',51); $book.Close($true) }} finally {{ if ($null -ne $book) {{ $book.Close($false) }}; if ($null -ne $app) {{ $app.Quit() }} }}\nWrite-Output $appName\n",
+        ps_quote(&input.to_string_lossy()),
+        ps_quote(&output.to_string_lossy())
+    )
 }
 
 fn validate_recalculated_workbook(input: &Path, output: &Path) -> Result<String> {
@@ -522,16 +530,14 @@ fn relationships_part(part: &str) -> String {
 
 fn run_libreoffice(input: &Path, temp_dir: &Path, target: &str) -> Result<()> {
     let profile = temp_dir.join("lo-profile");
+    let profile_argument = libreoffice_user_installation_arg(&profile)?;
     let mut command = Command::new("soffice");
     command
         .arg("--headless")
         .arg("--nologo")
         .arg("--nodefault")
         .arg("--nolockcheck")
-        .arg(format!(
-            "-env:UserInstallation={}",
-            profile.to_string_lossy()
-        ))
+        .arg(profile_argument)
         .arg("--convert-to")
         .arg(if target == "xlsx" {
             "xlsx:Calc MS Excel 2007 XML"
@@ -692,15 +698,13 @@ fn validate_conversion(
 fn extract_word_text_lo(input: &Path, output_dir: &Path) -> Result<String> {
     fs::create_dir_all(output_dir)?;
     let profile = output_dir.join("lo-profile");
+    let profile_argument = libreoffice_user_installation_arg(&profile)?;
     let command = Command::new("soffice")
         .arg("--headless")
         .arg("--nologo")
         .arg("--nodefault")
         .arg("--nolockcheck")
-        .arg(format!(
-            "-env:UserInstallation={}",
-            profile.to_string_lossy()
-        ))
+        .arg(profile_argument)
         .arg("--convert-to")
         .arg("txt:Text")
         .arg("--outdir")
@@ -1103,14 +1107,15 @@ impl Drop for TempDirGuard {
 #[cfg(test)]
 mod recalculation_tests {
     use super::{
-        file_uri, formula_cache_cell_count, require_engine_output, MAIN_NS, PACKAGE_REL_NS, REL_NS,
+        com_recalculate_script, file_uri, formula_cache_cell_count,
+        libreoffice_user_installation_arg, require_engine_output, MAIN_NS, PACKAGE_REL_NS, REL_NS,
     };
     use anyhow::Result;
     use std::{
         env,
         fs::{self, File},
         io::Write,
-        path::PathBuf,
+        path::{Path, PathBuf},
         time::{SystemTime, UNIX_EPOCH},
     };
     use zip::{write::SimpleFileOptions, ZipWriter};
@@ -1165,6 +1170,18 @@ mod recalculation_tests {
     }
 
     #[test]
+    fn windows_com_recalculation_uses_microsoft_excel_only() {
+        let script =
+            com_recalculate_script(Path::new(r"C:\input.xlsx"), Path::new(r"C:\output.xlsx"));
+        assert!(script.contains("New-Object -ComObject 'Excel.Application'"));
+        assert!(script.contains("Microsoft Excel COM is unavailable"));
+        assert!(script.contains("CalculateFullRebuild"));
+        assert!(!script.contains("KET.Application"));
+        assert!(!script.contains("ket.Application"));
+        assert!(!script.contains("wps.Application"));
+    }
+
+    #[test]
     fn missing_engine_output_is_rejected_even_when_request_copy_exists() -> Result<()> {
         let nonce = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
         let root =
@@ -1196,6 +1213,26 @@ mod recalculation_tests {
         assert!(uri.contains("%23"));
         assert!(!uri.contains(' '));
         assert!(!uri.contains('中'));
+        Ok(())
+    }
+
+    #[test]
+    fn libreoffice_user_installation_argument_creates_profile_and_uses_file_uri() -> Result<()> {
+        let nonce = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
+        let profile = env::temp_dir().join(format!(
+            "lo_profile_arg_{}_{}_# space",
+            std::process::id(),
+            nonce
+        ));
+        assert!(!profile.exists());
+
+        let argument = libreoffice_user_installation_arg(&profile)?;
+
+        assert!(profile.is_dir());
+        assert!(argument.starts_with("-env:UserInstallation=file://"));
+        assert!(argument.contains("%20"));
+        assert!(argument.contains("%23"));
+        fs::remove_dir_all(profile)?;
         Ok(())
     }
 }
