@@ -5,9 +5,9 @@
 //! expression-rule provenance so later rule execution can enrich the same rows.
 
 use crate::central_csv::{CentralDataset, CentralRecord, CentralValue};
-use anyhow::{ensure, Context, Result};
+use anyhow::{Context, Result, ensure};
 use chrono::{Datelike, Duration, NaiveDate};
-use excel_reader::{read_value_columns, CellValue, SheetValues};
+use excel_reader::{CellValue, SheetValues, read_value_columns};
 use excel_writer::{Color, Format, FormatAlign, Workbook, Worksheet};
 use regex::Regex;
 use std::{
@@ -1130,21 +1130,27 @@ fn write_central_value(
             }
         }
         CentralValue::Text(value) => {
+            let mut format = Format::new();
+            if let Some(number_format) = number_format {
+                format = format.set_num_format(number_format);
+            }
             if let Some(color) = fill_color {
-                worksheet.write_string_with_format(
-                    row,
-                    column,
-                    value,
-                    &Format::new().set_background_color(Color::RGB(color)),
-                )?;
+                format = format.set_background_color(Color::RGB(color));
+            }
+            if number_format.is_some() || fill_color.is_some() {
+                worksheet.write_string_with_format(row, column, value, &format)?;
             } else {
                 worksheet.write_string(row, column, value)?;
             }
         }
         CentralValue::Empty => {
-            let format = fill_color.map_or_else(Format::new, |color| {
-                Format::new().set_background_color(Color::RGB(color))
-            });
+            let mut format = Format::new();
+            if let Some(number_format) = number_format {
+                format = format.set_num_format(number_format);
+            }
+            if let Some(color) = fill_color {
+                format = format.set_background_color(Color::RGB(color));
+            }
             worksheet.write_blank(row, column, &format)?;
         }
     }
@@ -2815,10 +2821,9 @@ fn enabled(value: &str) -> bool {
 }
 
 fn matches_disabled(value: &str) -> bool {
-    matches!(
-        value.trim().to_ascii_lowercase().as_str(),
-        "否" | "0" | "false" | "n" | "no"
-    )
+    let normalized = value.trim().to_ascii_lowercase();
+    matches!(normalized.as_str(), "否" | "0" | "false" | "n" | "no")
+        || normalized.parse::<f64>().is_ok_and(|number| number == 0.0)
 }
 
 fn truthy(value: &str) -> bool {
@@ -2914,6 +2919,24 @@ fn round_digits(target_unit: &str) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn numeric_zero_config_flags_are_disabled() {
+        for value in ["0", "0.0", "-0.0", "0.000"] {
+            assert!(matches_disabled(value), "{value} must be disabled");
+            assert!(!truthy(value), "{value} must not be truthy");
+        }
+        for value in ["否", "false"] {
+            assert!(matches_disabled(value));
+            assert!(!truthy(value));
+        }
+        assert!(!matches_disabled(""));
+        assert!(!truthy(""));
+        for value in ["1", "1.0", "6.0"] {
+            assert!(!matches_disabled(value));
+            assert!(truthy(value));
+        }
+    }
 
     fn record(
         org: &str,
@@ -3372,9 +3395,10 @@ mod tests {
         assert_eq!(report.applicable_rules, 1);
         assert_eq!(report.filtered_rules, 1);
         assert_eq!(report.triggered_rules, 1);
-        assert!(row
-            .need_explanation
-            .contains("R-1-指标有变动需说明。-阈值5亿元"));
+        assert!(
+            row.need_explanation
+                .contains("R-1-指标有变动需说明。-阈值5亿元")
+        );
     }
 
     #[test]
@@ -3441,12 +3465,26 @@ mod tests {
             fill_color: Some(6),
             fill_scope: "row".to_owned(),
         };
+        let blank_row = S3ExecutionCompareRow {
+            record: record("0001", "1100000", "A-02", "月", "1", CentralValue::Empty),
+            order_code_out: "0008".to_owned(),
+            indicator_name_out: String::new(),
+            previous_value: CentralValue::Empty,
+            change: CentralValue::Empty,
+            ratio: CentralValue::Text(REMARK_DIV_ZERO.to_owned()),
+            remark: String::new(),
+            need_explanation: String::new(),
+            explanation_content: String::new(),
+            calculation_process: String::new(),
+            fill_color: None,
+            fill_scope: String::new(),
+        };
 
-        write_execution_compare_workbook(&output, &[row], "亿元", "2026-08-31")?;
+        write_execution_compare_workbook(&output, &[row, blank_row], "亿元", "2026-08-31")?;
         let sheets = read_value_columns(&output, 22)?;
         assert_eq!(sheets.len(), 1);
         assert_eq!(sheets[0].name, "2026年8月对比结果");
-        assert_eq!(sheets[0].max_row, 2);
+        assert_eq!(sheets[0].max_row, 3);
         assert_eq!(sheets[0].max_column, 22);
         assert_eq!(cell_text(&sheets[0], 1, 16), "增减额(亿元)");
         assert_eq!(cell_text(&sheets[0], 1, 22), "输出说明");
@@ -3483,7 +3521,7 @@ mod tests {
             .descendants()
             .find(|node| node.tag_name().name() == "autoFilter")
             .context("writer output must contain an autofilter")?;
-        assert_eq!(auto_filter.attribute("ref"), Some("A1:V2"));
+        assert_eq!(auto_filter.attribute("ref"), Some("A1:V3"));
 
         let mut styles_xml = String::new();
         package
@@ -3531,6 +3569,27 @@ mod tests {
             })
             .context("ratio cell must use a registered number format")?;
         assert_eq!(ratio_num_format.attribute("formatCode"), Some("0.00%"));
+        let custom_num_format = |address: &str| -> Result<String> {
+            let style = cell_style(address)?;
+            let num_format_id = style
+                .attribute("numFmtId")
+                .with_context(|| format!("cell {address} must retain its number format"))?;
+            let number_format = styles_document
+                .descendants()
+                .find(|node| {
+                    node.tag_name().name() == "numFmt"
+                        && node.attribute("numFmtId") == Some(num_format_id)
+                })
+                .with_context(|| format!("cell {address} must use a registered number format"))?;
+            Ok(number_format
+                .attribute("formatCode")
+                .unwrap_or_default()
+                .to_owned())
+        };
+        for address in ["N3", "O3", "P3"] {
+            assert_eq!(custom_num_format(address)?, "0.00");
+        }
+        assert_eq!(custom_num_format("Q3")?, "0.00%");
         assert!(write_execution_compare_workbook(&output, &[], "亿元", "2026-08-31").is_err());
         let _ = std::fs::remove_file(output);
         Ok(())
@@ -3548,14 +3607,18 @@ mod tests {
         assert!(!config.indicator_references.is_empty());
         assert!(config.action_rules.len() >= 1_000);
         assert!(config.expression_rules.len() >= 1_000);
-        assert!(config
-            .expression_rules
-            .iter()
-            .any(|rule| rule.schema == S3ExpressionSchema::FiveSegment));
-        assert!(config
-            .expression_rules
-            .iter()
-            .any(|rule| rule.schema == S3ExpressionSchema::LegacyEightSegment));
+        assert!(
+            config
+                .expression_rules
+                .iter()
+                .any(|rule| rule.schema == S3ExpressionSchema::FiveSegment)
+        );
+        assert!(
+            config
+                .expression_rules
+                .iter()
+                .any(|rule| rule.schema == S3ExpressionSchema::LegacyEightSegment)
+        );
         let five_rules =
             compile_expression_rules(&config, S3ExpressionSchema::FiveSegment, "2026-08-31")?;
         let eight_rules = compile_expression_rules(

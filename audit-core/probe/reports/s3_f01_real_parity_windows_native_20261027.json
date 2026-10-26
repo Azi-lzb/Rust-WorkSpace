@@ -1,0 +1,73 @@
+{
+  "feature": "S3-F01",
+  "scope": "Windows real 2026.07/2026.08 two-period CSV sample; both legacy eight-segment and five-segment expression modes",
+  "overall_feature_status": "migration_in_progress",
+  "real_sample_parity": "passed",
+  "rust_engines": {
+    "configuration_reader": "calamine",
+    "input_reader": "csv",
+    "output_writer": "rust_xlsxwriter",
+    "business_calculation": "Rust"
+  },
+  "runtime_summary": {
+    "current_records": 2595,
+    "previous_records": 2586,
+    "result_rows": 2610,
+    "enabled_action_rules": 4246,
+    "applicable_action_rules": 1528,
+    "enabled_expression_rules": 1141,
+    "triggered_action_rules": 0,
+    "triggered_expression_rules": 4,
+    "expression_errors": 0
+  },
+  "python_rust_comparison": {
+    "legacy_eight_segment": {
+      "python_writer": "OpenPyXL",
+      "rust_writer": "rust_xlsxwriter",
+      "sheet_names_equal": true,
+      "dimensions": [
+        [
+          2611,
+          22
+        ]
+      ],
+      "data_rows": 2610,
+      "key_dimension_mismatches": 0,
+      "value_mismatches_with_1e-9_numeric_tolerance": 0,
+      "style_mismatches_after_excel_default_normalization": {},
+      "column_width_max_delta": 0.0,
+      "column_widths_exact": true,
+      "formula_counts": {
+        "python": 0,
+        "rust": 0
+      }
+    },
+    "five_segment": {
+      "python_writer": "OpenPyXL",
+      "rust_writer": "rust_xlsxwriter",
+      "sheet_names_equal": true,
+      "dimensions": [
+        [
+          2611,
+          22
+        ]
+      ],
+      "data_rows": 2610,
+      "key_dimension_mismatches": 0,
+      "value_mismatches_with_1e-9_numeric_tolerance": 0,
+      "style_mismatches_after_excel_default_normalization": {},
+      "column_width_max_delta": 0.0,
+      "column_widths_exact": true,
+      "formula_counts": {
+        "python": 0,
+        "rust": 0
+      }
+    }
+  },
+  "notes": [
+    "Raw floating-point values can differ by at most 5.684341886080802e-14; all values match within 1e-9 and are written using the legacy 0.00 / 0.00% formats.",
+    "Style comparison normalizes implicit workbook-default font to Calibri 11 and ignores ARGB alpha and solid-fill background color, which do not change Excel rendering.",
+    "Python baseline and Rust output were written only under the Windows temporary directory; source workbooks and configs were read-only.",
+    "This proves the tested sample for both expression modes; it does not complete broader Windows acceptance, manual GUI acceptance, or Linux/deb acceptance."
+  ]
+}
