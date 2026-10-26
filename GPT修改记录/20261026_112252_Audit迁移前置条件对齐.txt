@@ -1,6 +1,6 @@
 日期：2026-10-26 11:22:52
 
-执行者：Codex。修改前 commit：0b9d33c1728223ac74375989b8f3e2eb84c4a63b。修改后 HEAD 未变化，文档变更尚未提交。main 工作树保留未跟踪 HANDOFF_ZCODE_TO_CODEX.md；audit-dev 与 pytools-dev 均有活动 WIP，本轮未修改这两个工作树。
+执行者：Codex。修改前 commit：0b9d33c1728223ac74375989b8f3e2eb84c4a63b。文档提交：6e980118987f6aa83096c58e3e9b28accc97cf5b（main 本地提交，未推送）。main 工作树保留未跟踪 HANDOFF_ZCODE_TO_CODEX.md；audit-dev 与 pytools-dev 均有活动 WIP，本轮未修改这两个工作树。
 
 目的：使迁移清单明确区分统一的功能阶段状态与原有对象/行为对拍结果；使 Audit 子规则遵循“并行完成独立功能、共享能力阻塞时登记并继续其他工作”的阶段策略，同时保留每个功能实际使用 Excel 能力的验收门槛。
 
