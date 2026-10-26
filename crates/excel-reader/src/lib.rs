@@ -1014,26 +1014,37 @@ pub fn read_sheet_names(path: impl AsRef<Path>) -> Result<Vec<String>> {
     Ok(names)
 }
 
-/// Return the OOXML workbook date epoch used for numeric date cells.
+/// Return whether a workbook uses the 1904 date epoch.
 ///
-/// This is intentionally separate from value decoding so callers that compare
-/// date-formatted cells with libraries exposing calendar values can normalize
-/// the stored serial correctly. Non-OOXML workbooks use the 1900 system in the
-/// current adapter contract and return `false`.
+/// XLSX-family workbooks use the namespace-aware `workbookPr` metadata. BIFF8
+/// XLS and XLSB use Calamine's format-specific epoch metadata. Other formats
+/// return `false` under this adapter contract.
 pub fn uses_1904_date_system(path: impl AsRef<Path>) -> Result<bool> {
     let path = path.as_ref();
-    let is_ooxml = path
+    let extension = path
         .extension()
         .and_then(|extension| extension.to_str())
-        .is_some_and(|extension| {
-            matches!(
-                extension.to_ascii_lowercase().as_str(),
-                "xlsx" | "xlsm" | "xlam"
-            )
-        });
-    if !is_ooxml {
-        return Ok(false);
+        .map(str::to_ascii_lowercase)
+        .unwrap_or_default();
+    match extension.as_str() {
+        "xls" | "xlsb" => {
+            validate_legacy_xls_signature(path)?;
+            let workbook = open_workbook_auto(path)
+                .with_context(|| format!("open {} to read date epoch", path.display()))?;
+            match (extension.as_str(), workbook) {
+                ("xls", Sheets::Xls(reader)) => Ok(reader.has_1904_epoch()),
+                ("xlsb", Sheets::Xlsb(reader)) => Ok(reader.has_1904_epoch()),
+                (format, _) => anyhow::bail!(
+                    "Calamine did not recognize the .{format} file as its expected workbook format"
+                ),
+            }
+        }
+        "xlsx" | "xlsm" | "xlam" => read_ooxml_1904_date_system(path),
+        _ => Ok(false),
     }
+}
+
+fn read_ooxml_1904_date_system(path: &Path) -> Result<bool> {
     let mut zip = ZipArchive::new(fs::File::open(path).context("open OOXML workbook")?)
         .context("open OOXML ZIP package")?;
     let xml =
@@ -1699,6 +1710,25 @@ mod tests {
         Ok(path)
     }
 
+    fn date_epoch_ooxml_fixture(extension: &str, workbook_properties: &str) -> Result<PathBuf> {
+        let path = std::env::temp_dir().join(format!(
+            "excel-reader-date-epoch-{}-{}.{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_nanos(),
+            extension
+        ));
+        let workbook = format!(
+            r#"<s:workbook xmlns:s="{SPREADSHEET_MAIN_NS}">{workbook_properties}<s:sheets/></s:workbook>"#
+        );
+        let mut archive = ZipWriter::new(fs::File::create(&path)?);
+        archive.start_file("xl/workbook.xml", SimpleFileOptions::default())?;
+        archive.write_all(workbook.as_bytes())?;
+        archive.finish()?;
+        Ok(path)
+    }
+
     fn defined_names_ooxml_fixture() -> Result<PathBuf> {
         let path = std::env::temp_dir().join(format!(
             "excel-reader-defined-names-{}-{}.xlsx",
@@ -1813,6 +1843,38 @@ mod tests {
         let names = read_xlsx_sheet_names_ooxml(&fixture)?;
         fs::remove_file(fixture)?;
         assert_eq!(names, vec!["单位贷款".to_owned(), "图表页".to_owned()]);
+        Ok(())
+    }
+
+    #[test]
+    fn date_epoch_reader_detects_ooxml_1904_setting_for_xlsx_and_xlsm() -> Result<()> {
+        for extension in ["xlsx", "xlsm"] {
+            let fixture =
+                date_epoch_ooxml_fixture(extension, &format!(r#"<s:workbookPr date1904="1"/>"#))?;
+            assert!(uses_1904_date_system(&fixture)?, "{extension} epoch");
+            fs::remove_file(fixture)?;
+        }
+
+        let fixture =
+            date_epoch_ooxml_fixture("xlsx", &format!(r#"<s:workbookPr date1904="false"/>"#))?;
+        assert!(!uses_1904_date_system(&fixture)?);
+        fs::remove_file(fixture)?;
+        Ok(())
+    }
+
+    #[test]
+    fn date_epoch_reader_rejects_invalid_legacy_xls_signature() -> Result<()> {
+        let path = std::env::temp_dir().join(format!(
+            "excel-reader-invalid-epoch-{}-{}.xls",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_nanos()
+        ));
+        fs::write(&path, b"<html>not an xls</html>")?;
+        let error = uses_1904_date_system(&path).expect_err("invalid .xls must be rejected");
+        assert!(error.to_string().contains("CFB/OLE 签名无效"));
+        fs::remove_file(path)?;
         Ok(())
     }
 
