@@ -242,6 +242,53 @@ fn interactive_v2_named_range_summary_uses_named_regions_and_skips_bad_structure
 }
 
 #[test]
+fn interactive_named_range_summary_collects_valid_rows_through_row_200() -> Result<()> {
+    let root = TestDirectory::new()?;
+    let config = create_app_config(root.path())?;
+    let template = root.path().join("arbitrary-row template.xlsx");
+    let source = root.path().join("arbitrary-row source.xlsx");
+    create_arbitrary_row_template(&template)?;
+    let expected_rows = create_arbitrary_row_source(&source)?;
+    let template_before = fs::read(&template)?;
+    let source_before = fs::read(&source)?;
+    let input = format!("1\n3\n{}\n{}\n0\n0\n", template.display(), source.display());
+
+    let output = run_menu(&config, &input)?;
+    assert!(
+        output.status.success(),
+        "named-range menu failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let logs = root.path().join("app").join("logs");
+    let (_, history, _) = read_single_history(&logs, "PT-6-2_")?;
+    assert_eq!(history["summary"]["rows"], expected_rows);
+    assert_eq!(history["summary"]["files"], 1);
+
+    let summary_path = PathBuf::from(history["summary"]["path"].as_str().unwrap());
+    let summary = read_workbook(&summary_path)?;
+    let sheet = summary
+        .sheets
+        .iter()
+        .find(|sheet| sheet.name == "数据")
+        .context("named-range result sheet missing")?;
+    assert!(sheet
+        .values
+        .values()
+        .any(|value| value["value"] == "最终机构"));
+    assert!(sheet
+        .values
+        .values()
+        .any(|value| value["value"].as_f64() == Some(0.0)));
+    assert!(!sheet
+        .values
+        .values()
+        .any(|value| value["value"] == "空行不应输出"));
+    assert_eq!(fs::read(&template)?, template_before);
+    assert_eq!(fs::read(&source)?, source_before);
+    Ok(())
+}
+
+#[test]
 fn summary_named_ranges_cli_is_a_real_standalone_entry() -> Result<()> {
     let root = TestDirectory::new()?;
     let template = root.path().join("named template.xlsx");
@@ -428,6 +475,54 @@ fn create_named_range_source(
     let stale_format = rust_xlsxwriter::Format::new().set_bold();
     worksheet.write_blank(399, 1, &stale_format)?;
     workbook.save(path).context("save named-range source")
+}
+
+fn create_arbitrary_row_template(path: &Path) -> Result<()> {
+    let mut workbook = rust_xlsxwriter::Workbook::new();
+    let worksheet = workbook.add_worksheet();
+    worksheet.set_name("数据")?;
+    worksheet.write_string(0, 0, "结构A")?;
+    worksheet.write_string(1, 2, "单位")?;
+    worksheet.write_string(2, 2, "名称")?;
+    worksheet.write_string(1, 3, "金额")?;
+    worksheet.write_string(2, 3, "本期")?;
+    worksheet.write_string(1, 4, "备注")?;
+    worksheet.write_string(2, 4, "类别")?;
+    worksheet.write_string(4, 2, "模板样例")?;
+    worksheet.write_number(4, 3, 1.0)?;
+    worksheet.write_string(4, 4, "模板备注")?;
+    workbook.define_name("表结构区域_1", "'数据'!$A$1")?;
+    workbook.define_name("表头区域_1", "'数据'!$C$2:$E$3")?;
+    workbook.define_name("任意行汇总区域_1", "'数据'!$C$5:$E$6")?;
+    workbook.save(path).context("save arbitrary-row template")
+}
+
+fn create_arbitrary_row_source(path: &Path) -> Result<usize> {
+    let mut workbook = rust_xlsxwriter::Workbook::new();
+    let worksheet = workbook.add_worksheet();
+    worksheet.set_name("数据")?;
+    worksheet.write_string(0, 0, "结构A")?;
+    let mut expected_rows = 0;
+    for row in 4..=199 {
+        if row % 7 == 0 {
+            continue;
+        }
+        expected_rows += 1;
+        if row == 99 {
+            worksheet.write_number(row, 3, 0.0)?;
+        } else {
+            worksheet.write_string(row, 2, format!("机构-{row}"))?;
+            worksheet.write_number(row, 3, (row - 3) as f64)?;
+            worksheet.write_string(row, 4, format!("明细-{row}"))?;
+        }
+    }
+    worksheet.write_blank(119, 2, &rust_xlsxwriter::Format::new().set_bold())?;
+    worksheet.write_string(199, 2, "最终机构")?;
+    worksheet.write_number(199, 3, 200.0)?;
+    worksheet.write_string(199, 4, "最后有效行")?;
+    worksheet.write_string(499, 25, "空行不应输出")?;
+    workbook.save(path).context("save arbitrary-row source")?;
+    Ok(expected_rows)
 }
 
 fn run_menu(config: &Path, input: &str) -> Result<Output> {

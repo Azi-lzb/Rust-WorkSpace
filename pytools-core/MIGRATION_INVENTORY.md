@@ -1021,7 +1021,7 @@ Windows 原生验证：`cargo fmt --manifest-path pytools-core/Cargo.toml -- --c
 
 新版数据菜单 `1 → 3` 及独立 `summary-named-ranges` CLI 现调用真实 Rust 命名区域汇总 API。实现表头、固定行、任意行、表结构四类定义名称；任意行按所选数据列扩展并跳过全空行、保留数值零；表结构区域按值、公式文本和合并区域比较，不匹配时跳过整份源工作簿并列出原因；输出工作表沿用模板同名工作表，输入模板和源工作簿只读。旧批注汇总实现及 standalone CLI 保留，但不放入 V2 菜单。
 
-生命周期：**已实现，待 Windows 真实验收**。Windows 合成 CLI/交互菜单端到端覆盖两个区域组、不同数据行数、零值、全空/样式残留行、无关远端单元格、结构不匹配跳过及输入文件字节不变；命名语法、分组和多区域输出布局采用需求文档建议示例作首版实现，仍待真实模板确认。未与旧 Python 对拍（新命名区域无旧版对应实现）；未验证模板格式/样式保真、Windows 原生文件选择器及 Linux 目标环境。Windows 原生 `cargo fmt --manifest-path pytools-core/Cargo.toml -- --check`、`cargo check --offline --locked -p pytools-core --bin pytools -j 1`、命名区域单测及 `summary_menu_cli`/`summary_comments_cli` 共 13 项测试通过；构建/测试产物在 F 盘专用文件夹。
+生命周期：**已实现，待 Windows 真实验收**。Windows 合成 CLI/交互菜单端到端覆盖两个区域组、不同数据行数、零值、全空/样式残留行、无关远端单元格、结构不匹配跳过及输入文件字节不变；2026-10-27 新增需求 A08 回归经真实菜单验证 C5:E6 任意行模板区扩展到源第 200 行，168 条有效记录均计入，空行及样式残留空行跳过，仅含数值零的行保留，Z500 远端数据不混入，模板/源文件字节不变。命名语法、分组和多区域输出布局采用需求文档建议示例作首版实现，仍待真实模板确认。未与旧 Python 对拍（新命名区域无旧版对应实现）；未验证模板格式/样式保真、Windows 原生文件选择器及 Linux 目标环境。Windows 原生 `cargo fmt --manifest-path pytools-core/Cargo.toml -- --check`、`cargo check --offline --locked -p pytools-core --bin pytools -j 1`、命名区域单测及当前 `summary_menu_cli` 7/7 通过；构建/测试产物在 F 盘专用文件夹。
 
 ### 2026-10-27 PT-2-3 V2 按配置检查重复生成标记工作簿
 
