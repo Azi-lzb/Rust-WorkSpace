@@ -1,0 +1,29 @@
+时间：2026-10-26（Asia/Shanghai）
+执行者：Codex
+分支：codex/windows-operable-entries
+修改前 commit：e1c748d（完整 SHA 以 Git 历史为准）
+修改后 commit：随本次功能提交；以 Git 历史为准。
+修改前 WIP：工作树起始干净。本轮补丁写入曾因 C: 满盘失败；已从 HEAD 恢复 `web_bridge.rs` 原件后再修改。未触碰其他 Worktree、原 Python 源或共享 Excel-Core。
+
+目的：修复旧版 Audit 页面在 S2 配置检查前同步空 S1 表单字段时被 Rust bridge 拒绝的问题，并验证现有 GUI/S2 入口。
+
+修改文件：
+- `audit-core/src/web_bridge.rs`：仅忽略未迁移工作流的空路径字段；非空仍返回 HTTP 501；新增空值兼容和非空拒绝回归测试。
+- `audit-core/MIGRATION_INVENTORY.md`：记录 Windows GUI 冒烟证据与未完成验收边界。
+- 本修改记录。
+
+验证：
+- Windows `cargo test -p audit-core --lib web_bridge::tests --locked --offline`：8 passed。
+- Windows `cargo test -p audit-core --test s2_service_parity --locked --offline`：1 passed（合成 S2 服务/CLI 对拍）。
+- Windows Release 构建 Audit GUI 和 PyTools CLI：通过。二进制输出到本机 F: 隔离 Cargo target，未纳入 Git。
+- Audit GUI HTTP 冒烟：`--no-browser --port 0`，`GET /` 返回 200，原 HTML 和注入的 `window.bridge` 存在；`POST /api/get_state` 返回 S2 初始状态。
+- 通过 GUI“检查配置”按钮调用 Rust 配置检查并显示报告；使用工作区默认配置模板，结果含 8 条默认项警告，不代表真实业务验收。
+- `rustfmt --edition 2021` 与 `git diff --check` 通过。
+
+未执行项与已知问题：没有从 GUI 执行真实 S2 批次；没有真实业务样本、全菜单人工验收或 Linux/deb 验收。Audit 保持浏览器承载的原页面，不是嵌入式 pywebview 外壳；S1/S3/S4/S5 仍未接入。
+
+环境处理：C: 初始可用空间为 0，Cargo/Git 无法写缓存数据库和索引锁。已将 `%USERPROFILE%\.cargo\registry` 原数据保留到 F:，并在原位置建立指向 F: 活动副本的 junction；原缓存数据未删除。需要恢复时，先移除该 junction，再将 F: 上的 `registry-original-c-drive` 移回 `%USERPROFILE%\.cargo\registry`。
+
+删除清单：无。
+回滚提示：还原 `web_bridge.rs` 和迁移清单对应改动即可；不涉及共享 crate 或 Python 项目。
+【组件版本】：不升级。

@@ -1,0 +1,24 @@
+时间：2026-10-26（Asia/Shanghai）
+执行者：Codex
+分支：codex/windows-operable-entries
+修改前 commit：e1c748d（完整 SHA 以 Git 历史为准）
+修改后 commit：随本次功能提交；以 Git 历史为准。
+修改前 WIP：工作树起始干净。本轮未修改 PyTools Rust 业务代码；旧 Python 源只读。
+
+目的：按要求核验已接线的 Rust CLI 数字菜单，并在迁移清单中记录 Windows 原生结果。
+
+修改文件：
+- `pytools-core/MIGRATION_INVENTORY.md`：补记本轮 Windows Release 启动冒烟与测试证据。
+- 本修改记录。
+
+核验：
+- 只读检查 `PyCode/main.py` 与 `NoComPyTools/nocompytools/main.py`：主菜单均保留 1–9 数字分组；Rust CLI 保持原编号并复用已有命令分发。
+- Windows `cargo test -p pytools-core --test interactive_menu --locked --offline`：5 passed。
+- Windows Release 版 `pytools.exe` 无参数直接启动、输入 `0`：显示旧菜单并正常退出。
+- Release 构建产物位于本机 F: 隔离 Cargo target，未纳入 Git。
+
+未执行项与限制：没有逐项人工运行所有菜单、真实业务样本验收或目标 Linux/deb 验收；未接通和 capability 门控项仍以迁移清单为准，菜单可启动不等于业务功能验收。
+
+删除清单：无。
+回滚提示：仅回滚迁移清单新增验证记录；没有 PyTools 业务代码变更。
+【组件版本】：不升级。

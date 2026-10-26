@@ -838,6 +838,10 @@ fn update_state(state: &AppState, args: &[Value]) -> std::result::Result<Value, 
                     "Rust Web 版当前只支持浏览器内置文件选择器",
                 ));
             }
+            // The unchanged legacy frontend syncs its shared form before S2 actions.
+            // Empty paths belong to unmigrated workflows and do not change S2 state.
+            "input" | "templateDir" | "template" | "external" | "output"
+                if value.as_str() == Some("") => {}
             _ => {
                 return Err(ApiError::new(
                     StatusCode::NOT_IMPLEMENTED,
@@ -1007,7 +1011,7 @@ impl IntoResponse for ApiError {
 
 #[cfg(test)]
 mod tests {
-    use super::{browse_dir, dispatch_api, render_index, AppState};
+    use super::{browse_dir, dispatch_api, render_index, update_state, AppState};
     use serde_json::{json, Value};
     use std::{
         fs,
@@ -1054,6 +1058,38 @@ mod tests {
         let error = dispatch_api(&test_state(), "start_dag_flow", &[]).unwrap_err();
         assert_eq!(error.status, axum::http::StatusCode::NOT_IMPLEMENTED);
         assert!(error.message.contains("尚未实现接口"));
+    }
+
+    #[test]
+    fn empty_legacy_workflow_paths_do_not_block_s2_settings_sync() {
+        let state = test_state();
+        let updated = update_state(
+            &state,
+            &[json!({
+                "input": "",
+                "templateDir": "",
+                "template": "",
+                "external": "",
+                "output": "",
+                "uiAccent": "blue"
+            })],
+        )
+        .expect("empty legacy paths should not block the S2 frontend sync");
+
+        assert_eq!(updated["uiAccent"], "blue");
+        assert_eq!(updated["pcCurDir"], state.get_state()["pcCurDir"]);
+    }
+
+    #[test]
+    fn nonempty_legacy_workflow_path_is_still_explicitly_unsupported() {
+        let error = update_state(
+            &test_state(),
+            &[json!({"external": "C:/not-migrated.xlsx"})],
+        )
+        .unwrap_err();
+
+        assert_eq!(error.status, axum::http::StatusCode::NOT_IMPLEMENTED);
+        assert!(error.message.contains("暂不支持修改设置：external"));
     }
 
     #[test]
