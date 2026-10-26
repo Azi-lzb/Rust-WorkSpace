@@ -1,7 +1,6 @@
 //! Local HTTP bridge for the bundled, unchanged Audit web frontend.
 //!
-//! This bridge exposes the migrated S2 paths and the S3-F02 explanation export.
-//! Other frontend APIs fail explicitly until their business workflows migrate.
+//! This bridge exposes migrated Audit workflows through the existing frontend.
 
 use crate::{
     period_pairs::{list_period_pairs, report_source_warning},
@@ -11,6 +10,7 @@ use crate::{
     s3_current_value_check::{
         input_reader_for_paths, python_regex_scope_matcher, run_current_value_check_files,
     },
+    s3_execution_compare::{run_execution_compare_files, S3ExpressionSchema},
     s3_explanation_export::export_selected_explanations,
 };
 use anyhow::{Context, Result};
@@ -98,6 +98,12 @@ impl AppState {
             .filter(|path| path.is_file())
             .map(|path| path.to_string_lossy().into_owned())
             .unwrap_or_default();
+        let central_comparison_config = Path::new(&config_path)
+            .parent()
+            .map(|parent| parent.join("3.1大集中执行比较_配置.xlsx"))
+            .filter(|path| path.is_file())
+            .map(|path| path.to_string_lossy().into_owned())
+            .unwrap_or_default();
         let config_report = check_s2_config(&config_path);
         let mut state = json!({
             "appInfo": {"title": "Open-Data-Audit (Rust)"},
@@ -144,7 +150,6 @@ impl AppState {
             "centralCompareFile": "",
             "centralExplainFile": "",
             "centralCommonConfig": central_common_config,
-            "centralComparisonConfig": "",
             "engines": [{"value": "自动", "label": "Rust 迁移功能"}]
         });
         let s2_state = json!({
@@ -170,6 +175,12 @@ impl AppState {
             "centralCrossConfig": central_cross_config,
             "centralCrossLastResult": ""
         });
+        let s3_execution_state = json!({
+            "centralCur": "",
+            "centralPre": "",
+            "centralComparisonConfig": central_comparison_config,
+            "centralExpressionSchema": "FIVE_SEGMENT_V1"
+        });
         state
             .as_object_mut()
             .expect("UI state is a JSON object")
@@ -186,6 +197,15 @@ impl AppState {
                 s3_state
                     .as_object()
                     .expect("S3 state is a JSON object")
+                    .clone(),
+            );
+        state
+            .as_object_mut()
+            .expect("UI state is a JSON object")
+            .extend(
+                s3_execution_state
+                    .as_object()
+                    .expect("S3 execution compare state is a JSON object")
                     .clone(),
             );
         Self {
@@ -418,6 +438,7 @@ fn dispatch_api(
         "choose_file" => choose_file(state, args),
         "clear_path" => clear_path(state, args),
         "inspect_template_formulas" => inspect_template_formulas(state),
+        "start_central_comparison" => start_central_comparison(state),
         "start_central_explanation_export" => start_central_explanation_export(state),
         "start_central_cross_period" => start_central_cross_period(state),
         "toggle_central_output_pin" => toggle_central_output_pin(state, args),
@@ -482,7 +503,9 @@ fn choose_central(state: &AppState, args: &[Value]) -> std::result::Result<Value
     let field = arg_string(args, 0)
         .ok_or_else(|| ApiError::new(StatusCode::BAD_REQUEST, "choose_central 缺少路径类型"))?;
     let is_file = match field {
-        "centralCompareFile"
+        "centralCur"
+        | "centralPre"
+        | "centralCompareFile"
         | "centralExplainFile"
         | "centralCommonConfig"
         | "centralComparisonConfig"
@@ -513,6 +536,11 @@ fn choose_central(state: &AppState, args: &[Value]) -> std::result::Result<Value
             .and_then(|extension| extension.to_str())
             .unwrap_or_default();
         let supported = match field {
+            "centralCur" | "centralPre" => {
+                extension.eq_ignore_ascii_case("csv")
+                    || extension.eq_ignore_ascii_case("xlsx")
+                    || extension.eq_ignore_ascii_case("xls")
+            }
             "centralCompareFile" => {
                 extension.eq_ignore_ascii_case("xlsx") || extension.eq_ignore_ascii_case("xlsm")
             }
@@ -531,6 +559,7 @@ fn choose_central(state: &AppState, args: &[Value]) -> std::result::Result<Value
             return Err(ApiError::new(
                 StatusCode::BAD_REQUEST,
                 match field {
+                    "centralCur" | "centralPre" => "大集中本期/上期数据目前只支持 CSV、XLSX、XLS",
                     "centralCompareFile" => "S3-F02 比较结果目前只支持 .xlsx 和 .xlsm",
                     "centralExplainFile" => "说明工作簿目前只支持 .xlsx",
                     "centralCommonConfig" => "大集中通用配置目前只支持 .xlsx",
@@ -563,6 +592,15 @@ fn choose_central(state: &AppState, args: &[Value]) -> std::result::Result<Value
     let value = path.to_string_lossy().into_owned();
     ui.value[field] = json!(value);
     match field {
+        "centralCur" => {
+            if ui.value["centralOutputAuto"] == true {
+                ui.value["centralOutput"] = json!(path
+                    .parent()
+                    .unwrap_or_else(|| Path::new("."))
+                    .join("执行结果")
+                    .to_string_lossy());
+            }
+        }
         "centralCompareFile" => {
             let parent = path
                 .parent()
@@ -581,6 +619,289 @@ fn choose_central(state: &AppState, args: &[Value]) -> std::result::Result<Value
     }
     push_log(&mut ui.value, format!("S3 路径已选择：{field}"));
     Ok(ui.value[field].clone())
+}
+
+fn start_central_comparison(state: &AppState) -> std::result::Result<Value, ApiError> {
+    let (current_file, previous_file, common_config, feature_config, output_directory, schema) = {
+        let ui = state.lock();
+        if ui.value["busy"] == true {
+            return Err(ApiError::new(
+                StatusCode::CONFLICT,
+                "已有任务正在运行，请完成后再执行大集中比较",
+            ));
+        }
+        let current_file = ui.value["centralCur"]
+            .as_str()
+            .filter(|path| !path.trim().is_empty())
+            .map(PathBuf::from)
+            .ok_or_else(|| ApiError::new(StatusCode::BAD_REQUEST, "请先选择本期大集中数据"))?;
+        let previous_file = ui.value["centralPre"]
+            .as_str()
+            .filter(|path| !path.trim().is_empty())
+            .map(PathBuf::from)
+            .ok_or_else(|| ApiError::new(StatusCode::BAD_REQUEST, "请先选择上期大集中数据"))?;
+        for (label, path) in [("本期数据", &current_file), ("上期数据", &previous_file)] {
+            if !path.is_file() {
+                return Err(ApiError::new(
+                    StatusCode::BAD_REQUEST,
+                    format!("{label}文件不存在：{}", path.display()),
+                ));
+            }
+            let supported = path
+                .extension()
+                .and_then(|extension| extension.to_str())
+                .is_some_and(|extension| {
+                    extension.eq_ignore_ascii_case("csv")
+                        || extension.eq_ignore_ascii_case("xlsx")
+                        || extension.eq_ignore_ascii_case("xls")
+                });
+            if !supported {
+                return Err(ApiError::new(
+                    StatusCode::BAD_REQUEST,
+                    format!("{label}只支持 CSV、XLSX、XLS：{}", path.display()),
+                ));
+            }
+        }
+
+        let common_config = ui.value["centralCommonConfig"]
+            .as_str()
+            .filter(|path| !path.trim().is_empty())
+            .map(PathBuf::from)
+            .ok_or_else(|| {
+                ApiError::new(StatusCode::BAD_REQUEST, "请先选择大集中通用配置（3.0）")
+            })?;
+        let feature_config = ui.value["centralComparisonConfig"]
+            .as_str()
+            .filter(|path| !path.trim().is_empty())
+            .map(PathBuf::from)
+            .ok_or_else(|| {
+                ApiError::new(StatusCode::BAD_REQUEST, "请先选择大集中执行比较配置（3.1）")
+            })?;
+        for (label, path) in [
+            ("大集中通用配置（3.0）", &common_config),
+            ("大集中执行比较配置（3.1）", &feature_config),
+        ] {
+            if !path.is_file() {
+                return Err(ApiError::new(
+                    StatusCode::BAD_REQUEST,
+                    format!("{label}不存在：{}", path.display()),
+                ));
+            }
+            if !path
+                .extension()
+                .and_then(|extension| extension.to_str())
+                .is_some_and(|extension| extension.eq_ignore_ascii_case("xlsx"))
+            {
+                return Err(ApiError::new(
+                    StatusCode::BAD_REQUEST,
+                    format!("{label}目前只支持 .xlsx"),
+                ));
+            }
+        }
+        let schema = match ui.value["centralExpressionSchema"].as_str() {
+            Some("FIVE_SEGMENT_V1") | None | Some("") => S3ExpressionSchema::FiveSegment,
+            Some("LEGACY_8") => S3ExpressionSchema::LegacyEightSegment,
+            Some(value) => {
+                return Err(ApiError::new(
+                    StatusCode::BAD_REQUEST,
+                    format!("不支持的大集中表达式语法：{value}"),
+                ));
+            }
+        };
+        let output_directory = ui.value["centralOutput"]
+            .as_str()
+            .filter(|path| !path.trim().is_empty())
+            .map(PathBuf::from)
+            .or_else(|| current_file.parent().map(|parent| parent.join("执行结果")))
+            .unwrap_or_else(|| PathBuf::from("执行结果"));
+        (
+            current_file,
+            previous_file,
+            common_config,
+            feature_config,
+            output_directory,
+            schema,
+        )
+    };
+
+    if output_directory.exists() && !output_directory.is_dir() {
+        return Err(ApiError::new(
+            StatusCode::BAD_REQUEST,
+            format!("大集中比较输出位置不是目录：{}", output_directory.display()),
+        ));
+    }
+    fs::create_dir_all(&output_directory).map_err(|error| {
+        ApiError::internal(format!(
+            "创建大集中比较输出目录失败：{}：{error}",
+            output_directory.display()
+        ))
+    })?;
+    let output_directory = fs::canonicalize(&output_directory)
+        .map_err(|error| ApiError::internal(format!("解析大集中比较输出目录失败：{error}")))?;
+    let stamp = chrono::Local::now().format("%Y%m%d_%H%M%S").to_string();
+    let mut output_workbook = output_directory.join(format!("比较结果_{stamp}.xlsx"));
+    if output_workbook.exists() {
+        let suffix = chrono::Local::now().timestamp_subsec_millis();
+        output_workbook = output_directory.join(format!("比较结果_{stamp}_{suffix:03}.xlsx"));
+        if output_workbook.exists() {
+            return Err(ApiError::new(
+                StatusCode::CONFLICT,
+                "大集中比较时间戳输出仍有同名文件，请稍后重试",
+            ));
+        }
+    }
+
+    let input_paths = [current_file.clone(), previous_file.clone()];
+    let input_reader = input_reader_for_paths(&input_paths);
+    let schema_name = match schema {
+        S3ExpressionSchema::FiveSegment => "five-segment",
+        S3ExpressionSchema::LegacyEightSegment => "legacy-eight-segment",
+    };
+    {
+        let mut ui = state.lock();
+        if ui.value["busy"] == true {
+            return Err(ApiError::new(
+                StatusCode::CONFLICT,
+                "已有任务正在运行，请完成后再执行大集中比较",
+            ));
+        }
+        ui.value["busy"] = json!(true);
+        ui.value["status"] = json!("正在执行大集中比较，请勿关闭窗口……");
+        push_log(&mut ui.value, "S3-F01 开始大集中执行比较".to_owned());
+        push_detail_log(
+            &mut ui.value,
+            format!(
+                "S3-F01 开始：input_reader={input_reader}，config_reader=Calamine，writer=rust_xlsxwriter，expression=Rust local ({schema_name})；本期 {}；上期 {}；3.0配置 {}；3.1配置 {}；输出 {}",
+                current_file.display(),
+                previous_file.display(),
+                common_config.display(),
+                feature_config.display(),
+                output_workbook.display()
+            ),
+        );
+    }
+
+    let worker_state = state.clone();
+    if let Err(error) = thread::Builder::new()
+        .name("audit-s3-execution-compare".to_owned())
+        .spawn(move || {
+            run_s3_execution_compare_worker(
+                worker_state,
+                current_file,
+                previous_file,
+                common_config,
+                feature_config,
+                output_workbook,
+                schema,
+                input_reader,
+                schema_name,
+            )
+        })
+    {
+        let mut ui = state.lock();
+        ui.value["busy"] = json!(false);
+        ui.value["status"] = json!("大集中执行比较失败");
+        push_log(&mut ui.value, format!("启动 S3-F01 比较线程失败：{error}"));
+        return Err(ApiError::internal(format!(
+            "启动 S3-F01 比较线程失败：{error}"
+        )));
+    }
+    Ok(json!(true))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_s3_execution_compare_worker(
+    state: AppState,
+    current_file: PathBuf,
+    previous_file: PathBuf,
+    common_config: PathBuf,
+    feature_config: PathBuf,
+    output_workbook: PathBuf,
+    schema: S3ExpressionSchema,
+    input_reader: String,
+    schema_name: &'static str,
+) {
+    let started = Instant::now();
+    let current_paths = [current_file];
+    let previous_paths = [previous_file];
+    let progress_state = state.clone();
+    let result = run_execution_compare_files(
+        &current_paths,
+        &previous_paths,
+        &common_config,
+        &feature_config,
+        &output_workbook,
+        schema,
+        |step| {
+            let mut ui = progress_state.lock();
+            ui.value["status"] = json!(format!("S3-F01：{step}"));
+            push_log(&mut ui.value, format!("S3-F01：{step}"));
+            push_detail_log(
+                &mut ui.value,
+                format!("S3-F01 阶段：{step}；expression={schema_name}"),
+            );
+        },
+    );
+    let mut ui = state.lock();
+    ui.value["busy"] = json!(false);
+    match result {
+        Ok(report) => {
+            let output = report.output_path.to_string_lossy().into_owned();
+            ui.value["centralCompareFile"] = json!(output);
+            if ui.value["centralFormOutputAuto"] == true {
+                if let Some(parent) = report.output_path.parent() {
+                    ui.value["centralFormOutput"] = json!(parent.to_string_lossy());
+                }
+            }
+            ui.value["status"] = json!(format!("执行比较完成：{} 行", report.rows));
+            push_log(
+                &mut ui.value,
+                format!(
+                    "S3-F01 执行比较完成：{} 行，结果文件 {}",
+                    report.rows,
+                    report.output_path.display()
+                ),
+            );
+            push_detail_log(
+                &mut ui.value,
+                format!(
+                    "S3-F01 完成：reader={}/{}, writer={}，本期/上期记录={}/{}，结果行={}，动作规则触发={}/{}/{}，表达式规则触发={}/{}，表达式错误={}，配置读取={} ms，输入读取={} ms，规则计算={} ms，工作簿写入={} ms，引擎总计={} ms，任务总计={} ms",
+                    report.config_reader,
+                    report.input_reader,
+                    report.writer,
+                    report.current_records,
+                    report.previous_records,
+                    report.rows,
+                    report.triggered_action_rules,
+                    report.applicable_action_rules,
+                    report.enabled_action_rules,
+                    report.triggered_expression_rules,
+                    report.enabled_expression_rules,
+                    report.expression_errors,
+                    report.config_read_time_ms,
+                    report.input_read_time_ms,
+                    report.calculation_time_ms,
+                    report.workbook_write_time_ms,
+                    report.total_time_ms,
+                    started.elapsed().as_millis()
+                ),
+            );
+        }
+        Err(error) => {
+            ui.value["status"] = json!("大集中执行比较失败");
+            push_log(
+                &mut ui.value,
+                format!("S3-F01 执行比较失败，未报告成功结果：{error:#}"),
+            );
+            push_detail_log(
+                &mut ui.value,
+                format!(
+                    "S3-F01 失败：reader={input_reader}，config_reader=Calamine，writer=rust_xlsxwriter，expression=Rust local ({schema_name})，任务总计={} ms，错误={error:#}",
+                    started.elapsed().as_millis()
+                ),
+            );
+        }
+    }
 }
 
 fn start_central_explanation_export(state: &AppState) -> std::result::Result<Value, ApiError> {
@@ -1108,6 +1429,8 @@ fn clear_path(state: &AppState, args: &[Value]) -> std::result::Result<Value, Ap
     if let Some(
         field @ ("centralCompareFile"
         | "centralExplainFile"
+        | "centralCur"
+        | "centralPre"
         | "centralCommonConfig"
         | "centralComparisonConfig"
         | "centralCrossCur"
@@ -1698,6 +2021,17 @@ fn update_state(state: &AppState, args: &[Value]) -> std::result::Result<Value, 
                 }
                 ui.value[key] = value.clone();
             }
+            "centralExpressionSchema"
+                if matches!(value.as_str(), Some("FIVE_SEGMENT_V1" | "LEGACY_8")) =>
+            {
+                ui.value[key] = value.clone();
+            }
+            "centralExpressionSchema" => {
+                return Err(ApiError::new(
+                    StatusCode::BAD_REQUEST,
+                    "centralExpressionSchema 必须是 FIVE_SEGMENT_V1 或 LEGACY_8",
+                ));
+            }
             "confirmBeforeRun"
             | "showRunDetailLogs"
             | "showPerformanceDiagnostics"
@@ -2077,6 +2411,104 @@ mod tests {
         workbook.save(path).unwrap();
     }
 
+    fn write_s3_execution_configs(common_path: &Path, feature_path: &Path) {
+        let mut common = Workbook::new();
+        let parameters = common.add_worksheet();
+        parameters.set_name("运行参数").unwrap();
+        for (column, header) in ["参数", "值"].iter().enumerate() {
+            parameters.write_string(0, column as u16, *header).unwrap();
+        }
+        parameters.write_string(1, 0, "默认源数据单位").unwrap();
+        parameters.write_string(1, 1, "元").unwrap();
+        parameters.write_string(2, 0, "默认目标单位").unwrap();
+        parameters.write_string(2, 1, "亿元").unwrap();
+
+        let exceptions = common.add_worksheet();
+        exceptions.set_name("单位换算例外").unwrap();
+        exceptions.write_string(0, 0, "指标代码").unwrap();
+        exceptions.write_string(0, 1, "启用").unwrap();
+
+        let alerts = common.add_worksheet();
+        alerts.set_name("环比警戒").unwrap();
+        for (column, header) in [
+            "下限",
+            "上限",
+            "备注文字",
+            "填充颜色",
+            "是否整行填充",
+            "金额变动阈值",
+            "是否说明",
+        ]
+        .iter()
+        .enumerate()
+        {
+            alerts.write_string(0, column as u16, *header).unwrap();
+        }
+        common.save(common_path).unwrap();
+
+        let mut feature = Workbook::new();
+        let indicators = feature.add_worksheet();
+        indicators.set_name("指标参照").unwrap();
+        for (column, header) in ["指标代码", "表单代码", "行序号", "指标别名"]
+            .iter()
+            .enumerate()
+        {
+            indicators.write_string(0, column as u16, *header).unwrap();
+        }
+        let actions = feature.add_worksheet();
+        actions.set_name("规则动作").unwrap();
+        for (column, header) in [
+            "规则编号",
+            "规则说明",
+            "规则动作",
+            "指标代码",
+            "数据属性",
+            "币种",
+            "比较指标代码",
+            "人民币阈值(亿元)",
+            "美元阈值(亿美元)",
+            "变幅阈值(%)",
+            "来源分组",
+            "适用表单",
+            "适用频度",
+            "适用批次",
+            "适用场景",
+            "详细说明",
+            "启用",
+            "停用原因",
+            "备注",
+        ]
+        .iter()
+        .enumerate()
+        {
+            actions.write_string(0, column as u16, *header).unwrap();
+        }
+        let expressions = feature.add_worksheet();
+        expressions.set_name("表达式校验").unwrap();
+        for (column, header) in [
+            "规则编号",
+            "规则说明",
+            "校验表达式",
+            "是否取反",
+            "容差值(万元)",
+            "启用",
+            "停用原因",
+        ]
+        .iter()
+        .enumerate()
+        {
+            expressions.write_string(0, column as u16, *header).unwrap();
+        }
+        feature.save(feature_path).unwrap();
+    }
+
+    fn write_s3_execution_csv(path: &Path, date: &str, amount: &str) {
+        let row = format!(
+            "业务一,{date},ORG1,示例机构,R001,示例地区,1,I001,指标一,余额,CNY,月,1,{amount}"
+        );
+        fs::write(path, format!("{}\n{row}\n", EXPECTED_HEADERS.join(","))).unwrap();
+    }
+
     #[test]
     fn served_page_is_original_markup_plus_runtime_bridge() {
         let served = render_index();
@@ -2087,6 +2519,7 @@ mod tests {
         assert!(served_markup.contains("本期数值核对文件（CSV/XLSX/XLS）"));
         assert!(!served_markup.contains("XLS/XLSX 尚未接通"));
         assert!(served.contains("window.bridge = { api: api }"));
+        assert!(super::ORIGINAL_HTML.contains("bridge.api.start_central_comparison()"));
         assert!(super::ORIGINAL_HTML.contains("bridge.api.start_central_explanation_export()"));
         assert!(super::ORIGINAL_HTML.contains("bridge.api.start_central_cross_period()"));
     }
@@ -2629,10 +3062,99 @@ mod tests {
     }
 
     #[test]
-    fn unsupported_frontend_methods_fail_explicitly() {
+    fn s3_execution_compare_reports_missing_gui_inputs() {
         let error = dispatch_api(&test_state(), "start_central_comparison", &[]).unwrap_err();
-        assert_eq!(error.status, axum::http::StatusCode::NOT_IMPLEMENTED);
-        assert!(error.message.contains("尚未实现接口"));
+        assert_eq!(error.status, axum::http::StatusCode::BAD_REQUEST);
+        assert!(error.message.contains("本期大集中数据"));
+    }
+
+    #[test]
+    fn s3_execution_compare_runs_through_the_existing_gui_api() {
+        let suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "audit_web_s3_execution_compare_{}_{}",
+            std::process::id(),
+            suffix
+        ));
+        fs::create_dir_all(&root).expect("create S3-F01 web test directory");
+        let current = root.join("current.csv");
+        let previous = root.join("previous.csv");
+        let common = root.join("3.0大集中通用配置.xlsx");
+        let feature = root.join("3.1大集中执行比较_配置.xlsx");
+        write_s3_execution_csv(&current, "2026-08-31", "1000");
+        write_s3_execution_csv(&previous, "2026-07-31", "900");
+        write_s3_execution_configs(&common, &feature);
+        let current_before = fs::read(&current).unwrap();
+        let previous_before = fs::read(&previous).unwrap();
+        let common_before = fs::read(&common).unwrap();
+        let feature_before = fs::read(&feature).unwrap();
+
+        let state = test_state();
+        for (field, path) in [
+            ("centralCur", &current),
+            ("centralPre", &previous),
+            ("centralCommonConfig", &common),
+            ("centralComparisonConfig", &feature),
+        ] {
+            dispatch_api(
+                &state,
+                "choose_central",
+                &[json!(field), json!(path.to_string_lossy())],
+            )
+            .unwrap_or_else(|error| panic!("select {field}: {}", error.message));
+        }
+        dispatch_api(
+            &state,
+            "update",
+            &[json!({"centralExpressionSchema": "FIVE_SEGMENT_V1"})],
+        )
+        .expect("set the legacy GUI expression schema");
+        assert_eq!(
+            dispatch_api(&state, "start_central_comparison", &[]).unwrap(),
+            json!(true)
+        );
+
+        let started = std::time::Instant::now();
+        while state.get_state()["busy"] == true && started.elapsed() < Duration::from_secs(10) {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let value = state.get_state();
+        assert_eq!(value["busy"], false, "background GUI task should finish");
+        assert_eq!(value["status"], "执行比较完成：1 行");
+        let output = PathBuf::from(
+            value["centralCompareFile"]
+                .as_str()
+                .expect("GUI should publish comparison output path"),
+        );
+        assert!(
+            output.is_file(),
+            "GUI task should create the result workbook"
+        );
+        assert_eq!(
+            value["centralFormOutput"],
+            output.parent().unwrap().to_string_lossy().as_ref()
+        );
+        let logs = value["log"].as_array().expect("GUI log array");
+        assert!(logs.iter().any(|entry| {
+            entry["detail"] == true
+                && entry["text"]
+                    .as_str()
+                    .is_some_and(|text| text.contains("writer=rust_xlsxwriter"))
+        }));
+        assert!(logs.iter().any(|entry| {
+            entry["detail"] == true
+                && entry["text"]
+                    .as_str()
+                    .is_some_and(|text| text.contains("S3-F01 完成：reader=calamine/csv"))
+        }));
+        assert_eq!(fs::read(&current).unwrap(), current_before);
+        assert_eq!(fs::read(&previous).unwrap(), previous_before);
+        assert_eq!(fs::read(&common).unwrap(), common_before);
+        assert_eq!(fs::read(&feature).unwrap(), feature_before);
+        fs::remove_dir_all(&root).expect("remove synthetic S3-F01 web test directory");
     }
 
     #[test]

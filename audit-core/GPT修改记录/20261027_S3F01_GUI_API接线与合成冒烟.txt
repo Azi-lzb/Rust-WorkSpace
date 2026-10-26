@@ -1,0 +1,23 @@
+日期：2026-10-27
+功能：S3-F01 既有 Audit GUI API 接线
+修改前 commit：5166723
+修改后 commit：本记录所属提交（SHA 由 Git 历史提供）
+工作树：audit-dev；保留已有 S1、S3、S5 等未提交修改，不将其纳入本功能提交。
+
+修改文件：
+- audit-core/src/web_bridge.rs：在原 GUI 的 start_central_comparison API 接入既有 run_execution_compare_files；本期/上期路径选择、3.0/3.1 配置默认路径、五段式/八段式模式、输出目录、后台任务、状态反馈及普通/开发者日志均接入。任务成功后发布结果路径，失败时明确报告；输入和配置只读。
+- audit-core/MIGRATION_INVENTORY.md：更新 S3-F01 状态证据，仍标为“迁移中”。
+- audit-core/GPT修改记录/20261027_S3F01_GUI_API接线与合成冒烟.txt：本记录。
+
+变化边界：复用现有 Rust S3-F01 规则和 XLSX writer；未修改 Excel-Core、Python 代码或配置格式；未改变 VBA/Office 迁移边界。组件版本：audit-core 0.1.0，未升级。
+
+验证：
+- Windows cargo test --offline --locked -p audit-core --lib web_bridge::tests::s3_execution_compare -- --nocapture：2 passed。覆盖必需输入错误，以及现有 GUI API 经后台线程生成 1 行 XLSX；检查结果路径、reader/writer 详情日志和四个输入/配置字节未变。合成输出临时生成后删除。
+- Windows cargo check --offline --locked -p audit-core --bin open-data-audit：通过。
+- Windows cargo build --offline --locked -p audit-core --bin open-data-audit：通过；生成 F:/RustBuild/audit/debug/open-data-audit.exe。
+- 生成二进制 open-data-audit.exe serve --help：通过，显示本地 GUI 服务默认端口 8750 和配置选项。
+- git diff --check：通过。
+
+未执行/限制：没有真实 S3 本期/上期数据，未做 Python/Rust 真实结果对拍；未进行人工浏览器操作验收；未进行 Linux、WSL、glibc 或 deb 验证。GUI 入口与合成冒烟通过不代表 S3-F01 整体业务验收通过。当前未申请新的共享 Excel-Core 能力。
+
+回滚：回退本功能提交或移除 web_bridge.rs 中 S3-F01 GUI 路由/后台接线及对应测试；不影响既有 S3-F01 CLI 和业务模块。删除清单：无。
