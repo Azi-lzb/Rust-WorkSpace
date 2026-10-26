@@ -1,0 +1,24 @@
+执行日期：2026-10-27（Asia/Shanghai）
+执行者：Codex（main）
+修改前 HEAD：9da78783c63cf41d65ff3b5310bcfab799f51a9d；修改后提交见本记录所在 Git 提交。
+WIP：保留 `crates/ooxml-patch/src/lib.rs` 未提交修改及 `HANDOFF_ZCODE_TO_CODEX.md` 未跟踪文件；未改写、暂存或提交它们。
+
+目的：回应 PyTools PT-2-4 的前导零格式复现。检查确认共享 API 已存在于 main/origin 的 `ecac5bd8e06a3865a676be7692677835d4f97654`，无需新增另一套接口；本次补齐 `000000` 自定义数字格式码的合成回归覆盖。
+
+修改文件：
+- `crates/excel-reader/src/lib.rs`
+- 本记录
+
+接口与修改内容：现有 `read_xlsx_cell_number_formats(path, requests)` 接收 `CellNumberFormatRequest { sheet_name, cell_reference }` 批量请求，返回 `CellNumberFormatInfo`，包含自定义 `format_code`。测试夹具新增数值 123、样式索引 3、numFmtId 165 和自定义格式 `000000`，断言 API 返回原格式码；仍覆盖 XLSX/XLSM、内置日期格式、未显式样式的默认 General 和缺失单元格默认样式。没有修改 Reader 默认路由、PyTools 业务调用、依赖或配置。
+
+验证：
+- `cargo fmt -p excel-reader -- --check`：通过。
+- `git diff --check -- crates/excel-reader/src/lib.rs`：通过。
+- 定向格式测试：通过（1/1）。
+- `cargo test --offline --locked -p excel-reader`：17 个单元测试、2 个集成测试通过；doc tests 0 项。
+
+未执行项与风险：没有修改 PyTools 业务 writer，因此 PT-2-4 尚未由产品链路修复或验收。PyTools Agent 需在安全同步 main 后调用现有 API，将返回的格式码映射到 rust_xlsxwriter 样式并完成自身对拍。此合成测试只验证 reader 返回格式元数据，不代表端到端输出保留已验收。
+
+组件版本：不升级。
+删除清单：无。
+回滚：仅回滚本次测试夹具与断言及本记录；保留已有 `ecac5bd8` reader API 和其他工作区 WIP。
