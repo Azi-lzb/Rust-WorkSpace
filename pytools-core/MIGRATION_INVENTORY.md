@@ -1070,3 +1070,9 @@ Windows 原生验证：`cargo fmt -p pytools-core -- --check`、`cargo check --o
 经 Rust 主菜单 `4 → 4 → 1` 选择现有 `.xls` 夹具，真实 Excel COM 输出 `.xlsx`，通过 sidecar 的工作表顺序/名称、值及公式文本校验，输入字节保持不变；经 `4 → 4 → 2` 选择由本机 Word 创建的临时 `.doc`，真实 Word COM 输出 `.docx`，通过 OOXML 包及正文文本校验。配置由 Rust `config-init` 在 F 盘临时目录创建。该证据是 Windows 引擎冒烟，不是 Python 输出对拍或真实用户文档保真验收。
 
 Windows 原生验证：`cargo fmt --manifest-path sidecar/lo-convert/Cargo.toml`；`cargo test --offline --locked -p lo-convert -j 1`（6 个单测 + 1 个集成测试通过）；`cargo build --offline --locked -p lo-convert -p pytools-core --bins -j 1` 通过。旧 `conversion_menu_cli` 集成目标为 2/10 通过、8 项失败；失败输入仍按旧菜单路径编号，进入新版 7 类菜单时被拒绝，另有一项返回文件不存在错误。本轮通过真实新版菜单路径单独验证了 XLS 和 DOC 转换，未改写其余旧路径测试。未验证 ET/WPS、真实业务 DOC、转换后样式/对象完整保留、旧 Python 与 Rust 输出对拍、LibreOffice/Linux、麒麟/UOS、glibc 2.28 或离线 deb；转换功能整体仍为“已实现，待 Windows 真实验收”。
+
+### 2026-10-27 V2 文件处理菜单回归用例校准
+
+将文件处理 CLI 集成用例的输入序列对齐当前 V2 子菜单：转换走 4→4→1/2，Sheet 改名走 4→5，内容命名走 4→3，提交检查走 4→6，排序前缀走 4→2→1/2。移除测试中已取消的同格式复制、内容前缀撤销、局部映射和菜单原生值转换行为，改为断言已取消入口不显示。转换本身仍通过上一条记录中的 Windows COM 实际菜单冒烟验证。
+
+Windows 原生验证：cargo fmt --manifest-path pytools-core/Cargo.toml -- --check；cargo test --offline --locked -p pytools-core --test conversion_menu_cli -j 1，10/10 通过；git diff --check 通过。此改动只校准过期菜单输入与 V2 范围断言，不改变生产业务实现或真实验收状态。

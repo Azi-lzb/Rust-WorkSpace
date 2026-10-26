@@ -47,7 +47,7 @@ impl Drop for TestDirectory {
 }
 
 #[test]
-fn interactive_conversion_menu_routes_all_ten_file_workflows() -> Result<()> {
+fn v2_file_menu_routes_supported_workflows() -> Result<()> {
     let root = TestDirectory::new()?;
     let config = create_config(root.path())?;
     let sources = root.path().join("sources");
@@ -66,30 +66,6 @@ fn interactive_conversion_menu_routes_all_ten_file_workflows() -> Result<()> {
     );
     assert!(renamed.is_file(), "folder input must expand to its files");
     assert_eq!(fs::read(&renamed)?, b"rename payload");
-
-    let excel_source = sources.join("excel-copy.xlsx");
-    create_source_workbook(&excel_source, "OldSheet")?;
-    let excel_conversion = run_action(&config, 2, 1, &excel_source)?;
-    assert!(
-        excel_conversion.status.success(),
-        "Excel conversion route failed: {}",
-        stderr(&excel_conversion)
-    );
-    let excel_copy = sources.join("xlsx").join("excel-copy.xlsx");
-    assert_eq!(fs::read(&excel_copy)?, fs::read(&excel_source)?);
-
-    let word_source = sources.join("word-copy.docx");
-    fs::write(&word_source, b"synthetic same-format copy route")?;
-    let word_conversion = run_action(&config, 3, 1, &word_source)?;
-    assert!(
-        word_conversion.status.success(),
-        "Word conversion route failed: {}",
-        stderr(&word_conversion)
-    );
-    assert_eq!(
-        fs::read(sources.join("docx").join("word-copy.docx"))?,
-        fs::read(&word_source)?
-    );
 
     let missing_sidecar = root.path().join("missing-lo-convert.exe");
     let legacy_excel_source = sources.join("needs-sidecar.xls");
@@ -160,31 +136,6 @@ fn interactive_conversion_menu_routes_all_ten_file_workflows() -> Result<()> {
         content_before
     );
 
-    let content_prefixed_source = sources.join("Bank_remove-content.xlsx");
-    create_source_workbook(&content_prefixed_source, "Plain")?;
-    let remove_content = run_action(&config, 6, 1, &content_prefixed_source)?;
-    assert!(
-        remove_content.status.success(),
-        "content prefix removal route failed: {}",
-        stderr(&remove_content)
-    );
-    assert!(sources.join("remove-content.xlsx").is_file());
-
-    let local_folder = sources.join("local-map-folder");
-    fs::create_dir_all(&local_folder)?;
-    let local_source = local_folder.join("before-local.txt");
-    fs::write(&local_source, b"local map payload")?;
-    let local_map = run_action(&config, 7, 2, &local_folder)?;
-    assert!(
-        local_map.status.success(),
-        "local map failed: {}",
-        stderr(&local_map)
-    );
-    assert_eq!(
-        fs::read(local_folder.join("after-local.txt"))?,
-        b"local map payload"
-    );
-
     let submission_dir = sources.join("submission-files");
     fs::create_dir_all(&submission_dir)?;
     for (name, bytes) in [
@@ -237,121 +188,14 @@ fn interactive_conversion_menu_routes_all_ten_file_workflows() -> Result<()> {
 }
 
 #[test]
-fn native_excel_conversion_menu_requires_confirmation_and_runs_xls_values() -> Result<()> {
+fn v2_file_menu_hides_native_value_conversion() -> Result<()> {
     let root = TestDirectory::new()?;
     let config = create_config(root.path())?;
-    let sources = root.path().join("sources");
-    fs::create_dir_all(&sources)?;
-
-    let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/timeline/wide_summary_legacy.xls");
-    let source = sources.join("legacy-values.xls");
-    fs::copy(&fixture, &source)?;
-    let source_before = fs::read(&source)?;
-
-    let declined = run_native_value_action(&config, &source, "no", "developer")?;
-    assert!(
-        declined.status.success(),
-        "decline failed: {}",
-        stderr(&declined)
-    );
-    let declined_output = String::from_utf8_lossy(&declined.stdout);
-    assert!(declined_output.contains("警告："));
-    assert!(declined_output.contains("已取消："));
-    assert!(!sources.join("xlsx").exists());
-    assert_eq!(fs::read(&source)?, source_before);
-
-    let converted = run_native_value_action(&config, &source, "yes", "developer")?;
-    assert!(
-        converted.status.success(),
-        "native XLS conversion failed: {}",
-        stderr(&converted)
-    );
-    let converted_output = String::from_utf8_lossy(&converted.stdout);
-    assert!(converted_output.contains("CSV 输入则将每个非空值作为文本写入"));
-    assert!(converted_output.contains("不会保留样式"));
-    assert!(converted_output.contains("也不会重算公式"));
-    assert!(converted_output.contains("ISO 日期/时长、错误值、空文本"));
-    assert!(converted_output.contains("1904 日期系统的 XLS/XLSM/XLSB"));
-
-    let report = output_json(&converted)?;
-    assert_eq!(report["converted"], 1);
-    assert_eq!(report["failed"], 0);
-    let output = PathBuf::from(
-        report["items"][0]["output"]
-            .as_str()
-            .context("native XLS output path missing")?,
-    );
-    assert_eq!(output, sources.join("xlsx").join("legacy-values.xlsx"));
-    assert!(report["items"][0]["detail"]
-        .as_str()
-        .is_some_and(|detail| detail.contains("native value-only conversion validated")));
-
-    let source_workbook = read_workbook(&source)?;
-    let output_workbook = read_workbook(&output)?;
-    assert_eq!(source_workbook.sheets.len(), output_workbook.sheets.len());
-    for (source_sheet, output_sheet) in source_workbook.sheets.iter().zip(&output_workbook.sheets) {
-        assert_eq!(source_sheet.name, output_sheet.name);
-        assert_eq!(
-            source_sheet.values.keys().collect::<Vec<_>>(),
-            output_sheet.values.keys().collect::<Vec<_>>()
-        );
-        for (address, source_value) in &source_sheet.values {
-            let output_value = &output_sheet.values[address];
-            let source_type = source_value["type"].as_str();
-            let output_type = output_value["type"].as_str();
-            if matches!(
-                (source_type, output_type),
-                (Some("integer"), Some("number")) | (Some("number"), Some("integer"))
-            ) {
-                assert_eq!(
-                    source_value["value"].as_f64(),
-                    output_value["value"].as_f64(),
-                    "numeric value differs at {}!{}",
-                    source_sheet.name,
-                    address
-                );
-            } else {
-                assert_eq!(
-                    source_value, output_value,
-                    "cell value differs at {}!{}",
-                    source_sheet.name, address
-                );
-            }
-        }
-        assert_eq!(source_sheet.formulas, output_sheet.formulas);
-    }
-
-    let history_path = PathBuf::from(
-        report["run_history_path"]
-            .as_str()
-            .context("native conversion history path missing")?,
-    );
-    let history: Value = serde_json::from_slice(&fs::read(history_path)?)?;
-    assert_eq!(history["feature_id"], "PT-4-2");
-    assert!(history["actual_engines"]
-        .as_array()
-        .is_some_and(|engines| engines
-            .iter()
-            .any(|engine| engine == "calamine + rust_xlsxwriter")));
-    let conversion_event = history["events"]
-        .as_array()
-        .and_then(|events| {
-            events.iter().find(|event| {
-                event["phase"] == "convert_file"
-                    && event["status"] == "completed"
-                    && event["actual_engine"] == "calamine + rust_xlsxwriter"
-            })
-        })
-        .context("native conversion completion event missing")?;
-    for component in ["excel-reader/calamine", "excel-writer/rust_xlsxwriter"] {
-        assert!(conversion_event["components"]
-            .as_array()
-            .is_some_and(|components| components.iter().any(|value| value == component)));
-    }
-    assert!(!serde_json::to_string(&history)?.contains("legacy-values.xls"));
-    assert_eq!(fs::read(&source)?, source_before);
-
+    let output = run_menu(&config, "4\n0\n0\n")?;
+    assert!(output.status.success(), "menu failed: {}", stderr(&output));
+    let menu = String::from_utf8_lossy(&output.stdout);
+    assert!(menu.contains("Office 格式转换（XLS / ET → XLSX，DOC → DOCX）"));
+    assert!(!menu.contains("批量原生值转换"));
     Ok(())
 }
 
@@ -381,54 +225,22 @@ fn conversion_menu_and_cli_emit_redacted_dual_view_progress() -> Result<()> {
     let log_dir = root.path().join("logs");
     fs::create_dir_all(&sources)?;
 
-    let user_dir = sources.join("user");
-    fs::create_dir_all(&user_dir)?;
-    let user_source = user_dir.join("user-private-report.xlsx");
-    create_source_workbook(&user_source, "Other")?;
-    let user = run_action_with_log_view(&config, 2, 1, &user_source, "user")?;
+    let user_source = sources.join("user-private-report.csv");
+    fs::write(&user_source, "Region,Value\nNorth,17\n")?;
+    let user_output_dir = root.path().join("user-output");
+    let user = run_convert_excel_cli(&config, &user_source, &user_output_dir, "native", "user")?;
     assert!(
         user.status.success(),
         "user conversion failed: {}",
         stderr(&user)
     );
-    assert!(user_dir
-        .join("xlsx")
-        .join("user-private-report.xlsx")
-        .is_file());
+    assert!(user_output_dir.join("user-private-report.xlsx").is_file());
     let user_stderr = stderr(&user);
     assert!(user_stderr.contains("已发现 1 个待处理文件"));
     assert!(user_stderr.contains("正在处理第 1/1 个文件"));
     assert!(user_stderr.contains("转换结束：成功 1，失败 0"));
     assert!(!user_stderr.contains("user-private-report"));
     assert_eq!(fs::read_dir(&log_dir)?.count(), 0);
-
-    let word_source = sources.join("word-private-copy.docx");
-    fs::write(&word_source, b"synthetic same-format Word copy")?;
-    let word = run_action_with_log_view(&config, 3, 1, &word_source, "developer")?;
-    assert!(
-        word.status.success(),
-        "Word conversion failed: {}",
-        stderr(&word)
-    );
-    assert_eq!(
-        fs::read(sources.join("docx").join("word-private-copy.docx"))?,
-        fs::read(&word_source)?
-    );
-    let word_report = output_json(&word)?;
-    let word_history_path = PathBuf::from(
-        word_report["run_history_path"]
-            .as_str()
-            .context("Word conversion history path missing")?,
-    );
-    let word_history_bytes = fs::read(word_history_path)?;
-    let word_history_text = String::from_utf8_lossy(&word_history_bytes);
-    assert!(!word_history_text.contains(&word_source.display().to_string()));
-    assert!(!word_history_text.contains("word-private-copy.docx"));
-    let word_history: Value = serde_json::from_slice(&word_history_bytes)?;
-    assert_eq!(word_history["feature_id"], "PT-4-3");
-    assert!(word_history["actual_engines"]
-        .as_array()
-        .is_some_and(|engines| engines.iter().any(|engine| engine == "Rust std::fs::copy")));
 
     let native_source = sources.join("native-private.csv");
     fs::write(&native_source, "Region,Value\nNorth,17\n")?;
@@ -481,18 +293,17 @@ fn conversion_menu_and_cli_emit_redacted_dual_view_progress() -> Result<()> {
     }));
     assert!(stderr(&native).contains("\"feature_id\":\"PT-4-2\""));
 
-    let off_dir = sources.join("off");
-    fs::create_dir_all(&off_dir)?;
-    let off_source = off_dir.join("off-private.xlsx");
-    create_source_workbook(&off_source, "Other")?;
+    let off_source = sources.join("off-private.csv");
+    fs::write(&off_source, "Region,Value\nSouth,19\n")?;
+    let off_output_dir = root.path().join("off-output");
     let history_count = fs::read_dir(&log_dir)?.count();
-    let off = run_action_with_log_view(&config, 2, 1, &off_source, "off")?;
+    let off = run_convert_excel_cli(&config, &off_source, &off_output_dir, "native", "off")?;
     assert!(
         off.status.success(),
         "off conversion failed: {}",
         stderr(&off)
     );
-    assert!(off_dir.join("xlsx").join("off-private.xlsx").is_file());
+    assert!(off_output_dir.join("off-private.xlsx").is_file());
     assert!(stderr(&off).is_empty());
     assert_eq!(fs::read_dir(&log_dir)?.count(), history_count);
 
@@ -689,7 +500,7 @@ fn file_sort_menu_supports_user_developer_and_off_progress_views() -> Result<()>
 }
 
 #[test]
-fn content_prefix_menu_logs_user_developer_and_off_views() -> Result<()> {
+fn workbook_content_naming_menu_logs_user_developer_and_off_views() -> Result<()> {
     let root = TestDirectory::new()?;
     let config = create_config(root.path())?;
     let sources = root.path().join("sources");
@@ -714,16 +525,16 @@ fn content_prefix_menu_logs_user_developer_and_off_views() -> Result<()> {
     assert!(!user_stderr.contains("content-user.xlsx"));
     assert_eq!(fs::read_dir(&log_dir)?.count(), 0);
 
-    let developer_source = sources.join("Bank_content-developer.xlsx");
+    let developer_source = sources.join("content-developer.xlsx");
     create_source_workbook(&developer_source, "Plain")?;
     let developer_source_bytes = fs::read(&developer_source)?;
-    let developer = run_action_with_log_view(&config, 6, 1, &developer_source, "developer")?;
+    let developer = run_action_with_log_view(&config, 5, 1, &developer_source, "developer")?;
     assert!(
         developer.status.success(),
         "developer view failed: {}",
         stderr(&developer)
     );
-    let developer_target = sources.join("content-developer.xlsx");
+    let developer_target = sources.join("Bank_content-developer.xlsx");
     assert_eq!(fs::read(&developer_target)?, developer_source_bytes);
     let developer_report = output_json(&developer)?;
     assert_eq!(developer_report["ok"], 1);
@@ -737,10 +548,9 @@ fn content_prefix_menu_logs_user_developer_and_off_views() -> Result<()> {
     assert!(!history_text.contains(&developer_source.display().to_string()));
     assert!(!history_text.contains("Bank_content-developer.xlsx"));
     assert!(!history_text.contains("content-developer.xlsx"));
-    assert!(!history_text.contains("Bank"));
     let history: Value = serde_json::from_slice(&history_bytes)?;
-    assert_eq!(history["feature_id"], "PT-4-7");
-    assert_eq!(history["function"], "unrename-by-content");
+    assert_eq!(history["feature_id"], "PT-4-6");
+    assert_eq!(history["function"], "rename-by-content");
     assert_eq!(history["status"], "succeeded");
     assert!(history["total_elapsed_ms"].is_number());
     let events = history["events"].as_array().context("events missing")?;
@@ -769,7 +579,7 @@ fn content_prefix_menu_logs_user_developer_and_off_views() -> Result<()> {
                 && event["stage_elapsed_ms"].is_number()
         }));
     }
-    assert!(stderr(&developer).contains("\"feature_id\":\"PT-4-7\""));
+    assert!(stderr(&developer).contains("\"feature_id\":\"PT-4-6\""));
 
     let history_count = fs::read_dir(&log_dir)?.count();
     let off_source = sources.join("content-off.xlsx");
@@ -785,103 +595,15 @@ fn content_prefix_menu_logs_user_developer_and_off_views() -> Result<()> {
 }
 
 #[test]
-fn local_filename_map_menu_logs_user_developer_and_off_views() -> Result<()> {
+fn v2_file_menu_hides_cancelled_local_mapping() -> Result<()> {
     let root = TestDirectory::new()?;
     let config = create_config(root.path())?;
-    let sources = root.path().join("sources");
-    fs::create_dir_all(&sources)?;
-    let log_dir = root.path().join("logs");
-
-    let user_source = sources.join("before-local-user.txt");
-    fs::write(&user_source, b"local map payload")?;
-    let user = run_action_with_log_view(&config, 7, 1, &user_source, "user")?;
-    assert!(user.status.success(), "user view failed: {}", stderr(&user));
-    assert_eq!(
-        fs::read(sources.join("after-local-user.txt"))?,
-        b"local map payload"
-    );
-    let user_report = output_json(&user)?;
-    assert_eq!(user_report["ok"], 1);
-    assert_eq!(user_report["rules"], 2);
-    assert!(user_report.get("run_history_path").is_none());
-    let user_stderr = stderr(&user);
-    assert!(user_stderr.contains("正在读取局部文件名映射配置"));
-    assert!(user_stderr.contains("已处理 1/1 个文件"));
-    assert!(user_stderr.contains("阶段用时"));
-    assert!(!user_stderr.contains(&user_source.display().to_string()));
-    assert!(!user_stderr.contains("before-local-user.txt"));
-    assert_eq!(fs::read_dir(&log_dir)?.count(), 0);
-
-    let developer_source = sources.join("before-local-developer.txt");
-    fs::write(&developer_source, b"local map payload")?;
-    let developer = run_action_with_log_view(&config, 7, 1, &developer_source, "developer")?;
-    assert!(
-        developer.status.success(),
-        "developer view failed: {}",
-        stderr(&developer)
-    );
-    assert_eq!(
-        fs::read(sources.join("after-local-developer.txt"))?,
-        b"local map payload"
-    );
-    let developer_report = output_json(&developer)?;
-    assert_eq!(developer_report["ok"], 1);
-    let history_path = PathBuf::from(
-        developer_report["run_history_path"]
-            .as_str()
-            .context("local-map history path missing")?,
-    );
-    let history_bytes = fs::read(&history_path)?;
-    let history_text = String::from_utf8_lossy(&history_bytes);
-    assert!(!history_text.contains(&developer_source.display().to_string()));
-    assert!(!history_text.contains("before-local-developer.txt"));
-    assert!(!history_text.contains("after-local-developer.txt"));
-    let history: Value = serde_json::from_slice(&history_bytes)?;
-    assert_eq!(history["feature_id"], "PT-4-8");
-    assert_eq!(history["function"], "rename-local-map");
-    assert_eq!(history["status"], "succeeded");
-    assert!(history["total_elapsed_ms"].is_number());
-    let events = history["events"].as_array().context("events missing")?;
-    assert!(events
-        .iter()
-        .any(|event| event["phase"] == "configuration_read"));
-    assert!(events
-        .iter()
-        .any(|event| event["phase"] == "file_processing"));
-    assert!(events.iter().any(|event| event["phase"] == "task"));
-    assert_eq!(events.last().unwrap()["completed_files"], 1);
-    for engine in ["Calamine", "RustFilesystem"] {
-        assert!(
-            history["actual_engines"]
-                .as_array()
-                .context("actual_engines missing")?
-                .iter()
-                .any(|actual| actual == engine),
-            "missing engine {engine}"
-        );
-    }
-    for phase in ["configuration_read", "file_processing", "task"] {
-        assert!(events.iter().any(|event| {
-            event["phase"] == phase
-                && event["status"] == "completed"
-                && event["stage_elapsed_ms"].is_number()
-        }));
-    }
-    assert!(stderr(&developer).contains("\"feature_id\":\"PT-4-8\""));
-
-    let history_count = fs::read_dir(&log_dir)?.count();
-    let off_source = sources.join("before-local-off.txt");
-    fs::write(&off_source, b"local map payload")?;
-    let off = run_action_with_log_view(&config, 7, 1, &off_source, "off")?;
-    assert!(off.status.success(), "off view failed: {}", stderr(&off));
-    assert_eq!(
-        fs::read(sources.join("after-local-off.txt"))?,
-        b"local map payload"
-    );
-    assert!(stderr(&off).is_empty());
-    assert_eq!(fs::read_dir(&log_dir)?.count(), history_count);
-    assert!(output_json(&off)?.get("run_history_path").is_none());
-
+    let output = run_menu(&config, "4\n0\n0\n")?;
+    assert!(output.status.success(), "menu failed: {}", stderr(&output));
+    let menu = String::from_utf8_lossy(&output.stdout);
+    assert!(menu.contains("机构提交完整性检查"));
+    assert!(!menu.contains("局部文件名映射"));
+    assert!(!menu.contains("取消内容前缀"));
     Ok(())
 }
 
@@ -1129,33 +851,27 @@ fn run_sheet_rename_menu(
         .arg(SHEET_RENAME_PLATFORM)
         .arg("--log-view")
         .arg("off");
-    let menu_input = format!("4\n4\n1\n{}\n{confirmation}\n0\n", input.display());
+    let menu_input = format!("4\n5\n1\n{}\n{confirmation}\n0\n0\n", input.display());
     finish_menu(child, &menu_input)
 }
 
-fn run_action(config: &Path, action: u8, mode: u8, selected: &Path) -> Result<Output> {
-    let input = format!("4\n{action}\n{mode}\n{}\n0\n", selected.display());
-    run_menu(config, &input)
+fn menu_input_for_action(action: u8, mode: u8, selected: &Path) -> String {
+    let path = selected.display();
+    match action {
+        1 => format!("4\n1\n{mode}\n{path}\n0\n0\n"),
+        2 => format!("4\n4\n1\n1\n{path}\n0\n0\n"),
+        3 => format!("4\n4\n2\n1\n{path}\n0\n0\n"),
+        4 => format!("4\n5\n1\n{path}\n0\n0\n"),
+        5 => format!("4\n3\n{mode}\n{path}\n0\n0\n"),
+        8 => format!("4\n6\n{mode}\n{path}\n0\n0\n"),
+        9 => format!("4\n2\n1\n{mode}\n{path}\n0\n0\n"),
+        10 => format!("4\n2\n2\n{mode}\n{path}\n0\n0\n"),
+        _ => panic!("action {action} is not exposed by the V2 file menu"),
+    }
 }
 
-fn run_native_value_action(
-    config: &Path,
-    selected: &Path,
-    confirmation: &str,
-    log_view: &str,
-) -> Result<Output> {
-    let confirmed = matches!(
-        confirmation.trim().to_ascii_lowercase().as_str(),
-        "y" | "yes" | "是"
-    );
-    let input = if confirmed {
-        format!("4\n11\n{confirmation}\n1\n{}\n0\n0\n", selected.display())
-    } else {
-        format!("4\n11\n{confirmation}\n0\n0\n")
-    };
-    let mut child = menu_command(config);
-    child.arg("--log-view").arg(log_view);
-    finish_menu(child, &input)
+fn run_action(config: &Path, action: u8, mode: u8, selected: &Path) -> Result<Output> {
+    run_menu(config, &menu_input_for_action(action, mode, selected))
 }
 
 fn run_action_with_log_view(
@@ -1165,7 +881,7 @@ fn run_action_with_log_view(
     selected: &Path,
     log_view: &str,
 ) -> Result<Output> {
-    let input = format!("4\n{action}\n{mode}\n{}\n0\n", selected.display());
+    let input = menu_input_for_action(action, mode, selected);
     let mut child = menu_command(config);
     child.arg("--log-view").arg(log_view);
     finish_menu(child, &input)
@@ -1178,7 +894,7 @@ fn run_action_with_sidecar(
     selected: &Path,
     sidecar: &Path,
 ) -> Result<Output> {
-    let input = format!("4\n{action}\n{mode}\n{}\n0\n", selected.display());
+    let input = menu_input_for_action(action, mode, selected);
     let mut child = menu_command(config);
     child.env("PYTOOLS_LO_CONVERT", sidecar);
     finish_menu(child, &input)
@@ -1192,7 +908,7 @@ fn run_action_with_sidecar_and_log_view(
     sidecar: &Path,
     log_view: &str,
 ) -> Result<Output> {
-    let input = format!("4\n{action}\n{mode}\n{}\n0\n", selected.display());
+    let input = menu_input_for_action(action, mode, selected);
     let mut child = menu_command(config);
     child
         .env("PYTOOLS_LO_CONVERT", sidecar)
