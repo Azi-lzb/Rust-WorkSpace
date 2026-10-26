@@ -1,0 +1,23 @@
+执行日期：2026-10-27（Asia/Shanghai）
+执行者：Codex（main）
+修改前 HEAD：5b105c7641e1149ab361ac703db785feb62b90b2；修改后提交见本记录所在 Git 提交。
+WIP：保留 `crates/ooxml-patch/src/lib.rs` 未提交修改及 `HANDOFF_ZCODE_TO_CODEX.md` 未跟踪文件；未改写、暂存或提交它们。
+
+目的：处理 PyTools PT-2-4 提出的行/列默认数字格式缺口。现有 `read_xlsx_cell_number_formats` 对无 cell `s` 的请求会返回 General，可能掩盖 row/column 默认样式并导致前导零显示丢失。
+
+修改文件：
+- `crates/excel-reader/src/lib.rs`
+- 本记录
+
+修改内容：现有 API 在请求单元格没有显式 cell `s` 时，检查匹配 worksheet row（仅 `customFormat=1/true`）和覆盖该列的 `<col min/max style>`。若存在适用默认样式，返回包含工作表、坐标和样式来源的错误，要求调用方 fail closed；不猜测 row 与 column 冲突时的 Excel 优先级。显式 cell `s`（包括 s=0）仍按原路径返回；无 row/column 样式时仍使用默认 style 0。新增 XLSX/XLSM 合成测试覆盖行/列继承失败、customFormat=0 忽略、显式 cell 样式覆盖行列样式。
+
+验证：
+- `cargo fmt -p excel-reader -- --check`：通过。
+- `git diff --check -- crates/excel-reader/src/lib.rs`：通过。
+- `cargo test --offline --locked -p excel-reader`：18 个单元测试、2 个集成测试通过；doc tests 0 项。
+
+未执行项与风险：没有修改 PyTools writer，也没有在 PyTools 工作树运行真实产品输出对拍。PT-2-4 的直接 cell `000000` 路径已由 PyTools Agent 报告通过；本次仅让未解析的继承样式请求安全失败。PT-2-4 的继承样式实际输出语义仍需 PyTools 使用其合成样本复验；本提交不声明 row/column 样式解析或优先级已实现。
+
+组件版本：不升级。
+删除清单：无。
+回滚：仅回滚本次 reader 检测与回归测试及本记录；保留已存在的 `read_xlsx_cell_number_formats` API、其他提交和工作区 WIP。
