@@ -1,0 +1,23 @@
+时间：2026-10-26 18:24（Asia/Shanghai）
+执行者：Codex
+分支：codex/windows-operable-entries
+修改前 commit：1682d14a38145e76cb5db6de4e1c18f8d2178e99；工作树干净
+修改后 commit：本次记录所在提交
+
+目的：复核复用旧 Audit 页面与 Rust S2 bridge 的 Windows GUI 启动入口；不改前端、业务流程或共享 Excel-Core。
+
+文件：
+- `audit-core/MIGRATION_INVENTORY.md`：补充本轮入口复核证据，真实 S2 状态保持未验收。
+- 本记录。
+
+Rust 业务入口：`open-data-audit-gui` 本机 loopback HTTP bridge；实际复用随仓旧 HTML，由系统浏览器展示。源 Python 项目和原页面均未修改。
+
+验证：
+- Windows Rust 1.99.1 Release 联合构建通过；设置 `CARGO_TARGET_DIR` 到上述独立目录后，`cargo test --locked --offline -p audit-core --lib web_bridge::tests -- --nocapture`：9/9 通过。
+- 直接启动独立 Release GUI bridge：原页面标题与 bridge 存在；`GET /`、`POST /api/get_state`、`POST /api/check_period_audit_config` 均 200；未迁移 `recognize` 为 HTTP 501 且提示明确。
+- 9 项测试含合成 S2 GUI 调用，生成结果报告并检查输入副本 SHA-256 未变；不是真实业务审核。
+- 可执行文件：`F:\CodexBuilds\windows-operable-entries-20261026-final\release\open-data-audit-gui.exe`。
+
+未执行/已知问题：本轮 bridge 烟测使用 `--no-browser`；系统浏览器默认启动已有此前复核证据，本轮未重复打开桌面浏览器。S1-F01、S3/S4/S5 GUI 工作流仍未接线；S2 真实业务验收及 Linux/deb 未执行。普通浏览器壳不是嵌入式 pywebview 窗口，入口说明保持透明。
+
+回滚：还原本记录及迁移清单新增行即可；没有业务代码、真实工作簿或共享 crate 改动。
