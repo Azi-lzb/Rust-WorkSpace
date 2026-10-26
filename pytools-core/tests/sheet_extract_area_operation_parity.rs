@@ -1648,18 +1648,23 @@ fn append_mode_creates_a_missing_output_and_unsupported_operations_are_rejected_
     duration_task.area_spec = "A1".to_owned();
     duration_task.output_name = "duration-output.xlsx".to_owned();
     let duration_output = root.join("duration-output");
-    let duration_error = run_extract_sheets_area_candidate(
+    let duration_result = run_extract_sheets_area_candidate(
         std::slice::from_ref(&duration_source),
         &[duration_task],
         &duration_output,
         false,
         Some("unused.xlsx"),
     )
-    .unwrap_err();
-    assert!(format!("{duration_error:#}").contains("calendar-versus-duration metadata"));
-    assert!(!duration_output
-        .join("区域提取/duration-output.xlsx")
-        .exists());
+    .unwrap();
+    assert_eq!(duration_result.extracted_sheets, 1);
+    let duration_output_path = duration_output.join("区域提取/duration-output.xlsx");
+    assert!(duration_output_path.is_file());
+    let duration_sheets = read_value_columns_with_iso_dates(&duration_output_path, 16_384).unwrap();
+    assert_eq!(duration_sheets.len(), 1);
+    assert!(matches!(
+        duration_sheets[0].values.get("A1"),
+        Some(CellValue::DateTimeSerial(value)) if (*value - 1.5).abs() < 1e-15
+    ));
 
     let collision_dir = root.join("collision");
     let collision_path = collision_dir.join("区域提取/area-result.xlsx");
@@ -1713,5 +1718,50 @@ fn interactive_menu_extracts_calendar_datetime_values() {
         ))
     );
     assert_eq!(fs::read(source).unwrap(), original_source);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn interactive_menu_extracts_elapsed_duration_values() {
+    let root = temporary_directory("sheet-extract-duration-menu");
+    let source = root.join("duration-source.xlsx");
+    let mut source_workbook = rust_xlsxwriter::Workbook::new();
+    let duration_format = rust_xlsxwriter::Format::new().set_num_format("[hh]:mm:ss");
+    let source_values = [1.5, 27.25, -0.25];
+    let source_sheet = source_workbook.add_worksheet();
+    for (row, value) in source_values.iter().copied().enumerate() {
+        source_sheet
+            .write_number_with_format(row as u32, 0, value, &duration_format)
+            .unwrap();
+    }
+    source_workbook.save(&source).unwrap();
+    let source_bytes = fs::read(&source).unwrap();
+
+    let mut task = load_tasks(&cases())[0].clone();
+    task.workbook_keywords.clear();
+    task.sheet_keywords.clear();
+    task.exclude_keywords.clear();
+    task.area_spec = "A1:A3".to_owned();
+    task.output_folder = "时长提取".to_owned();
+    task.output_name = "duration-output.xlsx".to_owned();
+    let config = create_menu_config(&root, &[task]);
+    let output = run_menu(&config, &format!("7\n6\nn\n{}\n", source.display()));
+    assert!(
+        output.status.success(),
+        "duration extraction menu failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let output_path = root.join("app/output/时长提取/duration-output.xlsx");
+    assert!(output_path.is_file());
+    let output_sheets = read_value_columns_with_iso_dates(&output_path, 16_384).unwrap();
+    assert_eq!(output_sheets.len(), 1);
+    for (row, expected) in source_values.into_iter().enumerate() {
+        assert!(matches!(
+            output_sheets[0].values.get(&format!("A{}", row + 1)),
+            Some(CellValue::DateTimeSerial(value)) if (*value - expected).abs() < 1e-15
+        ));
+    }
+    assert_eq!(fs::read(source).unwrap(), source_bytes);
     fs::remove_dir_all(root).unwrap();
 }

@@ -1,0 +1,18 @@
+修改前：分支 `pytools-dev`，HEAD `63638a2`，与 `origin/pytools-dev` 同步。保留既有未提交的迁移清单 16 行及三个未跟踪交接/缺陷记录；本次未清理或覆盖。
+
+修改文件：
+- `pytools-core/src/sheet_extract.rs`：区域提取写入器将共享 reader 的 `datetime_serial`（该读取路径中表示 Calamine 识别出的累计时长）写成带 `[hh]:mm:ss` 格式的时长数值；按 Python `timedelta` 微秒舍入和 openpyxl 毫秒 ties-to-even 读回语义归一化，并拒绝非有限或超出 openpyxl 时长范围的值。ISO-typed duration 和可能混淆的 time-only 日历值仍失败关闭。
+- `pytools-core/tests/sheet_extract_area_operation_parity.rs`：把现有累计时长失败测试改为成功回归，新增真实菜单 7→6 路径测试并确认源文件字节不变。
+- `pytools-core/probe/compare_sheet_extract_area_durations.py`、`pytools-core/probe/reports/sheet_extract_elapsed_duration_parity_20261026.json`：新增只读 PyCode `run_extract_sheets` 与 Rust CLI 合成对拍。
+- `pytools-core/MIGRATION_INVENTORY.md`：追加该子集证据；PT-7-6 整体仍未验收。
+
+验证（Windows 原生，CARGO_TARGET_DIR 指向 F 盘归档目录）：
+- `cargo fmt --manifest-path pytools-core/Cargo.toml -- --check`：通过。
+- `cargo test --offline --locked -p pytools-core --lib sheet_extract::duration_tests -j 1`：2/2 通过。
+- `cargo test --offline --locked -p pytools-core --test sheet_extract_area_operation_parity -j 1`：13/13 通过，包含真实菜单 7→6 路由。
+- `cargo build --offline --locked -p pytools-core --bin pytools -j 1`：通过。
+- `compare_sheet_extract_area_durations.py`：9 个合成累计时长值（含超过 24 小时、负值和毫秒边界）的 Python/Rust 输出工作簿投影逐格一致；包括 `timedelta` 类型和值及 `[hh]:mm:ss` 格式；两边失败文件数均为 0，源文件未变。
+
+未执行：真实业务工作簿验收、time-only 与 ISO-typed duration 成功迁移、其他输入格式、完整工作簿保真、Linux/glibc 2.28、麒麟/UOS 和 deb 离线交付。合成对拍不代表真实业务或平台验收，PT-7-6 整体状态不升级。
+
+回滚：只撤回本记录所列 Rust 写入逻辑、对应集成测试、新增 probe/report 与本清单段落；保留开始前所有 WIP。

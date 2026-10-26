@@ -1,0 +1,88 @@
+{
+  "schema_version": 1,
+  "status": "passed",
+  "feature": "PT-7-6 area extraction elapsed duration subset",
+  "sample_kind": "synthetic XLSX generated with openpyxl timedelta values",
+  "source_python": "PyCode/core/feature_1_6_extract_sheets.py::run_extract_sheets",
+  "rust_entry": "pytools extract-sheets-area",
+  "python_stats": {
+    "files": 1,
+    "extracted_sheets": 1,
+    "output_files": 1,
+    "failed_files": 0
+  },
+  "rust_stats": {
+    "files": 1,
+    "extracted_sheets": 1,
+    "output_files": 1,
+    "failed_files": 0
+  },
+  "output_projection": {
+    "sheet_names": [
+      "时长源"
+    ],
+    "sheets": [
+      {
+        "name": "时长源",
+        "cells": [
+          {
+            "cell": "A1",
+            "type": "timedelta",
+            "value": "1 day, 2:03:04.123000",
+            "number_format": "[hh]:mm:ss"
+          },
+          {
+            "cell": "A2",
+            "type": "timedelta",
+            "value": "1 day, 3:12:01.002000",
+            "number_format": "[hh]:mm:ss"
+          },
+          {
+            "cell": "A3",
+            "type": "timedelta",
+            "value": "0:00:00",
+            "number_format": "[hh]:mm:ss"
+          },
+          {
+            "cell": "A4",
+            "type": "timedelta",
+            "value": "0:00:00.002000",
+            "number_format": "[hh]:mm:ss"
+          },
+          {
+            "cell": "A5",
+            "type": "timedelta",
+            "value": "0:00:00.002000",
+            "number_format": "[hh]:mm:ss"
+          },
+          {
+            "cell": "A6",
+            "type": "timedelta",
+            "value": "0:00:00.004000",
+            "number_format": "[hh]:mm:ss"
+          },
+          {
+            "cell": "A7",
+            "type": "timedelta",
+            "value": "0:00:00",
+            "number_format": "[hh]:mm:ss"
+          },
+          {
+            "cell": "A8",
+            "type": "timedelta",
+            "value": "-1 day, 23:59:59.998000",
+            "number_format": "[hh]:mm:ss"
+          },
+          {
+            "cell": "A9",
+            "type": "timedelta",
+            "value": "-2 days, 3:04:05.123000",
+            "number_format": "[hh]:mm:ss"
+          }
+        ]
+      }
+    ]
+  },
+  "source_unchanged": true,
+  "scope_note": "Synthetic parity only. Real business workbooks, time-only cells, ISO-typed durations, non-XLSX inputs, and platform delivery remain unverified."
+}

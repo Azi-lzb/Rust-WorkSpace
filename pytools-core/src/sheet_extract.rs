@@ -971,6 +971,7 @@ where
                     let mut max_row = 0;
                     let mut max_column = 0;
                     let datetime_format = Format::new().set_num_format("yyyy-mm-dd h:mm:ss");
+                    let duration_format = Format::new().set_num_format("[hh]:mm:ss");
                     for (row_index, row) in values.iter().enumerate() {
                         for (column_index, value) in row.iter().enumerate() {
                             let Some(value) = value.as_ref() else {
@@ -983,15 +984,22 @@ where
                                 .context("extracted worksheet exceeds Excel row index range")?;
                             let column = u16::try_from(column_index)
                                 .context("extracted worksheet exceeds Excel column index range")?;
-                            write_extracted_value(worksheet, row, column, value, &datetime_format)
-                                .with_context(|| {
-                                    format!(
-                                        "write extracted value at {}{} from worksheet {:?}",
-                                        column_name(column_index + 1),
-                                        row_index + 1,
-                                        source_sheet.name
-                                    )
-                                })?;
+                            write_extracted_value(
+                                worksheet,
+                                row,
+                                column,
+                                value,
+                                &datetime_format,
+                                &duration_format,
+                            )
+                            .with_context(|| {
+                                format!(
+                                    "write extracted value at {}{} from worksheet {:?}",
+                                    column_name(column_index + 1),
+                                    row_index + 1,
+                                    source_sheet.name
+                                )
+                            })?;
                             non_empty_cells += 1;
                             max_row = max_row.max(row_index + 1);
                             max_column = max_column.max(column_index + 1);
@@ -1597,6 +1605,7 @@ fn write_extracted_value(
     column: u16,
     value: &Value,
     datetime_format: &Format,
+    duration_format: &Format,
 ) -> Result<()> {
     let cell_value = CellValue::from_probe_json(value)?;
     match cell_value {
@@ -1623,8 +1632,15 @@ fn write_extracted_value(
             let datetime = parse_extracted_calendar_datetime(&value)?;
             worksheet.write_datetime_with_format(row, column, &datetime, datetime_format)?;
         }
-        CellValue::DateTimeSerial(_) | CellValue::DurationIso(_) => {
-            bail!("date/time serial lacks calendar-versus-duration metadata; output was not committed")
+        CellValue::DateTimeSerial(serial) => {
+            // This flow reads through `read_value_columns_with_iso_dates`: its
+            // calendar values are DateTimeIso, while Calamine's elapsed
+            // durations remain DateTimeSerial.
+            let serial = normalize_openpyxl_duration_serial(serial)?;
+            worksheet.write_number_with_format(row, column, serial, duration_format)?;
+        }
+        CellValue::DurationIso(_) => {
+            bail!("ISO-typed duration values are unsupported by the area-only writer; output was not committed")
         }
         CellValue::Error(_) => {
             bail!("unsupported cell type for the area-only writer; output was not committed")
@@ -1660,6 +1676,101 @@ fn parse_extracted_calendar_datetime(value: &str) -> Result<ExcelDateTime> {
         "date/time uses an Excel epoch day that is ambiguous with a time-only value; output was not committed"
     );
     ExcelDateTime::parse_from_str(value).context("parse extracted Excel calendar date/time")
+}
+
+fn normalize_openpyxl_duration_serial(value: f64) -> Result<f64> {
+    const MAX_TIMEDELTA_DAYS: f64 = 999_999_999.0;
+    const MICROSECONDS_PER_DAY: f64 = 86_400_000_000.0;
+    const MICROSECONDS_PER_SECOND: u64 = 1_000_000;
+    const MICROSECONDS_PER_MILLISECOND: u64 = 1_000;
+    const SECONDS_PER_DAY: u64 = 86_400;
+
+    ensure!(
+        value.is_finite(),
+        "non-finite elapsed duration is unsupported"
+    );
+    let mut days = value.floor();
+    ensure!(
+        (-MAX_TIMEDELTA_DAYS..=MAX_TIMEDELTA_DAYS).contains(&days),
+        "elapsed duration exceeds openpyxl timedelta range"
+    );
+
+    // Python timedelta first rounds fractional days to microseconds. Openpyxl
+    // then rounds that remainder to milliseconds when reading an Excel
+    // duration. Preserve both ties-to-even steps, including negative values.
+    let fractional_microseconds = ((value - days) * MICROSECONDS_PER_DAY).round_ties_even();
+    ensure!(
+        fractional_microseconds.is_finite()
+            && (0.0..=MICROSECONDS_PER_DAY).contains(&fractional_microseconds),
+        "elapsed duration could not be normalized"
+    );
+    let mut fractional_microseconds = fractional_microseconds as u64;
+    if fractional_microseconds == MICROSECONDS_PER_DAY as u64 {
+        days += 1.0;
+        fractional_microseconds = 0;
+    }
+
+    let mut seconds = fractional_microseconds / MICROSECONDS_PER_SECOND;
+    let microsecond_remainder = fractional_microseconds % MICROSECONDS_PER_SECOND;
+    let mut rounded_microseconds = (microsecond_remainder as f64
+        / MICROSECONDS_PER_MILLISECOND as f64)
+        .round_ties_even() as u64
+        * MICROSECONDS_PER_MILLISECOND;
+    if rounded_microseconds == MICROSECONDS_PER_SECOND {
+        seconds += 1;
+        rounded_microseconds = 0;
+    }
+    if seconds == SECONDS_PER_DAY {
+        days += 1.0;
+        seconds = 0;
+    }
+    ensure!(
+        (-MAX_TIMEDELTA_DAYS..=MAX_TIMEDELTA_DAYS).contains(&days),
+        "rounded elapsed duration exceeds openpyxl timedelta range"
+    );
+
+    let normalized = days
+        + (seconds as f64 + rounded_microseconds as f64 / MICROSECONDS_PER_SECOND as f64)
+            / SECONDS_PER_DAY as f64;
+    ensure!(
+        normalized.is_finite(),
+        "normalized elapsed duration is non-finite"
+    );
+    Ok(normalized)
+}
+
+#[cfg(test)]
+mod duration_tests {
+    use super::normalize_openpyxl_duration_serial;
+
+    const MILLISECOND_IN_DAYS: f64 = 1.0 / 86_400_000.0;
+
+    #[test]
+    fn elapsed_durations_follow_openpyxl_millisecond_ties_to_even() {
+        assert_eq!(normalize_openpyxl_duration_serial(1.5).unwrap(), 1.5);
+        assert_eq!(
+            normalize_openpyxl_duration_serial(0.5 * MILLISECOND_IN_DAYS).unwrap(),
+            0.0
+        );
+        assert_eq!(
+            normalize_openpyxl_duration_serial(1.5 * MILLISECOND_IN_DAYS).unwrap(),
+            2.0 * MILLISECOND_IN_DAYS
+        );
+        assert_eq!(
+            normalize_openpyxl_duration_serial(-0.5 * MILLISECOND_IN_DAYS).unwrap(),
+            0.0
+        );
+        let negative_millisecond_tie =
+            normalize_openpyxl_duration_serial(-1.5 * MILLISECOND_IN_DAYS).unwrap();
+        assert!((negative_millisecond_tie + 2.0 * MILLISECOND_IN_DAYS).abs() < 1e-15);
+    }
+
+    #[test]
+    fn elapsed_durations_reject_values_outside_openpyxl_timedelta_range() {
+        assert!(normalize_openpyxl_duration_serial(f64::INFINITY).is_err());
+        assert!(normalize_openpyxl_duration_serial(-1_000_000_000.0).is_err());
+        assert!(normalize_openpyxl_duration_serial(1_000_000_000.0).is_err());
+    }
 }
 fn validate_staged_workbook_with_prefix(
     path: &Path,

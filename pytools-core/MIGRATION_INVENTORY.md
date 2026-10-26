@@ -761,6 +761,14 @@ Python 只读基线测试 test_extract_sheets_append_existing_output_keeps_previ
 
 本次使用的 Umya CreateSheet + ImportRange capability 仅由测试临时生成，未登记生产 Passed capability。Python 既有测试只覆盖区域追加；整表 Python helper 生成文件的样式重开问题仍按前节记录，本次不宣称整表输出文件级 Python 对拍通过。真实模板、未列举 OOXML 对象、非 XLSX、Windows 原生文件弹窗、目标 Linux/glibc 2.28 与 deb 未验证，PT-7-6 整体验收仍未完成。
 
+### 2026-10-26 PT-7-6 区域提取累计时长子集
+
+旧 PyCode 在区域提取中将累计时长读为 `datetime.timedelta`，再写入默认 `[hh]:mm:ss` 格式。现有区域提取读取路径通过 `read_value_columns_with_iso_dates` 将 Calamine 识别的日历值投影为 ISO 日期，而将累计时长保留为 `datetime_serial`；Rust 写入器现对该时长序列按 Python `timedelta` 微秒舍入及 openpyxl 毫秒 ties-to-even 语义归一化后，写为 `[hh]:mm:ss` 数值。非有限/超出 openpyxl 时长范围的序列拒绝；ISO-typed duration 及潜在歧义的 time-only epoch 日仍失败关闭。
+
+Windows 原生 `cargo fmt --manifest-path pytools-core/Cargo.toml -- --check`、`cargo test --offline --locked -p pytools-core --lib sheet_extract::duration_tests -j 1`（2/2）、`cargo test --offline --locked -p pytools-core --test sheet_extract_area_operation_parity -j 1`（13/13）及 `cargo build --offline --locked -p pytools-core --bin pytools -j 1` 通过。实际交互菜单 7→6 集成测试通过，源字节不变。只读旧 PyCode `run_extract_sheets` 与 Rust `extract-sheets-area` 对合成 XLSX 的 9 个累计时长值（含超 24 小时、负值及毫秒边界）完整输出投影一致：类型、值、单元格格式均一致，源文件未变，详见 `probe/reports/sheet_extract_elapsed_duration_parity_20261026.json`。该验证为合成样本，不构成真实业务工作簿验收。
+
+真实业务样本、time-only/ISO-typed duration、其他格式、全模板保真、Linux/glibc 2.28、麒麟/UOS 及离线 deb 仍未验收；PT-7-6 整体仍在迁移中，未标为完成。
+
 ### 2026-10-25 PT-1-2 时序提取 Rust 主输出、目标追加与入口对拍
 
 新增 `timeline_extract` Rust 业务模块，按原 `PyCode.core.timeline_396.run_timeline_slim` 复用现有规则引擎，读取配置规则与路径映射，执行行头后缀、跨规则去重、日期和值写出，并以 `rust_xlsxwriter` 生成七列 `时序提取结果`。新增 `timeline-extract` CLI 及真实菜单 `pytools menu → 1 → 2`，接入 user/developer/off 日志视图与 PT-1-2 运行历史。读取、写入和目标提交事件记录实际引擎、进度与阶段耗时。
