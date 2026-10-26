@@ -111,7 +111,18 @@ py_statistics_tools 工作表提取以普通无批注版为迁移基线，带批
 
 openpyxl 仅可通过隔离 worker 用于已验收的既有 XLSX 修改；未来 pywin32 / `win32com.client` 仅可通过独立 Windows worker 用于已验收的 COM 修改或公式计算。它们不得用于生产读取、新建写入、业务规则、统计或通用业务逻辑。worker 不依赖系统 Python/PATH，修改按工作簿批量处理，不逐格启动；对拍/测试 Python 仍可在 tests/compare 使用。禁止 python-calamine、PyO3、pandas、xlrd、pyxlsb 进入生产。不得无证据重写已验收模块；不得以完整 OOXML writer 为默认目标；不得无测量串联 Rust 读取→中间文件→Go 修改→Go 写回。
 
-`ExcelCalculator` 是与 ExcelModifier 分离的未来能力，候选为 LibreOffice Calc、Microsoft Excel COM 和 WPS COM；默认关闭，计算模式区分普通重算与完整重算。LibreOffice 基础公式计算的可行性已由用户实际测试确认，不重复泛泛的可行性调研；具体公式覆盖率、与 Excel 的公式语义一致性、保存保真和 Linux 离线运行时仍未验收。不得宣称计算结果完全等价。显式选择不可用或未经该功能验收的引擎时返回明确错误；界面仅列出已实现、可用且有匹配能力证据的选项。
+`ExcelCalculator` 是与 ExcelModifier 分离的未来能力；本阶段计算目标为 LibreOffice Calc（Windows/Linux）和 Microsoft Excel COM（Windows）。此前列出的 WPS COM 是历史候选，不属于当前计算范围，除非用户另行确认。默认关闭，计算模式区分普通重算与完整重算。LibreOffice 基础公式计算的可行性已由用户实际测试确认，不重复泛泛的可行性调研；具体公式覆盖率、与 Excel 的公式语义一致性、保存保真和 Linux 离线运行时仍未验收。不得宣称计算结果完全等价。显式选择不可用或未经该功能验收的引擎时返回明确错误；界面仅列出已实现、可用且有匹配能力证据的选项。
+
+### 4.5 本阶段 Excel-Core 实施优先级（2026-10-26）
+
+本节覆盖前述候选清单中的优先顺序，但不改变已验收生产路由、业务契约或能力状态；每项仍须按本规范完成对应格式、对象、平台和真实样本验收。
+
+- Read 使用 calamine，Create 使用 rust_xlsxwriter；不增加通用读取或新建引擎。
+- Edit 新增能力优先 OOXML Patch 与 umya-spreadsheet。按少量工作簿、少数工作表、约几十个值/文本/公式单元格及固定区域复制的业务规模实现，并保护非目标区域。
+- 保留现有 openpyxl worker、接口、测试及兼容依赖，暂停新增能力扩展；只有 Rust 替代方案通过对应真实模板和完整保真验收后，才可移除相应兼容路径。
+- 暂缓 Go Excelize worker、FFI 及相关扩展；它们不是 Audit/PyTools 当前迁移的前置条件。不得据此删除现有占位或修改生产默认路由。
+- 既有区域复制默认保留公式原文。引用平移作为显式可选语义，测试相对、绝对、混合和跨工作表引用；不能安全处理的公式必须拒绝或报告。
+- 公式重算本阶段使用 LibreOffice Calc 或 Windows Microsoft Excel COM；打印整理独立按真实模板验收格式保真和新文件安全。合成测试不构成生产验收。
 
 ## 5. 操作编号和目标方向
 

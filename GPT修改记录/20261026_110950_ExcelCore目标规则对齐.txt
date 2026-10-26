@@ -1,0 +1,22 @@
+日期：2026-10-26
+
+执行者：Codex。修改前 commit：d63ec5e25902b0959198c99c5ddf35d0517e479b。修改后 commit：以本记录所在 Git 提交为准。修改前 main 与 origin/main 同步；保留本地未跟踪 HANDOFF_ZCODE_TO_CODEX.md。Audit 与 PyTools Worktree 均有未提交工作，仅只读检查，未触碰。
+
+目的：根据用户确认的 Excel-Core 当前技术路线，消除长期目标和执行规则中旧候选清单可能被误解为当前开发承诺的歧义。保持 Audit/PyTools 业务范围、现有生产默认路由和兼容实现不变。
+
+修改文件：
+- DEVELOPMENT_GOAL.md：明确当前 Excel-Core 优先级、少量修改规模、显式公式引用平移、真实模板打印验收、openpyxl 保留并暂停扩展、Go Excelize/FFI 暂缓；当前公式计算目标限定为 LibreOffice 和 Windows Microsoft Excel COM，WPS COM 保留为历史候选而非本阶段计算目标。
+- AGENTS.md：加入同一执行优先级，并澄清 WPS COM 不属于当前计算范围。
+- rules/13_Rust_Excel读写修改与引擎路由规范.md：增加当前优先级覆盖说明及相同验收边界。
+- EXCEL_ENGINE_ARCHITECTURE.md：检查后未修改；其 2026-10-26 当前优先级已覆盖本轮确认方向。
+
+验证：
+- `git diff --check`：通过。
+- 逐项对照 DEVELOPMENT_GOAL.md、AGENTS.md、rules/13 和 EXCEL_ENGINE_ARCHITECTURE.md 的 Read/Create/Edit/Calculate 方向及兼容/验收边界；无代码或默认路由变更，不运行测试。
+- Audit 与 PyTools 工作树状态已检查。两者均有未提交内容；未进行同步、提交或其他修改。
+
+未执行项与已知边界：未修改两个活动 /goal，也未修改 Audit/PyTools Worktree。文档优先级不代表新能力实现、真实模板验收或生产路由切换。
+
+组件版本：不升级（纯文档/治理变更）。
+删除清单：无。
+回滚：回滚本提交中的三份文档修改和本记录；不得回滚或覆盖其他 Worktree 的修改。
