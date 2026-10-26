@@ -1,0 +1,27 @@
+时间：2026-10-26 22:22（Asia/Shanghai）
+执行者：Codex
+分支：pytools-dev
+修改前 HEAD：6ce8112932be0eb1ba52660bf67b42ba40a5eff4
+修改后提交：本次功能修正提交（提交后由 Git 历史确定）
+WIP：MIGRATION_INVENTORY.md 有本轮前已存在的其他未提交段落；HANDOFF_ZCODE_TO_CODEX.md、V2 需求文件及 PT-4-2/PT-6-2 历史记录保持原样，不纳入本次提交。
+
+目的：修正 V2 PT-3-3 用户/开发者结果摘要与执行事实不符的问题。
+
+变更文件：
+- pytools-core/src/bin/pytools.rs：依据配置打印报告中每组 execution 的真实状态统计已生成工作簿组与 plan-only 组；摘要区分实际生成和仅生成计划。
+- pytools-core/tests/print_menu_cli.rs：断言 V2 无 capability 的 plan-only 摘要、确认执行摘要，以及开发者运行历史中的执行组计数。
+- pytools-core/MIGRATION_INVENTORY.md：记录本次结果反馈修正，不提升 PT-3-3 验收状态。
+
+业务与配置影响：不改变 PT-3-3 计划、数据、Excel 路由、配置或旧菜单行为；无 VBA 变更。修正仅影响日志与摘要中对执行结果的描述。
+
+Windows 原生 MSVC 验证（target 与临时目录位于 F:\PyTools_Rust_本轮工作文件_20261026）：
+- cargo fmt --manifest-path pytools-core/Cargo.toml -- --check：通过。
+- cargo test --offline --locked --manifest-path pytools-core/Cargo.toml --test print_menu_cli --test print_config_new_target -j 1 -q：6/6 与 2/2 通过。
+- cargo build --offline --locked --manifest-path pytools-core/Cargo.toml --bin pytools -j 1 -q：通过。
+- git diff --check：通过。
+- Python/Rust 对拍：未新增；真实打印模板和生产 capability 未验证。
+
+已知问题：上游 Excel-Core 有既有 umya-spreadsheet 弃用警告；本次未改共享 crate。PT-3-3 仍待真实模板、生产 capability、Windows 人工验收及 Linux/目标平台验收。
+删除清单：无。
+回滚：确认无后续依赖后可 revert 本次结果摘要修正提交；不删除文件或数据。
+【组件版本】pytools-core 0.1.0，不升级。

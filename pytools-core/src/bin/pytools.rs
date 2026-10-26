@@ -4016,6 +4016,8 @@ fn print_menu_metrics(action: &str, report: &serde_json::Value) -> serde_json::V
             let mut marked_ranges = 0u64;
             let mut planned_operations = 0u64;
             let mut plan_files = 0u64;
+            let mut executed_groups = 0u64;
+            let mut plan_only_groups = 0u64;
             for item in &items {
                 let details = &item["report"];
                 matching_sheets += count(&details["matching_sheets"]);
@@ -4024,9 +4026,16 @@ fn print_menu_metrics(action: &str, report: &serde_json::Value) -> serde_json::V
                     .as_array()
                     .map_or(0, |operations| operations.len() as u64);
                 plan_files += u64::from(item["plan_file"].is_string());
+                if item["execution"].is_object() {
+                    executed_groups += 1;
+                } else {
+                    plan_only_groups += 1;
+                }
             }
             serde_json::json!({
                 "planned_groups": items.len(),
+                "executed_groups": executed_groups,
+                "plan_only_groups": plan_only_groups,
                 "matching_sheets": matching_sheets,
                 "marked_ranges": marked_ranges,
                 "planned_operations": planned_operations,
@@ -4053,9 +4062,18 @@ fn print_menu_summary(action: &str, metrics: &serde_json::Value) -> String {
         );
     }
     if action == "config_plan" {
+        let planned_groups = count("planned_groups");
+        let executed_groups = count("executed_groups");
+        let plan_only_groups = count("plan_only_groups");
+        let result = match (executed_groups, plan_only_groups) {
+            (0, _) => format!("生成 {planned_groups} 组计划，未写入工作簿"),
+            (_, 0) => format!("已生成 {executed_groups} 组静态打印工作簿"),
+            _ => format!(
+                "已生成 {executed_groups} 组静态打印工作簿，另有 {plan_only_groups} 组仅生成计划"
+            ),
+        };
         return format!(
-            "生成 {} 组计划，命中 {} 张表、{} 个打印区域，计划操作 {} 项",
-            count("planned_groups"),
+            "{result}，命中 {} 张表、{} 个打印区域，计划操作 {} 项",
             count("matching_sheets"),
             count("marked_ranges"),
             count("planned_operations")

@@ -248,6 +248,7 @@ fn v2_config_print_requires_capability_and_confirmation_before_writing() -> Resu
     );
     assert!(String::from_utf8_lossy(&plan_only.stdout)
         .contains("未提供配对的 ExcelModifier 能力与平台证据"));
+    assert!(String::from_utf8_lossy(&plan_only.stdout).contains("生成 1 组计划，未写入工作簿"));
     let plan_only_report = menu_object_json(&plan_only)?;
     assert_eq!(plan_only_report["execution"], "plan_only");
     assert!(
@@ -289,6 +290,7 @@ fn v2_config_print_requires_capability_and_confirmation_before_writing() -> Resu
     );
     let stdout = String::from_utf8_lossy(&confirmed.stdout);
     assert!(stdout.contains("按配置生成独立静态打印工作簿"));
+    assert!(stdout.contains("已生成 1 组静态打印工作簿"));
     let report = menu_object_json(&confirmed)?;
     assert_eq!(report["execution"]["engine"], "umya_spreadsheet");
     assert_eq!(
@@ -329,6 +331,8 @@ fn v2_config_print_requires_capability_and_confirmation_before_writing() -> Resu
         .context("successful V2 print execution history missing")?;
     assert_eq!(history["feature_id"], "PT-3-3");
     assert_eq!(history["status"], "succeeded");
+    assert_eq!(history["metrics"]["executed_groups"], 1);
+    assert_eq!(history["metrics"]["plan_only_groups"], 0);
     assert_eq!(history["excel_modifier_invoked"], true);
     assert!(history["actual_engines"]
         .as_array()
