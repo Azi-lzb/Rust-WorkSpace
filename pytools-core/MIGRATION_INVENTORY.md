@@ -990,3 +990,9 @@ Windows 原生 `cargo fmt --manifest-path pytools-core/Cargo.toml -- --check` �
 旧版 `PyCode/main.py` 的时序菜单 1→5 直接显示预校验摘要并回到菜单；Rust 菜单此前复用 JSON CLI 输出且将配置问题作为进程错误。现菜单路由直接调用既有 `run_timeline_precheck` 业务 API，逐项展示错误/警告、计数与成功或失败提示后继续主循环；独立 `timeline-precheck` JSON CLI 不变。未修改预校验规则或迁移验收状态。
 
 Windows 原生 `timeline_menu_cli` 27/27、`cargo fmt --check`、`cargo build --offline --locked -p pytools-core --bin pytools -j 1` 通过。新增成功及配置错误菜单路由测试均使用临时合成配置；无参数直接运行构建产物并输入 0，显示 1–9/0 主菜单且正常退出。此轮未重新执行 Python/Rust 业务对拍；既有 1-5 预校验配置对拍证据仍适用。无工作簿输出或源文件修改，PT-1-5 真实业务样本验收状态不变。
+
+### 2026-10-26 PT-4-2 legacy 1904 epoch 提示与共享能力复核
+
+核实当前分支已包含共享 reader 提交 `040e774`：`uses_1904_date_system` 对 `.xls` 使用 Calamine BIFF epoch 元数据，对 `.xlsb` 使用 Calamine XLSB epoch 元数据，对 OOXML 格式读取 `workbookPr`；PT-4-2 原生值转换已在创建候选文件前调用该 API。此前记录“helper 不支持 `.xls/.xlsb`”及等待 main 的描述已被该共享修复替代。菜单确认提示和 `--help` 现统一列出 `.xls/.xlsm/.xlsb` 的 1904 epoch 失败关闭保护。
+
+Windows 原生验证：`cargo fmt --manifest-path pytools-core/Cargo.toml -- --check` 通过；`cargo test --offline --locked -p pytools-core --test conversion_menu_cli -j 1` 10/10 通过，含 `.xls` 1900 epoch 测试夹具经实际菜单确认完成值转换、菜单警告列出三种格式及 CLI 帮助断言。未运行 Python/Rust 对拍；当前无可用的正向 BIFF `.xls`/`.xlsb` 1904 样本，故只确认代码路由和已有合成 OOXML 1904 失败关闭证据，不宣称 legacy 1904 正样本已验收。PT-4-2 真实业务与平台验收状态不变。

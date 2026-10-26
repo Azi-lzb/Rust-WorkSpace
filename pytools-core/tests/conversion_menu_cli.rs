@@ -272,7 +272,7 @@ fn native_excel_conversion_menu_requires_confirmation_and_runs_xls_values() -> R
     assert!(converted_output.contains("不会保留样式"));
     assert!(converted_output.contains("也不会重算公式"));
     assert!(converted_output.contains("ISO 日期/时长、错误值、空文本"));
-    assert!(converted_output.contains("1904 日期系统的 XLSM"));
+    assert!(converted_output.contains("1904 日期系统的 XLS/XLSM/XLSB"));
 
     let report = output_json(&converted)?;
     assert_eq!(report["converted"], 1);
@@ -352,6 +352,24 @@ fn native_excel_conversion_menu_requires_confirmation_and_runs_xls_values() -> R
     assert!(!serde_json::to_string(&history)?.contains("legacy-values.xls"));
     assert_eq!(fs::read(&source)?, source_before);
 
+    Ok(())
+}
+
+#[test]
+fn native_conversion_help_lists_legacy_epoch_formats() -> Result<()> {
+    let output = Command::new(env!("CARGO_BIN_EXE_pytools"))
+        .arg("--help")
+        .output()?;
+    assert!(
+        output.status.success(),
+        "pytools --help failed: {}",
+        stderr(&output)
+    );
+    let help = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        help.contains("检测到的 1904 epoch XLS/XLSM/XLSB 会拒绝转换"),
+        "help output did not describe the 1904 date-system guard: {help}"
+    );
     Ok(())
 }
 
