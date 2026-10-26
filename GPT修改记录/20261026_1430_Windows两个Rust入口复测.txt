@@ -1,0 +1,26 @@
+时间：2026-10-26（Asia/Shanghai）
+执行者：Codex
+修改前 commit：f9971bd8ae6abe50653981c38490f1771a61f65c
+修改后 commit：本记录及清单更新一并提交，以 Git 历史为准。
+修改前 WIP：工作树干净。当前仅复核已有 PyTools CLI 数字菜单和 Audit GUI 启动器；未修改业务代码、共享 crate、Cargo 配置或原 Python 项目。
+
+目的：复核 Windows 下两个 Rust 程序入口，更新迁移清单中的实际验证证据，不把入口可用等同于业务验收完成。
+
+修改文件：
+- `pytools-core/MIGRATION_INVENTORY.md`：记录 Release 数字菜单和 6-1 合成业务烟测结果，保留真实业务验收状态。
+- `audit-core/MIGRATION_INVENTORY.md`：记录 GUI HTTP 首页、状态 API 和未迁移 API 的 Windows Release 复测结果。
+- 本记录。
+
+验证：
+- Windows `cargo test --locked --offline -p pytools-core --test interactive_menu`：5/5 通过。
+- Windows `cargo test --locked --offline -p audit-core --lib web_bridge::tests`：8/8 通过。
+- Windows `cargo test --locked --offline -p audit-core --test s2_service_parity`：1/1 通过。
+- Windows `cargo build --release --locked --offline -p pytools-core --bin pytools -p audit-core --bin open-data-audit-gui`：通过。Release 产物位于 `F:\CodexBuilds\windows-operable-entries-codex-20261026-r1\release\`。
+- Release `pytools.exe` 无参数显示 1–9 菜单；菜单 6-1 通过 Rust 汇总服务生成 18 行 XLSX。输入为仓库合成夹具，输出写入隔离构建目录。
+- Release `open-data-audit-gui.exe --no-browser`：首页 GET 200 且含运行时 bridge；`POST /api/get_state` 为 200；未迁移的 `start_dag_flow` 为 501。
+
+未执行项与已知限制：未进行整张菜单逐项验收、真实业务样本验收、Audit 完整 GUI 人工审核或 Linux/deb 验收。Audit 前端由系统浏览器承载既有页面；当前 Rust bridge 已接通 S2 流程，不代表 S2 真实业务验收通过。构建输出包含共享 Excel crate 既有弃用 API 警告和 PyTools 两项未使用导入警告。
+
+删除清单：无。
+回滚提示：仅回滚本提交即可还原两份迁移清单和本记录，不影响业务实现或程序入口。
+【组件版本】：不升级（记录与验收入库，不改业务实现）。

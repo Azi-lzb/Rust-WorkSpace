@@ -87,5 +87,5 @@
 - 当前连接 `get_state`、浏览器路径浏览、S2 配置检查、S2 路径选择/清除、输出目录固定/跟随、审核启动、进度和结果回传，以及有限的 UI 设置更新。选择或清除本期/上期目录会刷新两期文件配对预览，并支持 `.xls`/`.xlsx` 文件名列举。
 - 未迁移接口返回 HTTP 501；点击尚未接通的 DAG 工作流会在原界面明确提示“该功能尚未接入 Rust 版本”。取消和设置持久化尚未接入；S1/S3/S4/S5 的前端入口不表示其功能已经迁移。
 - 合成 S2 输入经 HTTP bridge 完整运行并生成三表 XLSX；该结果不替代真实业务模板、Windows 原生、麒麟/UOS、glibc 2.28 与 deb 验收。
-- 2026-10-26 Windows 11 x64 Release 验证：`cargo test -p audit-core --lib web_bridge::tests --locked --offline` 8/8、`cargo test -p audit-core --test s2_service_parity --locked --offline` 1/1 通过；Release `open-data-audit-gui.exe --no-browser --port 0` 的 `GET /` 返回 200（原页面和注入 bridge 均存在），`POST /api/get_state` 返回 S2 初始状态。通过页面按钮执行配置检查并显示检查报告；工作区默认配置仅为冒烟样本，不是真实业务验收。此项验证入口及配置检查接线，不提升 S2 真实审核或其他功能状态。
+- 2026-10-26 Windows 11 x64 原生 Rust Release 复测：`cargo test -p audit-core --lib web_bridge::tests --locked --offline` 8/8、`cargo test -p audit-core --test s2_service_parity --locked --offline` 1/1 通过；Release `open-data-audit-gui.exe --no-browser --port <空闲端口>` 的 `GET /` 返回 200（原页面和注入 bridge 均存在），`POST /api/get_state` 返回 200，未迁移 `start_dag_flow` 返回 501。此前已从页面按钮执行配置检查并显示报告；工作区默认配置结果含模板默认项警告，只作为入口冒烟，不是真实业务验收；S2 真实审核及其他功能状态不变。
 - 本轮修复了页面同步空的旧 S1 路径字段会阻断 S2 配置检查的问题：只忽略 `input/templateDir/template/external/output` 的空值，非空未迁移值仍返回 501。两条回归覆盖空值兼容与非空拒绝。Release 二进制输出到本机 F: 隔离 Cargo target，未纳入 Git。
