@@ -323,11 +323,7 @@ fn require_engine_output(path: &Path) -> Result<()> {
 
 fn run_com_recalculate(input: &Path, output: &Path) -> Result<String> {
     let script_path = output.with_extension("recalculate.ps1");
-    let script = format!(
-        "$ErrorActionPreference='Stop';\n$app=$null; $appName=''; $lastError='';\nforeach ($name in @('Excel.Application','ket.Application','KET.Application','kwps.Application','KWPS.Application','wps.Application')) {{ if ($null -eq $app) {{ try {{ $app=New-Object -ComObject $name; $appName=$name }} catch {{ $lastError=$_.Exception.Message }} }} }}\nif ($null -eq $app) {{ throw \"No supported spreadsheet COM engine is available: $lastError\" }}\n$book=$null;\ntry {{ $app.Visible=$false; $app.DisplayAlerts=$false; $book=$app.Workbooks.Open('{}',$false,$false); $app.CalculateFullRebuild(); $book.SaveAs('{}',51); $book.Close($true) }} finally {{ if ($null -ne $book) {{ $book.Close($false) }}; if ($null -ne $app) {{ $app.Quit() }} }}\nWrite-Output $appName\n",
-        ps_quote(&input.to_string_lossy()),
-        ps_quote(&output.to_string_lossy())
-    );
+    let script = com_recalculate_script(input, output);
     fs::write(&script_path, script)?;
     let result = Command::new("powershell.exe")
         .args([
@@ -354,6 +350,14 @@ fn run_com_recalculate(input: &Path, output: &Path) -> Result<String> {
         "COM recalculation did not report the selected application"
     );
     Ok(engine)
+}
+
+fn com_recalculate_script(input: &Path, output: &Path) -> String {
+    format!(
+        "$ErrorActionPreference='Stop';\n$app=$null; $appName=''; $lastError='';\ntry {{ $app=New-Object -ComObject 'Excel.Application'; $appName='Excel.Application' }} catch {{ $lastError=$_.Exception.Message }}\nif ($null -eq $app) {{ throw \"Microsoft Excel COM is unavailable: $lastError\" }}\n$book=$null;\ntry {{ $app.Visible=$false; $app.DisplayAlerts=$false; $book=$app.Workbooks.Open('{}',$false,$false); $app.CalculateFullRebuild(); $book.SaveAs('{}',51); $book.Close($true) }} finally {{ if ($null -ne $book) {{ $book.Close($false) }}; if ($null -ne $app) {{ $app.Quit() }} }}\nWrite-Output $appName\n",
+        ps_quote(&input.to_string_lossy()),
+        ps_quote(&output.to_string_lossy())
+    )
 }
 
 fn validate_recalculated_workbook(input: &Path, output: &Path) -> Result<String> {
@@ -1103,15 +1107,15 @@ impl Drop for TempDirGuard {
 #[cfg(test)]
 mod recalculation_tests {
     use super::{
-        file_uri, formula_cache_cell_count, libreoffice_user_installation_arg,
-        require_engine_output, MAIN_NS, PACKAGE_REL_NS, REL_NS,
+        com_recalculate_script, file_uri, formula_cache_cell_count,
+        libreoffice_user_installation_arg, require_engine_output, MAIN_NS, PACKAGE_REL_NS, REL_NS,
     };
     use anyhow::Result;
     use std::{
         env,
         fs::{self, File},
         io::Write,
-        path::PathBuf,
+        path::{Path, PathBuf},
         time::{SystemTime, UNIX_EPOCH},
     };
     use zip::{write::SimpleFileOptions, ZipWriter};
@@ -1163,6 +1167,18 @@ mod recalculation_tests {
         assert!(error.to_string().contains("has no cached value node"));
         fs::remove_file(invalid)?;
         Ok(())
+    }
+
+    #[test]
+    fn windows_com_recalculation_uses_microsoft_excel_only() {
+        let script =
+            com_recalculate_script(Path::new(r"C:\input.xlsx"), Path::new(r"C:\output.xlsx"));
+        assert!(script.contains("New-Object -ComObject 'Excel.Application'"));
+        assert!(script.contains("Microsoft Excel COM is unavailable"));
+        assert!(script.contains("CalculateFullRebuild"));
+        assert!(!script.contains("KET.Application"));
+        assert!(!script.contains("ket.Application"));
+        assert!(!script.contains("wps.Application"));
     }
 
     #[test]
