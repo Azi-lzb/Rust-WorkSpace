@@ -45,7 +45,15 @@ const BRIDGE_JS: &str = r#"
     }).then(function (response) {
       return response.json().then(function (data) {
         if (!response.ok || (data && data.error)) {
-          throw new Error((data && data.error) || ('HTTP ' + response.status));
+          var message = (data && data.error) || ('HTTP ' + response.status);
+          if (response.status === 501 && method === 'start_dag_flow') {
+            if (typeof window.showToast === 'function') {
+              window.showToast('该功能尚未接入 Rust 版本。');
+            } else {
+              window.alert('该功能尚未接入 Rust 版本。');
+            }
+          }
+          throw new Error(message);
         }
         return data.result;
       });
@@ -1016,6 +1024,7 @@ mod tests {
         let served = render_index();
         assert_eq!(served.replace(super::BRIDGE_JS, ""), super::ORIGINAL_HTML);
         assert!(served.contains("window.bridge = { api: api }"));
+        assert!(served.contains("该功能尚未接入 Rust 版本。"));
     }
 
     #[test]
@@ -1042,7 +1051,7 @@ mod tests {
 
     #[test]
     fn unsupported_frontend_methods_fail_explicitly() {
-        let error = dispatch_api(&test_state(), "start_central_comparison", &[]).unwrap_err();
+        let error = dispatch_api(&test_state(), "start_dag_flow", &[]).unwrap_err();
         assert_eq!(error.status, axum::http::StatusCode::NOT_IMPLEMENTED);
         assert!(error.message.contains("尚未实现接口"));
     }

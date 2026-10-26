@@ -1,0 +1,28 @@
+时间：2026-10-26（Asia/Shanghai）
+执行者：Codex
+修改前 commit：d55d4bcba6050bd27e1ef006a20835ac6227acb9
+修改后 commit：随本次功能提交，以 Git 历史为准。
+修改前 WIP：当前工作树干净；PyTools 菜单与 Audit GUI 启动器已在本分支提交。本次只改 Audit bridge、迁移清单和本记录；未修改旧 Python 源目录或其他 Worktree。
+
+目的：复用原 Audit GUI 页面时，让未接通的 DAG 工作流在界面明确报告“该功能尚未接入 Rust 版本”，不只产生浏览器端未处理错误；保持未实现 API 的 HTTP 501 语义。
+
+修改文件：
+- `audit-core/src/web_bridge.rs`：DAG 工作流接口返回 HTTP 501 时显示界面提示，仍以错误结束请求，不伪报成功；页面渲染测试断言提示文案。
+- `audit-core/MIGRATION_INVENTORY.md`：记录未接通工作流的用户可见提示和未验收边界。
+- 本修改记录。
+
+入口与范围：未改变原 HTML、已有 S2 Rust 服务及业务逻辑。PyTools 的旧数字菜单接线仍由 `d55d4bc` 提交覆盖；Audit GUI 继续只接通当前清单中的 S2 入口。S1/S3/S4/S5 前端按钮不代表对应功能已经迁移。
+
+验证：
+- Windows `cargo test --locked -p pytools-core --test interactive_menu`：5 passed；覆盖数字菜单退出、配置查看/新建、汇总输出及未接通项提示。
+- Windows `CARGO_TARGET_DIR=F:\CodexBuilds\windows-operable-entries-audit-pytools-entry-verify-20261026 cargo test --locked -p audit-core --lib web_bridge::tests`：6 passed。
+- 同一 F 盘 target 下 `cargo test --locked -p audit-core --test s2_service_parity`：1 passed；合成 S2 文件级流程通过，输入保持不变。
+- 同一 F 盘 target 下分别构建 `pytools` 和 `open-data-audit-gui`：通过；产物为 `F:\CodexBuilds\windows-operable-entries-audit-pytools-entry-verify-20261026\debug\pytools.exe` 和 `F:\CodexBuilds\windows-operable-entries-audit-pytools-entry-verify-20261026\debug\open-data-audit-gui.exe`。
+- Windows HTTP 启动冒烟：Audit GUI `GET /`、`get_state`、S2 配置检查均返回 200；未接通 `start_dag_flow` 返回 HTTP 501；页面响应包含 bridge 和提示文案。仅使用仓库默认配置，未启动会写入结果的业务任务。
+- `rustfmt --edition 2021 --check audit-core/src/web_bridge.rs`、`git diff --check`：通过。
+- 初次在 C 盘运行 Audit 测试时因磁盘空间不足（OS error 112）停止；未清理既有构建产物，后续将测试和两个二进制的新增构建产物放在 F 盘独立目录完成。
+
+未执行与已知限制：未逐菜单人工运行全部 PyTools 功能；未在本轮通过真实样本执行 S2 GUI 审核、未做浏览器可视化人工验收或 Linux/deb 测试。S2 的合成端到端测试不构成真实业务验收。编译仍报告既有 umya-spreadsheet 弃用 API 警告和 PyTools 两项未使用导入警告。
+
+回滚提示：恢复 `web_bridge.rs` 中 `BRIDGE_JS` 和对应断言、恢复迁移清单说明并删除本记录；不涉及 Excel 引擎、共享 crate 或业务数据。
+【组件版本】：不升级。
