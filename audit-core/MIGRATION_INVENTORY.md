@@ -253,3 +253,7 @@ Windows 原生 `s5-audit-run` 与原 Python `AuditEngine.run` 对拍覆盖业务
 `s5_schema_snapshots` 将 Python `SourceRepository` 的路径摘要、HMAC 令牌、结构/位置对比和原子持久化接入实际 `s5-audit-run` 取数及输出总账。无命名结构区域的回退范围现在使用共享 `excel_reader::read_xlsx_worksheet_extents` 的 OOXML 单元格边界，包含带样式的空白单元格，匹配 Python `openpyxl.max_row/max_column`。Windows 合成单测覆盖 HMAC RFC 4231 向量、基线/位置变化/逻辑变化、输入变化不持久化、非对象 JSON 快照错误映射、样式空白扩展范围和总账事件写入。
 
 Windows 原生真实对拍使用 config-real 的 5 逐笔审核配置和 2026-07-31 单位贷款当前工作簿；Python `AuditEngine` 生成 4 个隔离结构快照后，Rust 实际 `s5-audit-run` CLI 读取这些 Python 基线，4/4 均返回 `UNCHANGED`，结构事件差异 0；377 条审核结果状态计数一致（370 PASSED、6 TRIGGERED、1 RETRIEVAL_FAILED），输入哈希前后相同，报告不保存原始单元格值或本机路径。证据见 `probe/reports/s5_structure_snapshot_real_parity_windows_native_20261026.json`。验证范围仅含 Windows、单位贷款、一个本期来源及其实际回退布局；未验证 V_PRE/V_EXT、哈希并发变化、目标 Linux/deb、麒麟 V10/UOS V20，也不代表 S5-F01 整体完成；生产 capability 仍为 `unverified`，共享请求 #8 仍未解决。
+
+### 2026-10-27 Codex 增量：S1-F02 汇总结构预检
+
+Rust 汇总入口已接入模板“表头区域”结构比对：正确结构的文件继续汇总，错配文件跳过并在普通日志中说明文件名/原因；缺少模板工作表时沿用旧 Python 部分继续语义，fallback-only 模板不增加固定结构门槛。Windows 合成 CLI 回归 6 passed，覆盖匹配、错配跳过及部分继续；GUI S1-F02 API 回归 2 passed，Windows GUI 构建通过。此次未对新增结构预检重跑真实 Python/Rust 对拍；已有 2026-10-24/25 真实个人贷款汇总报告未覆盖该新增步骤，输出格式尚有既有列宽差异。S1-F02 仍为迁移中。

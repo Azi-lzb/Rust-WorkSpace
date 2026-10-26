@@ -1,4 +1,4 @@
-use excel_reader::{read_workbook, CellValue, SheetDump};
+use excel_reader::{CellValue, SheetDump, read_workbook};
 use excel_writer::{Format, Workbook};
 use serde_json::Value;
 use std::{
@@ -319,6 +319,21 @@ fn write_history_summary_source(path: &Path) {
     worksheet
         .set_name("本地校验结果")
         .expect("set history source sheet name");
+    for (column, header) in [
+        "批次",
+        "表单名称",
+        "规则编号",
+        "规则类型",
+        "规则描述",
+        "校验字段",
+    ]
+    .iter()
+    .enumerate()
+    {
+        worksheet
+            .write_string(1, column as u16 + 1, *header)
+            .expect("write history source structure header");
+    }
     let rows = [
         [
             "2026-07",
@@ -460,7 +475,18 @@ fn create_sources(root: &Path) -> Vec<(PathBuf, Vec<u8>)> {
         &alpha,
         &[
             vec![SampleCell::Blank; 4],
-            vec![SampleCell::Blank; 4],
+            vec![
+                SampleCell::Blank,
+                SampleCell::Text("财务"),
+                SampleCell::Blank,
+                SampleCell::Blank,
+            ],
+            vec![
+                SampleCell::Blank,
+                SampleCell::Text("单位"),
+                SampleCell::Text("金额"),
+                SampleCell::Blank,
+            ],
             vec![SampleCell::Blank; 4],
             vec![
                 SampleCell::Blank,
@@ -487,7 +513,16 @@ fn create_sources(root: &Path) -> Vec<(PathBuf, Vec<u8>)> {
         &beta,
         &[
             vec![SampleCell::Blank; 3],
-            vec![SampleCell::Blank; 3],
+            vec![
+                SampleCell::Blank,
+                SampleCell::Text("财务"),
+                SampleCell::Blank,
+            ],
+            vec![
+                SampleCell::Blank,
+                SampleCell::Text("单位"),
+                SampleCell::Text("金额"),
+            ],
             vec![SampleCell::Blank; 3],
             vec![
                 SampleCell::Blank,
@@ -589,6 +624,109 @@ fn cli_summarizes_used_and_fixed_named_ranges_and_logs_both_views() {
     assert_eq!(events[1]["metadata_fields_left_blank"], 2);
 
     fs::remove_dir_all(&root).expect("remove synthetic test directory");
+}
+
+#[test]
+fn cli_preflights_summary_structure_skips_mismatches_and_keeps_partial_sources() {
+    let root = temporary_root("structure_preflight");
+    let input_dir = root.join("input");
+    let _valid_sources = create_sources(&input_dir);
+
+    let mismatch = input_dir.join("Mismatch_20260731.xlsx");
+    write_sample_workbook_with_metadata(
+        &mismatch,
+        &[
+            vec![SampleCell::Blank; 4],
+            vec![
+                SampleCell::Blank,
+                SampleCell::Text("结构不匹配"),
+                SampleCell::Blank,
+                SampleCell::Blank,
+            ],
+            vec![
+                SampleCell::Blank,
+                SampleCell::Text("单位"),
+                SampleCell::Text("金额"),
+                SampleCell::Blank,
+            ],
+            vec![
+                SampleCell::Blank,
+                SampleCell::Text("不得汇总"),
+                SampleCell::Number(999.0),
+                SampleCell::Blank,
+            ],
+        ],
+        Some("不匹配机构"),
+        None,
+    );
+    let mismatch_before = fs::read(&mismatch).expect("snapshot mismatched source");
+
+    let partial = input_dir.join("Partial_20260731.xlsx");
+    let mut partial_workbook = Workbook::new();
+    let other = partial_workbook.add_worksheet();
+    other
+        .set_name("Other")
+        .expect("set partial source sheet name");
+    other
+        .write_string(3, 1, "不在模板中的工作表")
+        .expect("write partial source row");
+    partial_workbook
+        .save(&partial)
+        .expect("save partial source");
+    let partial_before = fs::read(&partial).expect("snapshot partial source");
+
+    let output_path = root.join("structure_summary.xlsx");
+    let result = run_summary(&input_dir, &output_path, false);
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let payload: Value = serde_json::from_slice(&result.stdout).expect("parse preflight summary");
+    assert_eq!(
+        payload["summary"]["structure_preflight_checked_workbooks"],
+        4
+    );
+    assert_eq!(
+        payload["summary"]["structure_preflight_passed_workbooks"],
+        2
+    );
+    assert_eq!(
+        payload["summary"]["structure_preflight_partial_workbooks"],
+        1
+    );
+    assert_eq!(
+        payload["summary"]["structure_preflight_skipped_workbooks"],
+        1
+    );
+    assert!(payload["summary"]["structure_preflight_skipped_details"][0]
+        .as_str()
+        .unwrap()
+        .contains("Mismatch_20260731.xlsx"));
+    assert_eq!(payload["summary"]["source_workbooks"], 3);
+    assert_eq!(payload["summary"]["skipped_missing_sheets"], 2);
+
+    let output = read_workbook(&output_path).expect("read preflight summary workbook");
+    let output_text = output
+        .sheets
+        .iter()
+        .flat_map(|sheet| sheet.values.values())
+        .filter_map(|value| CellValue::from_probe_json(value).ok())
+        .filter_map(|value| match value {
+            CellValue::Text(value) => Some(value),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert!(!output_text.iter().any(|value| value == "不得汇总"));
+    assert_eq!(
+        fs::read(&mismatch).expect("read mismatch after summary"),
+        mismatch_before
+    );
+    assert_eq!(
+        fs::read(&partial).expect("read partial after summary"),
+        partial_before
+    );
+    fs::remove_dir_all(&root).expect("remove structure preflight test directory");
 }
 
 #[test]
@@ -705,8 +843,16 @@ fn cli_summarizes_formula_sources_from_saved_values_without_recalculation() {
         &source_path,
         &[
             vec![SampleCell::Blank; 3],
-            vec![SampleCell::Blank; 3],
-            vec![SampleCell::Blank; 3],
+            vec![
+                SampleCell::Blank,
+                SampleCell::Text("财务"),
+                SampleCell::Blank,
+            ],
+            vec![
+                SampleCell::Blank,
+                SampleCell::Text("单位"),
+                SampleCell::Text("金额"),
+            ],
             vec![
                 SampleCell::Blank,
                 SampleCell::Text("甲"),

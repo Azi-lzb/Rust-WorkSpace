@@ -1,0 +1,13 @@
+功能：S1-F02 汇总校验结果说明
+
+变更：在 Rust 区域汇总前复用 S1 表结构比较器，读取模板“表头区域”，按旧 Python 汇总流程核对固定表头。结构不匹配的源文件会跳过并记录文件名与原因；模板工作表缺失时仍可按旧行为汇总其他可用表；fallback-only 模板保持原处理方式。CLI 与 GUI 普通日志显示通过、部分继续和跳过数量，开发者日志补充结构预检引擎步骤耗时。
+
+修改文件：audit-core/src/s1_region_summary.rs、audit-core/src/s1_structure_compare.rs、audit-core/src/bin/open-data-audit.rs、audit-core/src/web_bridge.rs、audit-core/tests/s1_region_summary_cli.rs。
+
+验证：Windows 原生 Rust `cargo test --offline --locked -p audit-core --test s1_region_summary_cli`，6 passed；GUI S1-F02 定向测试 `cargo test --offline --locked -p audit-core --lib web_bridge::tests::s1_f2 -- --nocapture`，2 passed；`cargo build --offline --locked -p audit-core --bin open-data-audit-gui` 成功。测试覆盖匹配表头、错配文件跳过、缺少工作表时部分继续、历史配置和源文件只读。
+
+未验证：本次未对新增结构预检重跑 Python/Rust 真实输出对拍；此前 2026-10-24/25 的个人贷款真实汇总证据没有覆盖本次新增步骤。Windows 人工 GUI 操作、Linux/deb 未执行。S1-F02 仍为迁移中，不能据此声明验收通过。
+
+共享能力：未修改共享 crate、根 Cargo 配置或 Excel-Core；无新增 main 协助请求。
+
+安全与回滚：仅读取模板及源工作簿；CLI/GUI 输出继续写入新文件且拒绝覆盖。回滚本功能可还原上述五个 Rust/测试文件的本次改动；历史未提交工作区修改不在本记录或提交范围内。

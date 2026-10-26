@@ -13,6 +13,9 @@ use crate::{
         FIXED_ROW_SUMMARY_FUNCTION, NamedRangeArea, USED_RANGE_SUMMARY_FUNCTION,
         load_s1_region_summary_mappings, resolve_named_ranges_for_mappings,
     },
+    s1_structure_compare::{
+        compare_s1_summary_source_structure, read_s1_structure_template_with_required_sheets,
+    },
     template::normalize_template_name,
 };
 use anyhow::{Context, Result, bail, ensure};
@@ -23,7 +26,7 @@ use excel_reader::{
 use excel_writer::{Color, Format, FormatAlign, Workbook};
 use serde::Serialize;
 use std::{
-    collections::{BTreeMap, HashMap, HashSet},
+    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     fs,
     path::{Path, PathBuf},
     time::{Instant, SystemTime, UNIX_EPOCH},
@@ -51,6 +54,11 @@ pub struct S1RegionSummarySummary {
     pub features: usize,
     pub source_workbooks: usize,
     pub source_sheets: usize,
+    pub structure_preflight_checked_workbooks: usize,
+    pub structure_preflight_passed_workbooks: usize,
+    pub structure_preflight_partial_workbooks: usize,
+    pub structure_preflight_skipped_workbooks: usize,
+    pub structure_preflight_skipped_details: Vec<String>,
     pub output_sheets: usize,
     pub data_rows: usize,
     pub skipped_missing_sheets: usize,
@@ -61,6 +69,7 @@ pub struct S1RegionSummarySummary {
     pub writer: &'static str,
     pub discovery_time_ms: u128,
     pub template_read_time_ms: u128,
+    pub structure_preflight_time_ms: u128,
     pub source_read_time_ms: u128,
     pub calculation_time_ms: u128,
     pub history_elapsed_ms: u128,
@@ -268,6 +277,115 @@ pub fn summarize_s1_named_regions_selected(
         .map(|sheet| (sheet.name.to_lowercase(), sheet))
         .collect::<HashMap<_, _>>();
     let template_read_time_ms = template_started.elapsed().as_millis();
+
+    let structure_preflight_started = Instant::now();
+    let mut summary_data_ranges = Vec::new();
+    let mut summary_header_ranges = Vec::new();
+    for mapping in &selected_mappings {
+        summary_data_ranges.extend(resolve_named_ranges_for_mappings(
+            std::slice::from_ref(mapping),
+            &areas,
+            &template_sheet_names,
+        ));
+        let mut header_mapping = mapping.clone();
+        header_mapping.range_names = vec!["表头区域".to_owned()];
+        summary_header_ranges.extend(resolve_named_ranges_for_mappings(
+            &[header_mapping],
+            &areas,
+            &template_sheet_names,
+        ));
+    }
+    deduplicate_ranges(&mut summary_data_ranges);
+    deduplicate_ranges(&mut summary_header_ranges);
+    let fallback_sheet_name = template_sheet_names
+        .iter()
+        .find(|name| name.eq_ignore_ascii_case("兜底模板"));
+    if let Some(fallback_sheet_name) = fallback_sheet_name {
+        summary_data_ranges
+            .retain(|range| !range.sheet_name.eq_ignore_ascii_case(fallback_sheet_name));
+        summary_header_ranges
+            .retain(|range| !range.sheet_name.eq_ignore_ascii_case(fallback_sheet_name));
+    }
+    let structure_template = if summary_data_ranges.is_empty() && fallback_sheet_name.is_some() {
+        // The legacy summary flow accepts a fallback-only template without
+        // fixed structure labels; unmatched source sheets are then selected
+        // by the fallback data bounds during aggregation.
+        None
+    } else {
+        ensure!(
+            !summary_header_ranges.is_empty(),
+            "S1-F02 模板缺少可用于结构比对的“表头区域”命名区域"
+        );
+        let required_sheets = summary_data_ranges
+            .iter()
+            .map(|range| range.sheet_name.clone())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>();
+        Some(read_s1_structure_template_with_required_sheets(
+            &template_path,
+            &summary_header_ranges,
+            &required_sheets,
+        )?)
+    };
+
+    let mut structure_preflight_checked_workbooks = 0;
+    let mut structure_preflight_passed_workbooks = 0;
+    let mut structure_preflight_partial_workbooks = 0;
+    let mut structure_preflight_skipped_workbooks = 0;
+    let mut structure_preflight_skipped_details = Vec::new();
+    if let Some(structure_template) = structure_template.as_ref() {
+        let mut accepted_sources = Vec::with_capacity(sources.len());
+        for source_path in &sources {
+            structure_preflight_checked_workbooks += 1;
+            match compare_s1_summary_source_structure(source_path, structure_template) {
+                Ok(result) => {
+                    let partial_without_comparable_sheet = !result.missing_sheets.is_empty()
+                        && result.checked_labels == 0
+                        && result.diagnostic.as_deref().is_some_and(|diagnostic| {
+                            diagnostic.starts_with("缺少模板要求的工作表：")
+                        });
+                    if result.matched || partial_without_comparable_sheet {
+                        if result.missing_sheets.is_empty() {
+                            structure_preflight_passed_workbooks += 1;
+                        } else {
+                            structure_preflight_partial_workbooks += 1;
+                        }
+                        accepted_sources.push(source_path.clone());
+                    } else {
+                        structure_preflight_skipped_workbooks += 1;
+                        let details = result.diagnostic.unwrap_or_else(|| {
+                            format!(
+                                "表头结构仅匹配 {}/{}（阈值 90%）",
+                                result.matched_labels, result.checked_labels
+                            )
+                        });
+                        structure_preflight_skipped_details.push(format!(
+                            "{}：{}",
+                            source_file_label(source_path),
+                            details
+                        ));
+                    }
+                }
+                Err(error) => {
+                    structure_preflight_skipped_workbooks += 1;
+                    structure_preflight_skipped_details.push(format!(
+                        "{}：无法完成结构比对：{error:#}",
+                        source_file_label(source_path)
+                    ));
+                }
+            }
+        }
+        sources = accepted_sources;
+        if sources.is_empty() {
+            bail!(
+                "没有通过 S1-F02 表结构比对的源工作簿；已跳过 {} 个：{}",
+                structure_preflight_skipped_workbooks,
+                structure_preflight_skipped_details.join("；")
+            );
+        }
+    }
+    let structure_preflight_time_ms = structure_preflight_started.elapsed().as_millis();
 
     let mut source_workbooks =
         Vec::<(&PathBuf, WorkbookDump, Vec<WorksheetExtent>)>::with_capacity(sources.len());
@@ -909,6 +1027,11 @@ pub fn summarize_s1_named_regions_selected(
         features: feature_count,
         source_workbooks: sources.len(),
         source_sheets: source_sheet_count,
+        structure_preflight_checked_workbooks,
+        structure_preflight_passed_workbooks,
+        structure_preflight_partial_workbooks,
+        structure_preflight_skipped_workbooks,
+        structure_preflight_skipped_details,
         output_sheets: sheets.len(),
         data_rows,
         skipped_missing_sheets,
@@ -919,6 +1042,7 @@ pub fn summarize_s1_named_regions_selected(
         writer: WRITER_ENGINE,
         discovery_time_ms,
         template_read_time_ms,
+        structure_preflight_time_ms,
         source_read_time_ms,
         calculation_time_ms,
         history_elapsed_ms,
@@ -1536,6 +1660,23 @@ fn split_fallback_summary_ranges(
             right,
         }),
     ))
+}
+
+fn deduplicate_ranges(ranges: &mut Vec<CopyRange>) {
+    let mut seen = HashSet::new();
+    ranges.retain(|range| {
+        seen.insert((
+            range.sheet_name.to_lowercase(),
+            range.address.replace('$', "").to_ascii_uppercase(),
+        ))
+    });
+}
+
+fn source_file_label(path: &Path) -> String {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("<未知文件名>")
+        .to_owned()
 }
 
 fn discover_source_workbooks(input_dir: &Path, recursive: bool) -> Result<Vec<PathBuf>> {

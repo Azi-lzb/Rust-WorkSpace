@@ -2079,11 +2079,17 @@ fn run_s1_region_summary(arguments: S1RegionSummaryArgs) -> Result<()> {
                 "output_sheets": summary.output_sheets,
                 "data_rows": summary.data_rows,
                 "skipped_missing_sheets": summary.skipped_missing_sheets,
+                "structure_preflight_checked_workbooks": summary.structure_preflight_checked_workbooks,
+                "structure_preflight_passed_workbooks": summary.structure_preflight_passed_workbooks,
+                "structure_preflight_partial_workbooks": summary.structure_preflight_partial_workbooks,
+                "structure_preflight_skipped_workbooks": summary.structure_preflight_skipped_workbooks,
+                "structure_preflight_skipped_details": summary.structure_preflight_skipped_details,
                 "metadata_fields_left_blank": summary.metadata_fields_left_blank,
                 "history_reader": summary.history_reader,
                 "history_rows_matched": summary.history_rows_matched,
                 "discovery_time_ms": summary.discovery_time_ms,
                 "template_read_time_ms": summary.template_read_time_ms,
+                "structure_preflight_time_ms": summary.structure_preflight_time_ms,
                 "source_read_time_ms": summary.source_read_time_ms,
                 "calculation_time_ms": summary.calculation_time_ms,
                 "history_elapsed_ms": summary.history_elapsed_ms,
@@ -2097,8 +2103,16 @@ fn run_s1_region_summary(arguments: S1RegionSummaryArgs) -> Result<()> {
             format!("；历史追加匹配 {} 行", summary.history_rows_matched)
         });
         eprintln!(
-            "汇总完成：{} 个工作簿，{} 张结果表，{} 行{}；耗时 {} ms；输出：{}",
+            "汇总完成：{} 个工作簿，结构通过 {} 个、部分继续 {} 个、结构跳过 {} 个：{}；{} 张结果表，{} 行{}；耗时 {} ms；输出：{}",
             summary.source_workbooks,
+            summary.structure_preflight_passed_workbooks,
+            summary.structure_preflight_partial_workbooks,
+            summary.structure_preflight_skipped_workbooks,
+            if summary.structure_preflight_skipped_details.is_empty() {
+                "无".to_owned()
+            } else {
+                summary.structure_preflight_skipped_details.join("；")
+            },
             summary.output_sheets,
             summary.data_rows,
             history_message,

@@ -1029,22 +1029,36 @@ fn run_s1_region_summary_worker(
             push_log(
                 &mut ui.value,
                 format!(
-                    "S1-F02 汇总完成：{} 个源工作簿、{} 张输出表、{} 行；文件 {}",
+                    "S1-F02 汇总完成：{} 个源工作簿，结构通过 {} 个、部分继续 {} 个、跳过 {} 个；{} 张输出表、{} 行；文件 {}",
                     summary.source_workbooks,
+                    summary.structure_preflight_passed_workbooks,
+                    summary.structure_preflight_partial_workbooks,
+                    summary.structure_preflight_skipped_workbooks,
                     summary.output_sheets,
                     summary.data_rows,
                     summary.output_path.display()
                 ),
             );
+            for detail in &summary.structure_preflight_skipped_details {
+                push_log(
+                    &mut ui.value,
+                    format!("S1-F02 结构预检跳过文件：{detail}"),
+                );
+            }
             push_detail_log(
                 &mut ui.value,
                 format!(
-                    "S1-F02 完成：reader={}；writer={}；历史匹配={} 行；扫描={} ms；模板读取={} ms；源读取={} ms；汇总={} ms；历史富化={} ms；写入={} ms；读回校验={} ms；任务总计={} ms",
+                    "S1-F02 完成：reader={}；writer={}；结构预检={} 个，通过={}，部分继续={}，跳过={}；历史匹配={} 行；扫描={} ms；模板读取={} ms；结构预检={} ms；源读取={} ms；汇总={} ms；历史富化={} ms；写入={} ms；读回校验={} ms；任务总计={} ms",
                     summary.reader,
                     summary.writer,
+                    summary.structure_preflight_checked_workbooks,
+                    summary.structure_preflight_passed_workbooks,
+                    summary.structure_preflight_partial_workbooks,
+                    summary.structure_preflight_skipped_workbooks,
                     summary.history_rows_matched,
                     summary.discovery_time_ms,
                     summary.template_read_time_ms,
+                    summary.structure_preflight_time_ms,
                     summary.source_read_time_ms,
                     summary.calculation_time_ms,
                     summary.history_elapsed_ms,
@@ -2841,6 +2855,12 @@ mod tests {
         let mut workbook = Workbook::new();
         let data = workbook.add_worksheet();
         data.set_name("Data").expect("name S1 summary source sheet");
+        data.write_string(1, 1, "财务")
+            .expect("write S1 summary structure group header");
+        data.write_string(2, 1, "单位")
+            .expect("write S1 summary structure row header");
+        data.write_string(2, 2, "金额")
+            .expect("write S1 summary structure value header");
         data.write_string(4, 1, "甲")
             .expect("write S1 summary row label");
         data.write_number(4, 2, 10.0)

@@ -116,8 +116,28 @@ pub fn compare_s1_source_structure(
     source_path: impl AsRef<Path>,
     template: &S1StructureTemplate,
 ) -> Result<S1StructureMatch> {
+    compare_s1_source_structure_impl(source_path.as_ref(), template, false)
+}
+
+/// Match the structure ranges that are present in a summary source workbook.
+///
+/// S1-F02 preserves the Python summary behavior: missing template sheets are
+/// reported but do not reject other matching sheets. If all required sheets
+/// are absent, the caller may still accept the source as a partial summary
+/// input, matching `summary_source_is_usable` in the Python baseline.
+pub fn compare_s1_summary_source_structure(
+    source_path: impl AsRef<Path>,
+    template: &S1StructureTemplate,
+) -> Result<S1StructureMatch> {
+    compare_s1_source_structure_impl(source_path.as_ref(), template, true)
+}
+
+fn compare_s1_source_structure_impl(
+    source_path: &Path,
+    template: &S1StructureTemplate,
+    allow_missing_sheets: bool,
+) -> Result<S1StructureMatch> {
     let started = Instant::now();
-    let source_path = source_path.as_ref();
     let workbook = read_workbook(source_path)
         .with_context(|| format!("读取 S1 表结构报送文件 {}", source_path.display()))?;
     let sheet_names = workbook
@@ -132,7 +152,7 @@ pub fn compare_s1_source_structure(
         .cloned()
         .collect::<Vec<_>>();
 
-    if !missing_sheets.is_empty() {
+    if !allow_missing_sheets && !missing_sheets.is_empty() {
         return Ok(S1StructureMatch {
             matched: false,
             score: 0.0,
@@ -145,16 +165,25 @@ pub fn compare_s1_source_structure(
         });
     }
 
-    if template.expected_cells.is_empty() {
+    let available_expected_cells = template
+        .expected_cells
+        .iter()
+        .filter(|expected| sheet_names.contains(expected.sheet_name.as_str()))
+        .collect::<Vec<_>>();
+    if available_expected_cells.is_empty() {
         return Ok(S1StructureMatch {
             matched: false,
             score: 0.0,
             matched_labels: 0,
             checked_labels: 0,
-            missing_sheets: Vec::new(),
+            missing_sheets: missing_sheets.clone(),
             read_time_ms: workbook.elapsed_ms,
             elapsed_ms: started.elapsed().as_millis(),
-            diagnostic: Some("模板表结构区域没有可比对的固定值".to_owned()),
+            diagnostic: Some(if missing_sheets.is_empty() {
+                "模板表结构区域没有可比对的固定值".to_owned()
+            } else {
+                format!("缺少模板要求的工作表：{}", missing_sheets.join("、"))
+            }),
         });
     }
 
@@ -165,7 +194,7 @@ pub fn compare_s1_source_structure(
         .collect::<BTreeMap<_, _>>();
     let merge_anchors = build_merge_anchor_map(template, &sheets);
     let mut matched_labels = 0usize;
-    for expected in &template.expected_cells {
+    for expected in &available_expected_cells {
         let sheet = sheets[expected.sheet_name.as_str()];
         let (row, column) = merge_anchors
             .get(&(expected.sheet_name.clone(), expected.row, expected.column))
@@ -177,7 +206,7 @@ pub fn compare_s1_source_structure(
         }
     }
 
-    let checked_labels = template.expected_cells.len();
+    let checked_labels = available_expected_cells.len();
     let score = matched_labels as f64 / checked_labels as f64;
     let enough_matches = if checked_labels >= 5 {
         matched_labels >= 3
@@ -189,7 +218,7 @@ pub fn compare_s1_source_structure(
         score,
         matched_labels,
         checked_labels,
-        missing_sheets: Vec::new(),
+        missing_sheets,
         read_time_ms: workbook.elapsed_ms,
         elapsed_ms: started.elapsed().as_millis(),
         diagnostic: None,
