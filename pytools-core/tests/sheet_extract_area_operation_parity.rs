@@ -1765,3 +1765,40 @@ fn interactive_menu_extracts_elapsed_duration_values() {
     assert_eq!(fs::read(source).unwrap(), source_bytes);
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn interactive_menu_extracts_iso_typed_elapsed_durations() {
+    let root = temporary_directory("sheet-extract-iso-duration-menu");
+    let source = fixture_path("iso-typed-durations.xlsx");
+    let source_bytes = fs::read(&source).unwrap();
+    let mut task = load_tasks(&cases())[0].clone();
+    task.workbook_keywords.clear();
+    task.sheet_keywords.clear();
+    task.exclude_keywords.clear();
+    task.area_spec = "A1:A5".to_owned();
+    task.output_folder = "ISO时长提取".to_owned();
+    task.output_name = "iso-duration-output.xlsx".to_owned();
+    let config = create_menu_config(&root, &[task]);
+    let output = run_menu(&config, &format!("7\n6\nn\n{}\n", source.display()));
+    assert!(
+        output.status.success(),
+        "ISO duration extraction menu failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let output_path = root.join("app/output/ISO时长提取/iso-duration-output.xlsx");
+    assert!(output_path.is_file());
+    let output_sheets = read_value_columns_with_iso_dates(&output_path, 16_384).unwrap();
+    assert_eq!(output_sheets.len(), 1);
+    assert_eq!(output_sheets[0].name, "Sheet_2");
+    let expected_seconds = [5_415.125, 86_400.0, 0.0, 1.5, 172_860.007];
+    for (row, expected) in expected_seconds.into_iter().enumerate() {
+        assert!(matches!(
+            output_sheets[0].values.get(&format!("A{}", row + 1)),
+            Some(CellValue::DateTimeSerial(value))
+                if (*value - expected / 86_400.0).abs() < 1e-12
+        ));
+    }
+    assert_eq!(fs::read(source).unwrap(), source_bytes);
+    fs::remove_dir_all(root).unwrap();
+}

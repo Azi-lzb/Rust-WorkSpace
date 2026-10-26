@@ -1,0 +1,64 @@
+{
+  "schema_version": 1,
+  "status": "passed",
+  "feature": "PT-7-6 area extraction strict OOXML ISO duration subset",
+  "sample_kind": "synthetic XLSX cells tagged t=d with PT durations",
+  "source_python": "PyCode/core/feature_1_6_extract_sheets.py::run_extract_sheets",
+  "rust_entry": "pytools extract-sheets-area",
+  "python_stats": {
+    "files": 1,
+    "extracted_sheets": 1,
+    "output_files": 1,
+    "failed_files": 0
+  },
+  "rust_stats": {
+    "files": 1,
+    "extracted_sheets": 1,
+    "output_files": 1,
+    "failed_files": 0
+  },
+  "output_projection": {
+    "sheet_names": [
+      "Sheet_2"
+    ],
+    "sheets": [
+      {
+        "name": "Sheet_2",
+        "cells": [
+          {
+            "cell": "A1",
+            "type": "timedelta",
+            "value": "1:30:15.125000",
+            "number_format": "[hh]:mm:ss"
+          },
+          {
+            "cell": "A2",
+            "type": "timedelta",
+            "value": "1 day, 0:00:00",
+            "number_format": "[hh]:mm:ss"
+          },
+          {
+            "cell": "A3",
+            "type": "timedelta",
+            "value": "0:00:00",
+            "number_format": "[hh]:mm:ss"
+          },
+          {
+            "cell": "A4",
+            "type": "timedelta",
+            "value": "0:00:01.500000",
+            "number_format": "[hh]:mm:ss"
+          },
+          {
+            "cell": "A5",
+            "type": "timedelta",
+            "value": "2 days, 0:01:00.007000",
+            "number_format": "[hh]:mm:ss"
+          }
+        ]
+      }
+    ]
+  },
+  "source_unchanged": true,
+  "scope_note": "Synthetic parity only. Real business files, malformed or unsupported ISO duration forms, time-only cells, and platform delivery remain unverified."
+}

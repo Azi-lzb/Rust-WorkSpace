@@ -865,9 +865,8 @@ where
                 let output_index = match output_indexes.get(&key).copied() {
                     Some(index) => index,
                     None => {
-                        let (existing_sha256, existing_sheet_names) = if append_existing
-                            && output_path.exists()
-                        {
+                        let append_to_existing = append_existing && output_path.exists();
+                        let (existing_sha256, existing_sheet_names) = if append_to_existing {
                             ensure!(
                                     capability_path.is_some() && platform.is_some(),
                                     "appending to an existing extraction output requires --capabilities and --platform"
@@ -907,6 +906,13 @@ where
                         } else {
                             (None, Vec::new())
                         };
+                        let mut sheet_names = existing_sheet_names.clone();
+                        if !append_to_existing {
+                            // The PyCode path starts a fresh openpyxl Workbook, whose
+                            // default "Sheet" reserves that name until imported sheets
+                            // have been added and the empty default page is removed.
+                            sheet_names.push("Sheet".to_owned());
+                        }
                         let index = outputs.len();
                         output_indexes.insert(key, index);
                         outputs.push(PendingWorkbook {
@@ -914,7 +920,7 @@ where
                             existing_sha256,
                             workbook: Workbook::new(),
                             sheets: Vec::new(),
-                            sheet_names: existing_sheet_names.clone(),
+                            sheet_names,
                             existing_sheet_names,
                             import_operations: Vec::new(),
                         });
@@ -1629,8 +1635,13 @@ fn write_extracted_value(
         }
         CellValue::Empty => {}
         CellValue::DateTimeIso(value) => {
-            let datetime = parse_extracted_calendar_datetime(&value)?;
-            worksheet.write_datetime_with_format(row, column, &datetime, datetime_format)?;
+            if let Some(serial) = parse_openpyxl_iso_duration_serial(&value)? {
+                let serial = normalize_openpyxl_duration_serial(serial)?;
+                worksheet.write_number_with_format(row, column, serial, duration_format)?;
+            } else {
+                let datetime = parse_extracted_calendar_datetime(&value)?;
+                worksheet.write_datetime_with_format(row, column, &datetime, datetime_format)?;
+            }
         }
         CellValue::DateTimeSerial(serial) => {
             // This flow reads through `read_value_columns_with_iso_dates`: its
@@ -1676,6 +1687,132 @@ fn parse_extracted_calendar_datetime(value: &str) -> Result<ExcelDateTime> {
         "date/time uses an Excel epoch day that is ambiguous with a time-only value; output was not committed"
     );
     ExcelDateTime::parse_from_str(value).context("parse extracted Excel calendar date/time")
+}
+
+fn parse_openpyxl_iso_duration_serial(value: &str) -> Result<Option<f64>> {
+    const HOURS_IN_MICROSECONDS: i128 = 3_600_000_000;
+    const MINUTES_IN_MICROSECONDS: i128 = 60_000_000;
+    const MICROSECONDS_PER_SECOND: i128 = 1_000_000;
+    const MICROSECONDS_PER_DAY: i128 = 86_400_000_000;
+
+    let Some(mut remaining) = value.strip_prefix("PT") else {
+        return Ok(None);
+    };
+    let mut total_microseconds = 0_i128;
+    let mut found_component = false;
+
+    if let Some((component, rest)) = take_iso_duration_integer_component(remaining, 'H') {
+        let hours = component
+            .parse::<i128>()
+            .context("parse ISO duration hours")?;
+        total_microseconds = total_microseconds
+            .checked_add(
+                hours
+                    .checked_mul(HOURS_IN_MICROSECONDS)
+                    .context("ISO duration hours overflow")?,
+            )
+            .context("ISO duration overflow")?;
+        remaining = rest;
+        found_component = true;
+    }
+
+    if let Some((component, rest)) = take_iso_duration_integer_component(remaining, 'M') {
+        let minutes = component
+            .parse::<i128>()
+            .context("parse ISO duration minutes")?;
+        total_microseconds = total_microseconds
+            .checked_add(
+                minutes
+                    .checked_mul(MINUTES_IN_MICROSECONDS)
+                    .context("ISO duration minutes overflow")?,
+            )
+            .context("ISO duration overflow")?;
+        remaining = rest;
+        found_component = true;
+    }
+
+    if let Some((component, rest)) = take_iso_duration_seconds_component(remaining)? {
+        let (whole_seconds, fractional_seconds) = component
+            .split_once('.')
+            .map_or((component, None), |(whole, fraction)| {
+                (whole, Some(fraction))
+            });
+        let whole_seconds = whole_seconds
+            .parse::<i128>()
+            .context("parse ISO duration seconds")?;
+        let mut component_microseconds = whole_seconds
+            .checked_mul(MICROSECONDS_PER_SECOND)
+            .context("ISO duration seconds overflow")?;
+        if let Some(fraction) = fractional_seconds {
+            let fraction_digits = fraction.len();
+            let fraction = fraction
+                .parse::<i128>()
+                .context("parse ISO duration fractional seconds")?;
+            let scale = match fraction_digits {
+                1 => 100_000,
+                2 => 10_000,
+                3 => 1_000,
+                _ => bail!("ISO duration seconds support at most 3 decimal places"),
+            };
+            component_microseconds = component_microseconds
+                .checked_add(fraction * scale)
+                .context("ISO duration fractional seconds overflow")?;
+        }
+        total_microseconds = total_microseconds
+            .checked_add(component_microseconds)
+            .context("ISO duration overflow")?;
+        remaining = rest;
+        found_component = true;
+    }
+
+    ensure!(
+        found_component && remaining.is_empty(),
+        "unsupported ISO duration text; output was not committed"
+    );
+
+    let days = total_microseconds / MICROSECONDS_PER_DAY;
+    let remainder = total_microseconds % MICROSECONDS_PER_DAY;
+    let total_seconds = days as f64 * 86_400.0
+        + (remainder / MICROSECONDS_PER_SECOND) as f64
+        + (remainder % MICROSECONDS_PER_SECOND) as f64 / MICROSECONDS_PER_SECOND as f64;
+    let serial = total_seconds / 86_400.0;
+    ensure!(serial.is_finite(), "ISO duration exceeds numeric range");
+    Ok(Some(serial))
+}
+
+fn take_iso_duration_integer_component(value: &str, unit: char) -> Option<(&str, &str)> {
+    let digit_count = value.bytes().take_while(u8::is_ascii_digit).count();
+    if digit_count == 0 || !value[digit_count..].starts_with(unit) {
+        return None;
+    }
+    Some((
+        &value[..digit_count],
+        &value[digit_count + unit.len_utf8()..],
+    ))
+}
+
+fn take_iso_duration_seconds_component(value: &str) -> Result<Option<(&str, &str)>> {
+    let digit_count = value.bytes().take_while(u8::is_ascii_digit).count();
+    if digit_count == 0 {
+        return Ok(None);
+    }
+    let mut component_end = digit_count;
+    if value[digit_count..].starts_with('.') {
+        let fraction_start = digit_count + 1;
+        let fraction_count = value[fraction_start..]
+            .bytes()
+            .take_while(u8::is_ascii_digit)
+            .count();
+        ensure!(
+            (1..=3).contains(&fraction_count),
+            "ISO duration seconds support 1 to 3 decimal places"
+        );
+        component_end = fraction_start + fraction_count;
+    }
+    if !value[component_end..].starts_with('S') {
+        return Ok(None);
+    }
+    Ok(Some((&value[..component_end], &value[component_end + 1..])))
 }
 
 fn normalize_openpyxl_duration_serial(value: f64) -> Result<f64> {
@@ -1741,7 +1878,7 @@ fn normalize_openpyxl_duration_serial(value: f64) -> Result<f64> {
 
 #[cfg(test)]
 mod duration_tests {
-    use super::normalize_openpyxl_duration_serial;
+    use super::{normalize_openpyxl_duration_serial, parse_openpyxl_iso_duration_serial};
 
     const MILLISECOND_IN_DAYS: f64 = 1.0 / 86_400_000.0;
 
@@ -1770,6 +1907,25 @@ mod duration_tests {
         assert!(normalize_openpyxl_duration_serial(f64::INFINITY).is_err());
         assert!(normalize_openpyxl_duration_serial(-1_000_000_000.0).is_err());
         assert!(normalize_openpyxl_duration_serial(1_000_000_000.0).is_err());
+    }
+
+    #[test]
+    fn openpyxl_iso_duration_subset_matches_supported_pt_components() {
+        let serial = parse_openpyxl_iso_duration_serial("PT1H30M15.125S")
+            .unwrap()
+            .unwrap();
+        let expected = 5_415.125 / 86_400.0;
+        assert!((normalize_openpyxl_duration_serial(serial).unwrap() - expected).abs() < 1e-15);
+
+        let zero = parse_openpyxl_iso_duration_serial("PT0S").unwrap().unwrap();
+        assert_eq!(normalize_openpyxl_duration_serial(zero).unwrap(), 0.0);
+        assert_eq!(
+            parse_openpyxl_iso_duration_serial("2026-10-26T12:00:00").unwrap(),
+            None
+        );
+        assert!(parse_openpyxl_iso_duration_serial("PT").is_err());
+        assert!(parse_openpyxl_iso_duration_serial("PT1.1234S").is_err());
+        assert!(parse_openpyxl_iso_duration_serial("PT1H2M3Sx").is_err());
     }
 }
 fn validate_staged_workbook_with_prefix(

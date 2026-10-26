@@ -769,6 +769,14 @@ Windows 原生 `cargo fmt --manifest-path pytools-core/Cargo.toml -- --check`、
 
 真实业务样本、time-only/ISO-typed duration、其他格式、全模板保真、Linux/glibc 2.28、麒麟/UOS 及离线 deb 仍未验收；PT-7-6 整体仍在迁移中，未标为完成。
 
+### 2026-10-26 PT-7-6 ISO-typed 累计时长子集
+
+Calamine 将严格 OOXML `t="d"` 的 `PT...` 时长单元格读为 `DateTimeIso`，而旧 PyCode/openpyxl 会将其解释为 `datetime.timedelta`。区域提取现在支持与 PyCode `PT` 小时/分钟/秒语法一致、最多三位小数秒的值，按时长序列和 `[hh]:mm:ss` 输出；非匹配日历 ISO 值仍走原日期路径，ODS 专用 `DurationIso` 不扩大为 XLSX 输入支持。新建输出簿的页签名去重也保留 openpyxl 默认空白 `Sheet` 的名称占用行为。
+
+Windows 原生验证：`cargo fmt --manifest-path pytools-core/Cargo.toml -- --check`、`cargo test --offline --locked -p pytools-core --lib sheet_extract::duration_tests -j 1`（3/3）、`cargo test --offline --locked -p pytools-core --test sheet_extract_area_operation_parity -j 1`（14/14）及 `cargo build --offline --locked -p pytools-core --bin pytools -j 1` 通过。实际 `pytools menu → 7 → 6` 集成测试通过，5 个 ISO-typed 时长值、`Sheet_2` 名称、timedelta 类型及 `[hh]:mm:ss` 与只读 PyCode 完整输出投影一致；夹具字节未变，见 `probe/reports/sheet_extract_iso_duration_parity_20261026.json`。此项仅是合成 XLSX 证据，不代表真实业务工作簿或完整 Excel 保真验收。
+
+真实业务时长样本、time-only 单元格、其他输入格式、Windows 原生文件对话框、全模板保真、Linux/glibc 2.28、麒麟/UOS 与离线 deb 仍未验证；PT-7-6 整体验收继续未完成。
+
 ### 2026-10-25 PT-1-2 时序提取 Rust 主输出、目标追加与入口对拍
 
 新增 `timeline_extract` Rust 业务模块，按原 `PyCode.core.timeline_396.run_timeline_slim` 复用现有规则引擎，读取配置规则与路径映射，执行行头后缀、跨规则去重、日期和值写出，并以 `rust_xlsxwriter` 生成七列 `时序提取结果`。新增 `timeline-extract` CLI 及真实菜单 `pytools menu → 1 → 2`，接入 user/developer/off 日志视图与 PT-1-2 运行历史。读取、写入和目标提交事件记录实际引擎、进度与阶段耗时。
