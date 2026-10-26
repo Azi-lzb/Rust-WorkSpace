@@ -328,7 +328,7 @@ fn run_com_recalculate(input: &Path, output: &Path) -> Result<String> {
         ps_quote(&input.to_string_lossy()),
         ps_quote(&output.to_string_lossy())
     );
-    fs::write(&script_path, script)?;
+    write_powershell_script(&script_path, &script)?;
     let result = Command::new("powershell.exe")
         .args([
             "-NoProfile",
@@ -581,9 +581,9 @@ fn run_com(input: &Path, output: &Path, target: &str, source_ext: &str) -> Resul
         ));
     }
     script.push_str("if ($null -eq $app) { throw \"No supported Office/WPS COM engine is available: $lastError\" }\n");
-    script.push_str(
-        "$doc=$null; $book=$null;\ntry {\n$app.Visible=$false; $app.DisplayAlerts=$false;\n",
-    );
+    script.push_str("$doc=$null; $book=$null;\ntry {\n$app.Visible=$false; ");
+    script.push_str(com_display_alerts_setting(target));
+    script.push('\n');
     if target == "docx" {
         script.push_str(&format!("$doc=$app.Documents.Open('{}',$false,$true); try {{ $doc.SaveAs2('{}',{}) }} catch {{ $doc.SaveAs('{}',{}) }};\n", ps_quote(&input.to_string_lossy()), ps_quote(&output.to_string_lossy()), format_code, ps_quote(&output.to_string_lossy()), format_code));
     } else {
@@ -596,7 +596,7 @@ fn run_com(input: &Path, output: &Path, target: &str, source_ext: &str) -> Resul
     }
     script.push_str("} finally { if ($null -ne $doc) { $doc.Close($false) }; if ($null -ne $book) { $book.Close($false) }; if ($null -ne $app) { $app.Quit() } }\n");
     let script_path = output.with_extension("lo-convert.ps1");
-    fs::write(&script_path, script)?;
+    write_powershell_script(&script_path, &script)?;
     let result = Command::new("powershell.exe")
         .args([
             "-NoProfile",
@@ -619,6 +619,22 @@ fn run_com(input: &Path, output: &Path, target: &str, source_ext: &str) -> Resul
         );
     }
     Ok(())
+}
+
+fn com_display_alerts_setting(target: &str) -> &'static str {
+    if target == "docx" {
+        // Word expects the WdAlertLevel enum (wdAlertsNone = 0), not a Boolean.
+        "$app.DisplayAlerts=0;"
+    } else {
+        "$app.DisplayAlerts=$false;"
+    }
+}
+
+fn write_powershell_script(path: &Path, script: &str) -> Result<()> {
+    let mut encoded = Vec::with_capacity(script.len() + 3);
+    encoded.extend_from_slice(&[0xEF, 0xBB, 0xBF]);
+    encoded.extend_from_slice(script.as_bytes());
+    fs::write(path, encoded).with_context(|| format!("write PowerShell script {}", path.display()))
 }
 
 fn validate_conversion(
@@ -730,7 +746,15 @@ fn extract_word_text_com(input: &Path, text_output: &Path) -> Result<String> {
         ps_quote(&input.to_string_lossy()),
         ps_quote(&text_output.to_string_lossy())
     );
-    fs::write(&script_path, script)?;
+    let script = script.replace(
+        "$app.DisplayAlerts=$false;",
+        com_display_alerts_setting("docx"),
+    );
+    ensure!(
+        script.contains(com_display_alerts_setting("docx")),
+        "could not configure Word COM alert level"
+    );
+    write_powershell_script(&script_path, &script)?;
     let result = Command::new("powershell.exe")
         .args([
             "-NoProfile",
@@ -1103,8 +1127,9 @@ impl Drop for TempDirGuard {
 #[cfg(test)]
 mod recalculation_tests {
     use super::{
-        file_uri, formula_cache_cell_count, libreoffice_user_installation_arg,
-        require_engine_output, MAIN_NS, PACKAGE_REL_NS, REL_NS,
+        com_display_alerts_setting, file_uri, formula_cache_cell_count,
+        libreoffice_user_installation_arg, require_engine_output, write_powershell_script, MAIN_NS,
+        PACKAGE_REL_NS, REL_NS,
     };
     use anyhow::Result;
     use std::{
@@ -1115,6 +1140,31 @@ mod recalculation_tests {
         time::{SystemTime, UNIX_EPOCH},
     };
     use zip::{write::SimpleFileOptions, ZipWriter};
+
+    #[test]
+    fn com_display_alerts_setting_uses_host_application_type() {
+        assert_eq!(com_display_alerts_setting("docx"), "$app.DisplayAlerts=0;");
+        assert_eq!(
+            com_display_alerts_setting("xlsx"),
+            "$app.DisplayAlerts=$false;"
+        );
+    }
+
+    #[test]
+    fn powershell_scripts_are_written_as_utf8_with_bom() -> Result<()> {
+        let nonce = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
+        let path = env::temp_dir().join(format!(
+            "lo_convert_script_{}_{}.ps1",
+            std::process::id(),
+            nonce
+        ));
+        write_powershell_script(&path, "$input='中文路径';")?;
+        let bytes = fs::read(&path)?;
+        assert!(bytes.starts_with(&[0xEF, 0xBB, 0xBF]));
+        assert_eq!(std::str::from_utf8(&bytes[3..])?, "$input='中文路径';");
+        fs::remove_file(path)?;
+        Ok(())
+    }
 
     fn fixture(with_cache: bool) -> Result<PathBuf> {
         let nonce = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();

@@ -1062,3 +1062,11 @@ Windows 原生验证：格式检查和 PyTools CLI `cargo check` 通过；`batch
 补充新版业务要求 A07 的真实 `submission-check` CLI 合成回归：日期字段留空时不构成条件；县区“惠城区”、备用词“单家机构”必须命中；机构关键词中的全称/简称按 OR 匹配，而各非空字段组之间按 AND 匹配。两种别名文件命中，缺机构、缺备用词或缺县区的三份文件均列为未识别，配置与输入文件字节保持不变。该测试不改变既有规则实现或状态。
 
 Windows 原生验证：`cargo fmt -p pytools-core -- --check`、`cargo check --offline --locked -q -p pytools-core --bin pytools -j 1`、`cargo test --offline --locked -q -p pytools-core --test submission_check_parity -j 1`（5/5）、`git diff --check` 通过。只读核对的旧 Python `_load_submission_check_rules` / `_file_matches_submission_rule` 分别按非空组 AND、组内 token OR；本次未重新启动 Python，未执行真实业务样本或 Linux/deb 验收。
+
+### 2026-10-27 V2 4-4 Office 格式转换 Windows COM 冒烟与修复
+
+修复真实 Windows 转换入口中的两处 COM 问题：Word 的 `DisplayAlerts` 使用 `WdAlertLevel` 枚举（0）而非 Excel 的布尔值；所有 COM PowerShell 脚本写为带 BOM 的 UTF-8，避免 Windows PowerShell 在中文路径下按系统代码页误读。第二处由 F 盘中文测试目录中的实际 Excel COM 转换失败复现；失败时源工作簿未改且未发布结果。
+
+经 Rust 主菜单 `4 → 4 → 1` 选择现有 `.xls` 夹具，真实 Excel COM 输出 `.xlsx`，通过 sidecar 的工作表顺序/名称、值及公式文本校验，输入字节保持不变；经 `4 → 4 → 2` 选择由本机 Word 创建的临时 `.doc`，真实 Word COM 输出 `.docx`，通过 OOXML 包及正文文本校验。配置由 Rust `config-init` 在 F 盘临时目录创建。该证据是 Windows 引擎冒烟，不是 Python 输出对拍或真实用户文档保真验收。
+
+Windows 原生验证：`cargo fmt --manifest-path sidecar/lo-convert/Cargo.toml`；`cargo test --offline --locked -p lo-convert -j 1`（6 个单测 + 1 个集成测试通过）；`cargo build --offline --locked -p lo-convert -p pytools-core --bins -j 1` 通过。旧 `conversion_menu_cli` 集成目标为 2/10 通过、8 项失败；失败输入仍按旧菜单路径编号，进入新版 7 类菜单时被拒绝，另有一项返回文件不存在错误。本轮通过真实新版菜单路径单独验证了 XLS 和 DOC 转换，未改写其余旧路径测试。未验证 ET/WPS、真实业务 DOC、转换后样式/对象完整保留、旧 Python 与 Rust 输出对拍、LibreOffice/Linux、麒麟/UOS、glibc 2.28 或离线 deb；转换功能整体仍为“已实现，待 Windows 真实验收”。
