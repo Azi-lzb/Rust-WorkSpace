@@ -1004,7 +1004,7 @@ table.editor-table{width:100%;border-collapse:collapse;font-size:13px}
           <div class="field-head"><label>本期数值核对文件</label></div>
           <div class="input-group">
             <div class="path-name empty link" id="centralCrossCurName" onclick="openCentralPath('centralCrossCur')" title="">未选择</div>
-            <button class="btn" onclick="pickCentral('centralCrossCur')" title="选择本期数值核对数据（CSV 或 XLSX，UTF-8/GBK 均可）">选择</button>
+            <button class="btn" onclick="pickCentral('centralCrossCur')" title="选择本期数值核对 CSV（UTF-8/GBK）；XLS/XLSX 尚未接通">选择</button>
           </div>
         </div>
       </div>
@@ -2140,7 +2140,7 @@ const GUIDE_FLOWS=[
   {n:'S3F1',editionSystem:'S3',name:'两期数据 ⇨ 比较文件',scenario:'比较两期大集中导数，按配置执行环比、警戒和指标校验。',source:'大集中系统 → 指标查询：选择机构及所有指标，分别导出本期和上期数据，不要混在同一份文件中。',prep:'打开“大集中统计系统”，选择本期数据文件、上期数据文件和输出目录。',steps:'① 选择两期 CSV/XLSX 导数；② 核对输出目录；③ 点击“两期数据 ⇨ 比较文件”。',output:'输出目录下的“比较结果_时间戳.xlsx”，并自动带入“比较文件.xlsx”。',tip:'规则由大集中通用配置和“3.1大集中执行比较_配置.xlsx”共同维护。'},
   {n:'S3F2',editionSystem:'S3',name:'比较文件 ⇨ 说明文件',scenario:'将比较文件中需要机构说明的指标整理为简化说明文件。',prep:'先打开比较文件，在最右侧“输出说明”列对需说明的行填写“是”。',steps:'① 选择或确认“比较文件.xlsx”；② 填写“输出说明”；③ 点击“比较文件 ⇨ 说明文件”。',output:'输出目录下的“指标说明_时间戳.xlsx”，并自动带入“说明文件.xlsx”。',tip:'此操作只导出选中行，不改写比较文件。'},
   {n:'S3F3',editionSystem:'S3',name:'机构说明 ⇨ 说明文件',scenario:'将机构反馈的变动原因批量回写至同一份说明文件，方便集中审核。',prep:'选择或导出目标说明文件，并准备机构填报完成的说明文件。',steps:'① 确认“说明文件.xlsx”；② 点击“机构说明 ⇨ 说明文件”；③ 批量选择机构反馈文件。',output:'目标说明文件会原地更新；同目录会保留导入前时间戳备份。',tip:'按机构代码、机构名称、指标代码、指标名称、数据值和增减额匹配；存在冲突时不自动覆盖。'},
-  {n:'S3F4',editionSystem:'S3',name:'本期数值核对',scenario:'按本期数值核对规则检查一份专用单期数据文件，覆盖多频度、多批次的跨表核对。',source:'大集中系统 → 指标查询：导出本次需要比较的指标，例如日报 1 批、月报 1 批。若要核对其他批次，还需在 3.2 配置中增加相应校验公式。',prep:'选择“本期数值核对文件”（CSV/XLSX）和输出目录。',steps:'① 选择本期数值核对文件；② 核对输出目录；③ 点击“本期数值核对”。',output:'输出目录下的“数值核对结果_时间戳.xlsx”。',tip:'不会使用“两期数据”的本期文件；规则由大集中通用配置和“3.2大集中本期数值核对_配置.xlsx”维护，引用上期 {...} 的规则已停用。'},
+  {n:'S3F4',editionSystem:'S3',name:'本期数值核对',scenario:'按本期数值核对规则检查一份专用单期数据文件，覆盖多频度、多批次的跨表核对。',source:'大集中系统 → 指标查询：导出本次需要比较的指标，例如日报 1 批、月报 1 批。若要核对其他批次，还需在 3.2 配置中增加相应校验公式。',prep:'选择单个本期数值核对 CSV（UTF-8/GBK）和输出目录；当前 Rust Web 入口暂不支持 XLS/XLSX。',steps:'① 选择本期数值核对 CSV；② 核对输出目录；③ 点击“本期数值核对”。',output:'输出目录下的“数值核对结果_时间戳.xlsx”。',tip:'不会使用“两期数据”的本期文件；规则由大集中通用配置和“3.2大集中本期数值核对_配置.xlsx”维护，引用上期 {...} 的规则已停用。'},
   {n:'S3F5',editionSystem:'S3',name:'比较文件 ⇨ 金融表单',scenario:'将比较文件按机构拆分并回填至内嵌金融表单，生成便于查看的机构工作簿。',prep:'选择或确认“比较文件.xlsx”和输出目录。',steps:'① 选择比较文件；② 核对输出目录；③ 点击“比较文件 ⇨ 金融表单”。',output:'输出目录下“指标比较拆分_时间戳”文件夹中的机构金融表单。',tip:'表单模板和转表规则在“3.3大集中指标比较拆分_配置.xlsx”中维护。'},
   {n:'S1F3',editionSystem:'S1',name:'组合工作表（核查表）',egg:true,scenario:'文件名规范、需要把同一机构的多类报表（如个人贷款和单位贷款）合成一本，供制作联合模板或跨表核查。',prep:'源文件主名第一个下划线前必须是机构全称。',steps:'① 选择源数据目录；② 需要时勾选递归；③ 点击“组合工作表（核查表）”。',output:'每家机构一本合并工作簿。',tip:'同名工作表只保留先复制的一张；本流程不需要模板、外部文件或数据期。'},
   {n:'S1F4',editionSystem:'S1',name:'组合工作表（按配置）',egg:true,scenario:'按设置中心中当前选择的组合方案分组，适合机构名称或文件命名不规则的情况。',prep:'连续点击“设置中心”五次，进入“组合工作表配置”维护方案与分组。',steps:'① 选择源数据目录；② 在设置中心保存组合方案；③ 点击“组合工作表（按配置）”。',output:'按当前方案生成组合工作簿。',tip:'文件名正则和文件名关键字两种分组方式均可用。'},
@@ -3829,9 +3829,9 @@ async function pickCentral(key){
     await refresh();
     return;
   }
-  const fileKinds={centralCur:'central_data',centralPre:'central_data',centralCrossCur:'central_data',centralCompareFile:'excel_ooxml',centralExplainFile:'excel_ooxml',centralCommonConfig:'excel_ooxml',centralComparisonConfig:'excel_ooxml',centralCrossConfig:'excel_ooxml',centralFormsConfig:'excel_ooxml'};
+  const fileKinds={centralCur:'central_data',centralPre:'central_data',centralCrossCur:'csv',centralCompareFile:'excel_ooxml',centralExplainFile:'excel_ooxml',centralCommonConfig:'excel_ooxml',centralComparisonConfig:'excel_ooxml',centralCrossConfig:'excel_ooxml',centralFormsConfig:'excel_ooxml'};
   const isFile=key in fileKinds;
-  const titles={centralCur:'选择本期大集中导数文件（CSV/XLSX）',centralPre:'选择上期导数文件（CSV/XLSX）',centralCrossCur:'选择本期数值核对文件（CSV/XLSX）',
+  const titles={centralCur:'选择本期大集中导数文件（CSV/XLSX）',centralPre:'选择上期导数文件（CSV/XLSX）',centralCrossCur:'选择本期数值核对 CSV（UTF-8/GBK）',
     centralOutput:'选择比较结果输出目录',centralCompareFile:'选择比较结果.xlsx',centralExplainFile:'选择说明文件.xlsx',
     centralFormOutput:'选择转表输出目录',
     centralCommonConfig:'选择3.0大集中通用配置.xlsx',centralComparisonConfig:'选择3.1大集中执行比较_配置.xlsx',

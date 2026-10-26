@@ -5,9 +5,9 @@
 //! at the service/CLI boundary so the calculation can be compared independently.
 
 use crate::central_csv::{CentralDataset, CentralValue};
-use anyhow::{bail, ensure, Context, Result};
+use anyhow::{Context, Result, bail, ensure};
 use chrono::Local;
-use excel_reader::{read_value_columns, CellValue, SheetValues};
+use excel_reader::{CellValue, SheetValues, read_value_columns};
 use excel_writer::{Color, Format, Workbook};
 use regex::Regex;
 use serde::Serialize;
@@ -551,7 +551,11 @@ fn resolve_new_xlsx_path(path: &Path, description: &str) -> Result<PathBuf> {
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
         .unwrap_or_else(|| Path::new("."));
-    ensure!(parent.is_dir(), "{description} 输出目录不存在：{}", parent.display());
+    ensure!(
+        parent.is_dir(),
+        "{description} 输出目录不存在：{}",
+        parent.display()
+    );
     let parent = fs::canonicalize(parent)
         .with_context(|| format!("规范化 {description} 输出目录 {}", parent.display()))?;
     let file_name = path
@@ -578,11 +582,7 @@ fn same_path(left: &Path, right: &Path) -> bool {
 }
 
 fn date_or_unknown(date: &str) -> &str {
-    if date.is_empty() {
-        "未知"
-    } else {
-        date
-    }
+    if date.is_empty() { "未知" } else { date }
 }
 
 fn load_csv_dataset(
@@ -1818,9 +1818,11 @@ mod tests {
         let result = run_current_value_check(&current, None, &rules, "亿元", |_, _| true);
 
         assert_eq!(result.rows.len(), 1);
-        assert!(result.rows[0]
-            .explanation_required
-            .contains("校验公式计算有误"));
+        assert!(
+            result.rows[0]
+                .explanation_required
+                .contains("校验公式计算有误")
+        );
         assert_eq!(result.logs.len(), 1);
         assert_eq!(result.logs[0].error_type, "校验公式 计算有误");
     }

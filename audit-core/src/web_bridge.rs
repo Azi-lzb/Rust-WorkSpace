@@ -5,21 +5,22 @@
 
 use crate::{
     period_pairs::{list_period_pairs, report_source_warning},
-    s1_template_inspection::{inspect_s1_template, INSPECTION_ENGINE},
+    s1_template_inspection::{INSPECTION_ENGINE, inspect_s1_template},
     s2_config_check::check_s2_config,
-    s2_service::{run_s2_audit, s2_engine_for_stage, S2ProgressEvent, S2RunRequest},
+    s2_service::{S2ProgressEvent, S2RunRequest, run_s2_audit, s2_engine_for_stage},
+    s3_current_value_check::{python_regex_scope_matcher, run_current_value_check_csv},
     s3_explanation_export::export_selected_explanations,
 };
 use anyhow::{Context, Result};
 use axum::{
+    Json, Router,
     body::Bytes,
     extract::{Path as RoutePath, State},
-    http::{header, HeaderMap, HeaderValue, StatusCode},
+    http::{HeaderMap, HeaderValue, StatusCode, header},
     response::{Html, IntoResponse, Response},
     routing::{get, post},
-    Json, Router,
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::{
     fs,
     net::{IpAddr, Ipv4Addr, SocketAddr},
@@ -84,6 +85,12 @@ impl AppState {
         let central_common_config = Path::new(&config_path)
             .parent()
             .map(|parent| parent.join("3.0大集中通用配置.xlsx"))
+            .filter(|path| path.is_file())
+            .map(|path| path.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let central_cross_config = Path::new(&config_path)
+            .parent()
+            .map(|parent| parent.join("3.2大集中本期数值核对_配置.xlsx"))
             .filter(|path| path.is_file())
             .map(|path| path.to_string_lossy().into_owned())
             .unwrap_or_default();
@@ -154,6 +161,11 @@ impl AppState {
             "periodSourceWarning": "",
             "periodConfigCheck": config_report
         });
+        let s3_state = json!({
+            "centralCrossCur": "",
+            "centralCrossConfig": central_cross_config,
+            "centralCrossLastResult": ""
+        });
         state
             .as_object_mut()
             .expect("UI state is a JSON object")
@@ -161,6 +173,15 @@ impl AppState {
                 s2_state
                     .as_object()
                     .expect("S2 state is a JSON object")
+                    .clone(),
+            );
+        state
+            .as_object_mut()
+            .expect("UI state is a JSON object")
+            .extend(
+                s3_state
+                    .as_object()
+                    .expect("S3 state is a JSON object")
                     .clone(),
             );
         Self {
@@ -264,14 +285,15 @@ async fn call_api(
     let args = match serde_json::from_slice::<Value>(&body) {
         Ok(Value::Array(args)) => args,
         Ok(_) => {
-            return ApiError::new(StatusCode::BAD_REQUEST, "请求体必须是 JSON 数组").into_response()
+            return ApiError::new(StatusCode::BAD_REQUEST, "请求体必须是 JSON 数组")
+                .into_response();
         }
         Err(error) => {
             return ApiError::new(
                 StatusCode::BAD_REQUEST,
                 format!("请求体不是有效的 JSON：{error}"),
             )
-            .into_response()
+            .into_response();
         }
     };
 
@@ -326,6 +348,7 @@ fn dispatch_api(
         "clear_path" => clear_path(state, args),
         "inspect_template_formulas" => inspect_template_formulas(state),
         "start_central_explanation_export" => start_central_explanation_export(state),
+        "start_central_cross_period" => start_central_cross_period(state),
         "toggle_central_output_pin" => toggle_central_output_pin(state, args),
         "toggle_period_output_pin" => toggle_period_output_pin(state),
         "browse_dir" => browse_dir(state, args),
@@ -391,7 +414,9 @@ fn choose_central(state: &AppState, args: &[Value]) -> std::result::Result<Value
         "centralCompareFile"
         | "centralExplainFile"
         | "centralCommonConfig"
-        | "centralComparisonConfig" => true,
+        | "centralComparisonConfig"
+        | "centralCrossCur"
+        | "centralCrossConfig" => true,
         "centralOutput" | "centralFormOutput" => false,
         _ => {
             return Err(ApiError::new(
@@ -423,6 +448,8 @@ fn choose_central(state: &AppState, args: &[Value]) -> std::result::Result<Value
             "centralExplainFile" | "centralCommonConfig" | "centralComparisonConfig" => {
                 extension.eq_ignore_ascii_case("xlsx")
             }
+            "centralCrossCur" => extension.eq_ignore_ascii_case("csv"),
+            "centralCrossConfig" => extension.eq_ignore_ascii_case("xlsx"),
             _ => false,
         };
         if !supported {
@@ -432,6 +459,8 @@ fn choose_central(state: &AppState, args: &[Value]) -> std::result::Result<Value
                     "centralCompareFile" => "S3-F02 比较结果目前只支持 .xlsx 和 .xlsm",
                     "centralExplainFile" => "说明工作簿目前只支持 .xlsx",
                     "centralCommonConfig" => "大集中通用配置目前只支持 .xlsx",
+                    "centralCrossCur" => "S3-F04 当前只支持 CSV 输入；XLS/XLSX 尚未迁移",
+                    "centralCrossConfig" => "本期数值核对配置目前只支持 .xlsx",
                     _ => "大集中执行比较配置目前只支持 .xlsx",
                 },
             ));
@@ -666,6 +695,245 @@ fn run_s3_explanation_export_worker(
     }
 }
 
+fn start_central_cross_period(state: &AppState) -> std::result::Result<Value, ApiError> {
+    let (current_file, config_workbooks, output_directory, write_flow_logs) = {
+        let ui = state.lock();
+        if ui.value["busy"] == true {
+            return Err(ApiError::new(
+                StatusCode::CONFLICT,
+                "已有任务正在运行，请完成后再执行本期数值核对",
+            ));
+        }
+        let current_file = ui.value["centralCrossCur"]
+            .as_str()
+            .filter(|path| !path.trim().is_empty())
+            .map(PathBuf::from)
+            .ok_or_else(|| {
+                ApiError::new(StatusCode::BAD_REQUEST, "请先选择本期数值核对 CSV 文件")
+            })?;
+        if !current_file.is_file() {
+            return Err(ApiError::new(
+                StatusCode::BAD_REQUEST,
+                format!("本期数值核对文件不存在：{}", current_file.display()),
+            ));
+        }
+        if !current_file
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("csv"))
+        {
+            return Err(ApiError::new(
+                StatusCode::BAD_REQUEST,
+                "S3-F04 当前只支持 CSV 输入；XLS/XLSX 尚未迁移",
+            ));
+        }
+
+        let common_config = ui.value["centralCommonConfig"]
+            .as_str()
+            .filter(|path| !path.trim().is_empty())
+            .map(PathBuf::from)
+            .ok_or_else(|| {
+                ApiError::new(StatusCode::BAD_REQUEST, "请先选择大集中通用配置（3.0）")
+            })?;
+        let cross_config = ui.value["centralCrossConfig"]
+            .as_str()
+            .filter(|path| !path.trim().is_empty())
+            .map(PathBuf::from)
+            .ok_or_else(|| {
+                ApiError::new(StatusCode::BAD_REQUEST, "请先选择本期数值核对配置（3.2）")
+            })?;
+        for (label, path) in [
+            ("大集中通用配置", &common_config),
+            ("本期数值核对配置", &cross_config),
+        ] {
+            if !path.is_file() {
+                return Err(ApiError::new(
+                    StatusCode::BAD_REQUEST,
+                    format!("{label}不存在：{}", path.display()),
+                ));
+            }
+            if !path
+                .extension()
+                .and_then(|extension| extension.to_str())
+                .is_some_and(|extension| extension.eq_ignore_ascii_case("xlsx"))
+            {
+                return Err(ApiError::new(
+                    StatusCode::BAD_REQUEST,
+                    format!("{label}目前只支持 .xlsx"),
+                ));
+            }
+        }
+
+        let output_directory = ui.value["centralOutput"]
+            .as_str()
+            .filter(|path| !path.trim().is_empty())
+            .map(PathBuf::from)
+            .or_else(|| current_file.parent().map(|parent| parent.join("执行结果")))
+            .unwrap_or_else(|| PathBuf::from("执行结果"));
+        (
+            current_file,
+            vec![common_config, cross_config],
+            output_directory,
+            ui.value["exportRunLogs"] == true,
+        )
+    };
+
+    if output_directory.exists() && !output_directory.is_dir() {
+        return Err(ApiError::new(
+            StatusCode::BAD_REQUEST,
+            format!(
+                "本期数值核对输出位置不是目录：{}",
+                output_directory.display()
+            ),
+        ));
+    }
+    fs::create_dir_all(&output_directory).map_err(|error| {
+        ApiError::internal(format!(
+            "创建本期数值核对输出目录失败：{}：{error}",
+            output_directory.display()
+        ))
+    })?;
+    let output_directory = fs::canonicalize(&output_directory)
+        .map_err(|error| ApiError::internal(format!("解析本期数值核对输出目录失败：{error}")))?;
+    let stamp = chrono::Local::now().format("%Y%m%d_%H%M%S").to_string();
+    let mut output_workbook = output_directory.join(format!("数值核对结果_{stamp}.xlsx"));
+    let mut log_workbook = write_flow_logs
+        .then(|| output_directory.join(format!("本期数值核对_运行日志_{stamp}.xlsx")));
+    if output_workbook.exists() || log_workbook.as_ref().is_some_and(|path| path.exists()) {
+        let suffix = chrono::Local::now().timestamp_subsec_millis();
+        output_workbook = output_directory.join(format!("数值核对结果_{stamp}_{suffix:03}.xlsx"));
+        log_workbook = write_flow_logs.then(|| {
+            output_directory.join(format!("本期数值核对_运行日志_{stamp}_{suffix:03}.xlsx"))
+        });
+        if output_workbook.exists() || log_workbook.as_ref().is_some_and(|path| path.exists()) {
+            return Err(ApiError::new(
+                StatusCode::CONFLICT,
+                "本期数值核对时间戳输出仍有同名文件，请稍后重试",
+            ));
+        }
+    }
+
+    {
+        let mut ui = state.lock();
+        if ui.value["busy"] == true {
+            return Err(ApiError::new(
+                StatusCode::CONFLICT,
+                "已有任务正在运行，请完成后再执行本期数值核对",
+            ));
+        }
+        ui.value["busy"] = json!(true);
+        ui.value["status"] = json!("正在执行本期数值核对，请勿关闭窗口……");
+        push_log(&mut ui.value, "S3-F04 开始本期数值核对".to_owned());
+        push_detail_log(
+            &mut ui.value,
+            format!(
+                "S3-F04 开始：reader=Calamine/csv，writer=rust_xlsxwriter；当前数据 {}；通用配置 {}；本期核对配置 {}；结果输出 {}；运行日志={}",
+                current_file.display(),
+                config_workbooks[0].display(),
+                config_workbooks[1].display(),
+                output_workbook.display(),
+                log_workbook.is_some()
+            ),
+        );
+    }
+
+    let worker_state = state.clone();
+    if let Err(error) = thread::Builder::new()
+        .name("audit-s3-current-value-check".to_owned())
+        .spawn(move || {
+            run_s3_current_value_check_worker(
+                worker_state,
+                current_file,
+                config_workbooks,
+                output_workbook,
+                log_workbook,
+            )
+        })
+    {
+        let mut ui = state.lock();
+        ui.value["busy"] = json!(false);
+        ui.value["status"] = json!("本期数值核对失败");
+        push_log(&mut ui.value, format!("启动 S3-F04 任务线程失败：{error}"));
+        return Err(ApiError::internal(format!(
+            "启动 S3-F04 任务线程失败：{error}"
+        )));
+    }
+    Ok(json!(true))
+}
+
+fn run_s3_current_value_check_worker(
+    state: AppState,
+    current_file: PathBuf,
+    config_workbooks: Vec<PathBuf>,
+    output_workbook: PathBuf,
+    log_workbook: Option<PathBuf>,
+) {
+    let started = Instant::now();
+    let result = run_current_value_check_csv(
+        std::slice::from_ref(&current_file),
+        &[],
+        &config_workbooks,
+        &output_workbook,
+        log_workbook.as_deref(),
+        python_regex_scope_matcher(),
+    );
+    let mut ui = state.lock();
+    ui.value["busy"] = json!(false);
+    match result {
+        Ok(report) => {
+            let output = report.output_workbook.to_string_lossy().into_owned();
+            ui.value["centralCrossLastResult"] = json!(output);
+            ui.value["status"] = json!(format!("本期数值核对完成：{} 行", report.rows));
+            push_log(
+                &mut ui.value,
+                format!(
+                    "S3-F04 本期数值核对完成：{} 行，结果文件 {}",
+                    report.rows,
+                    report.output_workbook.display()
+                ),
+            );
+            if let Some(log_path) = report.log_workbook.as_ref() {
+                push_log(
+                    &mut ui.value,
+                    format!("S3-F04 运行日志文件：{}", log_path.display()),
+                );
+            }
+            push_detail_log(
+                &mut ui.value,
+                format!(
+                    "S3-F04 完成：reader={}/{}, writer={}，规则={}/{}/{}，输入记录={}/{}，结果行={}，配置读取={} ms，输入读取={} ms，规则计算={} ms，工作簿写入={} ms，引擎总计={} ms，任务总计={} ms",
+                    report.config_reader,
+                    report.input_reader,
+                    report.writer,
+                    report.enabled_rules,
+                    report.total_rules,
+                    report.disabled_rules,
+                    report.current_records,
+                    report.previous_records,
+                    report.rows,
+                    report.config_read_time_ms,
+                    report.input_read_time_ms,
+                    report.calculation_time_ms,
+                    report.workbook_write_time_ms,
+                    report.total_time_ms,
+                    started.elapsed().as_millis()
+                ),
+            );
+        }
+        Err(error) => {
+            ui.value["status"] = json!("本期数值核对失败");
+            push_log(&mut ui.value, format!("S3-F04 本期数值核对失败：{error:#}"));
+            push_detail_log(
+                &mut ui.value,
+                format!(
+                    "S3-F04 失败：reader=Calamine/csv，writer=rust_xlsxwriter，任务总计={} ms，错误={error:#}",
+                    started.elapsed().as_millis()
+                ),
+            );
+        }
+    }
+}
+
 fn toggle_central_output_pin(
     state: &AppState,
     args: &[Value],
@@ -760,6 +1028,8 @@ fn clear_path(state: &AppState, args: &[Value]) -> std::result::Result<Value, Ap
         | "centralExplainFile"
         | "centralCommonConfig"
         | "centralComparisonConfig"
+        | "centralCrossCur"
+        | "centralCrossConfig"
         | "centralOutput"
         | "centralFormOutput"),
     ) = arg_string(args, 0)
@@ -1014,7 +1284,7 @@ fn browse_dir(_state: &AppState, args: &[Value]) -> std::result::Result<Value, A
                 &root,
                 &error.to_string(),
                 &selected_file,
-            ))
+            ));
         }
     };
     let mut entries = entries.filter_map(|entry| entry.ok()).collect::<Vec<_>>();
@@ -1385,6 +1655,7 @@ fn browse_extensions(mode: &str) -> &'static [&'static str] {
         "config" => &[".xlsx"],
         "excel_ooxml" => &[".xlsx", ".xlsm"],
         "central_data" => &[".csv", ".xlsx", ".xls"],
+        "csv" => &[".csv"],
         "report_data" => &[".xlsx", ".xls"],
         _ => &[],
     }
@@ -1546,10 +1817,11 @@ impl IntoResponse for ApiError {
 
 #[cfg(test)]
 mod tests {
-    use super::{browse_dir, dispatch_api, progress_value, render_index, AppState};
+    use super::{AppState, browse_dir, dispatch_api, progress_value, render_index};
+    use crate::central_csv::EXPECTED_HEADERS;
     use crate::s2_service::S2ProgressEvent;
     use excel_writer::Workbook;
-    use serde_json::{json, Value};
+    use serde_json::{Value, json};
     use std::{
         fs,
         path::{Path, PathBuf},
@@ -1627,12 +1899,203 @@ mod tests {
             .expect("save common configuration workbook");
     }
 
+    fn write_s3_current_value_common_config(path: &Path) {
+        let mut workbook = Workbook::new();
+        let parameters = workbook.add_worksheet();
+        parameters.set_name("运行参数").unwrap();
+        for (column, header) in ["参数", "值"].iter().enumerate() {
+            parameters.write_string(0, column as u16, *header).unwrap();
+        }
+        parameters.write_string(1, 0, "默认源数据单位").unwrap();
+        parameters.write_string(1, 1, "元").unwrap();
+        parameters.write_string(2, 0, "默认目标单位").unwrap();
+        parameters.write_string(2, 1, "亿元").unwrap();
+
+        let exceptions = workbook.add_worksheet();
+        exceptions.set_name("单位换算例外").unwrap();
+        exceptions.write_string(0, 0, "指标代码").unwrap();
+        workbook.save(path).unwrap();
+    }
+
+    fn write_s3_current_value_cross_config(path: &Path) {
+        let mut workbook = Workbook::new();
+        let rules = workbook.add_worksheet();
+        rules.set_name("跨期数值核对").unwrap();
+        let headers = [
+            "校验编码",
+            "校验名称",
+            "机构类代码",
+            "地区代码",
+            "前提条件",
+            "left",
+            "right",
+            "校验公式",
+            "校验提示",
+            "取反标识",
+            "无误是否提示",
+            "是否逻辑校验",
+            "禁用",
+            "备注",
+        ];
+        for (column, header) in headers.iter().enumerate() {
+            rules.write_string(0, column as u16, *header).unwrap();
+        }
+        let values = [
+            "R1",
+            "Web 集成测试规则",
+            "^0001$",
+            "1234567",
+            "",
+            "[I1,余额,人民币,月,2]",
+            "0",
+            "left > right",
+            "请核实",
+            "",
+            "是",
+            "",
+            "",
+            "synthetic web fixture",
+        ];
+        for (column, value) in values.iter().enumerate() {
+            rules.write_string(1, column as u16, *value).unwrap();
+        }
+        workbook.save(path).unwrap();
+    }
+
     #[test]
     fn served_page_is_original_markup_plus_runtime_bridge() {
         let served = render_index();
         assert_eq!(served.replace(super::BRIDGE_JS, ""), super::ORIGINAL_HTML);
         assert!(served.contains("window.bridge = { api: api }"));
         assert!(super::ORIGINAL_HTML.contains("bridge.api.start_central_explanation_export()"));
+        assert!(super::ORIGINAL_HTML.contains("bridge.api.start_central_cross_period()"));
+        assert!(super::ORIGINAL_HTML.contains("centralCrossCur:'csv'"));
+    }
+
+    #[test]
+    fn s3_current_value_check_runs_through_the_web_api() {
+        let suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "audit_web_s3_current_value_{}_{}",
+            std::process::id(),
+            suffix
+        ));
+        fs::create_dir_all(&root).expect("create S3-F04 temporary directory");
+        let current = root.join("current.csv");
+        let unsupported = root.join("current.xlsx");
+        let common_config = root.join("3.0大集中通用配置.xlsx");
+        let cross_config = root.join("3.2大集中本期数值核对_配置.xlsx");
+        let output = root.join("output");
+        fs::create_dir_all(&output).expect("create S3-F04 output directory");
+        let csv = format!(
+            "{}\n人民币,2026-08-31,0001,机构,1234567,地区,1,I1,指标,余额,人民币,月,2,200000000\n",
+            EXPECTED_HEADERS.join(",")
+        );
+        fs::write(&current, &csv).expect("write synthetic current CSV");
+        fs::write(&unsupported, b"xlsx input is not supported yet")
+            .expect("write unsupported extension sample");
+        write_s3_current_value_common_config(&common_config);
+        write_s3_current_value_cross_config(&cross_config);
+
+        let state = test_state();
+        let extension_error = dispatch_api(
+            &state,
+            "choose_central",
+            &[
+                json!("centralCrossCur"),
+                json!(unsupported.to_string_lossy()),
+            ],
+        )
+        .expect_err("XLSX input must be rejected before scheduling S3-F04");
+        assert_eq!(extension_error.status, axum::http::StatusCode::BAD_REQUEST);
+        assert!(extension_error.message.contains("只支持 CSV"));
+
+        for (field, path) in [
+            ("centralCrossCur", &current),
+            ("centralCommonConfig", &common_config),
+            ("centralCrossConfig", &cross_config),
+            ("centralOutput", &output),
+        ] {
+            dispatch_api(
+                &state,
+                "choose_central",
+                &[json!(field), json!(path.to_string_lossy())],
+            )
+            .unwrap_or_else(|error| panic!("select {field}: {}", error.message));
+        }
+        dispatch_api(&state, "update", &[json!({"exportRunLogs": true})])
+            .expect("enable run-log workbook for the integration check");
+        assert_eq!(
+            dispatch_api(&state, "start_central_cross_period", &[])
+                .expect("start S3-F04 through its Web API"),
+            json!(true)
+        );
+
+        for _ in 0..200 {
+            if state.get_state()["busy"] != true {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(25));
+        }
+        let final_state = state.get_state();
+        assert_eq!(final_state["busy"], false);
+        assert_eq!(final_state["status"], "本期数值核对完成：1 行");
+        let result_paths = fs::read_dir(&output)
+            .unwrap()
+            .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+            .filter(|path| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.starts_with("数值核对结果_"))
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(result_paths.len(), 1);
+        let canonical_result = fs::canonicalize(&result_paths[0])
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        assert_eq!(
+            final_state["centralCrossLastResult"].as_str(),
+            Some(canonical_result.as_str())
+        );
+        let result_sheet = excel_reader::read_value_columns(&result_paths[0], 17)
+            .unwrap()
+            .remove(0);
+        assert_eq!(result_sheet.max_row, 2);
+        assert_eq!(
+            result_sheet.values.get("O2"),
+            Some(&excel_reader::CellValue::Text(
+                "一边有，一边无;请核实".to_owned()
+            ))
+        );
+        assert_eq!(
+            fs::read_dir(&output)
+                .unwrap()
+                .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+                .filter(|path| {
+                    path.file_name()
+                        .and_then(|name| name.to_str())
+                        .is_some_and(|name| name.starts_with("本期数值核对_运行日志_"))
+                })
+                .count(),
+            1
+        );
+        let logs = final_state["log"].as_array().unwrap();
+        assert!(logs.iter().any(|entry| {
+            entry["detail"] == true
+                && entry["text"].as_str().is_some_and(|text| {
+                    text.contains("reader=calamine/csv")
+                        && text.contains("writer=rust_xlsxwriter")
+                        && text.contains("工作簿写入=")
+                })
+        }));
+        assert_eq!(fs::read(&current).unwrap(), csv.as_bytes());
+        assert!(fs::read(&common_config).is_ok());
+        assert!(fs::read(&cross_config).is_ok());
+        fs::remove_dir_all(root).expect("remove S3-F04 temporary files");
     }
 
     #[test]
@@ -1817,11 +2280,13 @@ mod tests {
         assert!(output_path.is_file());
         let canonical_output = fs::canonicalize(&output).expect("canonical output directory");
         assert_eq!(output_path.parent(), Some(canonical_output.as_path()));
-        assert!(output_path
-            .file_name()
-            .unwrap()
-            .to_string_lossy()
-            .starts_with("指标说明_"));
+        assert!(
+            output_path
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with("指标说明_")
+        );
         let output_sheets = excel_reader::read_value_columns(&output_path, 8)
             .expect("read generated explanation workbook");
         let explanation = output_sheets
@@ -2070,11 +2535,13 @@ mod tests {
         .expect("select current directory");
         let current_only = state.get_state();
         assert_eq!(current_only["periodPairs"].as_array().unwrap().len(), 2);
-        assert!(current_only["periodPairs"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .all(|pair| pair["side"] == "cur"));
+        assert!(
+            current_only["periodPairs"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|pair| pair["side"] == "cur")
+        );
 
         dispatch_api(
             &state,
@@ -2083,21 +2550,25 @@ mod tests {
         )
         .expect("select previous directory");
         let matched = state.get_state();
-        assert!(matched["periodPairs"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .all(|pair| pair["matched"] == true));
+        assert!(
+            matched["periodPairs"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|pair| pair["matched"] == true)
+        );
         assert_eq!(matched["periodPairs"][0]["curDate"], "2026-06-30");
         assert_eq!(matched["periodPairs"][0]["preDate"], "2026-03-31");
 
         dispatch_api(&state, "clear_path", &[json!("pcPreDir")]).expect("clear previous");
         let cleared = state.get_state();
-        assert!(cleared["periodPairs"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .all(|pair| pair["side"] == "cur"));
+        assert!(
+            cleared["periodPairs"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|pair| pair["side"] == "cur")
+        );
         let _ = fs::remove_dir_all(root);
     }
 }
