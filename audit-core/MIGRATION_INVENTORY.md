@@ -257,3 +257,9 @@ Windows 原生真实对拍使用 config-real 的 5 逐笔审核配置和 2026-07
 ### 2026-10-27 Codex 增量：S1-F02 汇总结构预检
 
 Rust 汇总入口已接入模板“表头区域”结构比对：正确结构的文件继续汇总，错配文件跳过并在普通日志中说明文件名/原因；缺少模板工作表时沿用旧 Python 部分继续语义，fallback-only 模板不增加固定结构门槛。Windows 合成 CLI 回归 6 passed，覆盖匹配、错配跳过及部分继续；GUI S1-F02 API 回归 2 passed，Windows GUI 构建通过。此次未对新增结构预检重跑真实 Python/Rust 对拍；已有 2026-10-24/25 真实个人贷款汇总报告未覆盖该新增步骤，输出格式尚有既有列宽差异。S1-F02 仍为迁移中。
+
+### 2026-10-27 Codex 增量：S1-F01 显式重算副本合流复验
+
+`s1-audit-directory` 的显式 sidecar 路径现将公式审核项与本轮实际重算副本配对，修复原清单仍指向重算前副本而导致结果合流失败的问题。Windows Excel COM 合成端到端测试使用已有触发条件格式的合成工作簿，验证计算后的完整公式文本、公式审核项与条件格式审核项同入本期结果工作簿和历史结果工作簿，源文件和清单中的原审核副本字节不变；输出只写测试临时目录，测试结束后删除。`s1_recalculation::tests` 5 passed、1 ignored；`s1_audit_directory_cli` 6 passed、1 ignored；另显式运行 ignored Excel COM 端到端测试 1 passed。Rust CLI 构建及 `s1-audit-directory --help` 通过。
+
+该验证仍仅覆盖合成模板/样本和“清单已提供审核副本”之后的链路。CLI 未在本次执行中自动把模板校验区域复制进源文件独立副本；真实配置样本、Python 完整输出逐条对拍、公式副本引擎生产能力和工作簿对象级保真仍未验证，S1-F01 整体仍为未验证。Windows 全仓 fmt 检查因其他现存文件的格式差异未通过；本次涉及的 Rust 文件单独 rustfmt 检查通过。

@@ -6,7 +6,7 @@
 //! infer that a prior issue was resolved.
 
 use crate::models::Issue;
-use anyhow::{ensure, Result};
+use anyhow::{Result, ensure};
 use std::{collections::HashMap, fs, path::PathBuf};
 
 #[derive(Clone, Debug)]
@@ -31,6 +31,11 @@ pub fn merge_s1_issue_sources(
     for file in files {
         let source = path_key(&file.source_file);
         let audit = path_key(&file.audit_workbook);
+        ensure!(
+            source != audit,
+            "S1 公式审核副本必须与源工作簿分离：{}",
+            file.source_file.display()
+        );
         ensure!(
             source_to_audit
                 .insert(source.clone(), audit.clone())
@@ -185,5 +190,20 @@ mod tests {
         )
         .expect_err("formula issue must match the source/audit pair");
         assert!(error.to_string().contains("源文件/审核副本配对"));
+    }
+
+    #[test]
+    fn rejects_a_source_workbook_used_as_its_own_formula_copy() {
+        let source = PathBuf::from("source.xlsx");
+        let error = merge_s1_issue_sources(
+            &[S1IssueFilePair {
+                source_file: source.clone(),
+                audit_workbook: source,
+            }],
+            &[],
+            &[],
+        )
+        .expect_err("source and audit copy must be distinct");
+        assert!(format!("{error:#}").contains("必须与源工作簿分离"));
     }
 }

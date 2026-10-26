@@ -16,6 +16,7 @@ pub mod s1_formula_audit;
 pub mod s1_formula_copy;
 pub mod s1_history;
 pub mod s1_issue_chain;
+pub mod s1_recalculation;
 pub mod s1_region_summary;
 pub mod s1_result_workbook;
 pub mod s1_structure_compare;

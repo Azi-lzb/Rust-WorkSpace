@@ -2,25 +2,25 @@ use anyhow::{Context, Result};
 use audit_core::{
     conditional_format::evaluate_xlsx_workbook,
     discovery::{
-        detect_period_from_workbooks, organisation_from_name, source_workbooks, ScanDepth,
+        ScanDepth, detect_period_from_workbooks, organisation_from_name, source_workbooks,
     },
     models::CopyRange,
     name_config::{
+        CONDITIONAL_FORMAT_EXTRACT_FUNCTION, DEFAULT_CONDITIONAL_FEATURE_NAME,
         load_s1_conditional_mappings, matches_named_range, named_areas_from_defined_names,
-        resolve_s1_conditional_area_plan, CONDITIONAL_FORMAT_EXTRACT_FUNCTION,
-        DEFAULT_CONDITIONAL_FEATURE_NAME,
+        resolve_s1_conditional_area_plan,
     },
     s1_conditional_audit::{
-        extract_conditional_issues, extract_conditional_issues_batch,
         S1ConditionalBatchAuditResult, S1ConditionalBatchInput, S1ConditionalBatchProgress,
-        S1ConditionalMetadata,
+        S1ConditionalMetadata, extract_conditional_issues, extract_conditional_issues_batch,
     },
-    s1_formula_audit::{extract_s1_formula_issues, S1FormulaMetadata},
+    s1_formula_audit::{S1FormulaMetadata, extract_s1_formula_issues},
     s1_history::{
-        process_s1_history, read_s1_history_workbook, write_s1_history_workbook, S1HistoryRequest,
-        S1HistoryWorkbookReadSummary,
+        S1HistoryRequest, S1HistoryWorkbookReadSummary, process_s1_history,
+        read_s1_history_workbook, write_s1_history_workbook,
     },
-    s1_issue_chain::{merge_s1_issue_sources, S1IssueFilePair},
+    s1_issue_chain::{S1IssueFilePair, merge_s1_issue_sources},
+    s1_recalculation::{recalculate_s1_formula_copy, s1_recalculated_filename},
     s1_region_summary::summarize_s1_named_regions,
     s1_result_workbook::write_s1_result_workbook,
     s1_structure_compare::{
@@ -30,20 +30,20 @@ use audit_core::{
     s1_template::{recommend_template, recommend_template_for_workbooks, template_workbook_paths},
     s1_template_rules::{assess_s1_template_health, load_s1_template_rule_plan},
     s1_validation_formula_scan::{
-        issues_from_validation_formula_scan, validation_formula_scan_failure_issue,
-        S1ValidationFormulaScanPlan,
+        S1ValidationFormulaScanPlan, issues_from_validation_formula_scan,
+        validation_formula_scan_failure_issue,
     },
-    s2_service::{run_s2_audit, s2_engine_for_stage, S2ProgressEvent, S2RunRequest},
+    s2_service::{S2ProgressEvent, S2RunRequest, run_s2_audit, s2_engine_for_stage},
     s2_summary::S2AuditSummary,
     s3_current_value_check::{
         input_reader_for_paths, python_regex_scope_matcher, run_current_value_check_files,
     },
-    s3_execution_compare::{run_execution_compare_files, S3ExpressionSchema},
+    s3_execution_compare::{S3ExpressionSchema, run_execution_compare_files},
     s3_explanation_export::export_selected_explanations,
     s3_explanation_feedback::plan_explanation_feedback_import,
     s5_config::load_configuration,
     s5_config_check::validate_s5_config,
-    s5_outputs::{write_run_outputs, S5OutputRequest, S5OutputSource},
+    s5_outputs::{S5OutputRequest, S5OutputSource, write_run_outputs},
     s5_period_recognition::{detect_s5_period, s5_file_period_hint},
     s5_retrieval::{
         S5CurrentSourceBinding, S5ExternalSourceBinding, S5Retrieval, S5SourceDescriptor,
@@ -348,6 +348,19 @@ struct S1AuditDirectoryArgs {
     /// Manifest mapping each structurally accepted source file to its saved formula-result audit copy.
     #[arg(long)]
     formula_manifest: PathBuf,
+
+    /// Explicitly recalculate the manifest's already-copied formula workbooks using lo-convert.
+    /// Windows accepts Microsoft Excel COM only; Linux accepts LibreOffice Calc only.
+    #[arg(long, requires = "recalculated_copy_dir")]
+    recalculate_sidecar: Option<PathBuf>,
+
+    /// Diagnostic-only opt-in to saved formula caches without fresh Office/LibreOffice calculation.
+    #[arg(long, conflicts_with = "recalculate_sidecar")]
+    allow_saved_formula_cache_diagnostics: bool,
+
+    /// Directory for new, recalculated formula audit copies; existing files are never overwritten.
+    #[arg(long, requires = "recalculate_sidecar")]
+    recalculated_copy_dir: Option<PathBuf>,
 
     /// S1 template workbook containing formula rules and conditional-area mappings.
     #[arg(long, conflicts_with = "template_dir")]
@@ -2375,6 +2388,10 @@ fn run_s1_formula_audit(arguments: S1FormulaAuditArgs) -> Result<()> {
 fn run_s1_audit_directory(arguments: S1AuditDirectoryArgs) -> Result<()> {
     let run_started = Instant::now();
     let started_at = chrono::Local::now().to_rfc3339();
+    audit_core::s1_recalculation::validate_s1_formula_cache_mode(
+        arguments.recalculate_sidecar.is_some(),
+        arguments.allow_saved_formula_cache_diagnostics,
+    )?;
     let input_dir = fs::canonicalize(&arguments.input_dir)
         .with_context(|| format!("读取 S1 输入目录 {}", arguments.input_dir.display()))?;
     anyhow::ensure!(
@@ -2392,6 +2409,28 @@ fn run_s1_audit_directory(arguments: S1AuditDirectoryArgs) -> Result<()> {
         .as_deref()
         .map(prepare_s1_history_result_workbook_path)
         .transpose()?;
+    let recalculation_sidecar = arguments
+        .recalculate_sidecar
+        .as_deref()
+        .map(|path| {
+            fs::canonicalize(path)
+                .with_context(|| format!("读取公式重算 sidecar {}", path.display()))
+        })
+        .transpose()?;
+    if let Some(sidecar) = recalculation_sidecar.as_deref() {
+        anyhow::ensure!(sidecar.is_file(), "公式重算 sidecar 不是文件");
+    }
+    let recalculated_copy_dir = arguments
+        .recalculated_copy_dir
+        .as_deref()
+        .map(prepare_s1_recalculated_copy_dir)
+        .transpose()?;
+    if let Some(output_dir) = recalculated_copy_dir.as_deref() {
+        anyhow::ensure!(
+            !path_is_within_directory(&input_dir, output_dir),
+            "S1 重算副本目录不能是源数据目录本身或其父级"
+        );
+    }
     anyhow::ensure!(
         arguments.template_workbook.is_some() || arguments.template_dir.is_some(),
         "必须指定 --template-workbook 或 --template-dir"
@@ -2448,6 +2487,9 @@ fn run_s1_audit_directory(arguments: S1AuditDirectoryArgs) -> Result<()> {
                 && history_result_workbook_path
                     .as_ref()
                     .is_none_or(|output| !same_file_path(path, output))
+                && recalculated_copy_dir
+                    .as_deref()
+                    .is_none_or(|output| !path_is_within_directory(path, output))
         })
         .collect::<Vec<_>>();
     let available_source_count = source_files.len();
@@ -2637,7 +2679,7 @@ fn run_s1_audit_directory(arguments: S1AuditDirectoryArgs) -> Result<()> {
     );
 
     let formula_pairs = read_s1_audit_copy_manifest(&manifest_path, &input_dir, &accepted_inputs)?;
-    let pair_by_source = formula_pairs
+    let mut pair_by_source = formula_pairs
         .iter()
         .map(|pair| {
             (
@@ -2646,6 +2688,96 @@ fn run_s1_audit_directory(arguments: S1AuditDirectoryArgs) -> Result<()> {
             )
         })
         .collect::<std::collections::HashMap<_, _>>();
+
+    let mut recalculation_reports = Vec::new();
+    if let (Some(sidecar), Some(output_dir)) = (
+        recalculation_sidecar.as_deref(),
+        recalculated_copy_dir.as_deref(),
+    ) {
+        for (index, input) in accepted_inputs.iter().enumerate() {
+            let source_key = s1_path_identity(&input.source_file);
+            let original_copy = pair_by_source
+                .get(&source_key)
+                .with_context(|| {
+                    format!("公式审核副本清单缺少源文件 {}", input.source_file.display())
+                })?
+                .clone();
+            let output_copy =
+                output_dir.join(s1_recalculated_filename(index + 1, &input.source_file)?);
+            if arguments.developer_view {
+                eprintln!(
+                    "{}",
+                    serde_json::to_string(&serde_json::json!({
+                        "type": "progress",
+                        "product": "open-data-audit",
+                        "feature": "S1-F01",
+                        "step": "formula_copy_recalculation",
+                        "status": "started",
+                        "source_file": input.source_file,
+                        "input_audit_copy": original_copy,
+                        "output_audit_copy": output_copy,
+                        "engine": if cfg!(windows) { "Microsoft Excel COM" } else { "LibreOffice Calc" }
+                    }))?
+                );
+            } else {
+                eprintln!("正在重算公式审核副本：{}", input.source_file.display());
+            }
+            let recalculation_started = Instant::now();
+            let report = match recalculate_s1_formula_copy(sidecar, &original_copy, &output_copy) {
+                Ok(report) => report,
+                Err(error) => {
+                    if arguments.developer_view {
+                        eprintln!(
+                            "{}",
+                            serde_json::to_string(&serde_json::json!({
+                                "type": "progress",
+                                "product": "open-data-audit",
+                                "feature": "S1-F01",
+                                "step": "formula_copy_recalculation",
+                                "status": "failed",
+                                "source_file": input.source_file,
+                                "input_audit_copy": original_copy,
+                                "output_audit_copy": output_copy,
+                                "error": format!("{error:#}"),
+                                "elapsed_ms": recalculation_started.elapsed().as_millis()
+                            }))?
+                        );
+                    } else {
+                        eprintln!("{}：公式重算失败：{error:#}", input.source_file.display());
+                    }
+                    return Err(error).with_context(|| {
+                        format!("S1 公式重算失败：{}", input.source_file.display())
+                    });
+                }
+            };
+            pair_by_source.insert(source_key, report.output.clone());
+            if arguments.developer_view {
+                eprintln!(
+                    "{}",
+                    serde_json::to_string(&serde_json::json!({
+                        "type": "progress",
+                        "product": "open-data-audit",
+                        "feature": "S1-F01",
+                        "step": "formula_copy_recalculation",
+                        "status": "completed",
+                        "source_file": input.source_file,
+                        "input_audit_copy": report.input,
+                        "output_audit_copy": report.output,
+                        "engine": report.engine,
+                        "elapsed_ms": report.elapsed_ms
+                    }))?
+                );
+            } else {
+                eprintln!(
+                    "{}：{} 重算完成，耗时 {} ms。",
+                    input.source_file.display(),
+                    report.engine,
+                    report.elapsed_ms
+                );
+            }
+            recalculation_reports.push(report);
+        }
+    }
 
     let conditional_started = Instant::now();
     if arguments.developer_view {
@@ -2818,18 +2950,31 @@ fn run_s1_audit_directory(arguments: S1AuditDirectoryArgs) -> Result<()> {
                 "issues": formula_result_issue_count,
                 "per_file": per_file,
                 "elapsed_ms": formula_started.elapsed().as_millis(),
-                "formula_recalculation": "not performed; saved values only"
+                "formula_recalculation": if recalculation_reports.is_empty() { "not performed; saved values only" } else { "sidecar reported recalculated; S1 real-workbook fidelity remains unverified" },
+                "recalculation_reports": recalculation_reports.iter().map(|report| serde_json::json!({"engine": report.engine, "input": report.input, "output": report.output, "elapsed_ms": report.elapsed_ms})).collect::<Vec<_>>()
             }))?
         );
     } else {
-        eprintln!(
-            "公式结果审核完成：{} 个工作簿，规则 {} 条/份，非空结果值 {} 格，形成 {} 条审核项；读取与组装耗时 {} ms。未执行公式重算。",
-            formula_results.len(),
-            template_plan.summary.rules_enabled,
-            formula_nonempty_results,
-            formula_result_issue_count,
-            formula_started.elapsed().as_millis()
-        );
+        if recalculation_reports.is_empty() {
+            eprintln!(
+                "公式结果审核完成：{} 个工作簿，规则 {} 条/份，非空结果值 {} 格，形成 {} 条审核项；读取与组装耗时 {} ms。未执行公式重算。",
+                formula_results.len(),
+                template_plan.summary.rules_enabled,
+                formula_nonempty_results,
+                formula_result_issue_count,
+                formula_started.elapsed().as_millis()
+            );
+        } else {
+            eprintln!(
+                "公式结果审核完成：{} 个工作簿，规则 {} 条/份，非空结果值 {} 格，形成 {} 条审核项；读取与组装耗时 {} ms；已重算副本 {} 份。",
+                formula_results.len(),
+                template_plan.summary.rules_enabled,
+                formula_nonempty_results,
+                formula_result_issue_count,
+                formula_started.elapsed().as_millis(),
+                recalculation_reports.len()
+            );
+        }
     }
 
     let validation_scan_started = Instant::now();
@@ -3041,10 +3186,23 @@ fn run_s1_audit_directory(arguments: S1AuditDirectoryArgs) -> Result<()> {
         );
     }
 
+    let effective_formula_pairs = formula_pairs
+        .iter()
+        .map(|pair| S1IssueFilePair {
+            source_file: pair.source_file.clone(),
+            audit_workbook: pair_by_source
+                .get(&s1_path_identity(&pair.source_file))
+                .cloned()
+                .unwrap_or_else(|| pair.audit_workbook.clone()),
+        })
+        .collect::<Vec<_>>();
     let merge_started = Instant::now();
-    let merged_issues =
-        merge_s1_issue_sources(&formula_pairs, &formula_issues, &conditional_report.issues)
-            .context("按源文件顺序合流公式与条件格式审核项")?;
+    let merged_issues = merge_s1_issue_sources(
+        &effective_formula_pairs,
+        &formula_issues,
+        &conditional_report.issues,
+    )
+    .context("按源文件顺序合流公式与条件格式审核项")?;
 
     let history_started = Instant::now();
     let history_read = if let Some(history_path) = arguments.history_workbook.as_deref() {
@@ -3300,7 +3458,13 @@ fn run_s1_audit_directory(arguments: S1AuditDirectoryArgs) -> Result<()> {
         "completed"
     };
     let mut output = serde_json::json!({
-        "status": status,
+        "status": if arguments.allow_saved_formula_cache_diagnostics { "completed_with_diagnostics" } else { status },
+        "formula_execution": {
+            "status": if recalculation_reports.is_empty() { "saved_cache_diagnostic_only" } else { "recalculated_by_sidecar" },
+            "rust_formula_copy_performed_by_this_command": false,
+            "files_recalculated": recalculation_reports.len(),
+            "engines": recalculation_reports.iter().map(|report| report.engine.as_str()).collect::<std::collections::BTreeSet<_>>()
+        },
         "template_selection": {
             "mode": template_selection_mode,
             "template_file": template_workbook.file_name().map(|name| name.to_string_lossy())
@@ -3376,6 +3540,14 @@ fn read_s1_audit_copy_manifest(
         let audit_path = resolve_manifest_path(manifest_dir, entry.audit_workbook);
         let audit_workbook = fs::canonicalize(&audit_path)
             .with_context(|| format!("公式审核副本不存在：{}", audit_path.display()))?;
+        anyhow::ensure!(
+            !same_file_path(&source_file, &audit_workbook),
+            "公式审核副本不能指向源工作簿：{}",
+            source_file
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+        );
         anyhow::ensure!(
             accepted_by_source.contains_key(&s1_path_identity(&source_file)),
             "公式审核副本清单包含未通过结构预检或未纳入本次审核的源文件：{}",
@@ -4706,6 +4878,38 @@ fn same_file_path(left: &Path, right: &Path) -> bool {
     {
         left == right
     }
+}
+
+fn path_is_within_directory(candidate: &Path, directory: &Path) -> bool {
+    let candidate = fs::canonicalize(candidate).unwrap_or_else(|_| candidate.to_path_buf());
+    let directory = fs::canonicalize(directory).unwrap_or_else(|_| directory.to_path_buf());
+    #[cfg(windows)]
+    {
+        let candidate = candidate.to_string_lossy();
+        let directory = directory.to_string_lossy();
+        let directory = directory.trim_end_matches(['\\', '/']);
+        candidate.eq_ignore_ascii_case(directory)
+            || candidate
+                .get(..directory.len())
+                .is_some_and(|prefix| prefix.eq_ignore_ascii_case(directory))
+                && candidate
+                    .as_bytes()
+                    .get(directory.len())
+                    .is_some_and(|separator| matches!(separator, b'\\' | b'/'))
+    }
+    #[cfg(not(windows))]
+    {
+        candidate == directory || candidate.starts_with(directory)
+    }
+}
+
+fn prepare_s1_recalculated_copy_dir(path: &Path) -> Result<PathBuf> {
+    fs::create_dir_all(path)
+        .with_context(|| format!("创建 S1 重算副本目录：{}", path.display()))?;
+    let resolved = fs::canonicalize(path)
+        .with_context(|| format!("读取 S1 重算副本目录：{}", path.display()))?;
+    anyhow::ensure!(resolved.is_dir(), "S1 重算副本路径不是目录");
+    Ok(resolved)
 }
 
 fn prepare_s1_result_workbook_path(output_path: &Path) -> Result<PathBuf> {

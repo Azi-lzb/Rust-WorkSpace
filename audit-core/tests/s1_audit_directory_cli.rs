@@ -1,6 +1,6 @@
 use excel_reader::read_workbook;
 use excel_writer::Workbook;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -233,6 +233,7 @@ fn run_cli_with_options(
         .arg("2026-07")
         .arg("--batch-id")
         .arg("issue-chain-test")
+        .arg("--allow-saved-formula-cache-diagnostics")
         .arg("--audit-time")
         .arg("2026-10-24 12:00:00");
     if let Some(template) = template {
@@ -327,7 +328,15 @@ fn cli_runs_both_issue_sources_merges_then_classifies_and_logs_actual_engines() 
     );
 
     let report: Value = serde_json::from_slice(&ordinary.stdout).expect("parse issue-chain output");
-    assert_eq!(report["status"], "completed");
+    assert_eq!(report["status"], "completed_with_diagnostics");
+    assert_eq!(
+        report["formula_execution"]["status"],
+        "saved_cache_diagnostic_only"
+    );
+    assert_eq!(
+        report["formula_execution"]["rust_formula_copy_performed_by_this_command"],
+        false
+    );
     assert_eq!(report["template_selection"]["mode"], "automatic");
     assert_eq!(
         report["template_selection"]["template_file"],
@@ -527,11 +536,13 @@ fn cli_runs_both_issue_sources_merges_then_classifies_and_logs_actual_engines() 
     assert_eq!(replay_report["summary"]["recurring_issues"], 4);
     assert_eq!(replay_report["summary"]["continuous_issues"], 0);
     assert_eq!(replay_report["issues"].as_array().unwrap().len(), 4);
-    assert!(replay_report["issues"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .all(|issue| issue["status"] == "再次出现"));
+    assert!(
+        replay_report["issues"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|issue| issue["status"] == "再次出现")
+    );
     assert_eq!(replay_report["history_result_workbook"]["issue_count"], 4);
     let replay_log = String::from_utf8_lossy(&replay.stderr);
     assert!(replay_log.contains("S1 历史工作簿读取完成"));
@@ -657,9 +668,11 @@ fn cli_scans_template_validation_formula_cells_and_merges_source_errors() {
         history_result.sheets[0].values[&format!("E{history_issue_row}")]["value"],
         "校验公式错误"
     );
-    assert!(!report["validation_formula_scan"]["per_file"][0]
-        .to_string()
-        .contains("#REF!"));
+    assert!(
+        !report["validation_formula_scan"]["per_file"][0]
+            .to_string()
+            .contains("#REF!")
+    );
     let events = String::from_utf8_lossy(&output.stderr)
         .lines()
         .map(|line| serde_json::from_str::<Value>(line).expect("parse developer event"))
@@ -849,4 +862,154 @@ fn cli_reads_nonempty_history_before_classification_and_reports_reader_and_timin
     }));
 
     fs::remove_dir_all(directory).expect("remove synthetic S1 history workbooks");
+}
+
+#[test]
+fn production_s1_directory_command_requires_fresh_formula_calculation() {
+    let root = temporary_directory("recalculation_required");
+    let output = Command::new(env!("CARGO_BIN_EXE_open-data-audit"))
+        .arg("s1-audit-directory")
+        .arg("--input-dir")
+        .arg(&root)
+        .arg("--formula-manifest")
+        .arg(root.join("missing-manifest.json"))
+        .arg("--template-workbook")
+        .arg(root.join("missing-template.xlsx"))
+        .arg("--batch-id")
+        .arg("cache-policy-test")
+        .output()
+        .expect("run S1 production entry without calculation sidecar");
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("强制 Office/LibreOffice 重算"));
+}
+
+#[test]
+#[ignore = "requires AUDIT_S1_RECALC_TEST_SIDECAR and Windows Microsoft Excel COM"]
+fn s1_directory_with_excel_sidecar_recalculates_a_copy_before_auditing() -> anyhow::Result<()> {
+    let sidecar = std::env::var_os("AUDIT_S1_RECALC_TEST_SIDECAR")
+        .map(PathBuf::from)
+        .expect("AUDIT_S1_RECALC_TEST_SIDECAR is required for the Excel COM integration test");
+    let directory = temporary_directory("excel_sidecar_end_to_end");
+    let input = directory.join("input");
+    fs::create_dir_all(&input).expect("create S1 input directory");
+    let source = input.join("1001_机构甲_2026-07.xlsx");
+    fs::copy(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests")
+            .join("fixtures")
+            .join("s1_issue_chain_source.xlsx"),
+        &source,
+    )
+    .expect("copy synthetic source with a triggered conditional format");
+    let template = directory.join("template.xlsx");
+    formula_template(&template);
+    let audit_copy = directory.join("audit-copy.xlsx");
+    fs::copy(&template, &audit_copy).expect("create separate formula audit copy");
+    let manifest = directory.join("formula-copies.json");
+    fs::write(
+        &manifest,
+        serde_json::to_vec(&json!({
+            "files": [{
+                "source_file": source.file_name().unwrap().to_string_lossy(),
+                "audit_workbook": audit_copy.file_name().unwrap().to_string_lossy()
+            }]
+        }))?,
+    )
+    .expect("write S1 formula-copy manifest");
+    let source_before = fs::read(&source)?;
+    let audit_copy_before = fs::read(&audit_copy)?;
+    let recalculated_dir = directory.join("recalculated");
+    let result_workbook = directory.join("s1-result.xlsx");
+    let history_workbook = directory.join("s1-history.xlsx");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_open-data-audit"))
+        .arg("s1-audit-directory")
+        .arg("--input-dir")
+        .arg(&input)
+        .arg("--formula-manifest")
+        .arg(&manifest)
+        .arg("--period")
+        .arg("2026-07")
+        .arg("--batch-id")
+        .arg("excel-sidecar-e2e")
+        .arg("--audit-time")
+        .arg("2026-10-27 12:00:00")
+        .arg("--template-workbook")
+        .arg(&template)
+        .arg("--recalculate-sidecar")
+        .arg(&sidecar)
+        .arg("--recalculated-copy-dir")
+        .arg(&recalculated_dir)
+        .arg("--result-workbook")
+        .arg(&result_workbook)
+        .arg("--history-result-workbook")
+        .arg(&history_workbook)
+        .arg("--developer-view")
+        .output()
+        .expect("run S1 full flow with Excel calculation sidecar");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: Value = serde_json::from_slice(&output.stdout)?;
+    assert_eq!(report["status"], "completed");
+    assert_eq!(
+        report["formula_execution"]["status"],
+        "recalculated_by_sidecar"
+    );
+    assert_eq!(report["formula_execution"]["files_recalculated"], 1);
+    assert!(
+        report["formula_summary"]["issues"]
+            .as_u64()
+            .unwrap_or_default()
+            > 0
+    );
+    assert_eq!(report["conditional_summary"]["issues"], 1);
+    assert!(report["result_workbook"].is_object());
+    assert!(report["history_result_workbook"].is_object());
+    assert!(result_workbook.is_file());
+    assert!(history_workbook.is_file());
+    assert_eq!(fs::read(&source)?, source_before);
+    assert_eq!(fs::read(&audit_copy)?, audit_copy_before);
+
+    let progress = String::from_utf8_lossy(&output.stderr)
+        .lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .collect::<Vec<_>>();
+    let recalculated = progress
+        .iter()
+        .find(|event| {
+            event["step"] == "formula_copy_recalculation" && event["status"] == "completed"
+        })
+        .expect("completed formula-copy recalculation progress event");
+    assert_eq!(recalculated["engine"], "Excel.Application");
+    let recalculated_path = PathBuf::from(
+        recalculated["output_audit_copy"]
+            .as_str()
+            .expect("recalculated audit-copy path"),
+    );
+    let recalculated_workbook = excel_reader::read_workbook(&recalculated_path)?;
+    assert_eq!(
+        recalculated_workbook.sheets[0].values["A1"]["value"],
+        "错误|复核|存款|低于要求|100|200|100"
+    );
+    let result_workbook_read = read_workbook(&result_workbook)?;
+    let result_sheet = &result_workbook_read.sheets[0];
+    let issues = report["issues"].as_array().expect("combined S1 issues");
+    let conditional_issue_index = issues
+        .iter()
+        .position(|issue| issue["formula_cell"] == "B2")
+        .expect("triggered conditional-format issue");
+    assert_eq!(
+        result_sheet.values[&format!("K{}", conditional_issue_index + 2)]["value"],
+        issues[conditional_issue_index]["issue_id"]
+    );
+    assert_eq!(
+        report["result_workbook"]["issue_count"],
+        report["summary"]["new_issues"]
+    );
+
+    fs::remove_dir_all(directory).expect("remove S1 Excel sidecar E2E fixtures");
+    Ok(())
 }
