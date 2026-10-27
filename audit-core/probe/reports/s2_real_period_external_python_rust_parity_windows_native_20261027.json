@@ -1,0 +1,74 @@
+{
+  "schema_version": 1,
+  "suite": "audit.s2.real_period_external_python_rust_parity",
+  "status": "passed",
+  "sample_kind": "read_only_real_current_previous_and_external_workbooks",
+  "external_data_used": true,
+  "current_file_count": 3,
+  "previous_file_count": 3,
+  "external_candidate_count_with_findings": 12,
+  "selected_external_finding_count": 311,
+  "external_values_count": 1488,
+  "external_org_map_count": 207,
+  "external_time_series": false,
+  "config_file": "2.\u62a5\u8868\u91c7\u96c6\u7cfb\u7edf_\u914d\u7f6e.xlsx",
+  "python_version": "3.12.10",
+  "python_elapsed_ms": 839,
+  "python_summary": {
+    "institutions": 7,
+    "forms": 3,
+    "indicators": 678,
+    "total_findings": 1007,
+    "abnormal_findings": 435,
+    "by_type": {
+      "\u73af\u6bd4": 191,
+      "\u5916\u90e8\u6838\u5bf9": 226,
+      "\u89c4\u5219": 3,
+      "\u6821\u9a8c\u89c4\u5219": 15
+    },
+    "by_severity": {
+      "\u786c\u6027": 413,
+      "\u8f6f\u6027": 22
+    }
+  },
+  "rust_summary": {
+    "institutions": 7,
+    "forms": 3,
+    "indicators": 678,
+    "total_findings": 1007,
+    "abnormal_findings": 435,
+    "by_type": {
+      "\u5916\u90e8\u6838\u5bf9": 226,
+      "\u6821\u9a8c\u89c4\u5219": 15,
+      "\u73af\u6bd4": 191,
+      "\u89c4\u5219": 3
+    },
+    "by_severity": {
+      "\u786c\u6027": 413,
+      "\u8f6f\u6027": 22
+    }
+  },
+  "summary_equal": true,
+  "rust_cli_status": "completed",
+  "workbook_sheet_names": [
+    "\u73af\u6bd4\u89c4\u5219",
+    "\u5916\u90e8\u6838\u5bf9\u89c4\u5219",
+    "\u6821\u9a8c\u89c4\u5219"
+  ],
+  "workbook_stats": {
+    "sheets": 3,
+    "cells": 16084,
+    "numeric_cells": 2876,
+    "formulas": 0,
+    "cell_styles": 0,
+    "column_widths": 0,
+    "hidden_rows": 0,
+    "worksheet_settings": 0
+  },
+  "workbook_difference_count_captured": 0,
+  "difference_kinds": {},
+  "input_files_unchanged": true,
+  "input_file_count": 8,
+  "formula_recalculation": "not applicable; S2 rule calculation is Rust-only",
+  "target_linux_validation": "not performed"
+}

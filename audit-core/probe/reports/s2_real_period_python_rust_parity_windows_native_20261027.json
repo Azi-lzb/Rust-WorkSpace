@@ -1,0 +1,54 @@
+{
+  "schema_version": 1,
+  "suite": "audit.s2.real_period_python_rust_parity",
+  "status": "passed",
+  "sample_kind": "read_only_real_period_xls_directories",
+  "external_data_used": false,
+  "current_file_count": 3,
+  "previous_file_count": 3,
+  "config_file": "2.报表采集系统_配置.xlsx",
+  "python_version": "3.12.10",
+  "python_elapsed_ms": 419,
+  "python_summary": {
+    "institutions": 7,
+    "forms": 3,
+    "indicators": 678,
+    "total_findings": 688,
+    "abnormal_findings": 201,
+    "by_type": {
+      "环比": 191,
+      "规则": 3,
+      "校验规则": 7
+    },
+    "by_severity": {
+      "硬性": 187,
+      "软性": 14
+    }
+  },
+  "rust_workbook_sheet_names": [
+    "环比规则",
+    "外部核对规则",
+    "校验规则"
+  ],
+  "python_workbook_sheet_names": [
+    "环比规则",
+    "外部核对规则",
+    "校验规则"
+  ],
+  "workbook_stats": {
+    "sheets": 3,
+    "cells": 11012,
+    "numeric_cells": 1943,
+    "formulas": 0,
+    "cell_styles": 0,
+    "column_widths": 0,
+    "hidden_rows": 0,
+    "worksheet_settings": 0
+  },
+  "difference_count_captured": 0,
+  "difference_details_truncated": false,
+  "difference_kinds": [],
+  "input_files_unchanged": true,
+  "input_file_count": 7,
+  "external_rules_not_exercised": "The source S2 service was invoked without a central/external workbook; external comparison was not tested."
+}
