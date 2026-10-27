@@ -1,0 +1,84 @@
+{
+  "schema_version": 1,
+  "suite": "audit.s3_f01.real_python_rust_parity",
+  "status": "passed_with_binary_float_roundoff",
+  "sample_kind": "read_only_real_2026_07_2026_08_central_csv",
+  "python_version": "3.12.10",
+  "input_files": {
+    "current_count": 1,
+    "previous_count": 1,
+    "common_config": "3.0大集中通用配置.xlsx",
+    "feature_config": "3.1大集中执行比较_配置.xlsx",
+    "source_paths_modified": false
+  },
+  "engines": {
+    "rust_config_reader": "calamine",
+    "rust_data_reader": "csv",
+    "rust_writer": "rust_xlsxwriter",
+    "python_business_baseline": "OpenDataAudit S3 CentralStatisticsService"
+  },
+  "current_records": 2595,
+  "previous_records": 2586,
+  "result_rows": 2610,
+  "expression_schemas": [
+    {
+      "schema": "legacy-eight-segment",
+      "rust_status": "completed",
+      "python_status": "completed",
+      "enabled_action_rules": 4246,
+      "applicable_action_rules": 1528,
+      "enabled_expression_rules": 1141,
+      "triggered_expression_rules": 4,
+      "expression_errors": 0,
+      "python_elapsed_ms": 2297,
+      "rust_elapsed_ms": 7471
+    },
+    {
+      "schema": "five-segment",
+      "rust_status": "completed",
+      "python_status": "completed",
+      "enabled_action_rules": 4246,
+      "applicable_action_rules": 1528,
+      "enabled_expression_rules": 1141,
+      "triggered_expression_rules": 4,
+      "expression_errors": 0,
+      "python_elapsed_ms": 2391,
+      "rust_elapsed_ms": 6223
+    }
+  ],
+  "workbook_contract": {
+    "sheet_names_equal": true,
+    "sheet_count": 1,
+    "dimensions_equal": true,
+    "result_dimensions": [2611, 22],
+    "headers_equal": true,
+    "non_numeric_value_differences": 0,
+    "cell_type_differences": 0,
+    "formula_count": 0,
+    "style_differences": 0,
+    "merge_differences": 0,
+    "column_width_differences": 0,
+    "hidden_row_differences": 0,
+    "worksheet_setting_differences": 0,
+    "defined_name_differences": 0
+  },
+  "numeric_parity": {
+    "exact_cell_value_differences_per_schema": 1306,
+    "differences_by_column": {
+      "数据值": 251,
+      "上期值": 247,
+      "增减额(亿元)": 9,
+      "环比": 799
+    },
+    "maximum_absolute_difference": {
+      "数据值": 5.684341886080802e-14,
+      "上期值": 5.684341886080802e-14,
+      "增减额(亿元)": 2.7755575615628914e-17,
+      "环比": 7.105427357601002e-15
+    },
+    "different_after_rounding_to_10_decimal_places": 0,
+    "different_after_rounding_to_2_decimal_places": 0,
+    "interpretation": "All value differences are IEEE-754 binary floating-point tail differences; no result changes at the workbook's displayed 2-decimal precision or at 10 decimal places. Exact stored numeric values are not byte-for-byte equal."
+  },
+  "target_linux_validation": "not performed"
+}
