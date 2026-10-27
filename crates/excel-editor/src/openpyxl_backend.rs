@@ -3025,9 +3025,25 @@ fn read_local_print_area(path: &Path, sheet_name: &str) -> Result<Option<String>
 fn expected_import_styles(
     plan: &ExcelEditPlan,
 ) -> Result<BTreeMap<(String, String), umya_spreadsheet::Style>> {
-    let mut styles = BTreeMap::new();
+    let mut styles: BTreeMap<(String, String), umya_spreadsheet::Style> = BTreeMap::new();
     let mut normalized_import_sources: BTreeMap<PathBuf, NormalizedImportStyleSource> =
         BTreeMap::new();
+    let target_workbook = if plan.operations.iter().any(|operation| {
+        matches!(
+            operation,
+            EditOperation::ImportRange {
+                style_mode: RangeStyleMode::Basic | RangeStyleMode::Full,
+                ..
+            }
+        )
+    }) {
+        Some(
+            crate::open_xlsx(&plan.input)
+                .context("open original target for ImportRange style readback")?,
+        )
+    } else {
+        None
+    };
     for operation in &plan.operations {
         let EditOperation::ImportRange {
             source_workbook: import_path,
@@ -3079,30 +3095,51 @@ fn expected_import_styles(
                     .with_context(|| {
                         format!("ImportRange styled-cell inventory for {source_sheet:?} missing")
                     })?;
-                // Match openpyxl's `Cell.has_style`: it is true only when a
-                // direct cell XF has a nonzero StyleArray component. An absent
-                // cell, an explicit XF0 cell, or a cell that only inherits a
-                // row/column style must not be treated as a copied cell style.
-                if !styled_cells.contains(&source_cell) {
-                    continue;
-                }
-                let worksheet = imported.sheet_by_name(source_sheet).with_context(|| {
-                    format!("ImportRange source sheet {source_sheet:?} missing")
-                })?;
-                let style = if worksheet.cell(source_cell.as_str()).is_none() {
-                    let probe = normalized_source
-                        .probe_cells
-                        .get(source_sheet)
-                        .with_context(|| {
-                            format!("XF0 probe for source sheet {source_sheet:?} missing")
-                        })?;
-                    style_at(&imported, source_sheet, probe)?
+                // The old Python path copies the full StyleArray only when
+                // Cell.has_style is true. It then separately copies truthy
+                // number_format, alignment, and protection properties. For an
+                // unstyled cell those are defaults, so they reset only these
+                // components on the target while retaining its font, fill,
+                // and border.
+                let source_has_style = styled_cells.contains(&source_cell);
+                let source_style = if source_has_style {
+                    let worksheet = imported.sheet_by_name(source_sheet).with_context(|| {
+                        format!("ImportRange source sheet {source_sheet:?} missing")
+                    })?;
+                    let style = if worksheet.cell(source_cell.as_str()).is_none() {
+                        let probe = normalized_source
+                            .probe_cells
+                            .get(source_sheet)
+                            .with_context(|| {
+                                format!("XF0 probe for source sheet {source_sheet:?} missing")
+                            })?;
+                        style_at(&imported, source_sheet, probe)?
+                    } else {
+                        style_at(&imported, source_sheet, &source_cell)?
+                    };
+                    style
                 } else {
-                    style_at(&imported, source_sheet, &source_cell)?
+                    umya_spreadsheet::Style::default()
+                };
+                let key = (target_sheet.clone(), target_cell.clone());
+                let target_style = match styles.get(&key) {
+                    Some(style) => style.clone(),
+                    None => style_at(
+                        target_workbook.as_ref().context(
+                            "original target workbook missing for ImportRange style validation",
+                        )?,
+                        target_sheet,
+                        &target_cell,
+                    )?,
                 };
                 styles.insert(
-                    (target_sheet.clone(), target_cell),
-                    project_import_style(&style, *style_mode),
+                    key,
+                    project_import_style(
+                        &target_style,
+                        &source_style,
+                        *style_mode,
+                        source_has_style,
+                    ),
                 );
             }
         }
@@ -3783,29 +3820,23 @@ fn style_at(
 }
 
 fn project_import_style(
+    target: &umya_spreadsheet::Style,
     source: &umya_spreadsheet::Style,
     mode: RangeStyleMode,
+    source_has_style: bool,
 ) -> umya_spreadsheet::Style {
-    let mut target = umya_spreadsheet::Style::default();
-    if let Some(value) = source.font() {
-        target.set_font(value.clone());
+    let mut target = target.clone();
+    if source_has_style {
+        target.set_font(source.font().cloned().unwrap_or_default());
+        target.set_fill(source.fill().cloned().unwrap_or_default());
     }
-    if let Some(value) = source.fill() {
-        target.set_fill(value.clone());
-    }
-    if let Some(value) = source.alignment() {
-        target.set_alignment(value.clone());
-    }
-    if let Some(value) = source.number_format() {
-        target.set_number_format(value.clone());
-    }
+    target.set_alignment(source.alignment().cloned().unwrap_or_default());
+    target.set_number_format(source.number_format().cloned().unwrap_or_default());
     if mode == RangeStyleMode::Full {
-        if let Some(value) = source.borders() {
-            target.set_borders(value.clone());
+        if source_has_style {
+            target.set_borders(source.borders().cloned().unwrap_or_default());
         }
-        if let Some(value) = source.protection() {
-            target.set_protection(value.clone());
-        }
+        target.set_protection(source.protection().cloned().unwrap_or_default());
     }
     target
 }
@@ -4178,6 +4209,17 @@ fn validate_preserved_values(
             {
                 continue;
             }
+            // openpyxl loads stored empty inline/shared strings as None and
+            // omits them when saving. The real S1 comparison shows the old
+            // Python baseline and this worker have identical outside-range
+            // values, while both normalize these source cells. Accept only
+            // this exact non-formula text-to-blank normalization.
+            if actual.is_none()
+                && !old_sheet.formulas.contains_key(address)
+                && is_openpyxl_empty_text_value(value)
+            {
+                continue;
+            }
             anyhow::ensure!(
                 json_value_equal(value, actual),
                 "unmodified cell value changed at {}!{}: expected {:?}, got {:?}",
@@ -4189,6 +4231,11 @@ fn validate_preserved_values(
         }
     }
     Ok(())
+}
+
+fn is_openpyxl_empty_text_value(value: &serde_json::Value) -> bool {
+    value.get("type").and_then(serde_json::Value::as_str) == Some("string")
+        && value.get("value").and_then(serde_json::Value::as_str) == Some("")
 }
 
 fn validate_preserved_formulas(
@@ -5921,7 +5968,12 @@ mod tests {
             drop_allowed: BTreeMap::new(),
         };
         let expected = expected_import_styles(&plan)?;
-        assert!(expected.is_empty(), "{expected:?}");
+        assert_eq!(expected.len(), 2, "{expected:?}");
+        let target_a1 = style_at(&crate::open_xlsx(target.path())?, "Target", "A1")?;
+        assert!(styles_semantically_equal(
+            &target_a1,
+            &expected[&(String::from("Target"), String::from("A1"))]
+        ));
         validate_umya_readback(&plan, target.path())?;
 
         // An explicit cell with no `s` attribute still uses XF0 in openpyxl.
@@ -5991,6 +6043,116 @@ mod tests {
             cell_xf_style_presence(&styles)?,
             vec![false, true, true, false, true, false]
         );
+        Ok(())
+    }
+
+    #[test]
+    fn import_unstyled_source_preserves_target_direct_components_and_projects_legacy_defaults(
+    ) -> Result<()> {
+        let target = ScratchFile::create(&std::env::temp_dir(), "unstyled-import-style-target")?;
+        let target_components = rust_xlsxwriter::Format::new()
+            .set_font_name("Target Font")
+            .set_bold()
+            .set_background_color(rust_xlsxwriter::Color::RGB(0x11_22_33))
+            .set_border(rust_xlsxwriter::FormatBorder::Thin);
+        let target_format = target_components
+            .clone()
+            .set_num_format("#,##0.00")
+            .set_align(rust_xlsxwriter::FormatAlign::Center);
+        let mut target_book = rust_xlsxwriter::Workbook::new();
+        let target_sheet = target_book.add_worksheet().set_name("Target")?;
+        target_sheet.write_string_with_format(0, 0, "target A1", &target_format)?;
+        target_sheet.write_string_with_format(0, 1, "target B1", &target_format)?;
+        target_book.save(target.path())?;
+
+        let source = ScratchFile::create(&std::env::temp_dir(), "unstyled-import-style-source")?;
+        let mut source_book = rust_xlsxwriter::Workbook::new();
+        let source_sheet = source_book.add_worksheet().set_name("Source")?;
+        source_sheet.write_string_with_format(
+            0,
+            1,
+            "style index for inherited dimensions",
+            &rust_xlsxwriter::Format::new().set_bold(),
+        )?;
+        source_sheet.write_string(0, 2, "unstyled source")?;
+        source_book.save(source.path())?;
+
+        let inherited_source =
+            ScratchFile::create(&std::env::temp_dir(), "unstyled-import-style-dimensions")?;
+        rewrite_test_zip_part(
+            source.path(),
+            inherited_source.path(),
+            "xl/worksheets/sheet1.xml",
+            add_test_row_and_column_styles,
+        )?;
+        let normalized_source =
+            ScratchFile::create(&std::env::temp_dir(), "unstyled-import-style-probe")?;
+        let (_, styled_cells) =
+            materialize_implicit_style_zero(inherited_source.path(), normalized_source.path())?;
+        assert!(!styled_cells["Source"].contains("AA4"));
+        assert!(!styled_cells["Source"].contains("AB4"));
+
+        let output = ScratchFile::create(&std::env::temp_dir(), "unstyled-import-style-output")?;
+        let plan = ExcelEditPlan {
+            request_id: "unstyled-source-style-component-overlay".to_owned(),
+            input: target.path().to_owned(),
+            output: output.path().to_owned(),
+            format: WorkbookFormat::Xlsx,
+            workbook: crate::WorkbookProfile {
+                format: WorkbookFormat::Xlsx,
+                inventory_complete: true,
+                features_present: BTreeSet::new(),
+            },
+            operations: vec![EditOperation::ImportRange {
+                source_workbook: inherited_source.path().to_owned(),
+                source_sheet: "Source".to_owned(),
+                source_range: "AA4:AB4".to_owned(),
+                target_sheet: "Target".to_owned(),
+                target_start: "A1".to_owned(),
+                copy_values: true,
+                copy_formulas: true,
+                style_mode: RangeStyleMode::Full,
+                copy_comments: false,
+                copy_merges: false,
+                copy_row_heights: false,
+                copy_column_widths: false,
+                copy_row_hidden: false,
+                copy_column_hidden: false,
+                copy_outline_levels: false,
+                copy_all_row_dimensions: false,
+                copy_all_column_dimensions: false,
+                materialize_blank_cells: true,
+                hide_zero: false,
+            }],
+            preserve: BTreeSet::new(),
+            drop_allowed: BTreeMap::new(),
+        };
+
+        let expected = expected_import_styles(&plan)?;
+        assert_eq!(expected.len(), 2);
+        for address in ["A1", "B1"] {
+            let style = &expected[&(String::from("Target"), address.to_owned())];
+            assert_eq!(style.font().map(|font| font.name()), Some("Target Font"));
+            assert!(style.fill().is_some());
+            assert!(style.borders().is_some());
+            assert_eq!(
+                style.number_format().map(|format| format.format_code()),
+                Some("General")
+            );
+            assert!(style
+                .alignment()
+                .is_none_or(|alignment| alignment == &umya_spreadsheet::Alignment::default()));
+            assert!(style
+                .protection()
+                .is_none_or(|protection| protection == &umya_spreadsheet::Protection::default()));
+        }
+
+        let mut output_book = rust_xlsxwriter::Workbook::new();
+        let output_sheet = output_book.add_worksheet().set_name("Target")?;
+        output_sheet.write_string_with_format(0, 0, "blank A1", &target_components)?;
+        output_sheet.write_string_with_format(0, 1, "blank B1", &target_components)?;
+        output_book.save(output.path())?;
+        validate_umya_readback(&plan, output.path())?;
         Ok(())
     }
 
@@ -6201,6 +6363,45 @@ mod tests {
         ));
         std::fs::create_dir_all(&directory).unwrap();
         directory
+    }
+
+    #[test]
+    fn empty_string_elision_matches_openpyxl_save_semantics_without_masking_other_losses() {
+        let directory = exemption_test_directory("empty-string-normalization");
+        let mut plan = exemption_plan(&directory, Vec::new(), None);
+        plan.preserve
+            .insert(PreservationRequirement::CellValuesAndTypes);
+
+        let mut source_empty = sheet_dump("Data", &[]);
+        source_empty.values.insert(
+            "E10".to_owned(),
+            serde_json::json!({"type": "string", "value": ""}),
+        );
+        let output = sheet_dump("Data", &[]);
+        assert!(validate_preserved_values(&[source_empty], &[output], &plan).is_ok());
+
+        let mut source_nonempty = sheet_dump("Data", &[]);
+        source_nonempty.values.insert(
+            "E10".to_owned(),
+            serde_json::json!({"type": "string", "value": " "}),
+        );
+        assert!(
+            validate_preserved_values(&[source_nonempty], &[sheet_dump("Data", &[])], &plan)
+                .is_err()
+        );
+
+        let mut formula_source = sheet_dump("Data", &[]);
+        formula_source.values.insert(
+            "E10".to_owned(),
+            serde_json::json!({"type": "string", "value": ""}),
+        );
+        formula_source
+            .formulas
+            .insert("E10".to_owned(), "=IF(TRUE,\"\",\"x\")".to_owned());
+        assert!(
+            validate_preserved_values(&[formula_source], &[sheet_dump("Data", &[])], &plan)
+                .is_err()
+        );
     }
 
     #[test]

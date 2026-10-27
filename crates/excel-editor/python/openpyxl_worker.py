@@ -416,23 +416,51 @@ def _copy_cells(source: Any, cached: Any, target: Any, bounds: Tuple[int, int, i
             if value is None and style_mode == "none" and not copy_comments and not materialize_blanks:
                 continue
             cached_value = cached.cell(src.row, src.column).value
+            style = None
+            if style_mode != "none":
+                # The legacy ImportRange code first copied the full StyleArray
+                # only for cells with direct style, then independently copied
+                # these truthy style properties. In openpyxl 3.1.x, alignment,
+                # number_format, and protection are truthy even for an
+                # unstyled cell, so they reset those target components to
+                # their defaults while leaving font, fill, and border alone.
+                direct_style = None
+                if src.has_style:
+                    direct_style = (
+                        copy(src.font),
+                        copy(src.fill),
+                        copy(src.border) if style_mode == "full" else None,
+                    )
+                style = (
+                    direct_style,
+                    copy(src.alignment) if src.alignment else None,
+                    src.number_format if src.number_format else None,
+                    copy(src.protection)
+                    if style_mode == "full" and src.protection
+                    else None,
+                )
             snapshots.append((
                 src.coordinate,
                 value,
                 cached_value,
-                # Match the Python baseline's `if source.has_style` contract.
-                # Missing cells can inherit row/column defaults in Excel, but
-                # they do not carry a per-cell style for ImportRange to copy.
-                (copy(src.font), copy(src.fill), copy(src.border), copy(src.alignment),
-                 src.number_format, copy(src.protection))
-                if style_mode != "none" and src.has_style else None,
+                style,
                 None if src.comment is None else (src.comment.text, src.comment.author),
             ))
     for source_coordinate, value, cached_value, style, comment in snapshots:
         source_row, source_col = coordinate_to_tuple(source_coordinate)
         dst = target.cell(target_row + source_row - min_row, target_col + source_col - min_col)
         if style is not None:
-            dst.font, dst.fill, dst.border, dst.alignment, dst.number_format, dst.protection = style
+            direct_style, alignment, number_format, protection = style
+            if direct_style is not None:
+                dst.font, dst.fill, border = direct_style
+                if border is not None:
+                    dst.border = border
+            if alignment is not None:
+                dst.alignment = alignment
+            if number_format is not None:
+                dst.number_format = number_format
+            if protection is not None:
+                dst.protection = protection
         if copy_formulas and isinstance(value, str) and value.startswith("="):
             dst.value = _translate_formula(value, source_coordinate, dst)
         elif copy_values:
