@@ -106,7 +106,10 @@ pub enum EditOperationKind {
     SetComment,
     SetColumnWidth,
     SetRowHeight,
+    SetRowHidden,
+    SetCellNumberFormat,
     DeleteRows,
+    DeleteColumn,
     InsertRows,
     RenameSheet,
     CreateSheet,
@@ -115,6 +118,7 @@ pub enum EditOperationKind {
     SetFreezePanes,
     SetAutoFilter,
     DeleteSheet,
+    SetSheetVisibility,
     SetCellFillColor,
     CopyRange,
     ImportRange,
@@ -145,6 +149,14 @@ pub enum CellValue {
 pub enum PageOrientation {
     Portrait,
     Landscape,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SheetVisibility {
+    Visible,
+    Hidden,
+    VeryHidden,
 }
 
 /// `None` means leave that setting untouched. `clear_scale` explicitly removes
@@ -200,6 +212,23 @@ pub enum EditOperation {
         row_index: u32,
         height: f64,
     },
+    SetRowHidden {
+        sheet: String,
+        row_index: u32,
+        hidden: bool,
+    },
+    SetCellNumberFormat {
+        sheet: String,
+        cell: String,
+        format_code: String,
+    },
+    /// Delete one 1-based column. Indexes are evaluated against the workbook
+    /// state at the point this operation appears in the batch; submit several
+    /// deletions in descending order to address columns from the original layout.
+    DeleteColumn {
+        sheet: String,
+        column_index: u32,
+    },
     DeleteRows {
         sheet: String,
         first_row: u32,
@@ -241,6 +270,10 @@ pub enum EditOperation {
     },
     DeleteSheet {
         name: String,
+    },
+    SetSheetVisibility {
+        sheet: String,
+        visibility: SheetVisibility,
     },
     SetCellFillColor {
         sheet: String,
@@ -315,6 +348,9 @@ impl EditOperation {
             Self::SetComment { .. } => EditOperationKind::SetComment,
             Self::SetColumnWidth { .. } => EditOperationKind::SetColumnWidth,
             Self::SetRowHeight { .. } => EditOperationKind::SetRowHeight,
+            Self::SetRowHidden { .. } => EditOperationKind::SetRowHidden,
+            Self::SetCellNumberFormat { .. } => EditOperationKind::SetCellNumberFormat,
+            Self::DeleteColumn { .. } => EditOperationKind::DeleteColumn,
             Self::DeleteRows { .. } => EditOperationKind::DeleteRows,
             Self::InsertRows { .. } => EditOperationKind::InsertRows,
             Self::RenameSheet { .. } => EditOperationKind::RenameSheet,
@@ -324,6 +360,7 @@ impl EditOperation {
             Self::SetFreezePanes { .. } => EditOperationKind::SetFreezePanes,
             Self::SetAutoFilter { .. } => EditOperationKind::SetAutoFilter,
             Self::DeleteSheet { .. } => EditOperationKind::DeleteSheet,
+            Self::SetSheetVisibility { .. } => EditOperationKind::SetSheetVisibility,
             Self::SetCellFillColor { .. } => EditOperationKind::SetCellFillColor,
             Self::CopyRange { .. } => EditOperationKind::CopyRange,
             Self::ImportRange { .. } => EditOperationKind::ImportRange,
@@ -399,6 +436,34 @@ impl EditOperation {
                     bail!("row height must be finite and non-negative");
                 }
             }
+            Self::SetRowHidden {
+                sheet, row_index, ..
+            } => {
+                if sheet.trim().is_empty() || *row_index == 0 || *row_index > 1_048_576 {
+                    bail!("row visibility updates require a sheet and a valid 1-based row");
+                }
+            }
+            Self::SetCellNumberFormat {
+                sheet,
+                cell,
+                format_code,
+            } => {
+                require_sheet_cell(sheet, cell)?;
+                if !valid_a1_cell(cell) {
+                    bail!("number-format update requires a valid A1 cell address");
+                }
+                if format_code.contains(['\0', '\n', '\r']) {
+                    bail!("number format contains an invalid control character");
+                }
+            }
+            Self::DeleteColumn {
+                sheet,
+                column_index,
+            } => {
+                if sheet.trim().is_empty() || *column_index == 0 || *column_index > 16_384 {
+                    bail!("column deletion requires a sheet and a valid 1-based column");
+                }
+            }
             Self::DeleteRows {
                 sheet,
                 first_row,
@@ -431,6 +496,11 @@ impl EditOperation {
             Self::CreateSheet { name } | Self::DeleteSheet { name } => {
                 if name.trim().is_empty() {
                     bail!("worksheet name must not be empty");
+                }
+            }
+            Self::SetSheetVisibility { sheet, .. } => {
+                if sheet.trim().is_empty() {
+                    bail!("worksheet visibility update requires a worksheet name");
                 }
             }
             Self::CreateSheetAt { name, .. } => {
@@ -593,7 +663,7 @@ impl EditOperation {
     }
 }
 
-fn valid_a1_cell(value: &str) -> bool {
+pub(super) fn valid_a1_cell(value: &str) -> bool {
     let value = value.trim().replace('$', "");
     let split = value.find(|character: char| character.is_ascii_digit());
     let Some(split) = split else { return false };
