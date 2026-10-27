@@ -57,6 +57,8 @@ const DEFAULT_S2_CONFIG_STEM: &str = "2.报表采集系统_配置";
 /// is preferred in the historical search order. A single Windows numbered
 /// copy such as `...配置 (3).xlsx` is accepted when the conventional filename
 /// is absent; ambiguity is reported instead of selecting a workbook silently.
+/// If no config exists, preserve the historical relative-path fallback so the
+/// GUI can still start and report the missing S2 config in its status panel.
 pub fn resolve_default_config_path() -> Result<PathBuf> {
     if let Some(path) = std::env::var_os("OPEN_DATA_AUDIT_S2_CONFIG") {
         return Ok(PathBuf::from(path));
@@ -105,9 +107,7 @@ fn find_s2_config_path(directories: &[PathBuf]) -> Result<PathBuf> {
 
     match numbered_copies.as_slice() {
         [only] => Ok(only.clone()),
-        [] => anyhow::bail!(
-            "未找到 S2 配置 {exact_name} 或其数字副本（例如“{DEFAULT_S2_CONFIG_STEM} (3).xlsx”）；请通过 --config 或 OPEN_DATA_AUDIT_S2_CONFIG 指定配置。"
-        ),
+        [] => Ok(PathBuf::from(exact_name)),
         multiple => anyhow::bail!(
             "找到多个 S2 配置副本，无法安全自动选择：{}；请通过 --config 或 OPEN_DATA_AUDIT_S2_CONFIG 指定配置。",
             multiple
@@ -1460,7 +1460,7 @@ mod tests {
         }
 
         #[test]
-        fn unrelated_suffix_is_not_selected_as_the_default_config() {
+        fn missing_default_config_keeps_the_historical_relative_fallback() {
             let root = temporary_directory();
             fs::write(
                 root.join("2.报表采集系统_配置备份.xlsx"),
@@ -1468,8 +1468,10 @@ mod tests {
             )
             .expect("write unrelated config");
 
-            let error = find_s2_config_path(std::slice::from_ref(&root)).unwrap_err();
-            assert!(format!("{error:#}").contains("未找到 S2 配置"));
+            assert_eq!(
+                find_s2_config_path(std::slice::from_ref(&root)).unwrap(),
+                PathBuf::from("2.报表采集系统_配置.xlsx")
+            );
             fs::remove_dir_all(root).expect("remove temporary config directory");
         }
     }
