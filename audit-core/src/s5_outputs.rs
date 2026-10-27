@@ -83,22 +83,23 @@ pub struct S5WriteOutputsSummary {
     pub data_quality_warning_count: usize,
 }
 
-const RESULT_HEADERS: [&str; 12] = [
-    "机构名称",
-    "报表项目",
-    "统一社会信用代码",
-    "规则名称",
+const RESULT_HEADERS: [&str; 13] = [
+    "工作簿名",
     "工作表名",
     "定位单元格",
     "错误类型",
+    "校验类型",
     "校验指标",
     "描述",
-    "本期值",
+    "当前值",
     "对比值",
     "差值",
+    "规则编号",
+    "历史校验说明",
+    "审核意见",
 ];
-const COLUMN_WIDTHS: [f64; 12] = [
-    34.0, 34.0, 26.0, 28.0, 30.0, 20.0, 20.0, 30.0, 70.0, 18.0, 18.0, 18.0,
+const COLUMN_WIDTHS: [f64; 13] = [
+    38.0, 30.0, 24.0, 22.0, 20.0, 30.0, 70.0, 18.0, 18.0, 18.0, 18.0, 40.0, 40.0,
 ];
 
 fn path_stem(path: &Path) -> String {
@@ -214,6 +215,50 @@ struct LocationRender {
     sheet: String,
     cells: String,
     link_evidence: Option<JsonValue>,
+}
+
+fn outcome_source_path<'a>(
+    item: &'a S5RuleOutcome,
+    location: &'a LocationRender,
+    copy_by_source: &'a BTreeMap<String, PathBuf>,
+    default_source: &'a Path,
+) -> &'a Path {
+    if let Some(path) = item
+        .error_evidence
+        .get("source_path")
+        .and_then(JsonValue::as_str)
+        .filter(|path| copy_by_source.contains_key(*path))
+    {
+        return Path::new(path);
+    }
+    if let Some(path) = location
+        .link_evidence
+        .as_ref()
+        .and_then(|entry| entry.get("source_path"))
+        .and_then(JsonValue::as_str)
+        .filter(|path| copy_by_source.contains_key(*path))
+    {
+        return Path::new(path);
+    }
+    item.evidence
+        .iter()
+        .filter(|entry| {
+            entry
+                .get("sheet")
+                .and_then(JsonValue::as_str)
+                .map(|sheet| sheet == location.sheet)
+                .unwrap_or(false)
+        })
+        .filter_map(|entry| entry.get("source_path").and_then(JsonValue::as_str))
+        .find(|path| copy_by_source.contains_key(*path))
+        .map(Path::new)
+        .unwrap_or(default_source)
+}
+
+fn workbook_name(path: &Path) -> String {
+    path.file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default()
 }
 
 fn location(item: &S5RuleOutcome, copy_by_source: &BTreeMap<String, PathBuf>) -> LocationRender {
@@ -645,7 +690,7 @@ pub fn write_run_outputs(
 
         let worksheet = workbook
             .add_worksheet()
-            .set_name("审核结果")
+            .set_name("核查表校验结果")
             .map_err(|error| error.to_string())?;
         worksheet.set_screen_gridlines(false);
         for (column, header) in RESULT_HEADERS.iter().enumerate() {
@@ -669,17 +714,9 @@ pub fn write_run_outputs(
                 triggered_rows += 1;
             }
             let location = location(item, &copy_by_source);
-            let report_item = item
-                .evidence
-                .iter()
-                .find_map(|entry| {
-                    entry
-                        .get("report_item")
-                        .and_then(JsonValue::as_str)
-                        .filter(|text| !text.is_empty())
-                        .map(str::to_owned)
-                })
-                .unwrap_or_default();
+            let source_path =
+                outcome_source_path(item, &location, &copy_by_source, request.source_path);
+            let workbook = workbook_name(source_path);
             let mut link_target: Option<String> = None;
             if let Some(entry) = &location.link_evidence {
                 let source_path = entry
@@ -722,18 +759,16 @@ pub fn write_run_outputs(
                 }
             }
             let texts = [
-                request.institution_name.to_owned(),
-                report_item,
-                request.institution_code.to_owned(),
-                item.rule_name.clone(),
+                workbook,
                 location.sheet.clone(),
                 location.cells.clone(),
                 error_type(item),
+                item.check_type.clone(),
                 item.metric.clone(),
                 description(item),
             ];
             for (column, value) in texts.iter().enumerate() {
-                if column == 5 {
+                if column == 2 {
                     if let Some(target) = &link_target {
                         worksheet
                             .write_url_with_options(
@@ -748,24 +783,34 @@ pub fn write_run_outputs(
                         continue;
                     }
                 }
-                // Only the credit-code column keeps the literal-text format in
-                // the baseline; other text columns render with General.
-                let format = if column == 2 {
-                    &text_format
-                } else {
-                    &body_format
-                };
                 worksheet
-                    .write_string_with_format(row_number, column as u16, value.as_str(), format)
+                    .write_string_with_format(
+                        row_number,
+                        column as u16,
+                        value.as_str(),
+                        &body_format,
+                    )
                     .map_err(|error| error.to_string())?;
             }
+            // The current S5 ruleset has no historical-note or reviewer-opinion
+            // source fields. Keep the contracted columns blank rather than
+            // inventing values from the rule status.
+            worksheet
+                .write_string_with_format(row_number, 10, item.rule_id.as_str(), &text_format)
+                .map_err(|error| error.to_string())?;
+            worksheet
+                .write_string_with_format(row_number, 11, "", &body_format)
+                .map_err(|error| error.to_string())?;
+            worksheet
+                .write_string_with_format(row_number, 12, "", &body_format)
+                .map_err(|error| error.to_string())?;
             let value_fields = [
                 (item.current_value.as_ref(), item.current_precision),
                 (item.comparison_value.as_ref(), item.comparison_precision),
                 (item.difference_value.as_ref(), item.difference_precision),
             ];
             for (offset, (value_option, precision)) in value_fields.iter().enumerate() {
-                let column = 9 + offset as u16;
+                let column = 7 + offset as u16;
                 let owned = value_option.cloned().unwrap_or(JsonValue::Null);
                 let value = &owned;
                 // The baseline styles every J/K/L cell right/top without wrap,
@@ -1019,6 +1064,7 @@ mod tests {
     use std::{
         collections::BTreeMap,
         fs,
+        io::Read,
         path::PathBuf,
         time::{SystemTime, UNIX_EPOCH},
     };
@@ -1034,6 +1080,168 @@ mod tests {
             error_code: (status == "RETRIEVAL_FAILED").then(|| "SOURCE_READ_FAILED".to_owned()),
             ..S5RuleOutcome::default()
         }
+    }
+
+    fn output_cell_text(path: &std::path::Path, address: &str) -> String {
+        let mut archive = zip::ZipArchive::new(fs::File::open(path).expect("open output workbook"))
+            .expect("read output workbook ZIP");
+        let mut sheet_xml = String::new();
+        archive
+            .by_name("xl/worksheets/sheet1.xml")
+            .expect("read result worksheet")
+            .read_to_string(&mut sheet_xml)
+            .expect("read result worksheet XML");
+        let sheet = roxmltree::Document::parse(&sheet_xml).expect("parse result worksheet XML");
+        let Some(cell) = sheet
+            .descendants()
+            .find(|node| node.tag_name().name() == "c" && node.attribute("r") == Some(address))
+        else {
+            return String::new();
+        };
+        if cell.attribute("t") == Some("inlineStr") {
+            return cell
+                .descendants()
+                .find(|node| node.tag_name().name() == "t")
+                .and_then(|node| node.text())
+                .unwrap_or_default()
+                .to_owned();
+        }
+        let value = cell
+            .children()
+            .find(|node| node.tag_name().name() == "v")
+            .and_then(|node| node.text())
+            .unwrap_or_default();
+        if cell.attribute("t") != Some("s") {
+            return value.to_owned();
+        }
+        let index = value.parse::<usize>().expect("shared string index");
+        let mut shared_xml = String::new();
+        archive
+            .by_name("xl/sharedStrings.xml")
+            .expect("read shared strings")
+            .read_to_string(&mut shared_xml)
+            .expect("read shared strings XML");
+        let shared = roxmltree::Document::parse(&shared_xml).expect("parse shared strings XML");
+        shared
+            .descendants()
+            .filter(|node| node.tag_name().name() == "si")
+            .nth(index)
+            .map(|item| {
+                item.descendants()
+                    .filter(|node| node.tag_name().name() == "t")
+                    .filter_map(|node| node.text())
+                    .collect::<String>()
+            })
+            .unwrap_or_default()
+    }
+
+    #[test]
+    fn output_writer_uses_v2_thirteen_column_result_contract() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "audit_s5_v2_result_contract_{}_{}",
+            std::process::id(),
+            nonce
+        ));
+        fs::create_dir_all(&root).expect("create test root");
+        let source = root.join("business.xlsx");
+        let config = root.join("config.xlsx");
+        fs::write(&source, b"read-only source snapshot").expect("write source fixture");
+        fs::write(&config, b"read-only config snapshot").expect("write config fixture");
+        let source_sha = file_sha256(&source).expect("hash source");
+        let config_sha = file_sha256(&config).expect("hash config");
+        let mut outcome = test_outcome("TRIGGERED");
+        outcome.rule_id = "R-001".to_owned();
+        outcome.check_type = "勾稽关系".to_owned();
+        outcome.metric = "贷款余额".to_owned();
+        outcome.sheet_name = "贷款表".to_owned();
+        outcome.severity = "硬性".to_owned();
+        outcome.description = "期末余额需要一致".to_owned();
+        outcome.current_value = Some(serde_json::json!(12.5));
+        outcome.comparison_value = Some(serde_json::json!(10.0));
+        outcome.difference_value = Some(serde_json::json!(2.5));
+        outcome.evidence = vec![serde_json::json!({
+            "source_path": source.to_string_lossy(),
+            "sheet": "贷款表",
+            "cell": "D8"
+        })];
+        let outcomes = [outcome];
+        let status_counts = count_outcome_statuses(&outcomes);
+        let request = S5OutputRequest {
+            run_id: "v2-result-contract",
+            period: "2026-07-31",
+            institution_code: "123456789012345678",
+            institution_name: "测试机构",
+            outcomes: &outcomes,
+            status_counts: &status_counts,
+            data_quality_warnings: &[],
+            source_path: &source,
+            source_id: "CURRENT",
+            source_sha256_before: &source_sha,
+            additional_sources: &[],
+            selected_templates: &[],
+            config_path: &config,
+            config_sha256_before: &config_sha,
+            config_version: "test",
+            structure_observations: &[],
+            schema_snapshot_dir: None,
+        };
+        let summary =
+            write_run_outputs(&request, &root.join("output")).expect("write V2 result workbook");
+
+        let workbook = summary.output_files.result_workbook;
+        let mut archive =
+            zip::ZipArchive::new(fs::File::open(&workbook).expect("open result workbook"))
+                .expect("read result workbook ZIP");
+        let mut workbook_xml = String::new();
+        archive
+            .by_name("xl/workbook.xml")
+            .expect("read workbook metadata")
+            .read_to_string(&mut workbook_xml)
+            .expect("read workbook metadata XML");
+        assert!(workbook_xml.contains("name=\"核查表校验结果\""));
+        drop(archive);
+
+        let expected_headers = [
+            "工作簿名",
+            "工作表名",
+            "定位单元格",
+            "错误类型",
+            "校验类型",
+            "校验指标",
+            "描述",
+            "当前值",
+            "对比值",
+            "差值",
+            "规则编号",
+            "历史校验说明",
+            "审核意见",
+        ];
+        for (column, expected) in expected_headers.iter().enumerate() {
+            let address = format!("{}1", (b'A' + column as u8) as char);
+            assert_eq!(
+                output_cell_text(&workbook, &address),
+                *expected,
+                "{address}"
+            );
+        }
+        assert_eq!(output_cell_text(&workbook, "A2"), "business.xlsx");
+        assert_eq!(output_cell_text(&workbook, "B2"), "贷款表");
+        assert_eq!(output_cell_text(&workbook, "C2"), "D8");
+        assert_eq!(output_cell_text(&workbook, "D2"), "校验硬性错误");
+        assert_eq!(output_cell_text(&workbook, "E2"), "勾稽关系");
+        assert_eq!(output_cell_text(&workbook, "F2"), "贷款余额");
+        assert_eq!(output_cell_text(&workbook, "G2"), "期末余额需要一致");
+        assert_eq!(output_cell_text(&workbook, "H2"), "12.5");
+        assert_eq!(output_cell_text(&workbook, "I2"), "10");
+        assert_eq!(output_cell_text(&workbook, "J2"), "2.5");
+        assert_eq!(output_cell_text(&workbook, "K2"), "R-001");
+        assert_eq!(output_cell_text(&workbook, "L2"), "");
+        assert_eq!(output_cell_text(&workbook, "M2"), "");
+        fs::remove_dir_all(root).expect("remove isolated test output");
     }
 
     #[test]

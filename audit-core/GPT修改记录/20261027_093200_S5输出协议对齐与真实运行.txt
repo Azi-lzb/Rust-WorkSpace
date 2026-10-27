@@ -1,0 +1,26 @@
+【时间】2026-10-27 09:32 +08:00
+【执行者】Codex
+【修改前 commit】d40f82b0cf80d301da7374243b30f44755c0d49a
+【修改后 commit】本记录与 `audit-core/src/s5_outputs.rs` 单独提交；具体 SHA 以本记录对应的 Git 历史为准。GUI 适配器断言及迁移清单仍保留在工作树现有 WIP 中。
+【工作树状态】audit-dev 分支；开始前存在 MIGRATION_INVENTORY、GUI bridge、S1/S3/S5 业务代码及多份报告/记录的未提交修改和未跟踪文件。本轮未覆盖、删除或提交这些既有成果。
+
+【目的】将已接入 Rust S5 运行输出改为 V2 要求的 `核查表校验结果` 13 列契约，并以真实只读样本确认 GUI 适配器仍可执行。
+
+【修改文件】
+- `audit-core/src/s5_outputs.rs`：13 列字段和顺序、结果 Sheet 名、字段映射、文件名/来源定位、数字列位置与列宽；历史校验说明和审核意见无配置来源时保持空白。
+- `audit-core/src/s5_outputs.rs`：真实输出表契约和对应 writer 单元测试。
+- `audit-core/src/s5_web.rs`：真实适配器测试读取输出结果并逐项断言 13 列标题；此文件已有未提交 WIP，本次不单独提交。
+- `audit-core/MIGRATION_INVENTORY.md`：追加本轮功能和验证状态，不调整 S5 整体验收状态；该文件已有未提交 WIP，本次不单独提交。
+
+【配置/VBA/版本影响】配置格式和 VBA 未变更；按 workspace 规则不使用旧组件编号，不升级 crate 版本。
+
+【验证】
+- `cargo test --offline --locked -p audit-core --lib s5_outputs::tests::output_writer_uses_v2_thirteen_column_result_contract -- --exact --nocapture`：1 passed。
+- `cargo test --offline --locked -p audit-core --lib s5_outputs::tests -- --nocapture`：8 passed。
+- `cargo check --offline --locked -p audit-core --bin open-data-audit-gui`：通过。
+- Windows 真实只读样本：`runs_s5_gui_adapter_with_a_real_read_only_source` 1 passed；356 条规则、3 条触发、0 条失败、6,428ms；输出重新读取成功、13 个标题匹配、源文件字节未变。成功运行的隔离输出由测试删除。
+
+【未执行/已知问题】本轮没有 Python/Rust 文件级结果对拍：V2 13 列布局遵循用户最终需求，而旧 Python S5 README 将同名 Sheet 作为空历史表并使用另一输出布局。历史校验说明和审核意见目前无 S5 数据来源，故空白。条件格式触发提取、真实浏览器人工操作、Linux/deb 及目标发行版验收未完成；S5-F01 整体仍未验证。前一次真实测试因测试断言格式错误中断，在 `%TEMP%\audit-s5-web-identity-1793064470247605300` 留有该次隔离输出副本；安全策略拒绝递归删除该目录，本轮不触碰其内容。
+
+【删除清单】无。成功测试创建的临时输出已由测试自身清除。
+【回滚提示】回滚本轮 `s5_outputs.rs` 的输出字段映射和关联测试即可恢复原结果表布局；不应回滚既有 GUI/S1/S3 工作树改动。
