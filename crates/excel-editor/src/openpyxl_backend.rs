@@ -1433,6 +1433,27 @@ fn validate_preserved_relationships(
         retained_relationship_changes.push((sheet.clone(), output_name.clone()));
     }
 
+    // Adding or replacing a legacy worksheet comment can update only that
+    // worksheet's comments and VML relationship entries. Keep every other
+    // relationship on the sheet (for example hyperlinks) under strict
+    // comparison; package integrity validation below still verifies that all
+    // relationship targets and XML references are valid.
+    let mut comment_relationship_changes = Vec::new();
+    for operation in &plan.operations {
+        let EditOperation::SetComment { sheet, .. } = operation else {
+            continue;
+        };
+        // New or replaced worksheets already use their dedicated relationship
+        // exception below; they have no retained source relationship mapping.
+        if created_sheet_names.contains(sheet.as_str()) || deleted_sheets.contains_key(sheet) {
+            continue;
+        }
+        let output_name = retained_sheets.get(sheet).with_context(|| {
+            format!("SetComment relationship scope refers to non-retained worksheet {sheet:?}")
+        })?;
+        comment_relationship_changes.push((sheet.clone(), output_name.clone()));
+    }
+
     let source_recreated_names = replacements
         .iter()
         .map(|(source_name, _)| source_name.clone())
@@ -1459,6 +1480,14 @@ fn validate_preserved_relationships(
                 .map(|(_, output_name)| output_name.clone()),
         )
         .collect::<BTreeSet<_>>();
+    let source_comment_relationship_sheets = comment_relationship_changes
+        .iter()
+        .map(|(source_name, _)| source_name.clone())
+        .collect::<BTreeSet<_>>();
+    let output_comment_relationship_sheets = comment_relationship_changes
+        .iter()
+        .map(|(_, output_name)| output_name.clone())
+        .collect::<BTreeSet<_>>();
     let normalize_worksheet_relationship_ids = plan
         .operations
         .iter()
@@ -1468,12 +1497,14 @@ fn validate_preserved_relationships(
         source,
         &source_relationship_exceptions,
         &source_recreated_names,
+        &source_comment_relationship_sheets,
         normalize_worksheet_relationship_ids,
     );
     let output_relationships = relationships_outside_sheet_relationships(
         output,
         &output_relationship_exceptions,
         &output_recreated_names,
+        &output_comment_relationship_sheets,
         normalize_worksheet_relationship_ids,
     );
     anyhow::ensure!(
@@ -1487,6 +1518,7 @@ fn relationships_outside_sheet_relationships(
     snapshot: &WorkbookPreservationSnapshot,
     worksheet_relationship_exceptions: &BTreeSet<String>,
     recreated_worksheet_names: &BTreeSet<String>,
+    comment_relationship_sheets: &BTreeSet<String>,
     normalize_worksheet_relationship_ids: bool,
 ) -> Vec<(String, Vec<CanonicalXmlElement>)> {
     let recreated_names: BTreeSet<&str> = recreated_worksheet_names
@@ -1509,6 +1541,12 @@ fn relationships_outside_sheet_relationships(
         .filter(|(name, _, _)| relationship_exception_names.contains(name.as_str()))
         .map(|(_, worksheet_part, _)| relationships_part_for_source(worksheet_part))
         .collect();
+    let comment_relationship_parts: BTreeSet<String> = snapshot
+        .worksheet_parts
+        .iter()
+        .filter(|(name, _, _)| comment_relationship_sheets.contains(name))
+        .map(|(_, worksheet_part, _)| relationships_part_for_source(worksheet_part))
+        .collect();
     let worksheet_names_by_relationship_id: BTreeMap<&str, &str> = snapshot
         .worksheet_parts
         .iter()
@@ -1523,40 +1561,46 @@ fn relationships_outside_sheet_relationships(
                 return None;
             }
             let is_workbook_relationship_part = part_name == &snapshot.workbook_relationship_part;
-            let mut elements =
-                elements
-                    .iter()
-                    .filter(|element| {
-                        if !is_workbook_relationship_part {
-                            return true;
+            let mut elements = elements
+                .iter()
+                .filter(|element| {
+                    if !is_workbook_relationship_part {
+                        if comment_relationship_parts.contains(part_name) {
+                            return !canonical_xml_attribute(element, "Type").is_some_and(|kind| {
+                                kind.ends_with("/comments") || kind.ends_with("/vmlDrawing")
+                            });
                         }
-                        let id = canonical_xml_attribute(element, "Id");
-                        let kind = canonical_xml_attribute(element, "Type");
-                        !id.is_some_and(|id| relationship_ids.contains(id))
-                            && !kind.is_some_and(|kind| kind.ends_with("/sharedStrings"))
-                    })
-                    .map(|element| {
-                        let mut element = element.clone();
-                        if is_workbook_relationship_part && normalize_worksheet_relationship_ids {
-                            let is_worksheet = canonical_xml_attribute(&element, "Type")
-                                .is_some_and(|kind| kind.ends_with("/worksheet"));
-                            if is_worksheet {
-                                if let Some(sheet_name) = canonical_xml_attribute(&element, "Id")
-                                    .and_then(|relationship_id| {
-                                        worksheet_names_by_relationship_id.get(relationship_id)
+                        return true;
+                    }
+                    let id = canonical_xml_attribute(element, "Id");
+                    let kind = canonical_xml_attribute(element, "Type");
+                    !id.is_some_and(|id| relationship_ids.contains(id))
+                        && !kind.is_some_and(|kind| kind.ends_with("/sharedStrings"))
+                })
+                .map(|element| {
+                    let mut element = element.clone();
+                    if is_workbook_relationship_part && normalize_worksheet_relationship_ids {
+                        let is_worksheet = canonical_xml_attribute(&element, "Type")
+                            .is_some_and(|kind| kind.ends_with("/worksheet"));
+                        if is_worksheet {
+                            if let Some(sheet_name) = canonical_xml_attribute(&element, "Id")
+                                .and_then(|relationship_id| {
+                                    worksheet_names_by_relationship_id.get(relationship_id)
+                                })
+                            {
+                                if let Some((_, _, value)) =
+                                    element.attributes.iter_mut().find(|(namespace, name, _)| {
+                                        namespace.is_empty() && name == "Id"
                                     })
                                 {
-                                    if let Some((_, _, value)) = element.attributes.iter_mut().find(
-                                        |(namespace, name, _)| namespace.is_empty() && name == "Id",
-                                    ) {
-                                        *value = format!("worksheet:{sheet_name}");
-                                    }
+                                    *value = format!("worksheet:{sheet_name}");
                                 }
                             }
                         }
-                        element
-                    })
-                    .collect::<Vec<_>>();
+                    }
+                    element
+                })
+                .collect::<Vec<_>>();
             elements.sort();
             Some((part_name.clone(), elements))
         })
@@ -4971,6 +5015,73 @@ mod tests {
             &no_recreation
         )
         .is_err());
+    }
+
+    #[test]
+    fn set_comment_allows_only_target_sheet_comments_and_vml_relationship_changes() {
+        let operations = vec![EditOperation::SetComment {
+            sheet: "History".to_owned(),
+            cell: "A1".to_owned(),
+            text: Some("new note".to_owned()),
+            author: Some("tester".to_owned()),
+        }];
+        let plan = relationship_plan(operations);
+        let source = relationship_snapshot(false);
+        let mut output = source.clone();
+        let history_rels = output
+            .relationships
+            .iter_mut()
+            .find(|(part, _)| part == "xl/worksheets/_rels/history.xml.rels")
+            .expect("target worksheet relationship part exists");
+        for relationship in &mut history_rels.1 {
+            match canonical_xml_attribute(relationship, "Type") {
+                Some(kind) if kind.ends_with("/comments") => {
+                    let id = relationship
+                        .attributes
+                        .iter_mut()
+                        .find(|(namespace, name, _)| namespace.is_empty() && name == "Id")
+                        .expect("comment relationship has an Id");
+                    id.2 = "commentsAfterEdit".to_owned();
+                }
+                Some(kind) if kind.ends_with("/vmlDrawing") => {
+                    let id = relationship
+                        .attributes
+                        .iter_mut()
+                        .find(|(namespace, name, _)| namespace.is_empty() && name == "Id")
+                        .expect("VML relationship has an Id");
+                    id.2 = "vmlAfterEdit".to_owned();
+                }
+                _ => {}
+            }
+        }
+        history_rels.1.sort();
+
+        validate_preserved_relationships(&source, &output, &plan)
+            .expect("SetComment may update only target-sheet comments/VML links");
+
+        let mut changed_target_hyperlink = output;
+        let history_rels = changed_target_hyperlink
+            .relationships
+            .iter_mut()
+            .find(|(part, _)| part == "xl/worksheets/_rels/history.xml.rels")
+            .expect("target worksheet relationship part exists");
+        let hyperlink = history_rels
+            .1
+            .iter_mut()
+            .find(|relationship| {
+                canonical_xml_attribute(relationship, "Type")
+                    .is_some_and(|kind| kind.ends_with("/hyperlink"))
+            })
+            .expect("target sheet hyperlink relationship exists");
+        let target = hyperlink
+            .attributes
+            .iter_mut()
+            .find(|(namespace, name, _)| namespace.is_empty() && name == "Target")
+            .expect("hyperlink relationship has a Target");
+        target.2 = "https://example.invalid/changed".to_owned();
+        assert!(
+            validate_preserved_relationships(&source, &changed_target_hyperlink, &plan).is_err()
+        );
     }
 
     #[test]
