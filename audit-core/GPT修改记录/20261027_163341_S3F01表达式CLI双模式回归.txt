@@ -1,0 +1,15 @@
+# S3-F01 表达式 CLI 双模式回归
+
+- 时间：2026-10-27 16:33（Asia/Shanghai）
+- 执行者：Codex
+- 修改前 HEAD：`5b5ab39a3bdeaf5b31696c395752429584b2caa7`
+- 修改后 HEAD：未提交（本次保留现有工作树状态）
+- WIP：工作树已有多项 Audit 修改和未跟踪文件；仅增补 S3-F01 CLI 集成测试及迁移记录，没有覆盖、清理或暂存其他文件。
+- 目的：为 S3-F01 正式 CLI 增加五段式与旧八段式表达式规则的端到端合成回归，覆盖一个不触发和一个触发结果。
+- 修改文件：`audit-core/tests/s3_execution_compare_cli.rs`、`audit-core/MIGRATION_INVENTORY.md`、本记录。
+- 变更：合成 3.1 配置提供相同业务规则的两套表达式字段；通过 `s3-execution-compare` 省略参数运行默认八段式，并显式选择五段式，检查摘要计数、输出工作表名及结果“是否说明”单元格。测试产物写入测试临时目录并在结束时清理；业务输入和配置不修改。
+- 测试：目标目录初次链接被当前运行的 GUI 程序文件锁阻止；改用独立 `F:\RustBuild\audit_s3_expression_cli_20261027` 后，`cargo test --offline --locked -p audit-core --test s3_execution_compare_cli` 通过（2 passed）。首个测试执行仅因预期工作表名少了“对比结果”后缀失败，按当前输出契约修正断言后通过。
+- 未执行：真实 S3 样本/Python 对拍、GUI 浏览器点击、Linux/deb 验证。
+- 已知问题：S3-F01 整体仍待真实业务验收；本次只补齐两个表达式 schema 的 Rust CLI 入口回归证据。
+- 【组件版本】：未变更产品行为，不升级。
+- 回滚：如需撤回本次测试，可仅还原 `s3_execution_compare_cli.rs` 中新增的表达式配置辅助函数和测试，并移除本记录及对应迁移清单增量。
