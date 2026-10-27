@@ -1,0 +1,16 @@
+# 2026-10-27 S1-F01 GUI 未接通反馈
+
+## 修改目的
+在 S1-F01 的完整审核链尚未接通时，避免 GUI 按钮看起来可执行却静默失败。
+
+## 变更
+- `audit-core/frontend/web/index.html` 明示 F1 当前未接通。
+- 确认执行的异步 API 错误转为可见 toast，并刷新 GUI 状态。
+
+## 验证
+- Windows 原生 `cargo build --offline --locked -p audit-core --bin open-data-audit-gui` 通过。
+- 原 GUI 浏览器冒烟：确认 F1 后显示“执行失败：Rust 迁移版尚未接通工作流：dag:汇总核查表校验”。该次未选择输入文件，未启动工作簿处理。
+- `cargo test --offline --locked -p audit-core --lib s1_f2_gui_workflow`：1 passed；`s1_f2_runs_through_the_existing_gui_workflow_without_modifying_inputs`：1 passed。
+
+## 未验证与回滚
+S1-F01 业务审核链仍受公式复制/真实重算及 Excel-Core 样式语义缺口阻塞；本次不声明该功能迁移完成。回滚本 UI 变更可还原本记录及同一 HTML 文件的对应差异。

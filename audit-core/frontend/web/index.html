@@ -875,7 +875,7 @@ table.editor-table{width:100%;border-collapse:collapse;font-size:13px}
 
   <div class="operation-stack">
     <div class="card actionbar">
-      <button class="btn primary" id="auditPrimaryButton" data-action="dag:汇总核查表校验" onclick="startAuditPrimary()" title="执行汇总核查表校验">F1 汇总核查表校验</button>
+      <button class="btn primary" id="auditPrimaryButton" data-action="dag:汇总核查表校验" onclick="startAuditPrimary()" title="当前 Rust 迁移版尚未接通 S1-F01；执行时会显示具体状态">F1 汇总核查表校验（尚未接通）</button>
       <button class="btn" id="auditSummaryButton" data-action="dag:汇总校验结果说明" onclick="startAuditSummary()" title="执行汇总校验结果说明">F2 汇总校验结果说明</button>
       <div class="dag-extras-card" id="dagExtrasCard">
         <button class="btn" onclick="startDagMerge()">F3 组合工作表（核查表）</button>
@@ -1863,7 +1863,7 @@ function editionFaqItems(items){
 }
 function updateAuditWorkbenchMode(){
   const primary=document.getElementById('auditPrimaryButton'),summary=document.getElementById('auditSummaryButton');
-  if(primary){primary.dataset.action='dag:汇总核查表校验';primary.title='DAG 主流程：复制公式、计算并生成审核副本与问题汇总';}
+  if(primary){primary.dataset.action='dag:汇总核查表校验';primary.title='当前 Rust 迁移版尚未接通 S1-F01；执行时会显示具体状态';primary.textContent='F1 汇总核查表校验（尚未接通）';}
   if(summary){summary.dataset.action='dag:汇总校验结果说明';summary.title='DAG 主流程：汇总校验结果与报送说明';}
 }
 function openAuditWorkbench(){
@@ -3927,7 +3927,13 @@ function confirmRun(ok){
   document.getElementById('confirmFiles').hidden=true;
   if(!ok||!pendingConfirm)return;
   const c=pendingConfirm;pendingConfirm=null;
-  if(c.type==='run'&&c.run){c.run();}
+  if(c.type==='run'&&c.run){
+    Promise.resolve().then(()=>c.run()).catch(async error=>{
+      const message=(error&&error.message)?error.message:String(error);
+      showToast('执行失败：'+message);
+      try{await refresh()}catch(_){ }
+    });
+  }
   else if(c.type==='resetGeneral'){doResetGeneralSettings();}
   else if(c.type==='reset'){doResetConfig();}
   else if(c.type==='resetSummary'){doResetSummaryConfig();}
