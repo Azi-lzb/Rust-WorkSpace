@@ -15,14 +15,14 @@ use crate::{
     s2_period::{S2PeriodBandConfig, S2PeriodConfig, S2PeriodIndicatorConfig},
     s2_rule_engine::{S2Rule, S2RuleEngineConfig},
 };
-use anyhow::{anyhow, bail, Result};
+use anyhow::{Context, Result, anyhow, bail};
 use chrono::{Datelike, NaiveDateTime, Timelike};
-use excel_reader::{read_value_columns_with_iso_dates, CellValue, SheetValues};
+use excel_reader::{CellValue, SheetValues, read_value_columns_with_iso_dates};
 use serde::Serialize;
 use std::{
     collections::{HashMap, HashSet},
     fs,
-    path::Path,
+    path::{Path, PathBuf},
 };
 
 const GENERAL_SETTINGS_SHEET: &str = "通用设置";
@@ -48,6 +48,101 @@ const EXTERNAL_RULE_HEADERS: &[&str] = &[
 ];
 const EXTERNAL_COMPARISON_METHODS: &[&str] =
     &["等于", "不等于", "大于", "大于等于", "小于", "小于等于"];
+
+const DEFAULT_S2_CONFIG_STEM: &str = "2.报表采集系统_配置";
+
+/// Resolve the default S2 workbook for the GUI entry points.
+///
+/// An explicitly configured path wins. Otherwise, the conventional filename
+/// is preferred in the historical search order. A single Windows numbered
+/// copy such as `...配置 (3).xlsx` is accepted when the conventional filename
+/// is absent; ambiguity is reported instead of selecting a workbook silently.
+pub fn resolve_default_config_path() -> Result<PathBuf> {
+    if let Some(path) = std::env::var_os("OPEN_DATA_AUDIT_S2_CONFIG") {
+        return Ok(PathBuf::from(path));
+    }
+
+    let current_directory = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let directories = [
+        current_directory.join("audit-core/config-real"),
+        current_directory.join("audit-core/config/默认配置"),
+        current_directory.join("config-real"),
+        current_directory.join("config/默认配置"),
+    ];
+    find_s2_config_path(&directories)
+}
+
+fn find_s2_config_path(directories: &[PathBuf]) -> Result<PathBuf> {
+    let exact_name = format!("{DEFAULT_S2_CONFIG_STEM}.xlsx");
+    for directory in directories {
+        let exact = directory.join(&exact_name);
+        if exact.is_file() {
+            return Ok(exact);
+        }
+    }
+
+    let mut numbered_copies = Vec::new();
+    for directory in directories {
+        let entries = match fs::read_dir(directory) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => {
+                return Err(error)
+                    .with_context(|| format!("扫描 S2 配置目录失败：{}", directory.display()));
+            }
+        };
+        for entry in entries {
+            let entry =
+                entry.with_context(|| format!("读取 S2 配置目录失败：{}", directory.display()))?;
+            let path = entry.path();
+            if path.is_file() && is_numbered_s2_config_copy(&path) {
+                numbered_copies.push(path);
+            }
+        }
+    }
+    numbered_copies.sort();
+    numbered_copies.dedup();
+
+    match numbered_copies.as_slice() {
+        [only] => Ok(only.clone()),
+        [] => anyhow::bail!(
+            "未找到 S2 配置 {exact_name} 或其数字副本（例如“{DEFAULT_S2_CONFIG_STEM} (3).xlsx”）；请通过 --config 或 OPEN_DATA_AUDIT_S2_CONFIG 指定配置。"
+        ),
+        multiple => anyhow::bail!(
+            "找到多个 S2 配置副本，无法安全自动选择：{}；请通过 --config 或 OPEN_DATA_AUDIT_S2_CONFIG 指定配置。",
+            multiple
+                .iter()
+                .map(|path| path.display().to_string())
+                .collect::<Vec<_>>()
+                .join("、")
+        ),
+    }
+}
+
+fn is_numbered_s2_config_copy(path: &Path) -> bool {
+    if !path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("xlsx"))
+    {
+        return false;
+    }
+    let Some(stem) = path.file_stem().and_then(|stem| stem.to_str()) else {
+        return false;
+    };
+    let Some(suffix) = stem.strip_prefix(DEFAULT_S2_CONFIG_STEM) else {
+        return false;
+    };
+    let Some(number) = suffix
+        .trim()
+        .strip_prefix('(')
+        .and_then(|value| value.strip_suffix(')'))
+    else {
+        return false;
+    };
+    let number = number.trim();
+    !number.is_empty() && number.chars().all(|character| character.is_ascii_digit())
+}
 
 const INDICATOR_ALIASES: &[(&str, &str)] = &[
     ("指标代码", "code"),
@@ -1297,5 +1392,85 @@ mod tests {
             unknown_numeric_codes("[20201001] + {20201002} + [alpha]"),
             ["20201001", "20201002"]
         );
+    }
+
+    mod default_path_tests {
+        use super::find_s2_config_path;
+        use std::{fs, path::PathBuf, time::SystemTime};
+
+        fn temporary_directory() -> PathBuf {
+            let nonce = SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .expect("system clock")
+                .as_nanos();
+            let root = std::env::temp_dir().join(format!(
+                "audit_s2_config_discovery_{}_{}",
+                std::process::id(),
+                nonce
+            ));
+            fs::create_dir_all(&root).expect("create temporary config directory");
+            root
+        }
+
+        #[test]
+        fn exact_default_config_takes_precedence_over_numbered_copies() {
+            let root = temporary_directory();
+            let exact = root.join("2.报表采集系统_配置.xlsx");
+            let numbered = root.join("2.报表采集系统_配置 (3).xlsx");
+            fs::write(&exact, b"exact").expect("write exact config");
+            fs::write(&numbered, b"copy").expect("write numbered copy");
+
+            assert_eq!(
+                find_s2_config_path(std::slice::from_ref(&root)).unwrap(),
+                exact
+            );
+            fs::remove_dir_all(root).expect("remove temporary config directory");
+        }
+
+        #[test]
+        fn unique_numbered_default_config_is_discovered() {
+            let root = temporary_directory();
+            let numbered = root.join("2.报表采集系统_配置(3).xlsx");
+            fs::write(&numbered, b"copy").expect("write numbered copy");
+            fs::write(root.join("2.报表采集系统_配置备份.xlsx"), b"other")
+                .expect("write unrelated similarly named file");
+
+            assert_eq!(
+                find_s2_config_path(std::slice::from_ref(&root)).unwrap(),
+                numbered
+            );
+            fs::remove_dir_all(root).expect("remove temporary config directory");
+        }
+
+        #[test]
+        fn ambiguous_numbered_default_configs_require_explicit_selection() {
+            let root = temporary_directory();
+            let first = root.join("2.报表采集系统_配置 (2).xlsx");
+            let second = root.join("2.报表采集系统_配置 (3).xlsx");
+            fs::write(&first, b"copy 2").expect("write first numbered copy");
+            fs::write(&second, b"copy 3").expect("write second numbered copy");
+
+            let error = find_s2_config_path(std::slice::from_ref(&root)).unwrap_err();
+            let message = format!("{error:#}");
+            assert!(message.contains("找到多个 S2 配置副本"));
+            assert!(message.contains("--config"));
+            assert!(message.contains("(2).xlsx"));
+            assert!(message.contains("(3).xlsx"));
+            fs::remove_dir_all(root).expect("remove temporary config directory");
+        }
+
+        #[test]
+        fn unrelated_suffix_is_not_selected_as_the_default_config() {
+            let root = temporary_directory();
+            fs::write(
+                root.join("2.报表采集系统_配置备份.xlsx"),
+                b"not a numbered copy",
+            )
+            .expect("write unrelated config");
+
+            let error = find_s2_config_path(std::slice::from_ref(&root)).unwrap_err();
+            assert!(format!("{error:#}").contains("未找到 S2 配置"));
+            fs::remove_dir_all(root).expect("remove temporary config directory");
+        }
     }
 }

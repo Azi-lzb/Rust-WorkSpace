@@ -1,0 +1,19 @@
+修改：
+- `audit-core/src/s2_config.rs`
+- `audit-core/src/bin/open-data-audit.rs`
+- `audit-core/src/bin/open-data-audit-gui.rs`
+- `audit-core/MIGRATION_INVENTORY.md`
+
+目的：Audit 两个 GUI 启动入口共用默认 S2 配置路径解析，兼容 Windows 生成的 `(N)` 数字副本文件名；标准名保持原有优先级，唯一副本可自动选择，多个副本时明确要求用户指定。
+
+验证：
+- Windows 原生 `cargo test --offline --locked -p audit-core --lib default_path_tests --target-dir F:\RustBuild\audit_s2_config_path_20261027`：4 passed。
+- Windows 原生 `cargo check --offline --locked -p audit-core --bin open-data-audit --bin open-data-audit-gui --target-dir F:\RustBuild\audit_s2_config_path_20261027`：通过。
+- `rustfmt --edition 2024 --check` 覆盖 `s2_config.rs` 与两个入口文件：通过。
+- `git diff --check` 覆盖变更代码和迁移清单：通过。
+
+未执行：真实用户配置启动 GUI 的人工点击；无真实 S2 审核链回归（本次只改默认配置文件发现）。
+
+已知问题：若默认搜索目录中存在多个数字副本，程序不会自动猜测；需使用 `--config` 或 `OPEN_DATA_AUDIT_S2_CONFIG` 指定。显式配置路径的语义未改变。
+
+回滚：仅回退共享配置路径解析函数、两个 GUI 调用点及其 4 个定向测试，并删除本记录和对应迁移清单增量；不影响 S2 规则计算或输出。

@@ -901,7 +901,10 @@ fn run() -> Result<()> {
             run_s5_audit_run(arguments)?;
         }
         Command::Serve(arguments) => {
-            let config_path = arguments.config.unwrap_or_else(default_s2_config_path);
+            let config_path = match arguments.config {
+                Some(path) => path,
+                None => audit_core::s2_config::resolve_default_config_path()?,
+            };
             serve_web_ui(arguments.port, config_path)?;
         }
         Command::S2(arguments) => {
@@ -4984,24 +4987,6 @@ fn resolve_manifest_path(base: &Path, path: PathBuf) -> PathBuf {
     } else {
         base.join(path)
     }
-}
-
-fn default_s2_config_path() -> PathBuf {
-    if let Some(path) = std::env::var_os("OPEN_DATA_AUDIT_S2_CONFIG") {
-        return PathBuf::from(path);
-    }
-
-    let current_directory = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let candidates = [
-        current_directory.join("audit-core/config-real/2.报表采集系统_配置.xlsx"),
-        current_directory.join("audit-core/config/默认配置/2.报表采集系统_配置.xlsx"),
-        current_directory.join("config-real/2.报表采集系统_配置.xlsx"),
-        current_directory.join("config/默认配置/2.报表采集系统_配置.xlsx"),
-    ];
-    candidates
-        .into_iter()
-        .find(|path| path.is_file())
-        .unwrap_or_else(|| PathBuf::from("2.报表采集系统_配置.xlsx"))
 }
 
 fn parse_copy_range(specification: &str) -> Result<CopyRange> {
