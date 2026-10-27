@@ -1,0 +1,35 @@
+时间：2026-10-27 04:05:55（Asia/Shanghai）
+执行者：Codex
+工作树：main
+修改前 HEAD：3609dfdcea7e45bed2c716e899dcc6cc6df31c74
+修改后 HEAD：随本次独立提交落地（SHA 见 Git 提交历史）
+修改前 WIP：保留 `crates/ooxml-patch/src/lib.rs` 未提交修改和未跟踪 `HANDOFF_ZCODE_TO_CODEX.md`；未触碰 Audit/PyTools 工作树。
+
+目的
+- 为 PyTools PT-2-4 增加共享、只读的有效单元格数字格式查询能力，使继承行/列格式（如 `000000`）可被明确识别。
+
+变更
+- 修改 `crates/excel-reader/src/lib.rs`。
+- 新增 `CellNumberFormatSource`、`EffectiveCellNumberFormatInfo` 和批量 API `read_xlsx_effective_cell_number_formats`。
+- 保留 `read_xlsx_cell_number_formats` 的显式单元格格式行为及继承样式 fail-closed 语义。
+- 新 API 按请求坐标读取 OOXML cell/row/column/default 样式；无效样式索引和同一单元格同时命中行、列继承样式时拒绝，不猜测结果。
+- 未新增依赖、未修改 PyTools/Audit 代码、生产路由或配置。
+
+验证
+- `cargo test --offline --locked -p excel-reader`：通过，20 个库单元测试、2 个集成测试通过；Doc tests 0 项。
+- 上述测试已在 main 的 `6fdf78ea001119eb24ab61a21e6f14321146f576` 基线上复跑，通过。
+- `cargo fmt -p excel-reader -- --check`：通过。
+- `git diff --check`：通过。
+- 合成 XLSX/XLSM 覆盖显式 cell 覆盖、row、column、default、关闭的 row customFormat、行列同时命中拒绝及 cell/row/column 无效索引；原 API 继承格式拒绝回归通过。
+
+未执行/限制
+- 未在 PyTools 业务入口接入，也未运行 PT-2-4 真实样本对拍；由 PyTools Agent 使用其工作树中的样本验证。
+- row 与 column 同时提供样式时暂按歧义拒绝；尚未通过 Excel/WPS 真实参考验证其冲突优先级。
+- 未运行全 workspace 测试、Linux 构建或 deb 验收。
+
+已知问题
+- 本 API 仅读取 OOXML `cellXfs` 中的 number format 元数据，不是完整样式计算器；未知内置格式仍以 `format_code: None` 返回，调用方须继续处理。
+
+回滚
+- 仅回滚本记录及 `crates/excel-reader/src/lib.rs` 的本次 API/测试增量；不要还原或覆盖与本次无关的 `crates/ooxml-patch/src/lib.rs` 和 `HANDOFF_ZCODE_TO_CODEX.md`。
+- 组件版本：未升级，保持当前 workspace crate 版本。

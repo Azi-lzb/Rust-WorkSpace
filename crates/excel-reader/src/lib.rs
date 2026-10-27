@@ -164,15 +164,16 @@ pub struct CellNumberFormatRequest {
     pub cell_reference: String,
 }
 
-/// Number-format metadata assigned to a cell by its OOXML cell style.
+/// Number-format metadata returned by [`read_xlsx_cell_number_formats`].
 ///
 /// `format_code` contains the exact custom code from `styles.xml`, or a
 /// canonical code for a recognized built-in number format. It is `None` for
 /// reserved/unknown built-in IDs; `number_format_id` remains available so the
-/// caller can handle those explicitly. This reports an explicit cell-level
-/// `s` style reference. If no cell-level style exists but a matching row or
-/// column default style is present, the reader fails closed instead of
-/// assuming the default style; row/column style inheritance is not resolved.
+/// caller can handle those explicitly. This legacy API reports an explicit
+/// cell-level `s` style reference. If no cell-level style exists but a matching
+/// row or column default style is present, it fails closed instead of assuming
+/// the default style; use [`EffectiveCellNumberFormatInfo`] to query resolved
+/// row/column inheritance.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CellNumberFormatInfo {
     pub sheet_name: String,
@@ -181,6 +182,38 @@ pub struct CellNumberFormatInfo {
     pub style_index: u32,
     pub number_format_id: u32,
     pub format_code: Option<String>,
+}
+
+/// The OOXML style location used to resolve a cell's number format.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CellNumberFormatSource {
+    /// An explicit `s` attribute on the cell.
+    Cell,
+    /// A row-level `s` style with `customFormat="1"`.
+    Row,
+    /// A column-level `style` attribute covering the cell's column.
+    Column,
+    /// The workbook's default cell style (cellXfs index zero).
+    Default,
+}
+
+/// Number-format metadata resolved from the cell, row, column, or default style.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EffectiveCellNumberFormatInfo {
+    pub sheet_name: String,
+    /// Normalized A1 reference (uppercase column letters, no `$` markers).
+    pub cell_reference: String,
+    pub style_index: u32,
+    pub number_format_id: u32,
+    pub format_code: Option<String>,
+    pub source: CellNumberFormatSource,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct InheritedNumberFormatStyle {
+    style_index: u32,
+    source: CellNumberFormatSource,
+    description: String,
 }
 
 #[derive(Default)]
@@ -1209,19 +1242,53 @@ pub fn read_xlsx_worksheet_extents(path: impl AsRef<Path>) -> Result<Vec<Workshe
     Ok(extents)
 }
 
-/// Read number-format metadata for a batch of worksheet cells from XLSX/XLSM.
+/// Read number-format metadata for cells with explicit cell-level styles or
+/// the default style from XLSX/XLSM.
 ///
-/// The workbook is opened once for the whole request. Cell values and formulas
-/// are not read or changed. This is an OOXML metadata adapter, not a second
-/// value-reading engine. The returned format code preserves custom codes and
-/// normalizes recognized built-in IDs. A cell without an explicit `s`
-/// attribute uses style index 0 only when no matching row or column default
-/// style is present. Such inherited styles are reported as an error so callers
-/// can fail closed rather than silently losing display formatting.
+/// This API intentionally fails closed when a requested cell inherits a row
+/// or column style. Call [`read_xlsx_effective_cell_number_formats`] when that
+/// inheritance should be resolved. Keeping this behavior allows existing
+/// callers to distinguish explicit cell formatting from inherited formatting.
 pub fn read_xlsx_cell_number_formats(
     path: impl AsRef<Path>,
     requests: &[CellNumberFormatRequest],
 ) -> Result<Vec<CellNumberFormatInfo>> {
+    read_xlsx_cell_number_format_records(path, requests, false).map(|records| {
+        records
+            .into_iter()
+            .map(|record| CellNumberFormatInfo {
+                sheet_name: record.sheet_name,
+                cell_reference: record.cell_reference,
+                style_index: record.style_index,
+                number_format_id: record.number_format_id,
+                format_code: record.format_code,
+            })
+            .collect()
+    })
+}
+
+/// Read the effective number format for a batch of worksheet cells from
+/// XLSX/XLSM, including a uniquely identifiable row- or column-level style.
+///
+/// An explicit cell `s` style takes precedence. If no cell style exists, a
+/// single applicable row or column style is used; if neither exists, the
+/// workbook default style (cellXfs index zero) is used. When row and column
+/// styles both apply, the source is ambiguous to this metadata adapter and the
+/// request is rejected rather than guessing. Invalid style indexes are also
+/// rejected. The workbook is opened once for the whole batch; cell values and
+/// formulas are not read or changed.
+pub fn read_xlsx_effective_cell_number_formats(
+    path: impl AsRef<Path>,
+    requests: &[CellNumberFormatRequest],
+) -> Result<Vec<EffectiveCellNumberFormatInfo>> {
+    read_xlsx_cell_number_format_records(path, requests, true)
+}
+
+fn read_xlsx_cell_number_format_records(
+    path: impl AsRef<Path>,
+    requests: &[CellNumberFormatRequest],
+    resolve_inherited: bool,
+) -> Result<Vec<EffectiveCellNumberFormatInfo>> {
     let path = path.as_ref();
     ensure!(
         path.extension()
@@ -1301,19 +1368,41 @@ pub fn read_xlsx_cell_number_formats(
                 (style_index as usize) < style_number_formats.len(),
                 "cell {reference} in {part} references missing cell style {style_index}"
             );
-            cell_styles.insert(coordinate, style_index);
+            cell_styles.insert(coordinate, (style_index, CellNumberFormatSource::Cell));
         }
         for &(row, column) in &requested_coordinates {
             if cell_styles.contains_key(&(row, column)) {
                 continue;
             }
             let sources = inherited_style_sources(root, row, column)?;
+            let cell_reference = format_ooxml_cell_reference(row, column);
+            let (style_index, source) = match sources.as_slice() {
+                [] => (0, CellNumberFormatSource::Default),
+                [inherited] if resolve_inherited => {
+                    (inherited.style_index, inherited.source)
+                }
+                _ if resolve_inherited => bail!(
+                    "cell {cell_reference} in worksheet {sheet_name:?} has ambiguous inherited row/column styles: {}; refusing to guess the effective number format",
+                    sources
+                        .iter()
+                        .map(|source| source.description.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+                _ => bail!(
+                    "cell {cell_reference} in worksheet {sheet_name:?} has unresolved inherited style(s): {}; refusing to assume the default number format",
+                    sources
+                        .iter()
+                        .map(|source| source.description.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+            };
             ensure!(
-                sources.is_empty(),
-                "cell {} in worksheet {sheet_name:?} has unresolved inherited style(s): {}; refusing to assume the default number format",
-                format_ooxml_cell_reference(row, column),
-                sources.join(", ")
+                (style_index as usize) < style_number_formats.len(),
+                "cell {cell_reference} in worksheet {sheet_name:?} inherits missing cell style {style_index} from {source:?}"
             );
+            cell_styles.insert((row, column), (style_index, source));
         }
         styles_by_cell.insert(sheet_name, cell_styles);
     }
@@ -1321,22 +1410,23 @@ pub fn read_xlsx_cell_number_formats(
     parsed_requests
         .into_iter()
         .map(|(request, coordinate)| {
-            let style_index = styles_by_cell
+            let (style_index, source) = styles_by_cell
                 .get(&request.sheet_name)
                 .and_then(|styles| styles.get(&coordinate))
                 .copied()
-                .unwrap_or(0);
+                .unwrap_or((0, CellNumberFormatSource::Default));
             let number_format_id = style_number_formats[style_index as usize];
             let format_code = custom_number_formats
                 .get(&number_format_id)
                 .cloned()
                 .or_else(|| builtin_number_format_code(number_format_id).map(str::to_owned));
-            Ok(CellNumberFormatInfo {
+            Ok(EffectiveCellNumberFormatInfo {
                 sheet_name: request.sheet_name.clone(),
                 cell_reference: format_ooxml_cell_reference(coordinate.0, coordinate.1),
                 style_index,
                 number_format_id,
                 format_code,
+                source,
             })
         })
         .collect()
@@ -1346,7 +1436,7 @@ fn inherited_style_sources(
     root: roxmltree::Node<'_, '_>,
     target_row: usize,
     target_column: usize,
-) -> Result<Vec<String>> {
+) -> Result<Vec<InheritedNumberFormatStyle>> {
     let mut sources = Vec::new();
 
     for row in root.descendants().filter(|node| {
@@ -1373,7 +1463,11 @@ fn inherited_style_sources(
                 let style_index = style.parse::<u32>().with_context(|| {
                     format!("invalid row style index {style:?} for worksheet row {target_row}")
                 })?;
-                sources.push(format!("row default style {style_index}"));
+                sources.push(InheritedNumberFormatStyle {
+                    style_index,
+                    source: CellNumberFormatSource::Row,
+                    description: format!("row default style {style_index}"),
+                });
             }
         }
     }
@@ -1406,9 +1500,11 @@ fn inherited_style_sources(
         let style_index = style
             .parse::<u32>()
             .with_context(|| format!("invalid column style index {style:?} for {min}:{max}"))?;
-        sources.push(format!(
-            "column default style {style_index} for {min}:{max}"
-        ));
+        sources.push(InheritedNumberFormatStyle {
+            style_index,
+            source: CellNumberFormatSource::Column,
+            description: format!("column default style {style_index} for {min}:{max}"),
+        });
     }
 
     Ok(sources)
@@ -2223,6 +2319,138 @@ mod tests {
             let info = read_xlsx_cell_number_formats(&explicit_cell_override, &request)?;
             fs::remove_file(explicit_cell_override)?;
             assert_eq!(info[0].format_code.as_deref(), Some("General"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn effective_cell_number_formats_resolve_cell_row_column_and_default_sources() -> Result<()> {
+        let request = [CellNumberFormatRequest {
+            sheet_name: "Data".to_owned(),
+            cell_reference: "A2".to_owned(),
+        }];
+        let cases = [
+            (
+                "row style",
+                format!(
+                    r#"<s:worksheet xmlns:s="{SPREADSHEET_MAIN_NS}"><s:sheetData><s:row r="2" s="1" customFormat="1"><s:c r="A2"><s:v>123</s:v></s:c></s:row></s:sheetData></s:worksheet>"#
+                ),
+                CellNumberFormatSource::Row,
+                1,
+                165,
+                Some("000000"),
+            ),
+            (
+                "column style",
+                format!(
+                    r#"<s:worksheet xmlns:s="{SPREADSHEET_MAIN_NS}"><s:cols><s:col min="1" max="1" style="1"/></s:cols><s:sheetData><s:row r="2"><s:c r="A2"><s:v>123</s:v></s:c></s:row></s:sheetData></s:worksheet>"#
+                ),
+                CellNumberFormatSource::Column,
+                1,
+                165,
+                Some("000000"),
+            ),
+            (
+                "default style",
+                format!(
+                    r#"<s:worksheet xmlns:s="{SPREADSHEET_MAIN_NS}"><s:sheetData><s:row r="2"><s:c r="A2"><s:v>123</s:v></s:c></s:row></s:sheetData></s:worksheet>"#
+                ),
+                CellNumberFormatSource::Default,
+                0,
+                0,
+                Some("General"),
+            ),
+            (
+                "disabled row style",
+                format!(
+                    r#"<s:worksheet xmlns:s="{SPREADSHEET_MAIN_NS}"><s:sheetData><s:row r="2" s="1" customFormat="0"><s:c r="A2"><s:v>123</s:v></s:c></s:row></s:sheetData></s:worksheet>"#
+                ),
+                CellNumberFormatSource::Default,
+                0,
+                0,
+                Some("General"),
+            ),
+            (
+                "explicit cell override",
+                format!(
+                    r#"<s:worksheet xmlns:s="{SPREADSHEET_MAIN_NS}"><s:cols><s:col min="1" max="1" style="1"/></s:cols><s:sheetData><s:row r="2" s="1" customFormat="1"><s:c r="A2" s="0"><s:v>123</s:v></s:c></s:row></s:sheetData></s:worksheet>"#
+                ),
+                CellNumberFormatSource::Cell,
+                0,
+                0,
+                Some("General"),
+            ),
+        ];
+
+        for extension in ["xlsx", "xlsm"] {
+            for (name, worksheet, source, style_index, number_format_id, format_code) in &cases {
+                let fixture = inherited_number_format_fixture(extension, worksheet)?;
+                let formats = read_xlsx_effective_cell_number_formats(&fixture, &request)
+                    .with_context(|| format!("resolve {name} for {extension}"))?;
+                fs::remove_file(fixture)?;
+                assert_eq!(
+                    formats[0],
+                    EffectiveCellNumberFormatInfo {
+                        sheet_name: "Data".to_owned(),
+                        cell_reference: "A2".to_owned(),
+                        style_index: *style_index,
+                        number_format_id: *number_format_id,
+                        format_code: format_code.map(str::to_owned),
+                        source: *source,
+                    },
+                    "unexpected {name} result for {extension}"
+                );
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn effective_cell_number_formats_reject_ambiguous_and_invalid_styles() -> Result<()> {
+        let request = [CellNumberFormatRequest {
+            sheet_name: "Data".to_owned(),
+            cell_reference: "A2".to_owned(),
+        }];
+        let cases = [
+            (
+                "ambiguous row and column styles",
+                format!(
+                    r#"<s:worksheet xmlns:s="{SPREADSHEET_MAIN_NS}"><s:cols><s:col min="1" max="1" style="0"/></s:cols><s:sheetData><s:row r="2" s="1" customFormat="1"><s:c r="A2"><s:v>123</s:v></s:c></s:row></s:sheetData></s:worksheet>"#
+                ),
+                "ambiguous inherited row/column styles",
+            ),
+            (
+                "row style index out of range",
+                format!(
+                    r#"<s:worksheet xmlns:s="{SPREADSHEET_MAIN_NS}"><s:sheetData><s:row r="2" s="2" customFormat="1"><s:c r="A2"><s:v>123</s:v></s:c></s:row></s:sheetData></s:worksheet>"#
+                ),
+                "inherits missing cell style 2",
+            ),
+            (
+                "column style index out of range",
+                format!(
+                    r#"<s:worksheet xmlns:s="{SPREADSHEET_MAIN_NS}"><s:cols><s:col min="1" max="1" style="2"/></s:cols><s:sheetData><s:row r="2"><s:c r="A2"><s:v>123</s:v></s:c></s:row></s:sheetData></s:worksheet>"#
+                ),
+                "inherits missing cell style 2",
+            ),
+            (
+                "cell style index out of range",
+                format!(
+                    r#"<s:worksheet xmlns:s="{SPREADSHEET_MAIN_NS}"><s:sheetData><s:row r="2"><s:c r="A2" s="2"><s:v>123</s:v></s:c></s:row></s:sheetData></s:worksheet>"#
+                ),
+                "references missing cell style 2",
+            ),
+        ];
+
+        for (name, worksheet, expected_error) in cases {
+            let fixture = inherited_number_format_fixture("xlsx", &worksheet)?;
+            let error =
+                read_xlsx_effective_cell_number_formats(&fixture, &request).expect_err(name);
+            fs::remove_file(fixture)?;
+            assert!(
+                error.to_string().contains(expected_error),
+                "{name}: unexpected error: {error:#}"
+            );
         }
         Ok(())
     }
