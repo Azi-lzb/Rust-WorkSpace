@@ -1,0 +1,14 @@
+时间：2026-10-27 14:53 +08:00
+执行者：Codex
+修改前 commit：4297315068eb968dec55a4037b9246c39ddcc3a6；修改后 commit：本记录所在的本地提交。
+WIP：audit-dev 工作树原有多个修改和未跟踪文件；全部保留。本次只暂存修复代码、迁移清单增量和本记录，其余工作继续留在工作树。
+
+修改目的：按当前验收标准阻止 Excel 编辑器删除合并单元格非锚点上的既有数据。
+修改文件：audit-core/src/s1_formula_copy.rs、audit-core/MIGRATION_INVENTORY.md、本修改记录。
+逻辑变化：公式复制计划的 drop_allowed 为空；加入单测断言，确保计划不再授权丢弃合并单元格载荷。业务规则配置与 VBA 迁移无影响。
+测试：`cargo test --offline --locked -p audit-core --lib builds_one_protected_workbook_plan_for_template_ranges` 通过（1 passed）。首次非 `--lib` 命令因正在运行的 `open-data-audit-gui.exe` 锁定共享构建产物而失败；未终止该 GUI，改用同一工作树的库单测成功。
+未执行：真实工作簿写入、Office 重算、Python/Rust 文件级对拍、GUI 验收、全量测试及 Linux/deb 验收。既有真实样本证据显示其中有合并非锚载荷；根据当前共享预检代码，这类未获授权的数据丢弃会阻止写入。本轮未重新运行真实样本验证。
+已知问题：S1-F01 的公式复制/重算生产链仍未闭合。需由 main 协调一个能保留这些载荷的共享编辑能力；Audit 侧不改共享 crate，也不绕过 ExcelModifier。
+删除清单：无新增删除项。
+回滚提示：仅在重新接受载荷丢弃风险后，才可恢复公式复制计划的 `drop_allowed` 授权及对应单测；不要回滚或覆盖工作树中的其他既有改动。
+【组件版本】不升级；当前 workspace 未采用旧 Sx-Fxx 组件版本制度。

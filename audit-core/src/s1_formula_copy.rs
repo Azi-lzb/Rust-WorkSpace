@@ -148,21 +148,10 @@ pub fn build_s1_formula_copy_edit_plan(
         force_full_calc: Some(true),
     });
 
-    // The Python baseline (openpyxl load + save) drops every merged
-    // non-anchor payload in the whole workbook — proven cell-for-cell on the
-    // real target batch (7/7 samples, 855 payloads, merges unchanged). The
-    // plan declares that baseline equivalence for every target sheet so the
-    // openpyxl worker can reproduce the accepted Python behavior; without the
-    // declaration the shared preflight rejects the workbook outright.
-    let mut drop_allowed: BTreeMap<String, BTreeSet<PreservationRequirement>> = BTreeMap::new();
-    for sheet_name in &target_sheet_names {
-        drop_allowed.insert(
-            sheet_name.clone(),
-            [PreservationRequirement::MergedNonAnchorPayloads]
-                .into_iter()
-                .collect(),
-        );
-    }
+    // Existing values in merged non-anchor cells are still workbook data.
+    // Do not inherit the legacy Python save behavior that drops them. A
+    // backend that cannot preserve these values must reject this plan.
+    let drop_allowed: BTreeMap<String, BTreeSet<PreservationRequirement>> = BTreeMap::new();
 
     let edit_plan = ExcelEditPlan {
         request_id: "audit-s1-formula-copy".to_owned(),
@@ -452,6 +441,10 @@ mod tests {
         assert_eq!(prepared.edit_plan.format, WorkbookFormat::Xlsx);
         assert_eq!(prepared.template_summary.copy_ranges, 1);
         assert_eq!(prepared.edit_plan.operations.len(), 2);
+        assert!(
+            prepared.edit_plan.drop_allowed.is_empty(),
+            "S1 formula copy must not allow a backend to drop merged-cell payloads"
+        );
         assert_eq!(
             prepared
                 .edit_plan
