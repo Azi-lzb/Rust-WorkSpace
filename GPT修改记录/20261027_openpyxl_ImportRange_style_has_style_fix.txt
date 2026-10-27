@@ -1,0 +1,36 @@
+时间：2026-10-27（Asia/Shanghai）
+执行者：Codex
+工作树：main
+修改前 HEAD：3609dfdcea7e45bed2c716e899dcc6cc6df31c74
+修改后 HEAD：本次变更提交后确定
+修改前 WIP：保留 `crates/excel-reader/src/lib.rs`、`crates/ooxml-patch/src/lib.rs` 的未提交修改和 `HANDOFF_ZCODE_TO_CODEX.md`；不触碰 Audit/PyTools 工作树。
+
+目的
+- 修正 openpyxl ImportRange 对源单元格样式的复制/验证语义，使其遵循 Python 基线的 `Cell.has_style`，避免把仅有行/列默认样式的单元格当成显式样式复制。
+- 处理 Audit S1-F01 样本定位出的 H10 validator 误报，以及 N34/W67 worker 将继承样式物化到目标格的问题。
+
+变更
+- `crates/excel-editor/python/openpyxl_worker.py`：仅在源单元格 `has_style` 为真时快照并复制样式；无显式 cell style 时保留目标样式。
+- `crates/excel-editor/src/openpyxl_backend.rs`：从源 worksheet 的直接 cell XF 和 `cellXfs` 组件建立 styled-cell 集合，按此集合计算 ImportRange 预期样式；行/列样式不再冒充单元格样式，仍支持带非默认 XF0 的既有单元格。
+- `crates/excel-editor/tests/python/test_openpyxl_worker.py`：覆盖无样式源格保留目标格式、跨工作簿 style ID 冲突和非默认 XF0。
+- 未修改引擎路由、公共 API、业务代码、依赖或生产配置。
+
+验证
+- `cargo test --offline --locked -p excel-editor --lib implicit_xf_zero_properties_are_visible_to_umya_expected_style_reader -- --nocapture`：通过（1 项）。
+- `cargo test --offline --locked -p excel-editor --lib import_style -- --nocapture`：通过（2 项，包含 StyleArray 真值和跨工作簿 style ID 冲突回归）。
+- `Python 3.12 -m unittest discover -s crates/excel-editor/tests/python -p test_openpyxl_worker.py`：通过（14 项）。
+- `cargo fmt -p excel-editor -- --check`：通过。
+- `git diff --check`：通过。
+
+未执行/限制
+- 未运行完整 `excel-editor` 测试套件或全 workspace 测试。
+- 未在本工作树运行 Audit 真实 S1 样本、Office 重算链或真实业务输出对拍；需由 Audit 安全同步公共提交后重跑。
+- 目前只能说明相关合成回归测试通过；Audit S1-F01 仍受阻且未验收。既有对拍另报 211 个 Python/Rust 源工作簿复制区外值/类型差异，须由 Audit 按业务范围继续判断。
+
+已知风险
+- 样式数组判定根据 OOXML XF 的数值组件及 alignment/protection 默认值映射复现 openpyxl `StyleArray` 的非零判定；未知 alignment/protection 属性按有样式处理并保持保守。
+- 既有 umya API 弃用警告仍存在，与本次修复无关。
+
+回滚
+- 仅回滚本记录和 `crates/excel-editor/{python/openpyxl_worker.py,src/openpyxl_backend.rs,tests/python/test_openpyxl_worker.py}` 的本次变更；不要覆盖或回滚其他 WIP。
+- crate 版本不变。

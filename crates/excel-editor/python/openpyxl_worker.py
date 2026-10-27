@@ -420,8 +420,12 @@ def _copy_cells(source: Any, cached: Any, target: Any, bounds: Tuple[int, int, i
                 src.coordinate,
                 value,
                 cached_value,
+                # Match the Python baseline's `if source.has_style` contract.
+                # Missing cells can inherit row/column defaults in Excel, but
+                # they do not carry a per-cell style for ImportRange to copy.
                 (copy(src.font), copy(src.fill), copy(src.border), copy(src.alignment),
-                 src.number_format, copy(src.protection)) if style_mode != "none" else None,
+                 src.number_format, copy(src.protection))
+                if style_mode != "none" and src.has_style else None,
                 None if src.comment is None else (src.comment.text, src.comment.author),
             ))
     for source_coordinate, value, cached_value, style, comment in snapshots:

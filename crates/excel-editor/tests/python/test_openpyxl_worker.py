@@ -10,7 +10,7 @@ import zipfile
 from xml.etree import ElementTree as ET
 
 import openpyxl
-from openpyxl.styles import Font
+from openpyxl.styles import Alignment, Font, PatternFill
 
 WORKER = Path(__file__).resolve().parents[2] / "python" / "openpyxl_worker.py"
 
@@ -112,6 +112,202 @@ class OpenpyxlWorkerTests(unittest.TestCase):
             "operations": operations,
             "preserve": [],
         }
+
+    def test_import_range_blank_unstyled_source_preserves_target_style(self):
+        target_path = self.root / "blank-style-target.xlsx"
+        target_book = openpyxl.Workbook()
+        target_sheet = target_book.active
+        target_sheet.title = "Target"
+        target_sheet["A1"] = "preserve target style"
+        target_sheet["A1"].font = Font(name="Target Font", size=14, bold=True)
+        target_sheet["A1"].fill = PatternFill(fill_type="solid", fgColor="FF112233")
+        target_sheet["A2"] = "preserve second target style"
+        target_sheet["A2"].font = Font(name="Target Font 2", size=13, bold=True)
+        target_sheet["A2"].fill = PatternFill(fill_type="solid", fgColor="FF445566")
+        target_book.save(target_path)
+        target_book.close()
+
+        source_path = self.root / "blank-style-source.xlsx"
+        source_book = openpyxl.Workbook()
+        source_sheet = source_book.active
+        source_sheet.title = "Source"
+        source_sheet.row_dimensions[1].font = Font(name="Source Row Font", size=12)
+        source_sheet.row_dimensions[1].alignment = Alignment(vertical="center")
+        source_sheet.row_dimensions[2].font = Font(name="Source Row Font 2", size=11)
+        source_sheet.column_dimensions["A"].font = Font(name="Source Column Font", size=10)
+        source_sheet["A2"] = ""
+        source_book.save(source_path)
+        source_book.close()
+
+        source_check = openpyxl.load_workbook(source_path, data_only=False)
+        self.assertFalse(source_check["Source"]["A1"].has_style)
+        self.assertFalse(source_check["Source"]["A2"].has_style)
+        self.assertTrue(source_check["Source"].row_dimensions[1].has_style)
+        self.assertTrue(source_check["Source"].row_dimensions[2].has_style)
+        self.assertTrue(source_check["Source"].column_dimensions["A"].has_style)
+        source_check.close()
+        with zipfile.ZipFile(source_path) as source_zip:
+            source_sheet_xml = ET.fromstring(source_zip.read("xl/worksheets/sheet1.xml"))
+        namespace = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+        self.assertIsNone(source_sheet_xml.find(f".//{{{namespace}}}c[@r='A1']"))
+        self.assertIsNotNone(source_sheet_xml.find(f".//{{{namespace}}}c[@r='A2']"))
+
+        output = self.root / "blank-style-output.xlsx"
+        plan = self.base_plan(output, [
+            operation(
+                "import_range", source_workbook=str(source_path), source_sheet="Source",
+                source_range="A1:A2", target_sheet="Target", target_start="A1",
+                copy_values=True, copy_formulas=True, style_mode="full", copy_comments=False,
+                copy_merges=False, copy_row_heights=False, copy_column_widths=False,
+                copy_row_hidden=False, copy_column_hidden=False, copy_outline_levels=False,
+                copy_all_row_dimensions=False, copy_all_column_dimensions=False,
+                materialize_blank_cells=True, hide_zero=False,
+            ),
+        ])
+        plan["input"] = str(target_path)
+        process, response = run_worker(plan, output)
+
+        self.assertEqual(process.returncode, 0, process.stderr)
+        self.assertEqual(response["status"], "applied", response)
+        saved = openpyxl.load_workbook(output, data_only=False)
+        sheet = saved["Target"]
+        self.assertIsNone(sheet["A1"].value)
+        self.assertEqual(sheet["A1"].font.name, "Target Font")
+        self.assertEqual(sheet["A1"].font.sz, 14)
+        self.assertTrue(sheet["A1"].font.bold)
+        self.assertEqual(sheet["A1"].fill.fgColor.rgb, "FF112233")
+        self.assertIsNone(sheet["A2"].value)
+        self.assertEqual(sheet["A2"].font.name, "Target Font 2")
+        self.assertEqual(sheet["A2"].font.sz, 13)
+        self.assertTrue(sheet["A2"].font.bold)
+        self.assertEqual(sheet["A2"].fill.fgColor.rgb, "FF445566")
+        saved.close()
+
+    def test_import_range_maps_style_components_when_workbook_style_ids_collide(self):
+        target_path = self.root / "style-index-collision-target.xlsx"
+        target_book = openpyxl.Workbook()
+        target_sheet = target_book.active
+        target_sheet.title = "Target"
+        target_sheet["A1"] = "target"
+        target_sheet["A1"].font = Font(name="Target Font", size=14, bold=True, color="FFAA0000")
+        target_sheet["A1"].fill = PatternFill(fill_type="solid", fgColor="FFFFCC00")
+        target_book.save(target_path)
+        target_book.close()
+
+        source_path = self.root / "style-index-collision-source.xlsx"
+        source_book = openpyxl.Workbook()
+        source_sheet = source_book.active
+        source_sheet.title = "Source"
+        source_sheet["A1"] = "source"
+        source_sheet["A1"].font = Font(name="Source Font", size=11, italic=True, color="FF0033AA")
+        source_sheet["A1"].fill = PatternFill(fill_type="solid", fgColor="FF33CC99")
+        source_book.save(source_path)
+        source_book.close()
+
+        target_check = openpyxl.load_workbook(target_path)
+        source_check = openpyxl.load_workbook(source_path)
+        self.assertEqual(target_check["Target"]["A1"].style_id, 1)
+        self.assertEqual(source_check["Source"]["A1"].style_id, 1)
+        self.assertNotEqual(
+            target_check["Target"]["A1"].font.name,
+            source_check["Source"]["A1"].font.name,
+        )
+        target_check.close()
+        source_check.close()
+
+        output = self.root / "style-index-collision-output.xlsx"
+        plan = self.base_plan(output, [
+            operation(
+                "import_range", source_workbook=str(source_path), source_sheet="Source",
+                source_range="A1:A1", target_sheet="Target", target_start="A1",
+                copy_values=True, copy_formulas=True, style_mode="full", copy_comments=False,
+                copy_merges=False, copy_row_heights=False, copy_column_widths=False,
+                copy_row_hidden=False, copy_column_hidden=False, copy_outline_levels=False,
+                copy_all_row_dimensions=False, copy_all_column_dimensions=False,
+                materialize_blank_cells=True, hide_zero=False,
+            ),
+        ])
+        plan["input"] = str(target_path)
+        process, response = run_worker(plan, output)
+
+        self.assertEqual(process.returncode, 0, process.stderr)
+        self.assertEqual(response["status"], "applied", response)
+        saved = openpyxl.load_workbook(output, data_only=False)
+        cell = saved["Target"]["A1"]
+        self.assertEqual(cell.value, "source")
+        self.assertEqual(cell.font.name, "Source Font")
+        self.assertEqual(cell.font.sz, 11)
+        self.assertTrue(cell.font.italic)
+        self.assertEqual(cell.font.color.rgb, "FF0033AA")
+        self.assertEqual(cell.fill.fgColor.rgb, "FF33CC99")
+        saved.close()
+
+    def test_import_range_copies_nondefault_xf_zero_on_existing_cell_without_s_attribute(self):
+        source_path = self.root / "implicit-xf0-source.xlsx"
+        source_book = openpyxl.Workbook()
+        source_book.active.title = "Source"
+        source_book.active["A1"] = "source uses XF0"
+        source_book.save(source_path)
+        source_book.close()
+
+        patched_path = self.root / "implicit-xf0-source-patched.xlsx"
+        namespace = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+        with zipfile.ZipFile(source_path, "r") as original, zipfile.ZipFile(
+            patched_path, "w", zipfile.ZIP_DEFLATED
+        ) as patched:
+            for item in original.infolist():
+                data = original.read(item.filename)
+                if item.filename == "xl/styles.xml":
+                    styles = ET.fromstring(data)
+                    xf = styles.find(f"{{{namespace}}}cellXfs/{{{namespace}}}xf")
+                    xf.set("applyAlignment", "1")
+                    ET.SubElement(
+                        xf, f"{{{namespace}}}alignment", {"vertical": "center"}
+                    )
+                    ET.register_namespace("", namespace)
+                    data = ET.tostring(styles, encoding="utf-8", xml_declaration=True)
+                patched.writestr(item, data)
+        patched_path.replace(source_path)
+
+        source_check = openpyxl.load_workbook(source_path, data_only=False)
+        source_cell = source_check["Source"]["A1"]
+        self.assertTrue(source_cell.has_style)
+        self.assertEqual(source_cell.alignment.vertical, "center")
+        source_check.close()
+        with zipfile.ZipFile(source_path) as source_zip:
+            source_sheet_xml = ET.fromstring(source_zip.read("xl/worksheets/sheet1.xml"))
+        self.assertIsNone(source_sheet_xml.find(f".//{{{namespace}}}c[@r='A1']").get("s"))
+
+        target_path = self.root / "implicit-xf0-target.xlsx"
+        target_book = openpyxl.Workbook()
+        target_sheet = target_book.active
+        target_sheet.title = "Target"
+        target_sheet["A1"] = "old target"
+        target_sheet["A1"].font = Font(name="Target Font", size=14, bold=True)
+        target_book.save(target_path)
+        target_book.close()
+
+        output = self.root / "implicit-xf0-output.xlsx"
+        plan = self.base_plan(output, [operation(
+            "import_range", source_workbook=str(source_path), source_sheet="Source",
+            source_range="A1:A1", target_sheet="Target", target_start="A1",
+            copy_values=True, copy_formulas=True, style_mode="full", copy_comments=False,
+            copy_merges=False, copy_row_heights=False, copy_column_widths=False,
+            copy_row_hidden=False, copy_column_hidden=False, copy_outline_levels=False,
+            copy_all_row_dimensions=False, copy_all_column_dimensions=False,
+            materialize_blank_cells=True, hide_zero=False,
+        )])
+        plan["input"] = str(target_path)
+        process, response = run_worker(plan, output)
+
+        self.assertEqual(process.returncode, 0, process.stderr)
+        self.assertEqual(response["status"], "applied", response)
+        saved = openpyxl.load_workbook(output, data_only=False)
+        cell = saved["Target"]["A1"]
+        self.assertEqual(cell.value, "source uses XF0")
+        self.assertEqual(cell.alignment.vertical, "center")
+        self.assertNotEqual(cell.font.name, "Target Font")
+        saved.close()
 
     def test_batch_modifies_one_workbook_and_preserves_supported_structures(self):
         output = self.root / "candidate.xlsx"

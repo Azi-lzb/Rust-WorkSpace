@@ -3046,12 +3046,14 @@ fn expected_import_styles(
         }
         if !normalized_import_sources.contains_key(import_path) {
             let normalized = ScratchFile::create(&std::env::temp_dir(), "style-source-xlsx")?;
-            let probe_cells = materialize_implicit_style_zero(import_path, normalized.path())?;
+            let (probe_cells, styled_cells) =
+                materialize_implicit_style_zero(import_path, normalized.path())?;
             normalized_import_sources.insert(
                 import_path.clone(),
                 NormalizedImportStyleSource {
                     file: normalized,
                     probe_cells,
+                    styled_cells,
                 },
             );
         }
@@ -3071,6 +3073,19 @@ fn expected_import_styles(
                     column_letters(target_col + column - min_col),
                     target_row + row - min_row
                 );
+                let styled_cells = normalized_source
+                    .styled_cells
+                    .get(source_sheet)
+                    .with_context(|| {
+                        format!("ImportRange styled-cell inventory for {source_sheet:?} missing")
+                    })?;
+                // Match openpyxl's `Cell.has_style`: it is true only when a
+                // direct cell XF has a nonzero StyleArray component. An absent
+                // cell, an explicit XF0 cell, or a cell that only inherits a
+                // row/column style must not be treated as a copied cell style.
+                if !styled_cells.contains(&source_cell) {
+                    continue;
+                }
                 let worksheet = imported.sheet_by_name(source_sheet).with_context(|| {
                     format!("ImportRange source sheet {source_sheet:?} missing")
                 })?;
@@ -3096,24 +3111,32 @@ fn expected_import_styles(
 }
 
 /// Umya applies a cell style only when a worksheet cell has an explicit `s`
-/// attribute. OOXML defines an omitted `s` as style index 0, which can itself
-/// contain non-default properties. Materialize that implicit index only in a
-/// temporary readback copy so expected ImportRange styles include XF0. For
-/// absent source cells the probe reads the direct cell style used by the
-/// openpyxl worker; row/column dimensions remain separate worksheet objects.
+/// attribute. OOXML defines an omitted `s` on an existing cell as style index
+/// 0, which can itself contain non-default properties. Materialize that
+/// implicit index only in a temporary readback copy so expected ImportRange
+/// styles include XF0. `styled_cells` is computed from the source cell's
+/// direct XF using openpyxl's StyleArray truthiness; row/column defaults are
+/// not copied as cell styles.
 struct NormalizedImportStyleSource {
     file: ScratchFile,
     probe_cells: BTreeMap<String, String>,
+    styled_cells: BTreeMap<String, BTreeSet<String>>,
 }
 
 fn materialize_implicit_style_zero(
     source: &Path,
     output: &Path,
-) -> Result<BTreeMap<String, String>> {
+) -> Result<(BTreeMap<String, String>, BTreeMap<String, BTreeSet<String>>)> {
     let worksheet_parts = worksheet_parts_by_name(source)?;
     let mut input = zip::ZipArchive::new(File::open(source)?)?;
+    let cell_xf_has_style = if input.file_names().any(|name| name == "xl/styles.xml") {
+        cell_xf_style_presence(&read_zip_part(&mut input, "xl/styles.xml")?)?
+    } else {
+        vec![false]
+    };
     let mut writer = zip::ZipWriter::new(File::create(output)?);
     let mut probe_cells = BTreeMap::new();
+    let mut styled_cells = BTreeMap::new();
     for index in 0..input.len() {
         let mut entry = input.by_index(index)?;
         let name = entry.name().to_owned();
@@ -3132,12 +3155,17 @@ fn materialize_implicit_style_zero(
             entry.read_to_end(&mut xml)?;
             let xml = std::str::from_utf8(&xml)
                 .with_context(|| format!("worksheet part {name} is not UTF-8"))?;
-            let normalized = materialize_implicit_style_zero_cells(xml)?;
-            let (normalized, probe) = append_xf_zero_probe(&normalized)?;
             let sheet_name = worksheet_parts
                 .iter()
                 .find_map(|(sheet, part)| (part == &name).then_some(sheet.clone()))
                 .context("worksheet part has no workbook sheet identity")?;
+            styled_cells.insert(
+                sheet_name.clone(),
+                worksheet_cells_with_style(xml, &cell_xf_has_style)?,
+            );
+            let normalized = materialize_implicit_style_zero_cells(xml)?;
+            let normalized = remove_dimension_style_attributes(&normalized)?;
+            let (normalized, probe) = append_xf_zero_probe(&normalized)?;
             probe_cells.insert(sheet_name, probe);
             writer.write_all(normalized.as_bytes())?;
         } else {
@@ -3145,7 +3173,197 @@ fn materialize_implicit_style_zero(
         }
     }
     writer.finish()?;
-    Ok(probe_cells)
+    Ok((probe_cells, styled_cells))
+}
+
+/// Return whether each `cellXfs/xf` produces a non-default openpyxl
+/// StyleArray. `Cell.has_style` is `any(cell._style)`, so an XF index alone is
+/// not enough: XF0 may be styled, while a nonzero XF whose StyleArray fields
+/// are all zero is still considered unstyled.
+fn cell_xf_style_presence(xml: &str) -> Result<Vec<bool>> {
+    let document = roxmltree::Document::parse(xml)?;
+    let cell_xfs = document
+        .descendants()
+        .filter(|node| {
+            node.is_element() && node.tag_name().namespace() == Some(SPREADSHEET_MAIN_NS)
+        })
+        .find(|node| node.tag_name().name() == "cellXfs")
+        .context("styles part has no cellXfs collection")?;
+    let styles = cell_xfs
+        .children()
+        .filter(|node| {
+            node.is_element()
+                && node.tag_name().namespace() == Some(SPREADSHEET_MAIN_NS)
+                && node.tag_name().name() == "xf"
+        })
+        .map(cell_xf_has_nonzero_style_array)
+        .collect::<Result<Vec<_>>>()?;
+    anyhow::ensure!(!styles.is_empty(), "styles part has no cellXfs entries");
+    Ok(styles)
+}
+
+fn cell_xf_has_nonzero_style_array(xf: roxmltree::Node<'_, '_>) -> Result<bool> {
+    for name in ["fontId", "fillId", "borderId", "numFmtId", "xfId"] {
+        if let Some(value) = xf.attribute(name) {
+            let component = value
+                .parse::<i32>()
+                .with_context(|| format!("cell XF has invalid {name} component {value:?}"))?;
+            if component != 0 {
+                return Ok(true);
+            }
+        }
+    }
+    for name in ["pivotButton", "quotePrefix"] {
+        if xf
+            .attribute(name)
+            .map(parse_ooxml_bool)
+            .transpose()?
+            .unwrap_or(false)
+        {
+            return Ok(true);
+        }
+    }
+
+    for child in xf.children().filter(|node| {
+        node.is_element() && node.tag_name().namespace() == Some(SPREADSHEET_MAIN_NS)
+    }) {
+        match child.tag_name().name() {
+            "alignment" if alignment_has_nondefault_array_value(child)? => return Ok(true),
+            "protection" if protection_has_nondefault_array_value(child)? => return Ok(true),
+            _ => {}
+        }
+    }
+    Ok(false)
+}
+
+fn parse_ooxml_bool(value: &str) -> Result<bool> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "1" | "true" => Ok(true),
+        "0" | "false" => Ok(false),
+        _ => anyhow::bail!("invalid OOXML boolean {value:?}"),
+    }
+}
+
+fn alignment_has_nondefault_array_value(alignment: roxmltree::Node<'_, '_>) -> Result<bool> {
+    for attribute in alignment
+        .attributes()
+        .filter(|attribute| attribute.namespace().is_none())
+    {
+        let nondefault = match attribute.name() {
+            // Alignment::default() uses None for these text values.
+            "horizontal" | "vertical" => true,
+            // These numeric values default to zero in openpyxl.
+            "textRotation" | "indent" | "relativeIndent" | "readingOrder" => {
+                let value = attribute
+                    .value()
+                    .parse::<f64>()
+                    .with_context(|| format!("alignment has invalid {} value", attribute.name()))?;
+                value != 0.0
+            }
+            // These values default to None, so an explicit false still gives
+            // the Alignment object a distinct StyleArray table entry.
+            "wrapText" | "shrinkToFit" | "justifyLastLine" | "mergeCell" => {
+                parse_ooxml_bool(attribute.value())?;
+                true
+            }
+            // Keep future/unknown alignment properties fail-closed as styled.
+            _ => true,
+        };
+        if nondefault {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn protection_has_nondefault_array_value(protection: roxmltree::Node<'_, '_>) -> Result<bool> {
+    for attribute in protection
+        .attributes()
+        .filter(|attribute| attribute.namespace().is_none())
+    {
+        let nondefault = match attribute.name() {
+            "locked" => !parse_ooxml_bool(attribute.value())?,
+            "hidden" => parse_ooxml_bool(attribute.value())?,
+            // Keep future/unknown protection properties fail-closed as styled.
+            _ => true,
+        };
+        if nondefault {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn worksheet_cells_with_style(xml: &str, cell_xf_has_style: &[bool]) -> Result<BTreeSet<String>> {
+    let document = roxmltree::Document::parse(xml)?;
+    document
+        .descendants()
+        .filter(|node| {
+            node.is_element()
+                && node.tag_name().namespace() == Some(SPREADSHEET_MAIN_NS)
+                && node.tag_name().name() == "c"
+        })
+        .filter_map(|cell| {
+            let reference = match cell.attribute("r") {
+                Some(reference) => reference,
+                None => {
+                    return Some(Err(anyhow::anyhow!(
+                        "worksheet cell has no coordinate in ImportRange source"
+                    )))
+                }
+            };
+            let index = match cell
+                .attribute("s")
+                .unwrap_or("0")
+                .parse::<usize>()
+                .context("worksheet cell has invalid style index")
+            {
+                Ok(index) => index,
+                Err(error) => return Some(Err(error)),
+            };
+            let has_style = match cell_xf_has_style.get(index) {
+                Some(has_style) => *has_style,
+                None => {
+                    return Some(Err(anyhow::anyhow!(
+                        "worksheet cell references missing cell XF {index}"
+                    )))
+                }
+            };
+            has_style.then(|| Ok(reference.replace('$', "").to_ascii_uppercase()))
+        })
+        .collect()
+}
+
+fn remove_dimension_style_attributes(xml: &str) -> Result<String> {
+    let document = roxmltree::Document::parse(xml)?;
+    let mut ranges = document
+        .descendants()
+        .filter(|node| {
+            node.is_element() && node.tag_name().namespace() == Some(SPREADSHEET_MAIN_NS)
+        })
+        .flat_map(|node| {
+            let style_attribute = match node.tag_name().name() {
+                "row" => "s",
+                "col" => "style",
+                _ => return Vec::new(),
+            };
+            node.attributes()
+                .filter(move |attribute| {
+                    attribute.namespace().is_none() && attribute.name() == style_attribute
+                })
+                .map(|attribute| attribute.range())
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
+    if ranges.is_empty() {
+        return Ok(xml.to_owned());
+    }
+    ranges.sort_by_key(|range| std::cmp::Reverse(range.start));
+    let mut patched = xml.as_bytes().to_vec();
+    for range in ranges {
+        patched.splice(range, std::iter::empty());
+    }
+    String::from_utf8(patched).context("worksheet with dimension style attributes is not UTF-8")
 }
 
 fn worksheet_parts_by_name(source: &Path) -> Result<BTreeMap<String, String>> {
@@ -5599,7 +5817,14 @@ mod tests {
     fn implicit_xf_zero_properties_are_visible_to_umya_expected_style_reader() -> Result<()> {
         let source = ScratchFile::create(&std::env::temp_dir(), "implicit-xf0-source")?;
         let mut workbook = rust_xlsxwriter::Workbook::new();
-        workbook.add_worksheet().write_string(4, 10, "value")?;
+        let sheet = workbook.add_worksheet();
+        sheet.write_string_with_format(
+            0,
+            0,
+            "style one",
+            &rust_xlsxwriter::Format::new().set_bold(),
+        )?;
+        sheet.write_string(4, 10, "value")?;
         workbook.save(source.path())?;
 
         let styled_source =
@@ -5617,8 +5842,9 @@ mod tests {
 
         let explicit_style_zero =
             ScratchFile::create(&std::env::temp_dir(), "explicit-xf0-reader-copy")?;
-        let probes =
+        let (probes, styled_cells) =
             materialize_implicit_style_zero(styled_source.path(), explicit_style_zero.path())?;
+        assert!(styled_cells["Sheet1"].contains("K5"));
         let normalized_umya = crate::open_xlsx(explicit_style_zero.path())?;
         let normalized_style = style_at(&normalized_umya, "Sheet1", "K5")?;
         assert_eq!(
@@ -5635,15 +5861,35 @@ mod tests {
         let inherited_source =
             ScratchFile::create(&std::env::temp_dir(), "implicit-xf0-dimension-source")?;
         rewrite_test_zip_part(
-            styled_source.path(),
+            source.path(),
             inherited_source.path(),
             "xl/worksheets/sheet1.xml",
             add_test_row_and_column_styles,
         )?;
+        let inherited_style_probe =
+            ScratchFile::create(&std::env::temp_dir(), "implicit-xf0-dimension-probe")?;
+        let (_, inherited_styled_cells) =
+            materialize_implicit_style_zero(inherited_source.path(), inherited_style_probe.path())?;
+        assert!(!inherited_styled_cells["Sheet1"].contains("AA4"));
+        assert!(!inherited_styled_cells["Sheet1"].contains("AB4"));
+        let target = ScratchFile::create(&std::env::temp_dir(), "implicit-xf0-dimension-target")?;
+        let mut target_book = rust_xlsxwriter::Workbook::new();
+        target_book
+            .add_worksheet()
+            .set_name("Target")?
+            .write_string_with_format(
+                0,
+                0,
+                "keep target style",
+                &rust_xlsxwriter::Format::new()
+                    .set_font_name("Target Font")
+                    .set_italic(),
+            )?;
+        target_book.save(target.path())?;
         let plan = ExcelEditPlan {
             request_id: "missing-source-cell-xf0".to_owned(),
-            input: inherited_source.path().to_owned(),
-            output: inherited_source.path().with_extension("out.xlsx"),
+            input: target.path().to_owned(),
+            output: target.path().with_extension("out.xlsx"),
             format: WorkbookFormat::Xlsx,
             workbook: crate::WorkbookProfile {
                 format: WorkbookFormat::Xlsx,
@@ -5653,7 +5899,7 @@ mod tests {
             operations: vec![EditOperation::ImportRange {
                 source_workbook: inherited_source.path().to_owned(),
                 source_sheet: "Sheet1".to_owned(),
-                source_range: "AB4".to_owned(),
+                source_range: "AA4:AB4".to_owned(),
                 target_sheet: "Target".to_owned(),
                 target_start: "A1".to_owned(),
                 copy_values: false,
@@ -5675,6 +5921,49 @@ mod tests {
             drop_allowed: BTreeMap::new(),
         };
         let expected = expected_import_styles(&plan)?;
+        assert!(expected.is_empty(), "{expected:?}");
+        validate_umya_readback(&plan, target.path())?;
+
+        // An explicit cell with no `s` attribute still uses XF0 in openpyxl.
+        // When XF0 has a non-default component, `Cell.has_style` is true and
+        // that component is copied. This differs from AA4 above, which has no
+        // cell node and therefore has no cell style to import.
+        let xf0_plan = ExcelEditPlan {
+            request_id: "explicit-cell-xf0-import-style".to_owned(),
+            input: target.path().to_owned(),
+            output: target.path().with_extension("xf0.out.xlsx"),
+            format: WorkbookFormat::Xlsx,
+            workbook: crate::WorkbookProfile {
+                format: WorkbookFormat::Xlsx,
+                inventory_complete: true,
+                features_present: BTreeSet::new(),
+            },
+            operations: vec![EditOperation::ImportRange {
+                source_workbook: styled_source.path().to_owned(),
+                source_sheet: "Sheet1".to_owned(),
+                source_range: "K5".to_owned(),
+                target_sheet: "Target".to_owned(),
+                target_start: "A1".to_owned(),
+                copy_values: false,
+                copy_formulas: false,
+                style_mode: RangeStyleMode::Full,
+                copy_comments: false,
+                copy_merges: false,
+                copy_row_heights: false,
+                copy_column_widths: false,
+                copy_row_hidden: false,
+                copy_column_hidden: false,
+                copy_outline_levels: false,
+                copy_all_row_dimensions: false,
+                copy_all_column_dimensions: false,
+                materialize_blank_cells: false,
+                hide_zero: false,
+            }],
+            preserve: BTreeSet::new(),
+            drop_allowed: BTreeMap::new(),
+        };
+        let expected = expected_import_styles(&xf0_plan)?;
+        assert_eq!(expected.len(), 1);
         assert_eq!(
             expected[&(String::from("Target"), String::from("A1"))]
                 .alignment()
@@ -5682,6 +5971,134 @@ mod tests {
                 .vertical(),
             &umya_spreadsheet::VerticalAlignmentValues::Center
         );
+        Ok(())
+    }
+
+    #[test]
+    fn import_style_presence_matches_openpyxl_style_array_truthiness() -> Result<()> {
+        let styles = format!(
+            r#"<styleSheet xmlns="{SPREADSHEET_MAIN_NS}"><cellXfs>
+                <xf/>
+                <xf fontId="1"/>
+                <xf><alignment vertical="center"/></xf>
+                <xf><alignment textRotation="0"/></xf>
+                <xf><protection locked="false"/></xf>
+                <xf><protection locked="true" hidden="false"/></xf>
+            </cellXfs></styleSheet>"#
+        );
+
+        assert_eq!(
+            cell_xf_style_presence(&styles)?,
+            vec![false, true, true, false, true, false]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn import_style_readback_uses_semantics_when_source_and_target_style_ids_collide() -> Result<()>
+    {
+        fn cell_style_index(path: &Path, coordinate: &str) -> Result<String> {
+            let mut archive = zip::ZipArchive::new(File::open(path)?)?;
+            let xml = read_zip_part(&mut archive, "xl/worksheets/sheet1.xml")?;
+            let document = roxmltree::Document::parse(&xml)?;
+            let index = document
+                .descendants()
+                .find(|node| {
+                    node.is_element()
+                        && node.tag_name().namespace() == Some(SPREADSHEET_MAIN_NS)
+                        && node.tag_name().name() == "c"
+                        && node.attribute("r") == Some(coordinate)
+                })
+                .and_then(|node| node.attribute("s"))
+                .unwrap_or("0");
+            Ok(index.to_owned())
+        }
+
+        let target = ScratchFile::create(&std::env::temp_dir(), "style-index-target")?;
+        let mut target_book = rust_xlsxwriter::Workbook::new();
+        target_book
+            .add_worksheet()
+            .set_name("Target")?
+            .write_string_with_format(
+                0,
+                0,
+                "target",
+                &rust_xlsxwriter::Format::new()
+                    .set_font_name("Target Font")
+                    .set_bold()
+                    .set_font_color(rust_xlsxwriter::Color::RGB(0xAA_00_00)),
+            )?;
+        target_book.save(target.path())?;
+
+        let source = ScratchFile::create(&std::env::temp_dir(), "style-index-source")?;
+        let source_format = rust_xlsxwriter::Format::new()
+            .set_font_name("Source Font")
+            .set_italic()
+            .set_font_color(rust_xlsxwriter::Color::RGB(0x00_33_AA));
+        let mut source_book = rust_xlsxwriter::Workbook::new();
+        source_book
+            .add_worksheet()
+            .set_name("Source")?
+            .write_string_with_format(0, 0, "source", &source_format)?;
+        source_book.save(source.path())?;
+
+        // Both independent workbooks assign style index 1 to A1, but the
+        // referenced font records have different meanings.
+        assert_eq!(cell_style_index(target.path(), "A1")?, "1");
+        assert_eq!(cell_style_index(source.path(), "A1")?, "1");
+        let source_workbook = crate::open_xlsx(source.path())?;
+        let target_workbook = crate::open_xlsx(target.path())?;
+        let source_style = style_at(&source_workbook, "Source", "A1")?;
+        let target_style = style_at(&target_workbook, "Target", "A1")?;
+        assert!(!styles_semantically_equal(&source_style, &target_style));
+
+        let output = ScratchFile::create(&std::env::temp_dir(), "style-index-output")?;
+        let plan = ExcelEditPlan {
+            request_id: "style-index-semantic-import".to_owned(),
+            input: target.path().to_owned(),
+            output: output.path().to_owned(),
+            format: WorkbookFormat::Xlsx,
+            workbook: crate::WorkbookProfile {
+                format: WorkbookFormat::Xlsx,
+                inventory_complete: true,
+                features_present: BTreeSet::new(),
+            },
+            operations: vec![EditOperation::ImportRange {
+                source_workbook: source.path().to_owned(),
+                source_sheet: "Source".to_owned(),
+                source_range: "A1".to_owned(),
+                target_sheet: "Target".to_owned(),
+                target_start: "A1".to_owned(),
+                copy_values: false,
+                copy_formulas: false,
+                style_mode: RangeStyleMode::Full,
+                copy_comments: false,
+                copy_merges: false,
+                copy_row_heights: false,
+                copy_column_widths: false,
+                copy_row_hidden: false,
+                copy_column_hidden: false,
+                copy_outline_levels: false,
+                copy_all_row_dimensions: false,
+                copy_all_column_dimensions: false,
+                materialize_blank_cells: false,
+                hide_zero: false,
+            }],
+            preserve: BTreeSet::new(),
+            drop_allowed: BTreeMap::new(),
+        };
+
+        // Reusing the target's style-1 would be numerically plausible but
+        // semantically wrong. The validator must reject it.
+        assert!(validate_umya_readback(&plan, target.path()).is_err());
+
+        let mut output_book = rust_xlsxwriter::Workbook::new();
+        output_book
+            .add_worksheet()
+            .set_name("Target")?
+            .write_string_with_format(0, 0, "target", &source_format)?;
+        output_book.save(output.path())?;
+        validate_umya_readback(&plan, output.path())?;
         Ok(())
     }
 
@@ -5895,7 +6312,7 @@ mod tests {
         let mut result = xml.to_owned();
         result.insert_str(
             first_row.range().start,
-            "<row xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\" r=\"4\" s=\"0\" customFormat=\"1\"/>",
+            "<row xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\" r=\"4\" s=\"1\" customFormat=\"1\"><c r=\"AB4\"/></row>",
         );
         let document = roxmltree::Document::parse(&result)?;
         let sheet_data = document
@@ -5908,7 +6325,7 @@ mod tests {
             .context("test worksheet has no sheetData after row insertion")?;
         result.insert_str(
             sheet_data.range().start,
-            "<cols xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\"><col min=\"1\" max=\"28\" style=\"0\"/></cols>",
+            "<cols xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\"><col min=\"1\" max=\"28\" style=\"1\"/></cols>",
         );
         Ok(result)
     }
