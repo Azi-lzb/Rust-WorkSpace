@@ -6,7 +6,7 @@
 
 use crate::{
     BackendCapability, BackendFailure, EditBackend, EditOperation, ExcelEditPlan, OutputValidator,
-    PageOrientation, RangeStyleMode, Workbook, WorkbookFormat,
+    PageOrientation, RangeStyleMode, SheetVisibility, Workbook, WorkbookFormat,
 };
 use anyhow::{bail, Context, Result};
 use excel_reader::read_workbook;
@@ -47,6 +47,22 @@ impl EditBackend for UmyaXlsxBackend {
                 "unverified workbook structure: {error:#}"
             ))
         })?;
+        if plan
+            .operations
+            .iter()
+            .any(|operation| matches!(operation, EditOperation::DeleteColumn { .. }))
+        {
+            let defined_names = excel_reader::read_defined_names(&plan.input).map_err(|error| {
+                BackendFailure::unsupported_before_write(format!(
+                    "cannot inventory defined names before column deletion: {error:#}"
+                ))
+            })?;
+            if !defined_names.is_empty() {
+                return Err(BackendFailure::unsupported_before_write(
+                    "umya-spreadsheet 3.1.1 does not preserve workbook defined-name XML; refusing column deletion to avoid losing names",
+                ));
+            }
+        }
         for operation in &plan.operations {
             if let EditOperation::ImportRange {
                 source_workbook, ..
@@ -112,6 +128,10 @@ impl EditBackend for UmyaXlsxBackend {
             .map_err(|error| BackendFailure::unsupported_before_write(format!("{error:#}")))?;
         validate_row_insertion_scope(plan, &workbook)
             .map_err(|error| BackendFailure::unsupported_before_write(format!("{error:#}")))?;
+        validate_column_deletion_scope(plan, &workbook)
+            .map_err(|error| BackendFailure::unsupported_before_write(format!("{error:#}")))?;
+        validate_sheet_visibility_scope(plan, &workbook)
+            .map_err(|error| BackendFailure::unsupported_before_write(format!("{error:#}")))?;
         for operation in &plan.operations {
             if let EditOperation::SetFreezePanes { sheet, cell } = operation {
                 if is_freeze_clear_request(cell.as_deref())
@@ -167,6 +187,9 @@ impl EditBackend for UmyaXlsxBackend {
         }
         apply_final_print_areas(&mut workbook, &plan.operations).map_err(|error| {
             BackendFailure::failed(format!("apply final worksheet print areas: {error:#}"))
+        })?;
+        ensure_active_sheet_visible(&mut workbook).map_err(|error| {
+            BackendFailure::failed(format!("select a visible active worksheet: {error:#}"))
         })?;
         crate::save_xlsx(&workbook, &plan.output)
             .map_err(|error| BackendFailure::failed(format!("save XLSX: {error:#}")))?;
@@ -393,6 +416,456 @@ fn validate_row_insertion_scope(plan: &ExcelEditPlan, workbook: &Workbook) -> Re
         }
     }
     Ok(())
+}
+
+fn validate_column_deletion_scope(plan: &ExcelEditPlan, workbook: &Workbook) -> Result<()> {
+    if !plan
+        .operations
+        .iter()
+        .any(|operation| matches!(operation, EditOperation::DeleteColumn { .. }))
+    {
+        return Ok(());
+    }
+
+    // Validate the complete ordered batch on a disposable copy before the
+    // backend writes anything. The public operation uses one-based indexes.
+    let mut simulated = workbook.clone();
+    for operation in &plan.operations {
+        if let EditOperation::DeleteColumn {
+            sheet,
+            column_index,
+        } = operation
+        {
+            anyhow::ensure!(
+                *column_index > 0 && *column_index <= EXCEL_MAX_COLUMNS,
+                "column deletion is outside the XLSX grid"
+            );
+            anyhow::ensure!(
+                simulated.sheet_by_name(sheet).is_ok(),
+                "worksheet {sheet:?} not found"
+            );
+            delete_column_with_excel_references(&mut simulated, sheet, *column_index)?;
+        }
+    }
+    Ok(())
+}
+
+fn visibility_from_sheet(sheet: &umya_spreadsheet::Worksheet) -> SheetVisibility {
+    match sheet.state() {
+        umya_spreadsheet::SheetStateValues::Visible => SheetVisibility::Visible,
+        umya_spreadsheet::SheetStateValues::Hidden => SheetVisibility::Hidden,
+        umya_spreadsheet::SheetStateValues::VeryHidden => SheetVisibility::VeryHidden,
+    }
+}
+
+fn umya_visibility(visibility: SheetVisibility) -> umya_spreadsheet::SheetStateValues {
+    match visibility {
+        SheetVisibility::Visible => umya_spreadsheet::SheetStateValues::Visible,
+        SheetVisibility::Hidden => umya_spreadsheet::SheetStateValues::Hidden,
+        SheetVisibility::VeryHidden => umya_spreadsheet::SheetStateValues::VeryHidden,
+    }
+}
+
+fn validate_sheet_visibility_scope(plan: &ExcelEditPlan, workbook: &Workbook) -> Result<()> {
+    let mut sheets = workbook
+        .sheet_collection()
+        .iter()
+        .map(|sheet| (sheet.name().to_owned(), visibility_from_sheet(sheet)))
+        .collect::<std::collections::BTreeMap<_, _>>();
+
+    for operation in &plan.operations {
+        match operation {
+            EditOperation::CreateSheet { name } | EditOperation::CreateSheetAt { name, .. } => {
+                sheets.insert(name.clone(), SheetVisibility::Visible);
+            }
+            EditOperation::DeleteSheet { name } => {
+                anyhow::ensure!(
+                    sheets.remove(name).is_some(),
+                    "worksheet {name:?} not found"
+                );
+            }
+            EditOperation::SetSheetVisibility { sheet, visibility } => {
+                let current = sheets
+                    .get_mut(sheet)
+                    .with_context(|| format!("worksheet {sheet:?} not found"))?;
+                *current = *visibility;
+            }
+            _ => {}
+        }
+    }
+
+    anyhow::ensure!(
+        sheets
+            .values()
+            .any(|visibility| *visibility == SheetVisibility::Visible),
+        "an XLSX workbook must retain at least one visible worksheet"
+    );
+    Ok(())
+}
+
+fn ensure_active_sheet_visible(workbook: &mut Workbook) -> Result<()> {
+    let active_index = workbook.workbook_view().active_tab() as usize;
+    let active_is_visible = workbook
+        .sheet_collection()
+        .get(active_index)
+        .is_some_and(|sheet| visibility_from_sheet(sheet) == SheetVisibility::Visible);
+    if active_is_visible {
+        return Ok(());
+    }
+    let visible_index = workbook
+        .sheet_collection()
+        .iter()
+        .position(|sheet| visibility_from_sheet(sheet) == SheetVisibility::Visible)
+        .context("workbook has no visible worksheet")?;
+    workbook.set_active_sheet(visible_index as u32);
+    Ok(())
+}
+
+fn delete_column_with_excel_references(
+    workbook: &mut Workbook,
+    target_sheet: &str,
+    column_index: u32,
+) -> Result<()> {
+    anyhow::ensure!(
+        (1..=EXCEL_MAX_COLUMNS).contains(&column_index),
+        "column deletion is outside the XLSX grid"
+    );
+    workbook
+        .sheet_by_name(target_sheet)
+        .with_context(|| format!("worksheet {target_sheet:?} not found"))?;
+
+    let mut formula_updates = Vec::new();
+    for worksheet in workbook.sheet_collection() {
+        let formula_sheet = worksheet.name().to_owned();
+        for cell in worksheet
+            .cells()
+            .into_iter()
+            .filter(|cell| cell.is_formula())
+        {
+            let address = cell.coordinate().to_string();
+            let value = cell.cell_value().clone();
+            let relevant = formula_sheet == target_sheet
+                || formula_references_sheet(value.formula(), target_sheet);
+            if !relevant {
+                continue;
+            }
+            let (row, column) = parse_cell(&address)?;
+            if formula_sheet == target_sheet && column == column_index {
+                // The formula cell itself is being removed with the column;
+                // its references do not survive and need no translation.
+                continue;
+            }
+            anyhow::ensure!(
+                !value.formula().is_empty(),
+                "shared formula followers are not supported for column deletion"
+            );
+            if let Some(formula_object) = value.formula_obj() {
+                anyhow::ensure!(
+                    formula_object.formula_type() == &umya_spreadsheet::CellFormulaValues::Normal,
+                    "array, data-table, and shared formulas are not supported for column deletion"
+                );
+            }
+            let formula = shift_formula_columns_after_deletion(
+                value.formula(),
+                &formula_sheet,
+                target_sheet,
+                column_index,
+            )
+            .with_context(|| format!("adjust formula {formula_sheet}!{address}"))?;
+            let column = if formula_sheet == target_sheet && column > column_index {
+                column - 1
+            } else {
+                column
+            };
+            let mut updated_value = value;
+            set_cell_value_formula(&mut updated_value, formula)?;
+            formula_updates.push((
+                formula_sheet.clone(),
+                cell_address(row, column),
+                updated_value,
+            ));
+        }
+    }
+
+    let updated_global_names = workbook
+        .defined_names()
+        .iter()
+        .map(|name| adjust_defined_name_for_column_deletion(name, None, target_sheet, column_index))
+        .collect::<Result<Vec<_>>>()?;
+    let updated_local_names = workbook
+        .sheet_collection()
+        .iter()
+        .map(|worksheet| {
+            let owner = worksheet.name().to_owned();
+            let names = worksheet
+                .defined_names()
+                .iter()
+                .map(|name| {
+                    adjust_defined_name_for_column_deletion(
+                        name,
+                        Some(&owner),
+                        target_sheet,
+                        column_index,
+                    )
+                })
+                .collect::<Result<Vec<_>>>()?;
+            Ok::<_, anyhow::Error>((owner, names))
+        })
+        .collect::<Result<Vec<_>>>()?;
+
+    // Let umya update cell coordinates and the package's sheet-scoped objects,
+    // then replace formulas/names with the conservative reference adjustment
+    // computed from the original workbook. This also moves absolute references
+    // when a structural column deletion changes their target coordinates.
+    workbook
+        .sheet_by_name_mut(target_sheet)
+        .with_context(|| format!("worksheet {target_sheet:?} disappeared before column deletion"))?
+        .remove_column_by_index(column_index, 1);
+    for (formula_sheet, address, value) in formula_updates {
+        workbook
+            .sheet_by_name_mut(&formula_sheet)
+            .with_context(|| {
+                format!("worksheet {formula_sheet:?} disappeared after column deletion")
+            })?
+            .cell_mut(address.as_str())
+            .set_cell_value(value);
+    }
+    *workbook.defined_names_mut() = updated_global_names;
+    for (owner, names) in updated_local_names {
+        if let Ok(worksheet) = workbook.sheet_by_name_mut(&owner) {
+            *worksheet.defined_names_mut() = names;
+        }
+    }
+    Ok(())
+}
+
+fn shift_formula_columns_after_deletion(
+    formula: &str,
+    formula_sheet: &str,
+    target_sheet: &str,
+    deleted_column: u32,
+) -> Result<String> {
+    if formula.is_empty() {
+        bail!("shared formula followers are not supported for column deletion");
+    }
+    let upper = formula.to_ascii_uppercase();
+    anyhow::ensure!(
+        !upper.contains("INDIRECT(") && !formula.contains(['[', ']']),
+        "dynamic INDIRECT or structured/external formula references are not supported for column deletion"
+    );
+    anyhow::ensure!(
+        !formula_has_3d_sheet_reference(formula, target_sheet),
+        "3-D formula references are not supported for column deletion"
+    );
+    anyhow::ensure!(
+        !formula_has_whole_row_reference(formula) && !formula_has_whole_column_reference(formula),
+        "whole-row and whole-column formula references are not supported for column deletion"
+    );
+
+    let references = scan_formula_references(formula)?;
+    let mut output = String::with_capacity(formula.len());
+    let mut copied_to = 0;
+    let mut target_reference_seen = false;
+    for (index, span) in references.iter().enumerate() {
+        if !formula_reference_targets_sheet(
+            formula,
+            &references,
+            index,
+            formula_sheet,
+            target_sheet,
+        ) {
+            continue;
+        }
+        target_reference_seen = true;
+        let raw = &formula[span.start..span.end];
+        let (row, column, column_locked, row_locked) = parse_formula_cell_reference(raw)?;
+        anyhow::ensure!(
+            column != deleted_column,
+            "formula references deleted column {}; resulting #REF semantics require a separate explicit policy",
+            column_letters(deleted_column)
+        );
+        let adjusted_column = if column > deleted_column {
+            column - 1
+        } else {
+            column
+        };
+        output.push_str(&formula[copied_to..span.start]);
+        if column_locked {
+            output.push('$');
+        }
+        output.push_str(&column_letters(adjusted_column));
+        if row_locked {
+            output.push('$');
+        }
+        output.push_str(&row.to_string());
+        copied_to = span.end;
+    }
+    if !target_reference_seen {
+        // A formula on the edited worksheet may contain no cell references at
+        // all; otherwise untouched formulas on other worksheets need no change.
+        return Ok(formula.to_owned());
+    }
+    output.push_str(&formula[copied_to..]);
+    Ok(output)
+}
+
+fn parse_formula_cell_reference(reference: &str) -> Result<(u32, u32, bool, bool)> {
+    let column_locked = reference.starts_with('$');
+    let without_column_lock = reference.strip_prefix('$').unwrap_or(reference);
+    let split = without_column_lock
+        .find(|character: char| character == '$' || character.is_ascii_digit())
+        .context("formula reference has no row number")?;
+    let (letters, row_part) = without_column_lock.split_at(split);
+    let row_locked = row_part.starts_with('$');
+    let row_text = row_part.strip_prefix('$').unwrap_or(row_part);
+    let column = letters
+        .bytes()
+        .try_fold(0u32, |value, byte| {
+            if !byte.is_ascii_alphabetic() {
+                return None;
+            }
+            value
+                .checked_mul(26)?
+                .checked_add(u32::from(byte.to_ascii_uppercase() - b'A' + 1))
+        })
+        .context("invalid formula-reference column")?;
+    let row = row_text
+        .parse::<u32>()
+        .context("invalid formula-reference row")?;
+    anyhow::ensure!(
+        (1..=EXCEL_MAX_COLUMNS).contains(&column) && (1..=EXCEL_MAX_ROWS).contains(&row),
+        "formula cell reference is outside the XLSX grid"
+    );
+    Ok((row, column, column_locked, row_locked))
+}
+
+fn formula_reference_targets_sheet(
+    formula: &str,
+    references: &[FormulaReferenceSpan],
+    index: usize,
+    formula_sheet: &str,
+    target_sheet: &str,
+) -> bool {
+    let span = references[index];
+    let qualifier = formula_qualifier_before_reference(formula, span.start);
+    if let Some(qualifier) = qualifier {
+        return qualifier.eq_ignore_ascii_case(target_sheet);
+    }
+    if formula_sheet.eq_ignore_ascii_case(target_sheet) {
+        return true;
+    }
+    if index > 0 {
+        let previous = references[index - 1];
+        if formula[previous.end..span.start].trim() == ":" {
+            return formula_qualifier_before_reference(formula, previous.start)
+                .is_some_and(|name| name.eq_ignore_ascii_case(target_sheet));
+        }
+    }
+    false
+}
+
+fn formula_qualifier_before_reference(formula: &str, reference_start: usize) -> Option<String> {
+    let prefix = formula.get(..reference_start)?;
+    let bang = prefix.len().checked_sub(1)?;
+    if prefix.as_bytes().get(bang) != Some(&b'!') {
+        return None;
+    }
+    let qualifier_start = prefix[..bang]
+        .rfind(|character: char| "=,+-*/^&<>(){},; \t\r\n".contains(character))
+        .map_or(0, |index| index + 1);
+    let raw = prefix[qualifier_start..bang].trim();
+    if raw.is_empty() {
+        return None;
+    }
+    Some(
+        raw.strip_prefix('\'')
+            .and_then(|value| value.strip_suffix('\''))
+            .unwrap_or(raw)
+            .replace("''", "'"),
+    )
+}
+
+fn adjust_defined_name_for_column_deletion(
+    original: &umya_spreadsheet::DefinedName,
+    scope_sheet: Option<&str>,
+    target_sheet: &str,
+    deleted_column: u32,
+) -> Result<umya_spreadsheet::DefinedName> {
+    let address = original.address();
+    let trimmed = address.trim_start_matches('=');
+    let relevant = formula_references_sheet(trimmed, target_sheet)
+        || scope_sheet.is_some_and(|scope| scope.eq_ignore_ascii_case(target_sheet));
+    if !relevant {
+        if scope_sheet.is_none()
+            && scan_formula_references(trimmed)?
+                .iter()
+                .any(|span| formula_qualifier_before_reference(trimmed, span.start).is_none())
+        {
+            bail!(
+                "workbook-level relative defined name {:?} is ambiguous during column deletion",
+                original.name()
+            );
+        }
+        return Ok(original.clone());
+    }
+    let formula = shift_formula_columns_after_deletion(
+        trimmed,
+        scope_sheet.unwrap_or(""),
+        target_sheet,
+        deleted_column,
+    )?;
+    Ok(defined_name_with_address(original, &formula))
+}
+
+fn formula_has_whole_column_reference(formula: &str) -> bool {
+    let mut in_string = false;
+    let bytes = formula.as_bytes();
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'"' {
+            if in_string && bytes.get(index + 1) == Some(&b'"') {
+                index += 2;
+                continue;
+            }
+            in_string = !in_string;
+            index += 1;
+            continue;
+        }
+        if in_string
+            || !(bytes[index].is_ascii_alphabetic() || bytes[index] == b'$')
+            || !is_formula_boundary(bytes, index, true)
+        {
+            index += 1;
+            continue;
+        }
+        let start = index;
+        if bytes.get(index) == Some(&b'$') {
+            index += 1;
+        }
+        if !bytes.get(index).is_some_and(u8::is_ascii_alphabetic) {
+            index = start + 1;
+            continue;
+        }
+        while bytes.get(index).is_some_and(u8::is_ascii_alphabetic) && index - start <= 4 {
+            index += 1;
+        }
+        if bytes.get(index) == Some(&b':') {
+            index += 1;
+            if bytes.get(index) == Some(&b'$') {
+                index += 1;
+            }
+            let second = index;
+            while bytes.get(index).is_some_and(u8::is_ascii_alphabetic) && index - second <= 3 {
+                index += 1;
+            }
+            if second < index && is_formula_boundary(bytes, index, false) {
+                return true;
+            }
+        } else {
+            index = start + 1;
+        }
+    }
+    false
 }
 
 const EXCEL_MAX_ROWS: u32 = 1_048_576;
@@ -1461,6 +1934,95 @@ impl OutputValidator for UmyaXlsxValidator {
                 );
             }
         }
+        validate_deleted_column_payloads(&plan.input, &dump, &plan.operations)?;
+        let visibility_edits = plan
+            .operations
+            .iter()
+            .filter_map(|operation| match operation {
+                EditOperation::SetSheetVisibility { sheet, visibility } => {
+                    Some((sheet.as_str(), *visibility))
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        let row_visibility_edits = plan
+            .operations
+            .iter()
+            .filter_map(|operation| match operation {
+                EditOperation::SetRowHidden {
+                    sheet,
+                    row_index,
+                    hidden,
+                } => Some((sheet.as_str(), *row_index, *hidden)),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        let number_format_edits = plan
+            .operations
+            .iter()
+            .filter_map(|operation| match operation {
+                EditOperation::SetCellNumberFormat {
+                    sheet,
+                    cell,
+                    format_code,
+                } => Some((sheet.as_str(), cell.as_str(), format_code.as_str())),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        if !visibility_edits.is_empty()
+            || !row_visibility_edits.is_empty()
+            || !number_format_edits.is_empty()
+        {
+            let reopened = crate::open_xlsx(candidate_output)
+                .with_context(|| format!("reopen candidate {}", candidate_output.display()))?;
+            for (sheet, visibility) in visibility_edits {
+                let worksheet = reopened
+                    .sheet_by_name(sheet)
+                    .with_context(|| format!("worksheet {sheet:?} missing from candidate"))?;
+                anyhow::ensure!(
+                    visibility_from_sheet(worksheet) == visibility,
+                    "worksheet {sheet:?} visibility does not match the edit plan"
+                );
+            }
+            for (sheet, row, hidden) in row_visibility_edits {
+                let worksheet = reopened
+                    .sheet_by_name(sheet)
+                    .with_context(|| format!("worksheet {sheet:?} missing from candidate"))?;
+                let actual = worksheet
+                    .row_dimension(row)
+                    .is_some_and(|dimension| dimension.hidden());
+                anyhow::ensure!(
+                    actual == hidden,
+                    "worksheet {sheet:?} row {row} visibility does not match the edit plan"
+                );
+            }
+            for (sheet, cell, format_code) in number_format_edits {
+                let worksheet = reopened
+                    .sheet_by_name(sheet)
+                    .with_context(|| format!("worksheet {sheet:?} missing from candidate"))?;
+                let actual = worksheet
+                    .cell(cell)
+                    .and_then(|cell| cell.style().number_format())
+                    .map(|format| format.format_code())
+                    .unwrap_or_default();
+                anyhow::ensure!(
+                    actual == format_code,
+                    "worksheet {sheet:?} cell {cell} number format {actual:?} does not match {format_code:?}"
+                );
+            }
+            anyhow::ensure!(
+                reopened
+                    .sheet_collection()
+                    .iter()
+                    .any(|sheet| visibility_from_sheet(sheet) == SheetVisibility::Visible),
+                "candidate has no visible worksheet"
+            );
+            let active = reopened.active_sheet();
+            anyhow::ensure!(
+                visibility_from_sheet(active) == SheetVisibility::Visible,
+                "candidate active worksheet is hidden"
+            );
+        }
         let moves = plan
             .operations
             .iter()
@@ -1529,6 +2091,131 @@ impl OutputValidator for UmyaXlsxValidator {
         }
         Ok(())
     }
+}
+
+fn validate_deleted_column_payloads(
+    source_path: &Path,
+    candidate: &excel_reader::WorkbookDump,
+    operations: &[EditOperation],
+) -> Result<()> {
+    let mut deleted_by_sheet = std::collections::BTreeMap::<String, Vec<u32>>::new();
+    for operation in operations {
+        if let EditOperation::DeleteColumn {
+            sheet,
+            column_index,
+        } = operation
+        {
+            deleted_by_sheet
+                .entry(sheet.clone())
+                .or_default()
+                .push(*column_index);
+        }
+    }
+    if deleted_by_sheet.is_empty() {
+        return Ok(());
+    }
+
+    let source =
+        read_workbook(source_path).context("read source values for column deletion validation")?;
+    for (sheet_name, _) in deleted_by_sheet {
+        let Some(source_sheet) = source.sheets.iter().find(|sheet| sheet.name == sheet_name) else {
+            bail!("source worksheet {sheet_name:?} missing during column deletion validation");
+        };
+        let Some(candidate_sheet) = candidate
+            .sheets
+            .iter()
+            .find(|sheet| sheet.name == sheet_name)
+        else {
+            // A later DeleteSheet operation is allowed to remove this sheet.
+            if operations
+                .iter()
+                .any(|operation| matches!(operation, EditOperation::DeleteSheet { name } if name == &sheet_name))
+            {
+                continue;
+            }
+            bail!("candidate worksheet {sheet_name:?} missing after column deletion");
+        };
+
+        // This focused check verifies preserved literal payloads. Formulas are
+        // checked by dedicated formula/reference tests because their references
+        // must change along with a structural column deletion.
+        let mut expected = source_sheet
+            .values
+            .iter()
+            .filter(|(address, _)| !source_sheet.formulas.contains_key(*address))
+            .map(|(address, value)| Ok((address.clone(), value.clone())))
+            .collect::<Result<std::collections::BTreeMap<_, _>>>()?;
+        let mut saw_delete = false;
+        let mut saw_value_write = false;
+        let mut write_before_delete = false;
+        let mut overrides = std::collections::BTreeSet::new();
+        let mut unsupported_write_shape = false;
+        for operation in operations {
+            match operation {
+                EditOperation::DeleteColumn {
+                    sheet,
+                    column_index,
+                } if sheet == &sheet_name => {
+                    if saw_value_write {
+                        write_before_delete = true;
+                        saw_delete = true;
+                        continue;
+                    }
+                    saw_delete = true;
+                    let mut shifted = std::collections::BTreeMap::new();
+                    for (address, value) in std::mem::take(&mut expected) {
+                        let (row, column) = parse_cell(&address)?;
+                        if column == *column_index {
+                            continue;
+                        }
+                        let column = if column > *column_index {
+                            column - 1
+                        } else {
+                            column
+                        };
+                        shifted.insert(cell_address(row, column), value);
+                    }
+                    expected = shifted;
+                }
+                EditOperation::SetCellValue { sheet, cell, .. }
+                | EditOperation::SetFormulaText { sheet, cell, .. }
+                    if sheet == &sheet_name =>
+                {
+                    if !saw_delete {
+                        write_before_delete = true;
+                    }
+                    saw_value_write = true;
+                    overrides.insert(cell.to_ascii_uppercase().replace('$', ""));
+                }
+                EditOperation::CopyRange { target_sheet, .. }
+                | EditOperation::CopyRangeWithFormulaTranslation { target_sheet, .. }
+                | EditOperation::ImportRange { target_sheet, .. }
+                | EditOperation::ImportRangeWithFormulaTranslation { target_sheet, .. }
+                    if target_sheet == &sheet_name =>
+                {
+                    if !saw_delete {
+                        write_before_delete = true;
+                    }
+                    saw_value_write = true;
+                    unsupported_write_shape = true;
+                }
+                _ => {}
+            }
+        }
+        if !saw_delete || write_before_delete || unsupported_write_shape {
+            continue;
+        }
+        for (address, expected_value) in expected {
+            if overrides.contains(&address.to_ascii_uppercase().replace('$', "")) {
+                continue;
+            }
+            anyhow::ensure!(
+                candidate_sheet.values.get(&address) == Some(&expected_value),
+                "literal value at {sheet_name}!{address} was not preserved after column deletion"
+            );
+        }
+    }
+    Ok(())
 }
 
 /// Sheet-scoped defined names must stay attached to the worksheet named in
@@ -1762,7 +2449,7 @@ fn apply_operation(workbook: &mut crate::Workbook, operation: &EditOperation) ->
             formula,
         } => {
             workbook
-                .get_sheet_by_name_mut(sheet)
+                .sheet_by_name_mut(sheet)
                 .with_context(|| format!("worksheet {sheet:?} not found"))?
                 .cell_mut(cell.as_str())
                 .set_formula(formula.trim_start_matches('='));
@@ -1817,6 +2504,41 @@ fn apply_operation(workbook: &mut crate::Workbook, operation: &EditOperation) ->
                 .row_dimension_mut(*row_index)
                 .set_height(*height);
         }
+        EditOperation::SetRowHidden {
+            sheet,
+            row_index,
+            hidden,
+        } => {
+            anyhow::ensure!(
+                *row_index > 0 && *row_index <= EXCEL_MAX_ROWS,
+                "row visibility update is outside the XLSX grid"
+            );
+            workbook
+                .sheet_by_name_mut(sheet)
+                .with_context(|| format!("worksheet {sheet:?} not found"))?
+                .row_dimension_mut(*row_index)
+                .set_hidden(*hidden);
+        }
+        EditOperation::SetCellNumberFormat {
+            sheet,
+            cell,
+            format_code,
+        } => {
+            anyhow::ensure!(
+                crate::plan::valid_a1_cell(cell),
+                "number-format update requires a valid A1 cell address"
+            );
+            workbook
+                .sheet_by_name_mut(sheet)
+                .with_context(|| format!("worksheet {sheet:?} not found"))?
+                .style_mut(cell.as_str())
+                .number_format_mut()
+                .set_format_code(format_code);
+        }
+        EditOperation::DeleteColumn {
+            sheet,
+            column_index,
+        } => delete_column_with_excel_references(workbook, sheet, *column_index)?,
         EditOperation::DeleteRows {
             sheet,
             first_row,
@@ -1950,6 +2672,12 @@ fn apply_operation(workbook: &mut crate::Workbook, operation: &EditOperation) ->
                 .remove_sheet_by_name(name)
                 .with_context(|| format!("delete worksheet {name:?}"))?;
             remap_sheet_index_metadata(workbook, active_sheet.as_deref());
+        }
+        EditOperation::SetSheetVisibility { sheet, visibility } => {
+            workbook
+                .sheet_by_name_mut(sheet)
+                .with_context(|| format!("worksheet {sheet:?} not found"))?
+                .set_state(umya_visibility(*visibility));
         }
         EditOperation::SetCellFillColor { sheet, cell, argb } => {
             let normalized = normalize_argb(argb)?;

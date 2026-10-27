@@ -16,7 +16,8 @@ pub use plan::{
     BackendRouteDecision, CapabilityEvidence, CapabilityStatus, CellValue, EditBackend,
     EditExecutionReport, EditOperation, EditOperationKind, EngineId, ExcelEditPlan, ExcelModifier,
     ExcelModifierError, ExcelModifierErrorKind, OutputValidator, PageOrientation, PageSettings,
-    PreservationRequirement, RangeStyleMode, WorkbookFeature, WorkbookFormat, WorkbookProfile,
+    PreservationRequirement, RangeStyleMode, SheetVisibility, WorkbookFeature, WorkbookFormat,
+    WorkbookProfile,
 };
 pub use umya_backend::{UmyaXlsxBackend, UmyaXlsxValidator};
 pub use umya_spreadsheet::{BorderStyleValues, Cell, Workbook};

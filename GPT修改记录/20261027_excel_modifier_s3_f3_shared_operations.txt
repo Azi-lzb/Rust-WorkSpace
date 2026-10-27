@@ -1,0 +1,39 @@
+修改范围：公共 excel-editor S3-F3 候选编辑能力
+日期：2026-10-27
+
+目的
+- 为 Audit S3-F3 输出计划补齐共享 ExcelEditPlan / UmyaXlsxBackend 操作：删除工作表列、设置行隐藏、设置单元格数字格式、设置工作表可见状态。
+- 删除列时维护被删除列右侧的单元格坐标、合并区域、批注位置及常规公式引用；遇到无法安全处理的依赖关系时在写出前拒绝。
+- 确保工作簿至少保留一个可见工作表，并在隐藏当前活动表后选择可见工作表。
+
+修改文件
+- crates/excel-editor/src/plan.rs
+- crates/excel-editor/src/lib.rs
+- crates/excel-editor/src/umya_backend.rs
+- crates/excel-editor/tests/s3_f3_edit_operations.rs
+- GPT修改记录/20261027_excel_modifier_s3_f3_shared_operations.txt
+
+验证
+- cargo fmt -p excel-editor：通过。
+- cargo test --offline -p excel-editor --lib：45 passed，0 failed。
+- cargo test --offline -p excel-editor --test s3_f3_edit_operations：3 passed，1 ignored（需真实 Audit 3.3 配置的专用 smoke）。
+- cargo test --offline -p excel-editor --test s3_f3_edit_operations real_audit_s3_f3_config_supports_the_narrow_edit_batch -- --ignored --nocapture：1 passed；使用 workspace 内 3.3 配置副本，源文件字节保持不变。
+- 合成测试验证相对/绝对引用及区域公式平移、跨工作表引用调整、删除列自身公式移除、合并区域/批注位置移动、数值格式、行隐藏、工作表删除/隐藏和活动工作表可见性。
+- 合成失败测试验证：公式引用被删除列、工作簿定义名称存在时均在写出前拒绝，不产生输出文件。
+- 测试 capability 保持 Unverified；通过直接调用候选后端验证实现，不伪造 Passed 能力，也不改变生产默认路由。
+
+未执行/未验收
+- 未修改 audit-dev 或 pytools-dev。
+- 未对完整 S3-F3 业务输出执行 Python/Rust 对拍；本次真实样本仅为配置工作簿窄批次 smoke，不构成生产能力验收。
+- 未创建 capability JSON 或登记生产 Passed 路由。
+- 未运行 Linux/glibc 2.28 或 deb 验证。
+- 未同步到 Audit 开发工作树；需由 Audit 在安全节点接入新 EditOperation 并完成真实输出对拍。
+
+已知限制
+- umya-spreadsheet 3.1.1 不保留 workbook defined-name XML；当前列删除遇到任何 defined name 一律 UnsupportedBeforeWrite，避免静默丢失。workspace 内检查的 Audit 3.3 模板没有 defined name。
+- 列删除遇到引用待删除列的存续公式、INDIRECT、结构化/外部/三维引用、整行/整列引用、数组/数据表/共享公式时拒绝，不将其静默改写为错误公式。
+- 真实模板 smoke 和合成测试都不等于 S3-F3 端到端验收；具体 capability 仍须按格式、对象、操作批次和平台单独登记。
+- 构建输出使用 F:\RustBuild\main。
+
+回滚
+- 仅回滚上述四个源/测试文件及本记录即可撤销本轮候选能力；保留已有未提交修改 crates/ooxml-patch/src/lib.rs 和 HANDOFF_ZCODE_TO_CODEX.md，不纳入回滚或提交范围。
