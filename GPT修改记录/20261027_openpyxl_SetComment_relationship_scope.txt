@@ -1,0 +1,33 @@
+修改范围：公共 ExcelModifier 的 openpyxl relationships 校验
+日期：2026-10-27
+
+目的
+- 修复 S1-F01 完整编辑计划的共享校验阻塞：显式 SetComment 操作可能更新目标工作表的 legacy comments/VML 关系，但不应因此放宽同一工作表的超链接或其他关系检查。
+
+修改文件
+- crates/excel-editor/src/openpyxl_backend.rs
+- GPT修改记录/20261027_openpyxl_SetComment_relationship_scope.txt
+
+实现
+- 仅对 ExcelEditPlan 中显式 SetComment 指向的保留工作表，比较时忽略该工作表的 `/comments` 和 `/vmlDrawing` 关系条目。
+- 其他目标工作表关系、未修改工作表关系及包级关系仍严格比较；现有 package relationship target、关系 ID、XML 引用及 sharedStrings 完整性检查不变。
+- 新增回归用例验证目标工作表 comments/VML 关系 ID 变化可通过，同时同表超链接目标变化仍被拒绝。
+
+验证
+- `cargo test --offline --locked -p excel-editor --lib set_comment_allows_only_target_sheet_comments_and_vml_relationship_changes -- --nocapture`：1 passed。
+- `cargo test --offline --locked -p excel-editor --lib`：46 passed，0 failed。
+- 现有 deprecated umya API 警告仍存在，与本次改动无关。
+- 构建输出位于 `F:\RustBuild\main`。
+
+未执行/未验收
+- 未运行 Audit 工作树的真实 S1-F01 候选或 #8 候选；该工作树有大量未提交业务修改，未触碰其文件或运行可能干扰 Agent 的测试。
+- S1-F01 capability 仍为 unverified；本修复不登记 Passed，也不改变生产默认路由。
+- 未运行真实业务样本、Windows 正式入口、Linux/glibc 2.28 或 deb 验收。
+- PT-4-4 与 PT-7-2 缺真实业务样本，未创建或登记生产 capability。
+
+已知问题
+- 修复仅覆盖现有 package part 集合不变时的 SetComment relationships 变更；新增/删除 OOXML package part 仍由严格 package inventory 校验拒绝。
+- Audit Agent 需在安全同步节点用既有完整 S1-F01 真实候选重新验证；仍有其他保留项差异时须继续保持 unverified。
+
+回滚
+- 仅回滚上述共享校验实现、其回归测试和本记录即可撤销本次窄范围修复。已有未提交修改 `crates/ooxml-patch/src/lib.rs` 与 `HANDOFF_ZCODE_TO_CODEX.md` 保持原状。
