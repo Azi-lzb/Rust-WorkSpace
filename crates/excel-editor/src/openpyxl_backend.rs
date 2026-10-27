@@ -1409,9 +1409,9 @@ fn validate_preserved_relationships(
         .collect();
     // A worksheet relationship part may change only for an explicitly
     // replaced sheet or a retained sheet with a scoped relationship allowance.
-    // MoveSheet may cause a writer to renumber workbook-level worksheet rIds;
-    // those IDs are normalized by sheet identity below, while their targets
-    // and all non-worksheet relationships remain compared.
+    // MoveSheet may renumber workbook-level worksheet rIds and reassign
+    // worksheet part paths; both are compared by sheet identity only when the
+    // workbook relationship target resolves to that sheet's actual part.
     let replacements: Vec<(String, String)> = deleted_sheets
         .iter()
         .filter(|(_, deleted_as)| created_sheet_names.contains(deleted_as.as_str()))
@@ -1535,37 +1535,47 @@ fn relationships_outside_sheet_relationships(
         .filter(|(name, _, _)| recreated_names.contains(name.as_str()))
         .map(|(_, _, relationship_id)| relationship_id.as_str())
         .collect();
-    let worksheet_relationship_parts: BTreeSet<String> = snapshot
+    let worksheet_relationship_parts: BTreeMap<String, &str> = snapshot
         .worksheet_parts
         .iter()
-        .filter(|(name, _, _)| relationship_exception_names.contains(name.as_str()))
-        .map(|(_, worksheet_part, _)| relationships_part_for_source(worksheet_part))
-        .collect();
-    let comment_relationship_parts: BTreeSet<String> = snapshot
-        .worksheet_parts
-        .iter()
-        .filter(|(name, _, _)| comment_relationship_sheets.contains(name))
-        .map(|(_, worksheet_part, _)| relationships_part_for_source(worksheet_part))
+        .map(|(name, worksheet_part, _)| {
+            (relationships_part_for_source(worksheet_part), name.as_str())
+        })
         .collect();
     let worksheet_names_by_relationship_id: BTreeMap<&str, &str> = snapshot
         .worksheet_parts
         .iter()
         .map(|(name, _, relationship_id)| (relationship_id.as_str(), name.as_str()))
         .collect();
+    let worksheet_parts_by_name: BTreeMap<&str, &str> = snapshot
+        .worksheet_parts
+        .iter()
+        .map(|(name, worksheet_part, _)| (name.as_str(), worksheet_part.as_str()))
+        .collect();
 
     snapshot
         .relationships
         .iter()
         .filter_map(|(part_name, elements)| {
-            if worksheet_relationship_parts.contains(part_name) {
+            let worksheet_name = worksheet_relationship_parts.get(part_name).copied();
+            if worksheet_name.is_some_and(|name| relationship_exception_names.contains(name)) {
                 return None;
             }
             let is_workbook_relationship_part = part_name == &snapshot.workbook_relationship_part;
+            let normalized_part_name = if normalize_worksheet_relationship_ids {
+                worksheet_name
+                    .map(|name| format!("worksheet:{name}.rels"))
+                    .unwrap_or_else(|| part_name.clone())
+            } else {
+                part_name.clone()
+            };
             let mut elements = elements
                 .iter()
                 .filter(|element| {
                     if !is_workbook_relationship_part {
-                        if comment_relationship_parts.contains(part_name) {
+                        if worksheet_name
+                            .is_some_and(|name| comment_relationship_sheets.contains(name))
+                        {
                             return !canonical_xml_attribute(element, "Type").is_some_and(|kind| {
                                 kind.ends_with("/comments") || kind.ends_with("/vmlDrawing")
                             });
@@ -1583,17 +1593,32 @@ fn relationships_outside_sheet_relationships(
                         let is_worksheet = canonical_xml_attribute(&element, "Type")
                             .is_some_and(|kind| kind.ends_with("/worksheet"));
                         if is_worksheet {
-                            if let Some(sheet_name) = canonical_xml_attribute(&element, "Id")
-                                .and_then(|relationship_id| {
-                                    worksheet_names_by_relationship_id.get(relationship_id)
-                                })
-                            {
-                                if let Some((_, _, value)) =
-                                    element.attributes.iter_mut().find(|(namespace, name, _)| {
-                                        namespace.is_empty() && name == "Id"
-                                    })
-                                {
-                                    *value = format!("worksheet:{sheet_name}");
+                            let relationship_id = canonical_xml_attribute(&element, "Id");
+                            let sheet_name = relationship_id
+                                .and_then(|id| worksheet_names_by_relationship_id.get(id));
+                            let target = canonical_xml_attribute(&element, "Target");
+                            if let (Some(sheet_name), Some(target), Some(expected_part)) = (
+                                sheet_name,
+                                target,
+                                sheet_name.and_then(|name| worksheet_parts_by_name.get(name)),
+                            ) {
+                                if relationship_target_matches_part(
+                                    part_name,
+                                    target,
+                                    expected_part,
+                                ) {
+                                    if let Some((_, _, value)) = element.attributes.iter_mut().find(
+                                        |(namespace, name, _)| namespace.is_empty() && name == "Id",
+                                    ) {
+                                        *value = format!("worksheet:{sheet_name}");
+                                    }
+                                    if let Some((_, _, value)) = element.attributes.iter_mut().find(
+                                        |(namespace, name, _)| {
+                                            namespace.is_empty() && name == "Target"
+                                        },
+                                    ) {
+                                        *value = format!("worksheet:{sheet_name}");
+                                    }
                                 }
                             }
                         }
@@ -1602,9 +1627,24 @@ fn relationships_outside_sheet_relationships(
                 })
                 .collect::<Vec<_>>();
             elements.sort();
-            Some((part_name.clone(), elements))
+            Some((normalized_part_name, elements))
         })
         .collect()
+}
+
+fn relationship_target_matches_part(
+    relationship_part: &str,
+    target: &str,
+    expected_part: &str,
+) -> bool {
+    let Ok(source_part) = relationship_source_part(relationship_part) else {
+        return false;
+    };
+    let base = source_part
+        .rsplit_once('/')
+        .map(|(parent, _)| parent)
+        .unwrap_or("");
+    resolve_opc_target(base, target).is_ok_and(|resolved| resolved == expected_part)
 }
 
 fn canonical_xml_attribute<'a>(element: &'a CanonicalXmlElement, name: &str) -> Option<&'a str> {
@@ -5243,6 +5283,84 @@ mod tests {
 
         validate_preserved_relationships(&source, &output, &plan)
             .expect("worksheet rIds may be renumbered when sheet identity and target are stable");
+
+        let mut reassigned_parts = output.clone();
+        for (name, worksheet_part, relationship_id) in &mut reassigned_parts.worksheet_parts {
+            match name.as_str() {
+                "History" => {
+                    *worksheet_part = "xl/worksheets/other.xml".to_owned();
+                    *relationship_id = "rId2".to_owned();
+                }
+                "Other" => {
+                    *worksheet_part = "xl/worksheets/history.xml".to_owned();
+                    *relationship_id = "rId1".to_owned();
+                }
+                _ => panic!("unexpected worksheet {name:?}"),
+            }
+        }
+        reassigned_parts
+            .worksheet_parts
+            .sort_by_key(|(name, _, _)| {
+                reassigned_parts
+                    .sheet_order
+                    .iter()
+                    .position(|candidate| candidate == name)
+                    .unwrap_or(usize::MAX)
+            });
+        let original_history_relationships = source
+            .relationships
+            .iter()
+            .find(|(part, _)| part == "xl/worksheets/_rels/history.xml.rels")
+            .expect("source History relationships exist")
+            .1
+            .clone();
+        let original_other_relationships = source
+            .relationships
+            .iter()
+            .find(|(part, _)| part == "xl/worksheets/_rels/other.xml.rels")
+            .expect("source Other relationships exist")
+            .1
+            .clone();
+        for (part, relationships) in &mut reassigned_parts.relationships {
+            match part.as_str() {
+                "xl/worksheets/_rels/history.xml.rels" => {
+                    *relationships = original_other_relationships.clone();
+                }
+                "xl/worksheets/_rels/other.xml.rels" => {
+                    *relationships = original_history_relationships.clone();
+                }
+                "xl/_rels/workbook.xml.rels" => {
+                    for relationship in relationships.iter_mut() {
+                        let (expected_target, replacement_id) =
+                            match canonical_xml_attribute(relationship, "Id") {
+                                Some("rId1") => ("worksheets/history.xml", "rId1"),
+                                Some("rId2") => ("worksheets/other.xml", "rId2"),
+                                _ => continue,
+                            };
+                        if let Some((_, _, value)) = relationship
+                            .attributes
+                            .iter_mut()
+                            .find(|(namespace, name, _)| namespace.is_empty() && name == "Target")
+                        {
+                            *value = expected_target.to_owned();
+                        }
+                        if let Some((_, _, value)) = relationship
+                            .attributes
+                            .iter_mut()
+                            .find(|(namespace, name, _)| namespace.is_empty() && name == "Id")
+                        {
+                            *value = replacement_id.to_owned();
+                        }
+                    }
+                    relationships.sort();
+                }
+                _ => {}
+            }
+        }
+
+        validate_preserved_relationships(&source, &reassigned_parts, &plan).expect(
+            "MoveSheet may reassign worksheet part paths when relationships remain valid by sheet identity",
+        );
 
         let mut changed_target = output.clone();
         let workbook_relationships = changed_target

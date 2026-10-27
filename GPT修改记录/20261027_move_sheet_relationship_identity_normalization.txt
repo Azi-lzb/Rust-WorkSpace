@@ -1,0 +1,33 @@
+修改范围：公共 ExcelModifier MoveSheet OOXML relationships 比较
+日期：2026-10-27
+
+目的
+- 收窄处理 Audit #8 的关系校验阻塞：部分 writer 在 MoveSheet 时会按新顺序重新分配 worksheet part 路径及对应的 worksheet `.rels` part 路径，但工作簿仍通过名称、顺序和关系正确指向原有语义工作表。
+
+修改文件
+- crates/excel-editor/src/openpyxl_backend.rs
+- GPT修改记录/20261027_move_sheet_relationship_identity_normalization.txt
+
+实现
+- 仅当 ExcelEditPlan 明确包含 MoveSheet 时，才按工作表身份归一 workbook worksheet relationship ID/target 与 worksheet relationship part 路径。
+- 只有 relationship target 实际解析到该工作表在快照中的 worksheet part 时，才归一为逻辑工作表身份；不匹配的 target 仍严格比较并拒绝。
+- 未修改工作表的 `.rels` 内容继续按工作表身份严格比较；计划明确允许目标表 relationship 变化的 sheet 仍沿用原有定点豁免。
+- 保持 package part inventory、关系目标存在性、relationship ID 唯一性、XML 内 relationship 引用及 sharedStrings 索引校验。
+- 扩展 MoveSheet 回归测试覆盖 sheet-part 与 `.rels` 路径重新分配；错误 workbook target 仍须拒绝。
+
+验证
+- `cargo test --offline --locked -p excel-editor --lib move_sheet_allows_worksheet_relationship_id_remapping_by_sheet_identity -- --nocapture`：1 passed。
+- `cargo test --offline --locked -p excel-editor --lib`：46 passed，0 failed，包含 SetComment 与 MoveSheet relationship 回归。
+- 构建输出使用 `F:\RustBuild\main`。
+
+未执行/未验收
+- 尚未在 Audit #8 的 Umya 真实/合成候选输出上复验；Audit 工作树有大量未提交业务修改，未触碰该工作树或其测试产物。
+- 不登记生产 Passed capability，不改变默认路由；Audit #8 的状态需待 Audit 安全同步后复验。
+- 未运行 Linux/glibc 2.28、deb 或目标平台验收。
+
+已知限制
+- 该归一仅覆盖明确 MoveSheet 计划下、经 package relationship target 与 sheet 快照一致验证的 worksheet part 重新分配。其他 workbook/worksheet relationships、非目标保留项仍严格检查。
+- 若 Audit #8 复验仍失败，必须根据候选前后具体 package/sheet `.rels` 差异继续定位，不放宽全局检查。
+
+回滚
+- 仅回滚上述 MoveSheet relationship normalization、对应回归测试及本记录即可撤销本次窄范围修复。已推送的 769ef53 与当前未提交的 `crates/ooxml-patch/src/lib.rs`、`HANDOFF_ZCODE_TO_CODEX.md` 均保持不变。
