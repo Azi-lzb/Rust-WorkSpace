@@ -1,0 +1,33 @@
+时间：2026-10-27（Asia/Shanghai）
+执行者：Codex
+工作树：main
+修改前 HEAD：f202ed2ebfc58c56abbeeec3c684c852245b9bc7
+修改后 HEAD：本次变更提交后确定
+修改前 WIP：保留 `crates/excel-reader/src/lib.rs`、`crates/ooxml-patch/src/lib.rs` 未提交修改、`HANDOFF_ZCODE_TO_CODEX.md` 及既有未跟踪 ExcelReader 修改记录；未触碰 Audit/PyTools 工作树。
+
+目的
+- 防止把 Excel 8/XLS 内容仅改扩展名为 `.et` 后，经 WPS COM 当作原生 ET 转换并成功发布。
+
+变更
+- `sidecar/lo-convert/src/main.rs`：`.et` 的 COM 路由只使用 `KET.Application`；打开私有输入副本后、`SaveAs` 前检查 WPS `Workbook.FileFormat == 65521`。不匹配（如 Excel 8 的 56）即失败，不生成输出。
+- 对通过检查的 COM `.et` 转换，在 sidecar JSON validation 中返回 `source_format_verified: true`、`source_format: "et"`、`source_file_format: 65521`。LibreOffice 路径没有此 WPS COM 证据时返回未验证状态，不冒充已确认的原生 ET 输入。
+- `sidecar/lo-convert/tests/convert_et_com.rs`：将 XLS-as-ET 用例改为真实 CLI 拒绝回归，断言源输入字节不变且不发布 XLSX；若提供原生 ET 样本，正向测试要求响应包含格式验证字段。
+- 保留私有输入副本和临时输出验证机制；未修改 PyTools 业务代码、依赖、读取/新建/修改路由。
+
+验证
+- `cargo check --offline --locked -p lo-convert`：通过。
+- WPS COM 实际 CLI 回归：`com_conversion_rejects_excel8_xls_named_et_without_output`，通过（1 项）；输入使用 PyTools 提供的合成 XLS 改扩展名 `.et` 夹具，WPS 实际识别为 FileFormat 56，CLI 在保存前拒绝，源夹具与隔离输入字节未变，输出不存在。
+- `et_com_source_safety_tests::com_rejects_excel8_source_named_et_without_mutating_it`：通过（1 项）。
+- `cargo fmt -p lo-convert -- --check`、`git diff --check`：通过。
+
+未执行/限制
+- 未提供已验证的原生 ET 真实样本；`com_conversion_validates_native_et_fixture_when_provided` 正向测试未执行，ET→XLSX 正向生产能力仍未验收。
+- 未验证 LibreOffice 对真实 ET 的格式识别与保真；其 JSON 不会报告 WPS FileFormat 验证通过。
+- 未运行全 workspace、Linux 或离线 deb 测试。
+
+已知问题
+- 如果调用方要求已验证的 `.et` 来源，只有 COM 返回 `source_format_verified=true` 且 `source_format="et"` 才可发布；LibreOffice 路径目前不提供这种证据。
+
+回滚
+- 仅回滚本记录及 `sidecar/lo-convert/src/main.rs`、`sidecar/lo-convert/tests/convert_et_com.rs` 的本次 ET 格式验证变更；不要覆盖其他 WIP。
+- crate 版本不变。

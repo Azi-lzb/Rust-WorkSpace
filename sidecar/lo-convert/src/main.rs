@@ -102,14 +102,17 @@ fn run() -> Result<()> {
     } else {
         engine
     };
-    match selected {
-        "lo" => run_libreoffice(&input, temp_dir, &target)?,
+    let source_file_format = match selected {
+        "lo" => {
+            run_libreoffice(&input, temp_dir, &target)?;
+            None
+        }
         "com" if cfg!(windows) => run_com(&input, &converted, &target, &source_ext)?,
         "com" => bail!(
             "COM conversion is only available on Windows; install LibreOffice or use --engine lo"
         ),
         _ => unreachable!(),
-    }
+    };
     let candidate = if converted.exists() {
         converted
     } else {
@@ -119,8 +122,15 @@ fn run() -> Result<()> {
         candidate.is_file() && fs::metadata(&candidate)?.len() > 0,
         "conversion engine did not create a non-empty output file"
     );
-    let validation =
-        validate_conversion(&input, &candidate, &source_ext, &target, selected, temp_dir)?;
+    let validation = validate_conversion(
+        &input,
+        &candidate,
+        &source_ext,
+        &target,
+        selected,
+        temp_dir,
+        source_file_format,
+    )?;
     fs::rename(&candidate, &output)
         .with_context(|| format!("commit validated output {}", output.display()))?;
     println!("{{\"status\":\"converted\",\"engine\":\"{selected}\",\"input\":{},\"output\":{},\"validation\":{}}}", json_string(&input.display().to_string()), json_string(&output.display().to_string()), validation);
@@ -562,7 +572,7 @@ fn run_libreoffice(input: &Path, temp_dir: &Path, target: &str) -> Result<()> {
     Ok(())
 }
 
-fn run_com(input: &Path, output: &Path, target: &str, source_ext: &str) -> Result<()> {
+fn run_com(input: &Path, output: &Path, target: &str, source_ext: &str) -> Result<Option<i32>> {
     let output_parent = output
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
@@ -590,7 +600,9 @@ fn run_com(input: &Path, output: &Path, target: &str, source_ext: &str) -> Resul
             "wps.Application",
         ]
     } else if source_ext == "et" {
-        &["ket.Application", "KET.Application", "Excel.Application"]
+        // ET is a WPS-native workbook format. Do not route it through Excel
+        // COM, which may open a renamed XLS and make the extension look valid.
+        &["KET.Application"]
     } else {
         &["Excel.Application", "ket.Application", "KET.Application"]
     };
@@ -611,8 +623,19 @@ fn run_com(input: &Path, output: &Path, target: &str, source_ext: &str) -> Resul
         script.push_str(&format!("$doc=$app.Documents.Open('{}',$false,$true); try {{ $doc.SaveAs2('{}',{}) }} catch {{ $doc.SaveAs('{}',{}) }};\n", ps_quote(&com_input.to_string_lossy()), ps_quote(&output.to_string_lossy()), format_code, ps_quote(&output.to_string_lossy()), format_code));
     } else {
         script.push_str(&format!(
-            "$book=$app.Workbooks.Open('{}',0,$true); $book.SaveAs('{}',{});\n",
-            ps_quote(&com_input.to_string_lossy()),
+            "$book=$app.Workbooks.Open('{}',0,$true);\n",
+            ps_quote(&com_input.to_string_lossy())
+        ));
+        if source_ext == "et" {
+            // Inspect the format WPS actually opened before publishing an
+            // XLSX. A CFB/XLS file renamed to .et reports 56; native ET is
+            // identified by KET as 65521.
+            script.push_str(
+                "$sourceFormat=[int]$book.FileFormat; if ($sourceFormat -ne 65521) { throw \"Input has .et extension but KET opened FileFormat $sourceFormat; expected native ET FileFormat 65521\" }; [Console]::Out.WriteLine(\"LO_CONVERT_SOURCE_FILE_FORMAT=$sourceFormat\");\n",
+            );
+        }
+        script.push_str(&format!(
+            "$book.SaveAs('{}',{});\n",
             ps_quote(&output.to_string_lossy()),
             format_code
         ));
@@ -644,7 +667,21 @@ fn run_com(input: &Path, output: &Path, target: &str, source_ext: &str) -> Resul
             String::from_utf8_lossy(&result.stderr)
         );
     }
-    Ok(())
+    if source_ext == "et" {
+        let file_format = String::from_utf8_lossy(&result.stdout)
+            .lines()
+            .find_map(|line| line.trim().strip_prefix("LO_CONVERT_SOURCE_FILE_FORMAT="))
+            .context("KET did not return source FileFormat evidence for .et input")?
+            .parse::<i32>()
+            .context("KET returned invalid source FileFormat evidence")?;
+        ensure!(
+            file_format == 65521,
+            "KET opened .et input as FileFormat {file_format}; expected native ET FileFormat 65521"
+        );
+        Ok(Some(file_format))
+    } else {
+        Ok(None)
+    }
 }
 
 fn validate_conversion(
@@ -654,6 +691,7 @@ fn validate_conversion(
     target: &str,
     engine: &str,
     temp_dir: &Path,
+    source_file_format: Option<i32>,
 ) -> Result<String> {
     if target == "docx" {
         let bytes = fs::read(output)?;
@@ -707,8 +745,12 @@ fn validate_conversion(
             }
             "com" if cfg!(windows) => {
                 let probe = probe_dir.join(format!("source.{target}"));
-                run_com(input, &probe, target, source_ext)
+                let probe_file_format = run_com(input, &probe, target, source_ext)
                     .context("convert ET source for preservation validation with COM")?;
+                ensure!(
+                    source_file_format == probe_file_format,
+                    "ET source format verification differed between candidate and preservation probe"
+                );
                 ensure!(
                     probe.is_file() && fs::metadata(&probe)?.len() > 0,
                     "COM did not create a non-empty ET source validation workbook"
@@ -728,7 +770,12 @@ fn validate_conversion(
     })?;
     compare_workbooks(&source, &converted)?;
     if source_ext == "et" {
-        Ok("{\"level\":\"worksheet_order_names_values_and_formula_text\",\"source_probe\":\"separate_conversion_using_selected_engine\",\"numeric_tolerance\":1e-15}".into())
+        let (source_format_verified, source_format, source_file_format) =
+            match (engine, source_file_format) {
+                ("com", Some(65521)) => (true, "et", 65521),
+                _ => (false, "unknown", 0),
+            };
+        Ok(format!("{{\"level\":\"worksheet_order_names_values_and_formula_text\",\"source_probe\":\"separate_conversion_using_selected_engine\",\"numeric_tolerance\":1e-15,\"source_format_verified\":{source_format_verified},\"source_format\":\"{source_format}\",\"source_file_format\":{source_file_format}}}"))
     } else {
         Ok(
             "{\"level\":\"worksheet_order_names_values_and_formula_text\",\"numeric_tolerance\":1e-15}"
@@ -1157,7 +1204,7 @@ mod et_com_source_safety_tests {
     use std::{env, fs, path::Path};
 
     #[test]
-    fn com_save_failure_preserves_cfb_source_named_et() -> Result<()> {
+    fn com_rejects_excel8_source_named_et_without_mutating_it() -> Result<()> {
         if !cfg!(windows) {
             eprintln!("skipping ET COM failure test: COM is only available on Windows");
             return Ok(());
@@ -1177,22 +1224,20 @@ mod et_com_source_safety_tests {
         )?;
         let source_bytes = fs::read(&input)?;
 
-        // A directory at the requested file path forces COM SaveAs to fail
-        // after opening the ET workbook, exercising the source-safety path.
-        let blocked_output = root.0.join("blocked.xlsx");
-        fs::create_dir(&blocked_output)?;
-        let error = run_com(&input, &blocked_output, "xlsx", "et")
-            .expect_err("COM SaveAs to an existing directory must fail");
+        let output = root.0.join("rejected.xlsx");
+        let error = run_com(&input, &output, "xlsx", "et")
+            .expect_err("Excel 8 content renamed to .et must be rejected");
         ensure!(
             error
                 .to_string()
-                .contains("Office/WPS COM conversion failed"),
-            "expected a COM save failure, got: {error:#}"
+                .contains("expected native ET FileFormat 65521"),
+            "expected native ET format rejection, got: {error:#}"
         );
         ensure!(
             fs::read(&input)? == source_bytes,
             "COM failure modified the caller's ET source"
         );
+        ensure!(!output.exists(), "rejected .et input produced an output");
         Ok(())
     }
 }

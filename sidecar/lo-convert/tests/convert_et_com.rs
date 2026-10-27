@@ -7,7 +7,7 @@ use std::{env, fs, path::Path, process::Command};
 use support::{copy_and_seed_excel8_et_named_fixture, copy_native_et_fixture, temp_test_dir};
 
 #[test]
-fn com_conversion_validates_cfb_excel8_with_et_extension_data_and_formula() -> Result<()> {
+fn com_conversion_rejects_excel8_xls_named_et_without_output() -> Result<()> {
     if !wps_et_tests_enabled() {
         return Ok(());
     }
@@ -16,31 +16,43 @@ fn com_conversion_validates_cfb_excel8_with_et_extension_data_and_formula() -> R
         return Ok(());
     };
     let root = temp_test_dir("lo_convert_cfb_et_extension")?;
+    let fixture_before = fs::read(Path::new(&fixture))?;
     let input = copy_and_seed_excel8_et_named_fixture(&root.0, Path::new(&fixture))?;
-    let workbook = convert_and_read(&input, &root.0)?;
-    let data = workbook
-        .sheets
-        .first()
-        .context("converted workbook has no worksheets")?;
+    let input_before = fs::read(&input)?;
+    let output = root.0.join("output.xlsx");
+    let result = Command::new(env!("CARGO_BIN_EXE_lo-convert"))
+        .args([
+            "convert",
+            "--input",
+            input.to_str().context("ET input path is not UTF-8")?,
+            "--output",
+            output.to_str().context("XLSX output path is not UTF-8")?,
+            "--to",
+            "xlsx",
+            "--engine",
+            "com",
+        ])
+        .output()?;
     ensure!(
-        data.name == "Data",
-        "converted sheet name changed: {}",
-        data.name
+        !result.status.success(),
+        "COM unexpectedly accepted an Excel 8 workbook renamed to .et"
     );
     ensure!(
-        number_at(data, "A1") == Some(12.0),
-        "converted CFB/.et input lost A1: {:?}",
-        data.values.get("A1")
+        String::from_utf8_lossy(&result.stderr).contains("expected native ET FileFormat 65521"),
+        "COM rejected the mislabeled input for an unexpected reason: {}",
+        String::from_utf8_lossy(&result.stderr)
     );
     ensure!(
-        number_at(data, "A2") == Some(3.0),
-        "converted CFB/.et input lost A2: {:?}",
-        data.values.get("A2")
+        !output.exists(),
+        "rejected .et input still published an XLSX output"
     );
     ensure!(
-        data.formulas.get("B1").map(String::as_str) == Some("SUM(A1:A2)"),
-        "converted CFB/.et input lost B1 formula: {:?}",
-        data.formulas.get("B1")
+        fs::read(&input)? == input_before,
+        "COM rejection modified the staged source .et workbook"
+    );
+    ensure!(
+        fs::read(Path::new(&fixture))? == fixture_before,
+        "COM rejection modified the supplied XLS fixture"
     );
     Ok(())
 }
@@ -105,6 +117,13 @@ fn convert_and_read(input: &Path, root: &Path) -> Result<WorkbookDump> {
         "validation did not separately convert the source: {}",
         report["validation"]
     );
+    ensure!(
+        report["validation"]["source_format_verified"] == true
+            && report["validation"]["source_format"] == "et"
+            && report["validation"]["source_file_format"] == 65521,
+        "conversion did not report verified native ET source format: {}",
+        report["validation"]
+    );
     ensure!(output.is_file(), "validated XLSX output was not published");
     let workbook = read_workbook(&output)?;
     ensure!(
@@ -116,14 +135,6 @@ fn convert_and_read(input: &Path, root: &Path) -> Result<WorkbookDump> {
         "source input was modified during COM conversion"
     );
     Ok(workbook)
-}
-
-fn number_at(sheet: &excel_reader::SheetDump, address: &str) -> Option<f64> {
-    sheet
-        .values
-        .get(address)
-        .and_then(|value| value.get("value"))
-        .and_then(serde_json::Value::as_f64)
 }
 
 fn wps_et_tests_enabled() -> bool {
