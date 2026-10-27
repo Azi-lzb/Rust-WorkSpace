@@ -1,0 +1,39 @@
+时间：2026-10-27 10:15（Asia/Shanghai）
+执行者：Codex
+工作树：main
+修改前 HEAD：b31276da846fed129a4259377022adcb9ce4f66f
+修改后 HEAD：本次专用提交（SHA 以 Git 历史为准）
+修改前 WIP：保留待审的 `crates/excel-editor` ImportRange 改动；同时保留无关 `crates/ooxml-patch/src/lib.rs` 修改和未跟踪 `HANDOFF_ZCODE_TO_CODEX.md`，不纳入本次提交。
+
+## 目的
+
+让隔离 openpyxl worker 与 Rust readback validator 一致复现旧 Python ImportRange 的字段级样式语义，并只对 openpyxl 保存时确实发生的非公式空字符串归一放行。此项来自 Audit S1-F01 真实对拍暴露的问题；不改变生产路由，不代表 Audit S1-F01 已验收。
+
+## 变更
+
+- `crates/excel-editor/python/openpyxl_worker.py`：有直接 cell style 时复制相应直接样式组件；无直接样式时仍按旧 Python 的真值判断应用默认 number format、alignment（Full 模式另含 protection），同时保留目标格的 font/fill/border 等未被旧路径覆盖的组件。
+- `crates/excel-editor/src/openpyxl_backend.rs`：计算 ImportRange 预期样式时从原目标工作簿初始化目标样式，再按操作顺序叠加源字段；无样式源格的默认属性不会错误覆盖目标的其他直接样式组件。未修改能力路由或 API。
+- `crates/excel-editor/src/openpyxl_backend.rs`：工作簿保护校验仅接受非公式空文本保存后变为空白；不放行空格文本丢失或公式/缓存丢失。
+- `crates/excel-editor/tests/python/test_openpyxl_worker.py`：新增空 inline string 经 openpyxl 保存后归一为空白的回归。
+- `crates/excel-editor/src/openpyxl_backend.rs`：增加无直接样式源格、目标已有格式，以及空字符串归一的 Rust 回归覆盖。
+- 不改业务代码、依赖、配置、公共路由、其他产品工作树或 Excel-Core 生产默认。
+
+## 验证
+
+- `cargo fmt -p excel-editor -- --check`：通过。
+- `git diff --check`：通过。
+- `py -3.12 -m unittest discover -s crates/excel-editor/tests/python -p test_openpyxl_worker.py`：16 项通过。
+- `cargo test --offline --locked -q -p excel-editor --lib`：45 项通过。
+- 设置 `RUST_WORKSPACE_OPENPYXL_PYTHON` 为本机 Python 3.12 后，`cargo test --offline --locked -p excel-editor --test openpyxl_worker rust_modifier_invokes_one_batch_worker_and_preserves_source -- --ignored --nocapture`：1 项通过，验证 Rust 按 workbook 批量调用 worker 且原输入不被改写。
+
+## 未执行与适用边界
+
+- 尚未用 Audit v4 的同一真实 S1-F01 样本在包含本次共享改动的组合上复跑；main 不含 Audit 分支的 `s1_formula_copy_candidate` harness。Audit Agent 正在确认精确只读样本路径，后续应由其安全同步本提交并复跑。
+- 未触发公式重算，未验证 LibreOffice/Excel 计算缓存；未做 Linux、麒麟或 UOS 验收。
+- 修复边界仅为 openpyxl worker 的 ImportRange 样式/空字符串语义；Capability 仍为 Unverified，不能据此开放生产路由。
+
+## 已知问题与回滚
+
+- 仍有既存 umya-spreadsheet 弃用 API 编译警告，与本次无关。
+- 回滚时仅撤销本次提交中上述三个 excel-editor 文件及本记录；不得触碰 `crates/ooxml-patch/src/lib.rs`、`HANDOFF_ZCODE_TO_CODEX.md` 或其他 Agent 工作树。
+- 【组件版本】不升级。

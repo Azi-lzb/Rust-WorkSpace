@@ -10,7 +10,7 @@ import zipfile
 from xml.etree import ElementTree as ET
 
 import openpyxl
-from openpyxl.styles import Alignment, Font, PatternFill
+from openpyxl.styles import Alignment, Border, Font, PatternFill, Protection, Side
 
 WORKER = Path(__file__).resolve().parents[2] / "python" / "openpyxl_worker.py"
 
@@ -182,6 +182,115 @@ class OpenpyxlWorkerTests(unittest.TestCase):
         self.assertTrue(sheet["A2"].font.bold)
         self.assertEqual(sheet["A2"].fill.fgColor.rgb, "FF445566")
         saved.close()
+
+    def test_import_range_unstyled_source_matches_legacy_style_component_overlays(self):
+        target_path = self.root / "unstyled-source-target.xlsx"
+        target_book = openpyxl.Workbook()
+        target_sheet = target_book.active
+        target_sheet.title = "Target"
+        target_sheet["A1"] = "replace with blank"
+        target_sheet["A1"].font = Font(name="Target Font", size=14, bold=True)
+        target_sheet["A1"].fill = PatternFill(fill_type="solid", fgColor="FF112233")
+        target_sheet["A1"].border = Border(left=Side(style="thin", color="FF445566"))
+        target_sheet["A1"].alignment = Alignment(
+            horizontal="center", vertical="center", wrap_text=True
+        )
+        target_sheet["A1"].number_format = "#,##0.00"
+        target_sheet["A1"].protection = Protection(locked=False, hidden=True)
+        target_book.save(target_path)
+        target_book.close()
+
+        source_path = self.root / "unstyled-source.xlsx"
+        source_book = openpyxl.Workbook()
+        source_sheet = source_book.active
+        source_sheet.title = "Source"
+        source_sheet.row_dimensions[1].font = Font(name="Inherited Row Font", size=12)
+        source_sheet.row_dimensions[1].alignment = Alignment(horizontal="right")
+        source_sheet.column_dimensions["A"].font = Font(name="Inherited Column Font", size=10)
+        source_book.save(source_path)
+        source_book.close()
+
+        source_check = openpyxl.load_workbook(source_path, data_only=False)
+        source_cell = source_check["Source"]["A1"]
+        self.assertFalse(source_cell.has_style)
+        self.assertTrue(source_check["Source"].row_dimensions[1].has_style)
+        self.assertTrue(source_check["Source"].column_dimensions["A"].has_style)
+        self.assertEqual(source_cell.number_format, "General")
+        self.assertIsNone(source_cell.alignment.horizontal)
+        self.assertTrue(source_cell.protection.locked)
+        self.assertFalse(source_cell.protection.hidden)
+        source_check.close()
+
+        output = self.root / "unstyled-source-output.xlsx"
+        plan = self.base_plan(output, [
+            operation(
+                "import_range", source_workbook=str(source_path), source_sheet="Source",
+                source_range="A1:A1", target_sheet="Target", target_start="A1",
+                copy_values=True, copy_formulas=True, style_mode="full", copy_comments=False,
+                copy_merges=False, copy_row_heights=False, copy_column_widths=False,
+                copy_row_hidden=False, copy_column_hidden=False, copy_outline_levels=False,
+                copy_all_row_dimensions=False, copy_all_column_dimensions=False,
+                materialize_blank_cells=True, hide_zero=False,
+            ),
+        ])
+        plan["input"] = str(target_path)
+        process, response = run_worker(plan, output)
+
+        self.assertEqual(process.returncode, 0, process.stderr)
+        self.assertEqual(response["status"], "applied", response)
+        saved = openpyxl.load_workbook(output, data_only=False)
+        result = saved["Target"]["A1"]
+        self.assertIsNone(result.value)
+        self.assertEqual(result.font.name, "Target Font")
+        self.assertEqual(result.font.sz, 14)
+        self.assertTrue(result.font.bold)
+        self.assertEqual(result.fill.fgColor.rgb, "FF112233")
+        self.assertEqual(result.border.left.style, "thin")
+        self.assertEqual(result.border.left.color.rgb, "FF445566")
+        self.assertEqual(result.number_format, "General")
+        self.assertIsNone(result.alignment.horizontal)
+        self.assertIsNone(result.alignment.vertical)
+        self.assertIsNone(result.alignment.wrap_text)
+        self.assertTrue(result.protection.locked)
+        self.assertFalse(result.protection.hidden)
+        saved.close()
+
+    def test_openpyxl_round_trip_normalizes_stored_empty_inline_string(self):
+        source = self.root / "empty-inline-string.xlsx"
+        book = openpyxl.Workbook()
+        book.save(source)
+        book.close()
+
+        namespace = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+        replacement = source.with_name("empty-inline-string.patched.xlsx")
+        ET.register_namespace("", namespace)
+        with zipfile.ZipFile(source, "r") as original, zipfile.ZipFile(
+            replacement, "w", zipfile.ZIP_DEFLATED
+        ) as patched:
+            for item in original.infolist():
+                data = original.read(item.filename)
+                if item.filename == "xl/worksheets/sheet1.xml":
+                    root = ET.fromstring(data)
+                    sheet_data = root.find(f"{{{namespace}}}sheetData")
+                    row = ET.SubElement(sheet_data, f"{{{namespace}}}row", {"r": "10"})
+                    cell = ET.SubElement(
+                        row, f"{{{namespace}}}c", {"r": "E10", "t": "inlineStr"}
+                    )
+                    inline_string = ET.SubElement(cell, f"{{{namespace}}}is")
+                    ET.SubElement(inline_string, f"{{{namespace}}}t").text = ""
+                    data = ET.tostring(root, encoding="utf-8", xml_declaration=True)
+                patched.writestr(item, data)
+        replacement.replace(source)
+
+        loaded = openpyxl.load_workbook(source, data_only=False)
+        self.assertEqual(loaded.active["E10"].value, "")
+        output = self.root / "empty-inline-string-round-trip.xlsx"
+        loaded.save(output)
+        loaded.close()
+
+        round_trip = openpyxl.load_workbook(output, data_only=False)
+        self.assertIsNone(round_trip.active["E10"].value)
+        round_trip.close()
 
     def test_import_range_maps_style_components_when_workbook_style_ids_collide(self):
         target_path = self.root / "style-index-collision-target.xlsx"
