@@ -48,8 +48,16 @@ fn readback_failure_category(message: &str) -> &'static str {
         "merged_range_preservation_mismatch"
     } else if message.contains("calculation") {
         "calculation_properties_mismatch"
-    } else if message.contains("relationship") || message.contains("defined name") {
-        "ooxml_metadata_preservation_mismatch"
+    } else if message.contains("defined name") {
+        "defined_names_preservation_mismatch"
+    } else if message.contains("relationships outside") {
+        "ooxml_relationship_semantics_mismatch"
+    } else if message.contains("relationship") {
+        "ooxml_relationship_integrity_failure"
+    } else if message.contains("conditional formatting") {
+        "conditional_formatting_preservation_mismatch"
+    } else if message.contains("data validation") {
+        "data_validation_preservation_mismatch"
     } else {
         "other_readback_validation_failure"
     }

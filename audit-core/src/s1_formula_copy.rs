@@ -7,14 +7,14 @@
 
 use crate::{
     models::CopyRange,
-    s1_template_rules::{load_s1_template_rule_plan, S1TemplateRuleSummary},
+    s1_template_rules::{S1TemplateRuleSummary, load_s1_template_rule_plan},
 };
-use anyhow::{ensure, Context, Result};
+use anyhow::{Context, Result, ensure};
 use excel_editor::{
-    inspect_xlsx_profile, EditOperation, ExcelEditPlan, PreservationRequirement, RangeStyleMode,
-    WorkbookProfile,
+    EditOperation, ExcelEditPlan, PreservationRequirement, RangeStyleMode, WorkbookProfile,
+    inspect_xlsx_profile,
 };
-use excel_reader::{read_ooxml_comments, WorkbookComment};
+use excel_reader::{WorkbookComment, read_ooxml_comments};
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
@@ -123,7 +123,10 @@ pub fn build_s1_formula_copy_edit_plan(
             target_start,
             copy_values: true,
             copy_formulas: true,
-            style_mode: RangeStyleMode::Full,
+            // S1's audit only consumes copied values, formula text and
+            // comments. Ordinary presentation styles are not part of its
+            // acceptance contract and must not block the business copy.
+            style_mode: RangeStyleMode::None,
             // Copy nonempty source comments as per-cell SetComment operations
             // below. This preserves existing target comments where the source
             // template has no comment at that coordinate.
@@ -160,20 +163,18 @@ pub fn build_s1_formula_copy_edit_plan(
         format: target_profile.format,
         workbook: target_profile,
         operations,
+        // Keep the contracts required by formula execution, issue extraction
+        // and workbook structure. Ordinary presentation and package-byte
+        // normalization are intentionally nonblocking for this workflow.
         preserve: [
             PreservationRequirement::CellValuesAndTypes,
             PreservationRequirement::FormulaText,
             PreservationRequirement::CommentsAndPositions,
-            PreservationRequirement::Styles,
             PreservationRequirement::MergedRanges,
             PreservationRequirement::ConditionalFormatting,
             PreservationRequirement::DataValidations,
             PreservationRequirement::DefinedNames,
-            PreservationRequirement::RowAndColumnDimensions,
-            PreservationRequirement::PageSettings,
-            PreservationRequirement::HeaderFooterText,
             PreservationRequirement::Relationships,
-            PreservationRequirement::UnmodifiedPackageParts,
             PreservationRequirement::SheetIdentityAndOrder,
         ]
         .into_iter()
@@ -463,7 +464,7 @@ mod tests {
                 copy_formulas: true,
                 copy_comments: false,
                 materialize_blank_cells: true,
-                style_mode: RangeStyleMode::Full,
+                style_mode: RangeStyleMode::None,
                 ..
             } if source_range == "A1:B2" && target_start == "A1"
         ));
@@ -474,6 +475,33 @@ mod tests {
                 force_full_calc: Some(true),
             })
         ));
+        for requirement in [
+            PreservationRequirement::Styles,
+            PreservationRequirement::RowAndColumnDimensions,
+            PreservationRequirement::PageSettings,
+            PreservationRequirement::HeaderFooterText,
+            PreservationRequirement::UnmodifiedPackageParts,
+        ] {
+            assert!(
+                !prepared.edit_plan.preserve.contains(&requirement),
+                "ordinary presentation/package normalization must not gate S1 content copy: {requirement:?}"
+            );
+        }
+        for requirement in [
+            PreservationRequirement::CellValuesAndTypes,
+            PreservationRequirement::FormulaText,
+            PreservationRequirement::CommentsAndPositions,
+            PreservationRequirement::MergedRanges,
+            PreservationRequirement::ConditionalFormatting,
+            PreservationRequirement::DefinedNames,
+            PreservationRequirement::Relationships,
+            PreservationRequirement::SheetIdentityAndOrder,
+        ] {
+            assert!(
+                prepared.edit_plan.preserve.contains(&requirement),
+                "business content/structure must remain protected: {requirement:?}"
+            );
+        }
         assert!(!output.exists(), "plan construction must not write output");
 
         fs::remove_dir_all(directory).expect("remove formula-copy test directory");

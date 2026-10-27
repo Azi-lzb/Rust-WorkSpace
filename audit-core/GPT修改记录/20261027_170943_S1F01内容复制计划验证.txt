@@ -1,0 +1,25 @@
+时间：2026-10-27 17:09:43 +08:00
+执行者：Codex
+分支：audit-dev
+修改前/后 HEAD（提交前）：cf65400 / cf65400；提交 SHA 见 Git 历史。
+WIP：工作树含其他 S1/S2/S3/S5 未提交修改；仅提交本记录列出的 S1 内容复制计划文件和对应迁移记录，不改动其余 WIP。
+
+目的：按用户当前内容优先标准，移除普通外观样式对 S1 公式复制计划的阻塞，同时保留业务数据、公式及必要工作簿结构保护。
+
+修改文件：
+- `audit-core/src/s1_formula_copy.rs`：ImportRange 使用 `RangeStyleMode::None`；保留值/类型、公式、批注、合并、条件格式、数据验证、定义名称、关系和工作表身份保护。
+- `audit-core/tests/compare/compare_s1_formula_copy_candidate.py`：对拍聚焦业务内容、公式与必要结构，不再比较普通样式、尺寸或打印外观；仍计入工作簿结构和公式缓存结果。
+- `audit-core/tests/s1_formula_copy_candidate.rs`：将候选读回失败分类细分为关系、条件格式和数据验证语义。
+- `audit-core/MIGRATION_INVENTORY.md`：记录本轮定向验证与保留的阻塞状态。
+
+验证：
+- Windows `cargo test --offline --locked -p audit-core --lib s1_formula_copy::tests --target-dir F:\RustBuild\audit_s1_content_plan_20261027`：7 passed，0 failed。
+- Windows `cargo test --offline --locked -p audit-core --test s1_formula_copy_candidate candidate_apply_failure_categories_are_path_free_and_case_insensitive --target-dir F:\RustBuild\audit_s1_content_plan_20261027`：1 passed，0 failed。
+- `py -3.12` AST 解析对拍脚本通过。
+- `rustfmt --edition 2024 --check` 与 `git diff --check` 覆盖两个 Rust 文件和测试脚本，通过。
+
+未执行/已知问题：本轮未重跑真实 ImportRange 编辑候选、真实 Excel COM 重算、GUI 浏览器流程或 Linux/deb。既有真实报告显示 5,487 个复制范围格值/类型和公式文本差异为 0，但候选输出读回因 OOXML 关系语义差异未通过；生产路由仍 Unverified，S1-F01 整体仍受阻。
+
+回滚：仅回退 `s1_formula_copy.rs` 的 S1 内容复制保留契约调整及对应候选对拍诊断更新，并撤销本记录和迁移清单增量；不改共享 Excel-Core。
+
+【组件版本】不升级；沿用现有 workspace crate 版本。

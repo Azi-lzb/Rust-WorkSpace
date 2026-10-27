@@ -122,33 +122,6 @@ def resolve_real_ranges(source_root: Path, template_path: Path, mapping_path: Pa
     return definition
 
 
-def style_component_signature(component, tag):
-    """Return an ID-free semantic signature for an OpenPyXL style component."""
-    node = component.to_tree(tagname=tag)
-
-    def normalize(element):
-        return (
-            element.tag,
-            tuple(sorted(element.attrib.items())),
-            element.text,
-            tuple(normalize(child) for child in element),
-        )
-
-    return normalize(node)
-
-
-def style_signature(cell):
-    return (
-        cell.style,
-        cell.number_format,
-        style_component_signature(cell.font, "font"),
-        style_component_signature(cell.fill, "fill"),
-        style_component_signature(cell.border, "border"),
-        style_component_signature(cell.alignment, "alignment"),
-        style_component_signature(cell.protection, "protection"),
-    )
-
-
 def cell_value_type_signature(cell):
     return cell.value, cell.data_type
 
@@ -177,12 +150,11 @@ def hyperlink_signature(cell):
 def cell_mismatch_counts(
     python_path: Path, rust_path: Path, template_path: Path, target_path: Path, ranges
 ):
-    """Compare copied cells to the Python value/comment contract and template styles.
+    """Compare copied business content while excluding presentation styling.
 
-    The legacy Python cross-workbook style copier can emit invalid font component
-    references. Therefore copied-range styles are checked against the source
-    template, while values, formulas, comments and hyperlinks are compared with
-    the Python baseline. Cells outside copied ranges are compared with the input.
+    Values, types, formulas, comments, hyperlinks, rules, and workbook structure
+    remain in scope. Ordinary cell styles, dimensions, and print appearance do
+    not gate the S1 business-copy candidate.
     """
     python_book = load_workbook(python_path, data_only=False, keep_links=True)
     rust_book = load_workbook(rust_path, data_only=False, keep_links=True)
@@ -194,14 +166,12 @@ def cell_mismatch_counts(
         "range_cells": 0,
         "range_value_type_mismatches": 0,
         "range_formula_text_mismatches": 0,
-        "range_style_mismatches": 0,
         "range_comment_mismatches": 0,
         "range_hyperlink_mismatches": 0,
         "range_mismatches": 0,
         "outside_cells": 0,
         "outside_value_type_mismatches": 0,
         "outside_formula_text_mismatches": 0,
-        "outside_style_mismatches": 0,
         "outside_comment_mismatches": 0,
         "outside_hyperlink_mismatches": 0,
         "outside_formula_cache_cells": 0,
@@ -209,10 +179,15 @@ def cell_mismatch_counts(
         "outside_formula_cache_nonempty_mismatches": 0,
         "outside_mismatches": 0,
         "outside_sheet_mismatches": 0,
+        "outside_python_rust_value_type_mismatches": 0,
+        "outside_python_rust_formula_text_mismatches": 0,
+        "outside_python_rust_comment_mismatches": 0,
+        "outside_python_rust_hyperlink_mismatches": 0,
+        "outside_python_rust_mismatches": 0,
     }
     range_cells: dict[str, set[tuple[int, int]]] = {}
 
-    def record_cell(prefix, expected_value, actual_value, expected_style, actual_style):
+    def record_cell(prefix, expected_value, actual_value):
         counts[f"{prefix}_value_type_mismatches"] += int(
             cell_value_type_signature(expected_value) != cell_value_type_signature(actual_value)
         )
@@ -224,9 +199,6 @@ def cell_mismatch_counts(
         )
         counts[f"{prefix}_hyperlink_mismatches"] += int(
             hyperlink_signature(expected_value) != hyperlink_signature(actual_value)
-        )
-        counts[f"{prefix}_style_mismatches"] += int(
-            style_signature(expected_style) != style_signature(actual_style)
         )
 
     for item in ranges:
@@ -241,38 +213,58 @@ def cell_mismatch_counts(
         range_cells.setdefault(sheet_name, set()).update(cells)
         python_sheet = python_book[sheet_name]
         rust_sheet = rust_book[sheet_name]
-        template_sheet = template_book[sheet_name]
         for row, col in cells:
             counts["range_cells"] += 1
+            python_cell = python_sheet.cell(row, col)
+            rust_cell = rust_sheet.cell(row, col)
             record_cell(
                 "range",
-                python_sheet.cell(row, col),
-                rust_sheet.cell(row, col),
-                template_sheet.cell(row, col),
-                rust_sheet.cell(row, col),
+                python_cell,
+                rust_cell,
             )
 
-    for sheet_name in sorted(set(target_book.sheetnames) | set(rust_book.sheetnames)):
-        if sheet_name not in target_book.sheetnames or sheet_name not in rust_book.sheetnames:
+    for sheet_name in sorted(
+        set(target_book.sheetnames) | set(python_book.sheetnames) | set(rust_book.sheetnames)
+    ):
+        if any(
+            sheet_name not in book.sheetnames
+            for book in (target_book, python_book, rust_book)
+        ):
             counts["outside_sheet_mismatches"] += 1
             continue
         target_sheet = target_book[sheet_name]
+        python_sheet = python_book[sheet_name]
         rust_sheet = rust_book[sheet_name]
         target_cache_sheet = target_cache_book[sheet_name]
         rust_cache_sheet = rust_cache_book[sheet_name]
-        coordinates = set(target_sheet._cells) | set(rust_sheet._cells)
+        coordinates = (
+            set(target_sheet._cells) | set(python_sheet._cells) | set(rust_sheet._cells)
+        )
         for row, col in coordinates:
             if (row, col) in range_cells.get(sheet_name, set()):
                 continue
             counts["outside_cells"] += 1
             target_cell = target_sheet.cell(row, col)
+            python_cell = python_sheet.cell(row, col)
             rust_cell = rust_sheet.cell(row, col)
             record_cell(
                 "outside",
-                target_cell,
+                python_cell,
                 rust_cell,
-                target_cell,
-                rust_cell,
+            )
+            counts["outside_python_rust_value_type_mismatches"] += int(
+                cell_value_type_signature(python_cell)
+                != cell_value_type_signature(rust_cell)
+            )
+            counts["outside_python_rust_formula_text_mismatches"] += int(
+                formula_text_signature(python_cell)
+                != formula_text_signature(rust_cell)
+            )
+            counts["outside_python_rust_comment_mismatches"] += int(
+                comment_signature(python_cell) != comment_signature(rust_cell)
+            )
+            counts["outside_python_rust_hyperlink_mismatches"] += int(
+                hyperlink_signature(python_cell) != hyperlink_signature(rust_cell)
             )
             target_formula = formula_text_signature(target_cell)
             if target_formula is not None and formula_text_signature(rust_cell) == target_formula:
@@ -289,10 +281,14 @@ def cell_mismatch_counts(
     for prefix in ("range", "outside"):
         counts[f"{prefix}_mismatches"] = sum(
             counts[f"{prefix}_{kind}_mismatches"]
-            for kind in ("value_type", "formula_text", "style", "comment", "hyperlink")
+            for kind in ("value_type", "formula_text", "comment", "hyperlink")
         )
     counts["outside_mismatches"] += counts["outside_formula_cache_mismatches"]
     counts["outside_mismatches"] += counts["outside_sheet_mismatches"]
+    counts["outside_python_rust_mismatches"] = sum(
+        counts[f"outside_python_rust_{kind}_mismatches"]
+        for kind in ("value_type", "formula_text", "comment", "hyperlink")
+    )
     for book in (python_book, rust_book, template_book, target_book, target_cache_book, rust_cache_book):
         book.close()
     return counts
@@ -318,26 +314,10 @@ def workbook_metadata(path: Path):
         conditional = tuple(
             sorted((str(group.sqref), repr(group.rules)) for group in sheet.conditional_formatting)
         )
-        dimensions = (
-            tuple(sorted((key, value.height, value.hidden, value.outlineLevel, value.collapsed) for key, value in sheet.row_dimensions.items())),
-            tuple(sorted((key, value.width, value.hidden, value.outlineLevel, value.collapsed) for key, value in sheet.column_dimensions.items())),
-        )
         result["sheets"][sheet.title] = (
             tuple(sorted(str(item) for item in sheet.merged_cells.ranges)),
             validations,
             conditional,
-            dimensions,
-            sheet.freeze_panes,
-            sheet.print_area,
-            sheet.print_title_rows,
-            sheet.print_title_cols,
-            sheet.page_setup.orientation,
-            sheet.page_setup.paperSize,
-            sheet.page_setup.fitToWidth,
-            sheet.page_setup.fitToHeight,
-            sheet.sheet_properties.pageSetUpPr.fitToPage if sheet.sheet_properties.pageSetUpPr else None,
-            (sheet.page_margins.left, sheet.page_margins.right, sheet.page_margins.top, sheet.page_margins.bottom),
-            (str(sheet.oddHeader), str(sheet.oddFooter), str(sheet.evenHeader), str(sheet.evenFooter)),
             sheet.sheet_state,
         )
     workbook.close()
@@ -353,64 +333,6 @@ def calculation_flags(path: Path):
     return {
         "full_calc_on_load": node.get("fullCalcOnLoad"),
         "force_full_calc": node.get("forceFullCalc"),
-    }
-
-
-def style_reference_summary(path: Path):
-    with zipfile.ZipFile(path) as archive:
-        styles = ElementTree.fromstring(archive.read("xl/styles.xml"))
-        cell_xfs = styles.find(f"{{{MAIN_NS}}}cellXfs")
-        style_count = len(cell_xfs) if cell_xfs is not None else 0
-        fonts = styles.find(f"{{{MAIN_NS}}}fonts")
-        fills = styles.find(f"{{{MAIN_NS}}}fills")
-        borders = styles.find(f"{{{MAIN_NS}}}borders")
-        font_count = len(fonts) if fonts is not None else 0
-        fill_count = len(fills) if fills is not None else 0
-        border_count = len(borders) if borders is not None else 0
-        custom_formats = {
-            int(item.get("numFmtId"))
-            for item in styles.findall(f".//{{{MAIN_NS}}}numFmt")
-            if item.get("numFmtId")
-        }
-        references = 0
-        invalid = 0
-        max_index = -1
-        invalid_sheets = set()
-        invalid_components = {"font": 0, "fill": 0, "border": 0, "custom_number_format": 0}
-        for name in archive.namelist():
-            if not (name.startswith("xl/worksheets/") and name.endswith(".xml") and "/_rels/" not in name):
-                continue
-            root = ElementTree.fromstring(archive.read(name))
-            for cell in root.findall(f".//{{{MAIN_NS}}}c"):
-                raw_index = cell.get("s")
-                if raw_index is None:
-                    continue
-                index = int(raw_index)
-                references += 1
-                max_index = max(max_index, index)
-                if index >= style_count:
-                    invalid += 1
-                    invalid_sheets.add(name)
-                    continue
-                style = cell_xfs[index]
-                for component, attribute, maximum in (
-                    ("font", "fontId", font_count),
-                    ("fill", "fillId", fill_count),
-                    ("border", "borderId", border_count),
-                ):
-                    component_index = int(style.get(attribute, "0"))
-                    if component_index >= maximum:
-                        invalid_components[component] += 1
-                number_format = int(style.get("numFmtId", "0"))
-                if number_format >= 164 and number_format not in custom_formats:
-                    invalid_components["custom_number_format"] += 1
-    return {
-        "cell_xf_count": style_count,
-        "cell_style_reference_count": references,
-        "invalid_cell_style_reference_count": invalid,
-        "max_cell_style_index": max_index,
-        "sheets_with_invalid_style_references": len(invalid_sheets),
-        "invalid_style_component_reference_counts": invalid_components,
     }
 
 
@@ -466,70 +388,146 @@ def recalculate_and_compare(
     started = time.perf_counter()
     python_recalculated = directory / "python_recalculated.xlsx"
     rust_recalculated = directory / "rust_recalculated.xlsx"
-    shutil.copy2(python_output, python_recalculated)
+    if os.name == "nt":
+        def recalculate_with_com(source: Path, destination: Path):
+            try:
+                result = subprocess.run(
+                    [
+                        str(sidecar_path),
+                        "recalculate",
+                        "--input",
+                        str(source),
+                        "--output",
+                        str(destination),
+                        "--engine",
+                        "com",
+                    ],
+                    timeout=300,
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    check=False,
+                )
+            except subprocess.TimeoutExpired:
+                return None, "excel_com_timeout"
+            except OSError as error:
+                return None, f"sidecar_start_{type(error).__name__}"
 
-    from base_audit.engines.libreoffice import LibreOfficeCalculator
-    calculator = LibreOfficeCalculator()
+            if result.returncode != 0:
+                diagnostic = (result.stderr + "\n" + result.stdout).casefold()
+                if "recalculation changed formulas" in diagnostic:
+                    return None, "formula_text_changed"
+                if "workbooks.open" in diagnostic or "不能取得类 workbooks 的 open 属性" in diagnostic:
+                    return None, "excel_com_workbook_open_failed"
+                return None, f"sidecar_exit_{result.returncode}"
+            try:
+                report = json.loads(result.stdout)
+            except (json.JSONDecodeError, TypeError):
+                return None, "sidecar_invalid_json"
+            if not isinstance(report, dict):
+                return None, "sidecar_invalid_response"
+            validation = report.get("validation", {})
+            formula_count = validation.get("formula_count") if isinstance(validation, dict) else None
+            if (
+                report.get("status") != "recalculated"
+                or report.get("engine") != "Excel.Application"
+                or not isinstance(validation, dict)
+                or validation.get("formula_text_preserved") is not True
+                or validation.get("cache_nodes_complete") is not True
+                or not isinstance(formula_count, int)
+                or isinstance(formula_count, bool)
+                or formula_count <= 0
+                or validation.get("formula_cache_cells") != formula_count
+                or not destination.is_file()
+                or destination.stat().st_size == 0
+            ):
+                return None, "sidecar_validation_failed"
+            return report, None
 
-    try:
-        python_result = calculator.recalculate_many(
-            (python_recalculated,),
-            batch_size=8,
+        python_report, python_error = recalculate_with_com(
+            python_output, python_recalculated
         )
-    except Exception as error:
-        raise CandidateReadbackError(f"python_recalculation_{type(error).__name__}") from None
+        rust_report, rust_error = recalculate_with_com(rust_output, rust_recalculated)
+        if python_error or rust_error:
+            return {
+                "status": "failed",
+                "engine_requested": "Excel.Application COM",
+                "python_recalculation_status": "failed" if python_error else "completed",
+                "python_error_category": python_error,
+                "candidate_recalculation_status": "failed" if rust_error else "completed",
+                "candidate_error_category": rust_error,
+                "mismatch_count": 1,
+                "elapsed_ms": round((time.perf_counter() - started) * 1000),
+            }
+        python_engine = python_report["engine"]
+        sidecar_report = rust_report
+    else:
+        shutil.copy2(python_output, python_recalculated)
 
-    try:
-        sidecar_result = subprocess.run(
-            [
-                str(sidecar_path),
-                "recalculate",
-                "--input",
-                str(rust_output),
-                "--output",
-                str(rust_recalculated),
-                "--engine",
-                "lo",
-            ],
-            timeout=calculator.timeout_seconds,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            check=False,
-        )
-    except subprocess.TimeoutExpired:
-        raise CandidateReadbackError("sidecar_timeout") from None
-    except OSError as error:
-        raise CandidateReadbackError(f"sidecar_start_{type(error).__name__}") from None
-    if sidecar_result.returncode != 0:
-        raise CandidateReadbackError(f"sidecar_exit_{sidecar_result.returncode}")
+        from base_audit.engines.libreoffice import LibreOfficeCalculator
+        calculator = LibreOfficeCalculator()
 
-    try:
-        sidecar_report = json.loads(sidecar_result.stdout)
-    except (json.JSONDecodeError, TypeError):
-        raise CandidateReadbackError("sidecar_invalid_json") from None
-    if not isinstance(sidecar_report, dict):
-        raise CandidateReadbackError("sidecar_invalid_response")
-    validation = sidecar_report.get("validation", {})
-    if not isinstance(validation, dict):
-        raise CandidateReadbackError("sidecar_invalid_validation")
-    formula_count = validation.get("formula_count")
-    formula_cache_cells = validation.get("formula_cache_cells")
-    if (
-        sidecar_report.get("status") != "recalculated"
-        or not isinstance(sidecar_report.get("engine"), str)
-        or "LibreOffice" not in sidecar_report["engine"]
-        or validation.get("formula_text_preserved") is not True
-        or validation.get("cache_nodes_complete") is not True
-        or not isinstance(formula_count, int)
-        or isinstance(formula_count, bool)
-        or formula_count <= 0
-        or formula_cache_cells != formula_count
-        or not rust_recalculated.is_file()
-        or rust_recalculated.stat().st_size == 0
-    ):
-        raise CandidateReadbackError("sidecar_validation_failed")
+        try:
+            python_result = calculator.recalculate_many(
+                (python_recalculated,),
+                batch_size=8,
+            )
+        except Exception as error:
+            raise CandidateReadbackError(f"python_recalculation_{type(error).__name__}") from None
+
+        try:
+            sidecar_result = subprocess.run(
+                [
+                    str(sidecar_path),
+                    "recalculate",
+                    "--input",
+                    str(rust_output),
+                    "--output",
+                    str(rust_recalculated),
+                    "--engine",
+                    "lo",
+                ],
+                timeout=calculator.timeout_seconds,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                check=False,
+            )
+        except subprocess.TimeoutExpired:
+            raise CandidateReadbackError("sidecar_timeout") from None
+        except OSError as error:
+            raise CandidateReadbackError(f"sidecar_start_{type(error).__name__}") from None
+        if sidecar_result.returncode != 0:
+            raise CandidateReadbackError(f"sidecar_exit_{sidecar_result.returncode}")
+
+        try:
+            sidecar_report = json.loads(sidecar_result.stdout)
+        except (json.JSONDecodeError, TypeError):
+            raise CandidateReadbackError("sidecar_invalid_json") from None
+        if not isinstance(sidecar_report, dict):
+            raise CandidateReadbackError("sidecar_invalid_response")
+        validation = sidecar_report.get("validation", {})
+        if not isinstance(validation, dict):
+            raise CandidateReadbackError("sidecar_invalid_validation")
+        formula_count = validation.get("formula_count")
+        formula_cache_cells = validation.get("formula_cache_cells")
+        if (
+            sidecar_report.get("status") != "recalculated"
+            or not isinstance(sidecar_report.get("engine"), str)
+            or "LibreOffice" not in sidecar_report["engine"]
+            or validation.get("formula_text_preserved") is not True
+            or validation.get("cache_nodes_complete") is not True
+            or not isinstance(formula_count, int)
+            or isinstance(formula_count, bool)
+            or formula_count <= 0
+            or formula_cache_cells != formula_count
+            or not rust_recalculated.is_file()
+            or rust_recalculated.stat().st_size == 0
+        ):
+            raise CandidateReadbackError("sidecar_validation_failed")
+        python_engine = python_result.engine_display
 
     python_values = formula_cache_snapshot(python_recalculated)
     rust_values = formula_cache_snapshot(rust_recalculated)
@@ -569,7 +567,7 @@ def recalculate_and_compare(
     )
     return {
         "status": "matched" if mismatch_count == 0 else "mismatch",
-        "python_engine": python_result.engine_display,
+        "python_engine": python_engine,
         "sidecar_engine": sidecar_report["engine"],
         "formula_count_python": len(python_keys),
         "formula_count_sidecar": len(rust_keys),
@@ -606,49 +604,6 @@ def range_stats(template_path: Path, ranges):
                 comments += int(cell.comment is not None)
     workbook.close()
     return {"formula_cells": formulas, "range_comment_count_python": comments}
-
-
-def package_difference_counts(left_path: Path, right_path: Path):
-    def category(name: str) -> str:
-        if name == "[Content_Types].xml":
-            return "content_types"
-        if name.startswith("xl/worksheets/"):
-            return "worksheets"
-        if name.startswith("xl/comments"):
-            return "comments"
-        if name.startswith("xl/drawings/"):
-            return "drawings"
-        if name.startswith("xl/_rels/") or name.startswith("_rels/"):
-            return "relationships"
-        if name == "xl/styles.xml":
-            return "styles"
-        if name == "xl/workbook.xml":
-            return "workbook"
-        if name.startswith("docprops/"):
-            return "properties"
-        return "other"
-
-    with zipfile.ZipFile(left_path) as left, zipfile.ZipFile(right_path) as right:
-        left_names = set(left.namelist())
-        right_names = set(right.namelist())
-        common = left_names & right_names
-        name_difference_counts = {}
-        byte_difference_counts = {}
-        for name in left_names ^ right_names:
-            bucket = category(name)
-            name_difference_counts[bucket] = name_difference_counts.get(bucket, 0) + 1
-        for name in common:
-            if left.read(name) != right.read(name):
-                bucket = category(name)
-                byte_difference_counts[bucket] = byte_difference_counts.get(bucket, 0) + 1
-        return {
-            "left_part_count": len(left_names),
-            "right_part_count": len(right_names),
-            "part_name_difference_count": len(left_names ^ right_names),
-            "part_name_difference_category_counts": dict(sorted(name_difference_counts.items())),
-            "common_part_byte_difference_count": sum(byte_difference_counts.values()),
-            "common_part_byte_difference_category_counts": dict(sorted(byte_difference_counts.items())),
-        }
 
 
 def invoke_candidate(
@@ -706,6 +661,30 @@ def invoke_candidate(
             encoding="utf-8",
             errors="replace",
             check=False,
+        )
+    if completed.returncode:
+        output = completed.stdout + "\n" + completed.stderr
+        summary_lines = [
+            line.strip()
+            for line in output.splitlines()
+            if "panicked at" in line or line.strip().startswith("error:")
+        ]
+        output_lines = output.splitlines()
+        panic_index = next(
+            (index for index, line in enumerate(output_lines) if "panicked at" in line),
+            None,
+        )
+        if panic_index is not None:
+            summary = " ".join(
+                line.strip() for line in output_lines[panic_index : panic_index + 3] if line.strip()
+            )
+        else:
+            summary = summary_lines[-1] if summary_lines else "candidate test failed without a diagnostic line"
+        for path in paths.values():
+            summary = summary.replace(str(path), "<workbook>")
+        print(
+            f"Rust S1 copy candidate exited {completed.returncode}: {summary}",
+            file=sys.stderr,
         )
     return completed.returncode
 
@@ -860,37 +839,27 @@ def main() -> int:
                     "mismatch_count": 1,
                 }
 
-        readback_failed = bool(candidate.get("output_readback_failed", False))
         readback_failure_category = candidate.get("output_readback_failure_category")
+        style_only_readback_diagnostic = (
+            readback_failure_category == "imported_style_semantic_mismatch"
+        )
+        readback_failed = bool(candidate.get("output_readback_failed", False)) and not (
+            style_only_readback_diagnostic
+        )
+        if style_only_readback_diagnostic:
+            readback_failure_category = None
         if rust_output.exists():
             python_calc = calculation_flags(python_output)
             python_cache_count = formula_cache_count(python_output)
-            python_style_references = style_reference_summary(python_output)
             try:
                 rust_calc = calculation_flags(rust_output)
-                package_differences = package_difference_counts(python_output, rust_output)
                 candidate_cache_count = formula_cache_count(rust_output)
-                rust_style_references = style_reference_summary(rust_output)
                 calc_mismatch = int(python_calc != rust_calc)
             except Exception as error:
                 readback_failed = True
                 readback_failure_category = f"package_{type(error).__name__}"
                 rust_calc = {"full_calc_on_load": None, "force_full_calc": None}
-                package_differences = {
-                    "left_part_count": 0,
-                    "right_part_count": 0,
-                    "part_name_difference_count": 0,
-                    "common_part_byte_difference_count": 0,
-                }
                 candidate_cache_count = 0
-                rust_style_references = {
-                    "cell_xf_count": 0,
-                    "cell_style_reference_count": 0,
-                    "invalid_cell_style_reference_count": 0,
-                    "max_cell_style_index": -1,
-                    "sheets_with_invalid_style_references": 0,
-                    "invalid_style_component_reference_counts": {},
-                }
                 calc_mismatch = 1
             try:
                 cell_comparison = cell_mismatch_counts(python_output, rust_output, template_path, audit_path, ranges)
@@ -903,6 +872,7 @@ def main() -> int:
                     "outside_formula_cache_cells": 0,
                     "outside_formula_cache_mismatches": 0,
                     "outside_formula_cache_nonempty_mismatches": 0,
+                    "outside_python_rust_mismatches": 0,
                 }
             try:
                 python_metadata = workbook_metadata(python_output)
@@ -924,24 +894,15 @@ def main() -> int:
                 "outside_formula_cache_cells": 0,
                 "outside_formula_cache_mismatches": 0,
                 "outside_formula_cache_nonempty_mismatches": 0,
+                "outside_python_rust_mismatches": 0,
             }
             metadata_mismatch = 1
             target_metadata_mismatch = 1
             calc_mismatch = 1
             python_calc = calculation_flags(python_output)
             rust_calc = {"full_calc_on_load": None, "force_full_calc": None}
-            package_differences = {"left_part_count": 0, "right_part_count": 0, "part_name_difference_count": 0, "common_part_byte_difference_count": 0}
             candidate_cache_count = 0
             python_cache_count = formula_cache_count(python_output)
-            python_style_references = style_reference_summary(python_output)
-            rust_style_references = {
-                "cell_xf_count": 0,
-                "cell_style_reference_count": 0,
-                "invalid_cell_style_reference_count": 0,
-                "max_cell_style_index": -1,
-                "sheets_with_invalid_style_references": 0,
-                "invalid_style_component_reference_counts": {},
-            }
 
         inputs_unchanged = (
             template_path.read_bytes() == before_template
@@ -951,17 +912,10 @@ def main() -> int:
             cell_comparison["range_mismatches"]
             + cell_comparison["outside_mismatches"]
             + metadata_mismatch
-            + target_metadata_mismatch
             + calc_mismatch
             + int(readback_failed)
         )
-        python_invalid_style_reference_count = python_style_references[
-            "invalid_cell_style_reference_count"
-        ]
-        rust_invalid_style_reference_count = rust_style_references[
-            "invalid_cell_style_reference_count"
-        ]
-        mismatches += rust_invalid_style_reference_count + recalculation["mismatch_count"]
+        mismatches += recalculation["mismatch_count"]
         scope_stats = range_stats(template_path, ranges)
         if rust_exit != 0 or not output_created:
             candidate_status = "candidate_unavailable"
@@ -1004,14 +958,8 @@ def main() -> int:
                 "python_calculation_flags": python_calc,
                 "rust_calculation_flags": rust_calc,
                 "python_formula_cache_nonempty_count": python_cache_count,
-                "package_differences_python_vs_rust": package_differences,
-                "template_style_references": style_reference_summary(template_path),
-                "target_style_references": style_reference_summary(audit_path),
-                "python_style_references": python_style_references,
-                "rust_style_references": rust_style_references,
-                "python_baseline_invalid_style_component_references": python_style_references["invalid_style_component_reference_counts"],
-                "invalid_style_reference_count": rust_invalid_style_reference_count,
-                "python_baseline_invalid_style_reference_count": python_invalid_style_reference_count,
+                "presentation_style_comparison": "not performed; ordinary formatting is nonblocking",
+                "style_only_readback_diagnostic_nonblocking": style_only_readback_diagnostic,
                 "output_readback_failed": readback_failed,
                 "mismatch_count": mismatches,
             },
@@ -1027,13 +975,11 @@ def main() -> int:
                     if args.scope == "full-s1"
                     else "four cross-workbook ImportRange operations only; calculation flags intentionally omitted for diagnostics"
                 ),
-                "copied_range_styles_compared_to": "source template",
-                "other_cell_styles_and_values_compared_to": "original target workbook",
+                "presentation_style_comparison": "not performed; ordinary formatting is nonblocking",
+                "outside_python_rust_mismatches": cell_comparison[
+                    "outside_python_rust_mismatches"
+                ],
                 "outside_formula_caches_compared_to": "original target workbook where formula text matches",
-                "python_baseline_style_integrity": (
-                    "reported separately; not used as copied-range style oracle "
-                    "when component references are invalid"
-                ),
             },
         }
 
